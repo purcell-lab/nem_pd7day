@@ -18,7 +18,6 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
 - **Interconnector flows** — interconnector MW flow forecasts for the configured region
 - **Market intervention flag** — binary sensor from CASESOLUTION data
 - **Calibration diagnostic** — observation count, active bucket count, fit quality per bucket
-- **Forecast history diagnostic** — monitor forecast history storage health
 - **Cloud polling** — two independent polling loops:
   - **PD7DAY** fetches at AEMO publish times: 07:30, 13:00, 18:00 AEST (3 requests/day)
   - **TradingIS** fetches actual 5-min dispatch prices every 30 minutes (48 requests/day)
@@ -64,8 +63,6 @@ The integration is configured via a single-step UI flow.
 | NEM Region | QLD1 | The NEM region to monitor: `QLD1`, `NSW1`, `VIC1`, `SA1`, or `TAS1` |
 
 The configured region is used for both price forecasting and calibration. No additional settings are required.
-
-> Actual prices are sourced directly from AEMO's TradingIS reports on NEMWeb — no third-party account required. The integration fetches actual 5-minute dispatch prices every 30 minutes and automatically matches them against forecast history to build calibration.
 
 No `configuration.yaml` entries are required.
 
@@ -217,9 +214,7 @@ Default interconnectors per region:
 | `fitted_at` | ISO-8601 timestamp of last model refit |
 | `summary` | Per-bucket coefficients, MAE, RMSE, quantile slopes |
 
----
-
-The calibration sensor also includes forecast history metadata in its attributes:
+#### Forecast history attributes
 
 | Attribute | Description |
 |---|---|
@@ -328,18 +323,6 @@ Then reload or restart the integration.
 
 ---
 
-## Fetch Schedule
-
-| NEM time (AEST) | UTC | Notes |
-|---|---|---|
-| 07:30 | 21:30 (previous day) | Morning AEMO publish |
-| 13:00 | 03:00 | Midday AEMO publish |
-| 18:00 | 08:00 | Evening AEMO publish |
-
-The integration uses `async_track_point_in_utc_time` which fires reliably at exact UTC datetimes and self-reschedules 24 hours after each fire. It works correctly regardless of the HA host timezone.
-
----
-
 ## Template Sensor Examples
 
 The `value` key in each forecast period is an alias for `calibrated` (or `raw_value` in passthrough), maintained for backward compatibility.
@@ -391,14 +374,6 @@ The `nemtime` field in forecast periods is the **interval end** timestamp (AEMO 
 
 ---
 
-## Data Source
-
-Price forecast data is sourced from [AEMO NEMWeb PD7DAY](https://www.nemweb.com.au/REPORTS/CURRENT/PD7Day/) — updated three times per day with 7-day ahead dispatch price forecasts for all NEM regions.
-
-Actual prices are sourced from [AEMO TradingIS Reports](https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/) — 5-minute dispatch price data published after every dispatch interval.
-
----
-
 ## Troubleshooting
 
 ### Integration fails to load
@@ -427,8 +402,7 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 
 | Version | Changes |
 |---|---|
-| 2.0.4 | Region-scoped storage keys — multi-instance safe, automatic migration from legacy names |
-| 2.0.4 | Region-scoped storage keys, automatic migration, gas_tj populated in forecast history |
+| 2.0.4 | Region-scoped storage keys (multi-instance safe, auto-migration); gas_tj populated in forecast history |
 | 2.0.3 | Single-region enforcement — one region per integration instance, full calibration coverage |
 | 2.0.2 | Clean sensor names, remove Amber dependency, add Forecast History sensor |
 | 2.0.1 | Version bump post-integration |
