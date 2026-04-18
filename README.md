@@ -402,6 +402,7 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 
 | Version | Changes |
 |---|---|
+| 2.0.5 | Live sensor state advance (30-min intervals); gas_tj fix; calibration sensor → diagnostic; forecast history merged into calibration sensor |
 | 2.0.4 | Region-scoped storage keys (multi-instance safe, auto-migration); gas_tj populated in forecast history |
 | 2.0.3 | Single-region enforcement — one region per integration instance, full calibration coverage |
 | 2.0.2 | Clean sensor names, remove Amber dependency, add Forecast History sensor |
