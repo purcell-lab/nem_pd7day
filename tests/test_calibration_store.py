@@ -95,6 +95,9 @@ def make_store() -> CalibrationStore:
     store._coeff_store = AsyncMock()
     store._coeff_store.async_load = AsyncMock(return_value=None)
     store._coeff_store.async_save = AsyncMock()
+    store._fh_store = AsyncMock()
+    store._fh_store.async_load = AsyncMock(return_value=None)
+    store._fh_store.async_save = AsyncMock()
     store._engine = CalibrationEngine()
     store._observations = []
     store._calibration = None
@@ -103,6 +106,11 @@ def make_store() -> CalibrationStore:
     return store
 
 BASE_DT = datetime(2026, 4, 14, 18, 0, tzinfo=NEM_TZ)  # 18:00 NEM forecast run
+
+import asyncio
+
+def run_async(coro):
+    return asyncio.new_event_loop().run_until_complete(coro)
 
 
 # ── Tests: forecast_history key type ──────────────────────────────────────────
@@ -118,12 +126,12 @@ def test_forecast_history_keyed_by_str():
     interval_end = BASE_DT + timedelta(hours=3, minutes=30)  # nemtime
     period = make_price_period(interval_end, value=0.108)
 
-    store.ingest_forecast(
+    run_async(store.ingest_forecast(
         region="QLD1",
         price_data=make_price_data(run_dt, [period]),
         interconnectors={},
         case=None,
-    )
+    ))
 
     assert len(store._forecast_history) == 1
     key = list(store._forecast_history.keys())[0]
@@ -146,12 +154,12 @@ def test_forecast_history_matches_current_nem_interval():
     interval_end_dt = interval_start_dt + timedelta(minutes=30)
     period = make_price_period(interval_end_dt, value=0.10)
 
-    store.ingest_forecast(
+    run_async(store.ingest_forecast(
         region="QLD1",
         price_data=make_price_data(BASE_DT, [period]),
         interconnectors={},
         case=None,
-    )
+    ))
 
     # current_nem_interval() at 21:15 should return "2026-04-14T21:00:00+10:00"
     key_from_store = list(store._forecast_history.keys())[0]
@@ -163,12 +171,6 @@ def test_forecast_history_matches_current_nem_interval():
 
 # ── Tests: observation deduplication and averaging ────────────────────────────
 
-import asyncio
-
-def run_async(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
-
-
 def test_first_amber_reading_creates_observation():
     """First Amber reading for an interval must create exactly one observation."""
     store = make_store()
@@ -176,12 +178,12 @@ def test_first_amber_reading_creates_observation():
     interval_end_dt = interval_start_dt + timedelta(minutes=30)
     period = make_price_period(interval_end_dt, value=0.108)
 
-    store.ingest_forecast(
+    run_async(store.ingest_forecast(
         region="QLD1",
         price_data=make_price_data(BASE_DT, [period]),
         interconnectors={},
         case=None,
-    )
+    ))
 
     interval_iso = nem_iso(interval_start_dt)
     run_async(store.async_record_actual(interval_iso, 0.0956))
@@ -203,12 +205,12 @@ def test_duplicate_amber_readings_averaged_not_duplicated():
     interval_end_dt = interval_start_dt + timedelta(minutes=30)
     period = make_price_period(interval_end_dt, value=0.108)
 
-    store.ingest_forecast(
+    run_async(store.ingest_forecast(
         region="QLD1",
         price_data=make_price_data(BASE_DT, [period]),
         interconnectors={},
         case=None,
-    )
+    ))
 
     interval_iso = nem_iso(interval_start_dt)
     readings = [0.090, 0.092, 0.094, 0.091, 0.093, 0.095]
@@ -238,12 +240,12 @@ def test_different_intervals_create_separate_observations():
         interval_start_dt = datetime(2026, 4, 14, 21, 0, tzinfo=NEM_TZ) + timedelta(minutes=30*i)
         interval_end_dt = interval_start_dt + timedelta(minutes=30)
         period = make_price_period(interval_end_dt, value=0.10 + i * 0.01)
-        store.ingest_forecast(
+        run_async(store.ingest_forecast(
             region="QLD1",
             price_data=make_price_data(run_dt, [period]),
             interconnectors={},
             case=None,
-        )
+        ))
 
     for i in range(3):
         interval_start_dt = datetime(2026, 4, 14, 21, 0, tzinfo=NEM_TZ) + timedelta(minutes=30*i)
@@ -426,12 +428,12 @@ def test_horizon_hours_calculated_from_nemtime():
     interval_start_dt = interval_end_dt - timedelta(minutes=30)      # time = 21:00
 
     period = make_price_period(interval_end_dt, value=0.108)
-    store.ingest_forecast(
+    run_async(store.ingest_forecast(
         region="QLD1",
         price_data=make_price_data(run_dt, [period]),
         interconnectors={},
         case=None,
-    )
+    ))
 
     run_async(store.async_record_actual(nem_iso(interval_start_dt), 0.095))
 
@@ -451,12 +453,12 @@ def test_negative_horizon_skipped():
     interval_start_dt = interval_end_dt - timedelta(minutes=30)  # 20:00, before run_at 21:00
 
     period = make_price_period(interval_end_dt, value=0.10)
-    store.ingest_forecast(
+    run_async(store.ingest_forecast(
         region="QLD1",
         price_data=make_price_data(run_dt, [period]),
         interconnectors={},
         case=None,
-    )
+    ))
 
     run_async(store.async_record_actual(nem_iso(interval_start_dt), 0.09))
     assert len(store._observations) == 0, (
@@ -481,12 +483,12 @@ def test_multiple_forecast_runs_create_multiple_observations():
 
     for run_dt in [run1_dt, run2_dt]:
         period = make_price_period(interval_end_dt, value=0.118)
-        store.ingest_forecast(
+        run_async(store.ingest_forecast(
             region="QLD1",
             price_data=make_price_data(run_dt, [period]),
             interconnectors={},
             case=None,
-        )
+        ))
 
     run_async(store.async_record_actual(nem_iso(interval_start_dt), 0.095))
 
@@ -517,8 +519,8 @@ def test_reingest_same_run_at_does_not_duplicate_forecast_history():
     price_data = make_price_data(run_dt, [period])
 
     # Ingest the same forecast twice (restart scenario)
-    store.ingest_forecast("QLD1", price_data, {}, None)
-    store.ingest_forecast("QLD1", price_data, {}, None)  # same run_at
+    run_async(store.ingest_forecast("QLD1", price_data, {}, None))
+    run_async(store.ingest_forecast("QLD1", price_data, {}, None))  # same run_at
 
     # History must have exactly one entry per interval key
     key = nem_iso(interval_end_dt - timedelta(minutes=30))
@@ -549,7 +551,7 @@ def test_reingest_different_run_at_adds_new_entry():
 
     for run_dt in [run1_dt, run2_dt]:
         period = make_price_period(interval_end_dt, value=0.110)
-        store.ingest_forecast("QLD1", make_price_data(run_dt, [period]), {}, None)
+        run_async(store.ingest_forecast("QLD1", make_price_data(run_dt, [period]), {}, None))
 
     assert len(store._forecast_history[interval_start_str]) == 2, (
         "Two distinct run_at timestamps must produce two history entries"
@@ -585,7 +587,7 @@ def test_horizon_uses_interval_start_not_nemtime():
     interval_end_dt = interval_start_dt + timedelta(minutes=30)  # 14:30 NEM
 
     period = make_price_period(interval_end_dt, value=0.12)
-    store.ingest_forecast("QLD1", make_price_data(run_dt, [period]), {}, None)
+    run_async(store.ingest_forecast("QLD1", make_price_data(run_dt, [period]), {}, None))
 
     run_async(store.async_record_actual(nem_iso(interval_start_dt), 0.095))
 

@@ -52,39 +52,21 @@ import math
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+from .const import (
+    HORIZON_EDGES,
+    HORIZON_LABELS,
+    IRLS_EPS,
+    IRLS_ITER,
+    MAX_CALIBRATED_RATIO,
+    MAX_INTERCEPT_ABS,
+    MAX_OBS,
+    MIN_OBS,
+    QUANTILES,
+    TOD_BUCKETS,
+)
 from .nem_time import now_nem, to_nem_iso
 
 _LOGGER = logging.getLogger(__name__)
-
-# ── Configuration ─────────────────────────────────────────────────────────────
-
-MIN_OBS = 10          # minimum observations before a bucket is used
-MAX_OBS = 5000        # cap stored observations per bucket (rolling window)
-IRLS_ITER = 15        # quantile regression IRLS iterations
-IRLS_EPS = 1e-8       # weight floor to avoid division by zero
-QUANTILES = (0.1, 0.5, 0.9)   # P10, P50, P90
-
-# Sanity guard limits — buckets outside these bounds are rejected as corrupt
-# and fall back to passthrough rather than producing nonsense calibrations.
-#
-# NEM wholesale prices ($/kWh) physically cannot exceed ~$16/kWh (VOLL cap)
-# or go below ~−$1/kWh (market floor).  An OLS intercept outside ±1.0 $/kWh
-# indicates the training data is non-representative (duplicates, outliers, or
-# a mismatch between forecast and actual interval keys).
-MAX_INTERCEPT_ABS = 1.0   # |b| must be < this or bucket is rejected
-MAX_CALIBRATED_RATIO = 5.0  # |calibrated/raw| must be < this (when |raw|>0.01)
-
-# Horizon bucket boundaries in hours
-HORIZON_EDGES = [0, 6, 12, 24, 48, 96]   # last bucket is 96h+
-HORIZON_LABELS = ["h00_06", "h06_12", "h12_24", "h24_48", "h48_96", "h96plus"]
-
-# Time-of-day buckets (QLD local time, hour ranges are half-open [a, b))
-TOD_BUCKETS = {
-    "solar":    (10, 16),   # solar oversupply window — negative price risk
-    "peak":     (16, 20),   # demand peak — spike risk
-    "shoulder": (20, 22),   # transition
-    "offpeak":  None,       # everything else
-}
 
 
 # ── Data structures ───────────────────────────────────────────────────────────

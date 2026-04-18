@@ -32,20 +32,21 @@ from .calibration_engine import (
     CalibrationResult,
     Observation,
 )
+from .const import (
+    COEFF_STORAGE_KEY,
+    FORECAST_HISTORY_STORAGE_KEY,
+    MAX_FORECAST_AGE_DAYS,
+    MAX_HORIZON_HOURS,
+    MAX_TOTAL_OBS,
+    OBS_STORAGE_KEY,
+    STORAGE_VERSION,
+)
 from .nem_time import now_nem, parse_iso, to_nem_iso
 
 if TYPE_CHECKING:
     from .pd7day_client import PD7DayData, InterconnectorData, CaseSolutionData
 
 _LOGGER = logging.getLogger(__name__)
-
-OBS_STORAGE_KEY = "nem_pd7day.observation_log"
-COEFF_STORAGE_KEY = "nem_pd7day.calibration_coefficients"
-STORAGE_VERSION = 1
-
-MAX_TOTAL_OBS = 20_000
-MAX_FORECAST_AGE_DAYS = 14
-MAX_HORIZON_HOURS = 168   # 7 days
 
 
 class CalibrationStore:
@@ -58,6 +59,7 @@ class CalibrationStore:
         self._hass = hass
         self._obs_store = Store(hass, STORAGE_VERSION, OBS_STORAGE_KEY)
         self._coeff_store = Store(hass, STORAGE_VERSION, COEFF_STORAGE_KEY)
+        self._fh_store = Store(hass, STORAGE_VERSION, FORECAST_HISTORY_STORAGE_KEY)
         self._engine = CalibrationEngine()
 
         self._observations: list[dict] = []
@@ -114,9 +116,16 @@ class CalibrationStore:
                     "PD7DAY calibration: could not restore coefficients: %s", exc
                 )
 
+        fh_data = await self._fh_store.async_load() or {}
+        self._forecast_history = fh_data.get("forecast_history", {})
+        _LOGGER.info(
+            "PD7DAY calibration: loaded %d forecast history keys from storage",
+            len(self._forecast_history),
+        )
+
     # ── Forecast history management ───────────────────────────────────────────
 
-    def ingest_forecast(
+    async def ingest_forecast(
         self,
         region: str,
         price_data: "PD7DayData",
@@ -169,12 +178,19 @@ class CalibrationStore:
             k: v for k, v in self._forecast_history.items() if k >= cutoff
         }
 
+        await self._save_forecast_history()
+
+    async def _save_forecast_history(self) -> None:
+        await self._fh_store.async_save({"forecast_history": self._forecast_history})
+
     # ── Observation logging ───────────────────────────────────────────────────
 
     async def async_record_actual(
         self,
         interval_time: str,   # ISO-8601 +10:00 NEM time
         actual_rrp: float,
+        calibration_region: str | None = None,
+        source: str = "unknown",
     ) -> int:
         """
         Match the actual RRP for an interval against all PD7DAY forecasts
@@ -192,6 +208,9 @@ class CalibrationStore:
         new_count = 0
 
         for fc in forecasts:
+            if calibration_region and fc.get("region") != calibration_region:
+                continue
+
             try:
                 run_dt = parse_iso(fc["run_at"])
             except (ValueError, KeyError):
@@ -234,6 +253,7 @@ class CalibrationStore:
                 "qni_mwflow": fc.get("qni_mwflow"),
                 "qni_violation_degree": fc.get("qni_violation"),
                 "is_intervention": fc.get("is_intervention", False),
+                "actual_source": source,
             }
             obs_idx = len(self._observations)
             self._observations.append(obs)

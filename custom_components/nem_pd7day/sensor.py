@@ -21,11 +21,14 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    ATTR_ATTRIBUTION,
     ATTR_CAL_ACTIVE_BUCKETS,
     ATTR_CAL_CALIBRATED,
     ATTR_CAL_FITTED_AT,
@@ -64,13 +67,20 @@ from .const import (
     ATTR_RUN_DATETIME,
     ATTR_SOURCE_FILE,
     ATTR_VIOLATIONDEGREE,
+    CONF_CALIBRATION_REGION,
     CONF_REGIONS,
     COORDINATOR_KEY,
+    DEFAULT_CALIBRATION_REGION,
+    DEFAULT_REGIONS,
+    DEVICE_CONFIGURATION_URL,
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
     DOMAIN,
+    interconnectors_for_regions,
+    QLD1_INTERCONNECTORS,
     STORE_KEY,
 )
 from .coordinator import PD7DayCoordinator
-from .pd7day_client import QLD_INTERCONNECTORS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,24 +108,42 @@ async def async_setup_entry(
 ) -> None:
     coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR_KEY]
     store = hass.data[DOMAIN][entry.entry_id].get(STORE_KEY)
-    regions: list[str] = entry.data[CONF_REGIONS]
+    regions: list[str] = entry.options.get(
+        CONF_REGIONS,
+        entry.data.get(CONF_REGIONS, DEFAULT_REGIONS),
+    )
+    calibration_region: str = entry.options.get(
+        CONF_CALIBRATION_REGION,
+        entry.data.get(
+            CONF_CALIBRATION_REGION,
+            regions[0] if regions else DEFAULT_CALIBRATION_REGION,
+        ),
+    )
+    if calibration_region not in regions and regions:
+        calibration_region = regions[0]
+    selected_interconnector_ids = interconnectors_for_regions(regions)
 
     entities: list[SensorEntity] = []
 
     for region in regions:
-        entities.append(PD7DayForecastSensor(coordinator, store, region))
+        entities.append(PD7DayForecastSensor(coordinator, store, entry, region))
+        entities.append(PD7DayRegionSourceFileDatetimeSensor(coordinator, entry, region))
+        entities.append(PD7DayRegionDataUpdatedDatetimeSensor(coordinator, entry, region))
 
-    entities.append(PD7DayGasForecastSensor(coordinator))
+    entities.append(PD7DayGasForecastSensor(coordinator, entry))
 
-    if coordinator.data and coordinator.data.interconnectors:
-        for ic_id in coordinator.data.interconnectors:
-            entities.append(PD7DayInterconnectorSensor(coordinator, ic_id))
-    else:
-        for ic_id in QLD_INTERCONNECTORS:
-            entities.append(PD7DayInterconnectorSensor(coordinator, ic_id))
+    live_interconnector_ids = set(coordinator.data.interconnectors) if (
+        coordinator.data and coordinator.data.interconnectors
+    ) else set()
+    for region in regions:
+        region_interconnector_ids = interconnectors_for_regions([region])
+        interconnector_ids = live_interconnector_ids or region_interconnector_ids or QLD1_INTERCONNECTORS
+        for ic_id in sorted(interconnector_ids):
+            if ic_id in region_interconnector_ids:
+                entities.append(PD7DayInterconnectorSensor(coordinator, entry, region, ic_id))
 
-    # Calibration diagnostic sensor (one, shared)
-    entities.append(PD7DayCalibrationSensor(coordinator, store))
+    # Calibration diagnostic sensor bound to configured calibration region.
+    entities.append(PD7DayCalibrationSensor(coordinator, store, entry, calibration_region))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -129,25 +157,6 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     Regional spot price forecast.
 
     State: calibrated $/kWh when calibration is active, raw PD7DAY otherwise.
-
-    Forecast attribute structure per interval:
-    {
-        "time":              "2026-04-15T17:00:00",
-        "raw_value":         0.084,       # direct from PD7DAY CSV
-        "calibrated":        0.142,       # OLS-adjusted point estimate
-        "p10":               0.091,       # 10th percentile (lower bound)
-        "p50":               0.138,       # 50th percentile (median)
-        "p90":               0.231,       # 90th percentile (upper bound / spike risk)
-        "mae":               0.038,       # mean abs error of this bucket's model
-        "calibrated_source": "ols",       # "ols" | "passthrough"
-        "n_obs":             147,         # observations that trained this bucket
-        "horizon_hours":     36.5
-    }
-
-    Downstream template sensors (AfterAmber, Day2Plus, BuyCost) continue to
-    work unchanged because 'calibrated' falls back to raw_value when
-    passthrough — but you can update them to use 'calibrated' instead of
-    'value' once enough data has accumulated.
     """
 
     _attr_device_class = SensorDeviceClass.MONETARY
@@ -156,15 +165,24 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     _attr_icon = "mdi:transmission-tower"
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _attr_attribution = ATTR_ATTRIBUTION
 
-    def __init__(self, coordinator, store, region: str) -> None:
+    def __init__(self, coordinator, store, entry: ConfigEntry, region: str) -> None:
         super().__init__(coordinator)
+        self._entry = entry
         self._region = region
         self._store = store
         slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{slug}_forecast"
         self._attr_name = f"{region} PD7DAY Forecast"
         self.entity_id = f"sensor.{slug}_pd7day_forecast"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
 
     @property
     def _price_data(self):
@@ -185,25 +203,22 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             cal = self._store.apply_to_price(
                 d.current_value,
                 horizon_hours=0.0,
-                hour_of_day=now_nem().hour,  # NEM local hour, always UTC+10
+                hour_of_day=now_nem().hour,
             )
             return cal["calibrated"]
         return d.current_value
 
     def _calibrate_period(self, period, run_at_str: str | None) -> dict:
         """Build the enriched forecast dict for one PricePeriod."""
-        # Use period.time (interval START) for horizon — matches the store's
-        # horizon calculation in async_record_actual so bucket routing is
-        # consistent between training and inference.
         h = _horizon_hours(run_at_str, period.time)
         try:
-            hour = parse_iso(period.time).hour  # NEM local hour from interval START
+            hour = parse_iso(period.time).hour
         except (ValueError, TypeError):
             hour = 0
 
         base = {
-            "nemtime": to_nem_iso(parse_iso(period.nemtime)),   # interval END (AEMO convention)
-            "time": to_nem_iso(parse_iso(period.time)),          # interval START = nemtime − 30 min
+            "nemtime": to_nem_iso(parse_iso(period.nemtime)),
+            "time": to_nem_iso(parse_iso(period.time)),
             "raw_value": period.value,
             "horizon_hours": round(h, 1),
         }
@@ -218,7 +233,6 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 ATTR_CAL_MAE: cal.get("mae"),
                 ATTR_CAL_SOURCE: cal["calibrated_source"],
                 ATTR_CAL_N_OBS: cal["n_obs"],
-                # Legacy 'value' key = calibrated for template sensor compatibility
                 "value": cal["calibrated"],
             })
         else:
@@ -283,11 +297,23 @@ class PD7DayGasForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, coordinator: PD7DayCoordinator) -> None:
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
         super().__init__(coordinator)
+        self._entry = entry
         self._attr_unique_id = "nem_pd7day_gas_forecast"
         self._attr_name = "NEM PD7DAY Gas Generation Forecast"
         self.entity_id = "sensor.nem_pd7day_gas_forecast"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_gas")},
+            name="NEM PD7DAY Gas Generation",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
 
     @property
     def _data(self):
@@ -324,6 +350,105 @@ class PD7DayGasForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
         }
 
 
+class PD7DayRegionSourceFileDatetimeSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """Per-region diagnostic timestamp for latest source file run datetime."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:file-clock-outline"
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: PD7DayCoordinator, entry: ConfigEntry, region: str) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._region = region
+        region_slug = region.lower()
+        self._attr_unique_id = f"nem_pd7day_{region_slug}_source_file_datetime"
+        self._attr_name = f"{region} PD7DAY Source File Datetime"
+        self.entity_id = f"sensor.nem_pd7day_{region_slug}_source_file_datetime"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
+
+    @property
+    def _price_data(self):
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.prices.get(self._region)
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success and self._price_data is not None
+
+    @property
+    def native_value(self):
+        d = self._price_data
+        if d is None or not d.forecast_generated_at:
+            return None
+        return parse_iso(d.forecast_generated_at)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        d = self._price_data
+        if d is None:
+            return {}
+        return {
+            ATTR_REGION: self._region,
+            ATTR_SOURCE_FILE: d.source_file,
+        }
+
+
+class PD7DayRegionDataUpdatedDatetimeSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """Per-region diagnostic timestamp for latest coordinator data refresh."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:update"
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: PD7DayCoordinator, entry: ConfigEntry, region: str) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._region = region
+        region_slug = region.lower()
+        self._attr_unique_id = f"nem_pd7day_{region_slug}_data_updated_datetime"
+        self._attr_name = f"{region} PD7DAY Data Updated Datetime"
+        self.entity_id = f"sensor.nem_pd7day_{region_slug}_data_updated_datetime"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success and self.coordinator.data is not None
+
+    @property
+    def native_value(self):
+        if not self.coordinator.data:
+            return None
+        updated_at = getattr(self.coordinator.data, "updated_at", None)
+        if not updated_at:
+            return None
+        return parse_iso(updated_at)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            ATTR_REGION: self._region,
+            ATTR_SOURCE_FILE: self.coordinator.data.source_file if self.coordinator.data else None,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Interconnector sensor
 # ---------------------------------------------------------------------------
@@ -338,13 +463,29 @@ class PD7DayInterconnectorSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, coordinator: PD7DayCoordinator, ic_id: str) -> None:
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+        ic_id: str,
+    ) -> None:
         super().__init__(coordinator)
+        self._entry = entry
+        self._region = region
         self._ic_id = ic_id
-        slug = ic_id.lower().replace("-", "_")
-        self._attr_unique_id = f"nem_pd7day_ic_{slug}"
-        self._attr_name = f"PD7DAY Interconnector {ic_id}"
-        self.entity_id = f"sensor.pd7day_ic_{slug}"
+        ic_slug = ic_id.lower().replace("-", "_")
+        region_slug = region.lower()
+        self._attr_unique_id = f"nem_pd7day_{region_slug}_ic_{ic_slug}"
+        self._attr_name = f"{region} PD7DAY Interconnector {ic_id}"
+        self.entity_id = f"sensor.pd7day_{region_slug}_ic_{ic_slug}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
 
     @property
     def _data(self):
@@ -400,38 +541,35 @@ class PD7DayInterconnectorSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
 # ---------------------------------------------------------------------------
 
 class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
-    """
-    Calibration pipeline status sensor.
-
-    State: number of logged (forecast, actual) observation pairs.
-
-    Attributes include:
-    - status:           "no_calibration" | "active"
-    - fitted_at:        ISO-8601 timestamp of last model fit
-    - active_buckets:   count of buckets with ≥ MIN_OBS observations
-    - total_buckets:    24 (6 horizons × 4 time-of-day)
-    - summary:          per-bucket coefficients (a, b, mae, rmse, q10_a, q90_a)
-
-    Interpretation guide
-    --------------------
-    - State = 0–9:   No calibration yet. All prices are raw PD7DAY.
-    - State = 10–99: Partial calibration. Some buckets active.
-    - State ≥ 100:   Good coverage. Check 'active_buckets' for full picture.
-    - active_buckets = 24: Full calibration — every horizon/ToD bucket has data.
-    - MAE per bucket: typical QLD values after 30 days are 0.02–0.08 $/kWh.
-    """
+    """Calibration pipeline status sensor."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:chart-bell-curve-cumulative"
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, coordinator: PD7DayCoordinator, store) -> None:
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        store,
+        entry: ConfigEntry,
+        region: str,
+    ) -> None:
         super().__init__(coordinator)
+        self._entry = entry
+        self._region = region
         self._store = store
-        self._attr_unique_id = "nem_pd7day_calibration"
-        self._attr_name = "NEM PD7DAY Calibration"
-        self.entity_id = "sensor.nem_pd7day_calibration"
+        region_slug = region.lower()
+        self._attr_unique_id = f"nem_pd7day_{region_slug}_calibration"
+        self._attr_name = f"{region} NEM PD7DAY Calibration"
+        self.entity_id = f"sensor.nem_pd7day_{region_slug}_calibration"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
 
     @property
     def available(self) -> bool:
@@ -445,4 +583,6 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     def extra_state_attributes(self) -> dict[str, Any]:
         if not self._store:
             return {ATTR_CAL_STATUS: "store_unavailable"}
-        return self._store.summary_attributes()
+        attrs = self._store.summary_attributes()
+        attrs[ATTR_REGION] = self._region
+        return attrs

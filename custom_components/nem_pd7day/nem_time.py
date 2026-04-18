@@ -21,10 +21,9 @@ This means:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
-# NEM time is UTC+10:00, fixed, no DST
-NEM_TZ = timezone(timedelta(hours=10), name="AEST")
+from .const import FETCH_TIMES_NEM, INTERVAL_DURATION, NEM_TZ
 
 # ISO 8601 format used throughout the integration
 _ISO_FMT = "%Y-%m-%dT%H:%M:%S%z"       # parses both +10:00 and naive
@@ -90,9 +89,6 @@ def parse_iso(s: str) -> datetime:
         return naive.replace(tzinfo=NEM_TZ)
 
 
-INTERVAL_DURATION = timedelta(minutes=30)
-
-
 def interval_start(nemtime_iso: str) -> str:
     """
     Given an AEMO interval-end timestamp (nemtime), return the interval-start
@@ -132,9 +128,8 @@ def fetch_times_as_utc() -> list[str]:
     UTC equivalents: 21:30 (prev day), 03:00, 08:00
     """
     # AEMO publish times in NEM hours/minutes
-    nem_times = [(7, 30), (13, 0), (18, 0)]
     utc_strings = []
-    for h, m in nem_times:
+    for h, m in FETCH_TIMES_NEM:
         # Subtract 10 hours to get UTC, wrapping at midnight
         total_minutes = h * 60 + m - 600   # -600 = -10 hours
         total_minutes %= 1440              # wrap to [0, 1440)

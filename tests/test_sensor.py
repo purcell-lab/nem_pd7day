@@ -28,23 +28,35 @@ def _load(name, path):
     return mod
 
 
+def run_async(coro):
+    import asyncio
+
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
 # Stub HA and aiohttp before loading any integration module
 sys.modules.setdefault("aiohttp", MagicMock())
 for ha_mod in [
     "homeassistant", "homeassistant.core", "homeassistant.helpers",
     "homeassistant.helpers.storage", "homeassistant.helpers.event",
     "homeassistant.helpers.aiohttp_client", "homeassistant.helpers.update_coordinator",
-    "homeassistant.helpers.entity_platform", "homeassistant.config_entries",
+    "homeassistant.helpers.entity_platform", "homeassistant.helpers.device_registry",
+    "homeassistant.config_entries",
     "homeassistant.const", "homeassistant.util", "homeassistant.util.dt",
     "homeassistant.components", "homeassistant.components.sensor",
 ]:
     sys.modules.setdefault(ha_mod, MagicMock())
+
+device_registry_mock = MagicMock()
+device_registry_mock.DeviceInfo = dict
+sys.modules["homeassistant.helpers.device_registry"] = device_registry_mock
 
 # Make SensorStateClass and SensorDeviceClass importable as real names
 import enum
 class _SensorDeviceClass(str, enum.Enum):
     MONETARY = "monetary"
     ENERGY = "energy"
+    TIMESTAMP = "timestamp"
 
 class _SensorStateClass(str, enum.Enum):
     MEASUREMENT = "measurement"
@@ -126,7 +138,23 @@ _sensor_mod = _load(
 
 from custom_components.nem_pd7day.nem_time import NEM_TZ
 from custom_components.nem_pd7day.calibration_engine import CalibrationEngine, Observation
-from custom_components.nem_pd7day.sensor import _horizon_hours, PD7DayForecastSensor
+from custom_components.nem_pd7day.const import (
+    CONF_CALIBRATION_REGION,
+    CONF_REGIONS,
+    COORDINATOR_KEY,
+    DOMAIN,
+    STORE_KEY,
+)
+from custom_components.nem_pd7day.sensor import (
+    _horizon_hours,
+    PD7DayCalibrationSensor,
+    PD7DayGasForecastSensor,
+    PD7DayForecastSensor,
+    PD7DayRegionDataUpdatedDatetimeSensor,
+    PD7DayRegionSourceFileDatetimeSensor,
+    PD7DayInterconnectorSensor,
+    async_setup_entry as sensor_async_setup_entry,
+)
 
 NEM_TZ = timezone(timedelta(hours=10))
 
@@ -159,6 +187,207 @@ def make_sensor(store=None) -> PD7DayForecastSensor:
     sensor._attr_name = "QLD1 PD7DAY Forecast"
     sensor.entity_id = "sensor.qld1_pd7day_forecast"
     return sensor
+
+
+def test_async_setup_entry_uses_options_regions_for_forecast_entities():
+    """
+    Regression: region selection changed in OptionsFlow must control which
+    forecast entities are created. If entry.data is used instead of
+    entry.options, only the original first region appears.
+    """
+    coordinator = MagicMock()
+    coordinator.data = None
+
+    entry = MagicMock()
+    entry.entry_id = "entry_1"
+    entry.data = {CONF_REGIONS: ["QLD1"]}
+    entry.options = {CONF_REGIONS: ["QLD1", "NSW1"]}
+
+    hass = MagicMock()
+    hass.data = {
+        DOMAIN: {
+            entry.entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: MagicMock(),
+            }
+        }
+    }
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
+
+    forecast_entities = [
+        ent for ent in created if isinstance(ent, PD7DayForecastSensor)
+    ]
+    regions = sorted(ent._region for ent in forecast_entities)
+
+    assert regions == ["NSW1", "QLD1"], (
+        "Forecast entities must match entry.options regions. "
+        f"Got regions={regions}"
+    )
+
+
+def test_async_setup_entry_creates_selected_region_interconnector_entities():
+    """
+    Regression: interconnector entities must be created from selected regions,
+    not always from the QLD-only default set.
+    """
+    coordinator = MagicMock()
+    coordinator.data = None
+
+    entry = MagicMock()
+    entry.entry_id = "entry_2"
+    entry.data = {CONF_REGIONS: ["QLD1"]}
+    entry.options = {CONF_REGIONS: ["NSW1"]}
+
+    hass = MagicMock()
+    hass.data = {
+        DOMAIN: {
+            entry.entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: MagicMock(),
+            }
+        }
+    }
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
+
+    interconnector_entities = [
+        ent for ent in created if isinstance(ent, PD7DayInterconnectorSensor)
+    ]
+    ic_ids = sorted(ent._ic_id for ent in interconnector_entities)
+
+    assert ic_ids == ["N-Q-MNSP1", "NSW1-QLD1", "VIC1-NSW1"], (
+        "Interconnector entities must match selected region interconnectors. "
+        f"Got ic_ids={ic_ids}"
+    )
+
+
+def test_async_setup_entry_creates_calibration_sensor_for_selected_region():
+    """Calibration sensor must be created for configured calibration region."""
+    coordinator = MagicMock()
+    coordinator.data = None
+
+    entry = MagicMock()
+    entry.entry_id = "entry_3"
+    entry.data = {CONF_REGIONS: ["QLD1"]}
+    entry.options = {
+        CONF_REGIONS: ["QLD1", "NSW1"],
+        CONF_CALIBRATION_REGION: "NSW1",
+    }
+
+    hass = MagicMock()
+    hass.data = {
+        DOMAIN: {
+            entry.entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: MagicMock(),
+            }
+        }
+    }
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
+
+    cal_entities = [
+        ent for ent in created if isinstance(ent, PD7DayCalibrationSensor)
+    ]
+
+    assert len(cal_entities) == 1
+    assert cal_entities[0]._region == "NSW1"
+    assert cal_entities[0].entity_id == "sensor.nem_pd7day_nsw1_calibration"
+    assert cal_entities[0]._attr_unique_id == "nem_pd7day_nsw1_calibration"
+
+
+def test_async_setup_entry_creates_single_gas_forecast_sensor():
+    """Gas forecast must be a single standalone sensor/device."""
+    coordinator = MagicMock()
+    coordinator.data = None
+
+    entry = MagicMock()
+    entry.entry_id = "entry_4"
+    entry.data = {CONF_REGIONS: ["QLD1"]}
+    entry.options = {CONF_REGIONS: ["QLD1", "NSW1"]}
+
+    hass = MagicMock()
+    hass.data = {
+        DOMAIN: {
+            entry.entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: MagicMock(),
+            }
+        }
+    }
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
+
+    gas_entities = [
+        ent for ent in created if isinstance(ent, PD7DayGasForecastSensor)
+    ]
+    assert len(gas_entities) == 1
+    assert gas_entities[0].entity_id == "sensor.nem_pd7day_gas_forecast"
+
+
+def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
+    """Each region must get source-file and updated-at diagnostic timestamp sensors."""
+    coordinator = MagicMock()
+    coordinator.data = None
+
+    entry = MagicMock()
+    entry.entry_id = "entry_5"
+    entry.data = {CONF_REGIONS: ["QLD1"]}
+    entry.options = {CONF_REGIONS: ["QLD1", "NSW1"]}
+
+    hass = MagicMock()
+    hass.data = {
+        DOMAIN: {
+            entry.entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: MagicMock(),
+            }
+        }
+    }
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
+
+    source_dt_entities = [
+        ent for ent in created if isinstance(ent, PD7DayRegionSourceFileDatetimeSensor)
+    ]
+    updated_dt_entities = [
+        ent for ent in created if isinstance(ent, PD7DayRegionDataUpdatedDatetimeSensor)
+    ]
+
+    assert sorted(ent.entity_id for ent in source_dt_entities) == [
+        "sensor.nem_pd7day_nsw1_source_file_datetime",
+        "sensor.nem_pd7day_qld1_source_file_datetime",
+    ]
+    assert sorted(ent.entity_id for ent in updated_dt_entities) == [
+        "sensor.nem_pd7day_nsw1_data_updated_datetime",
+        "sensor.nem_pd7day_qld1_data_updated_datetime",
+    ]
 
 
 # ── Tests: _horizon_hours() ───────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 {
   "domain": "nem_pd7day",
   "name": "NEM PD7DAY Price Forecast",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "documentation": "https://github.com/purcell-lab/nem_pd7day",
   "issue_tracker": "https://github.com/purcell-lab/nem_pd7day/issues",
   "requirements": [],

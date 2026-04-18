@@ -1,4 +1,8 @@
 {
   "name": "NEM PD7DAY Price Forecast",
-  "render_readme": true
+  "hacs": "2.0.1",
+  "homeassistant": "2024.1.0",
+  "render_readme": true,
+  "zip_release": true,
+  "filename": "nem_pd7day.zip"
 }

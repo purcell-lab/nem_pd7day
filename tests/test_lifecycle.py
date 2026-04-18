@@ -130,6 +130,9 @@ def make_store(obs_count: int = 0) -> CalibrationStore:
     store._coeff_store = MagicMock()
     store._coeff_store.async_load = AsyncMock(return_value=None)
     store._coeff_store.async_save = AsyncMock()
+    store._fh_store = MagicMock()
+    store._fh_store.async_load = AsyncMock(return_value=None)
+    store._fh_store.async_save = AsyncMock()
     from custom_components.nem_pd7day.calibration_engine import CalibrationEngine
     store._engine = CalibrationEngine()
     store._observations = [{"dummy": i} for i in range(obs_count)]
@@ -374,11 +377,11 @@ def test_amber_entity_id_constant():
     AMBER_ACTUAL_ENTITY must match the real Amber integration entity ID.
     A wrong entity ID means zero Amber readings and no calibration data ever.
     """
-    # Load __init__.py to check the constant
-    import_path = os.path.join(_ROOT, "custom_components", "nem_pd7day", "__init__.py")
+    # Constants were centralized into const.py.
+    import_path = os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py")
     src = open(import_path).read()
     assert "sensor.amber_express_amber_feed_in_price" in src, (
-        "AMBER_ACTUAL_ENTITY not found in __init__.py. "
+        "AMBER_ACTUAL_ENTITY not found in const.py. "
         "If this entity ID changes, calibration silently stops collecting data."
     )
 
@@ -388,7 +391,7 @@ def test_refit_interval_is_24h():
     REFIT_INTERVAL must be 24 hours.  A shorter interval wastes CPU; a longer
     interval means calibration summary falls further behind observation_count.
     """
-    import_path = os.path.join(_ROOT, "custom_components", "nem_pd7day", "__init__.py")
+    import_path = os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py")
     src = open(import_path).read()
     # Look for timedelta(hours=24) near REFIT_INTERVAL
     assert "timedelta(hours=24)" in src, (

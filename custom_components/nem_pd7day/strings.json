@@ -7,11 +7,20 @@
         "data": {
           "regions": "NEM Regions"
         }
+      },
+      "calibration": {
+        "title": "Calibration Settings",
+        "description": "Configure calibration region and optional Amber sensor for price actuals.",
+        "data": {
+          "calibration_region": "Calibration Region",
+          "amber_sensor": "Amber Sensor Entity (optional)"
+        }
       }
     },
     "error": {
       "cannot_connect": "Could not reach NEMWeb. Check network access.",
       "invalid_data": "NEMWeb returned data but no matching region rows were found.",
+      "invalid_option": "Selected calibration region is not in the configured regions.",
       "unknown": "Unexpected error — check the Home Assistant log."
     },
     "abort": {
@@ -41,6 +50,14 @@
         "description": "Forecasts are fetched at {fetch_times} NEM time (AEST).",
         "data": {
           "regions": "NEM Regions"
+        }
+      },
+      "calibration": {
+        "title": "Calibration Settings",
+        "description": "Configure calibration region and optional Amber sensor.",
+        "data": {
+          "calibration_region": "Calibration Region",
+          "amber_sensor": "Amber Sensor Entity (optional)"
         }
       }
     }

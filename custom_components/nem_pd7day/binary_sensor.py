@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -10,10 +11,18 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify as ha_slugify
 
 from .const import (
+    ATTR_ATTRIBUTION,
+    DEVICE_CONFIGURATION_URL,
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
+    CONF_REGIONS,
+    DEFAULT_REGIONS,
     ATTR_LAST_CHANGED,
     ATTR_RUN_DATETIME,
     ATTR_SOURCE_FILE,
@@ -25,13 +34,32 @@ from .coordinator import PD7DayCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 
+def _safe_slug(value: str) -> str:
+    """Return a robust slug even when HA helpers are stubbed in tests."""
+    try:
+        slug = ha_slugify(value)
+        if isinstance(slug, str) and slug:
+            return slug
+    except Exception:  # noqa: BLE001
+        pass
+    return re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_")
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR_KEY]
-    async_add_entities([PD7DayInterventionSensor(coordinator)], update_before_add=True)
+    regions: list[str] = entry.options.get(
+        CONF_REGIONS,
+        entry.data.get(CONF_REGIONS, DEFAULT_REGIONS),
+    )
+    entities = [
+        PD7DayInterventionSensor(coordinator, entry, region)
+        for region in regions
+    ]
+    async_add_entities(entities, update_before_add=True)
 
 
 class PD7DayInterventionSensor(CoordinatorEntity[PD7DayCoordinator], BinarySensorEntity):
@@ -55,11 +83,22 @@ class PD7DayInterventionSensor(CoordinatorEntity[PD7DayCoordinator], BinarySenso
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, coordinator: PD7DayCoordinator) -> None:
+    def __init__(self, coordinator: PD7DayCoordinator, entry: ConfigEntry, region: str) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = "nem_pd7day_intervention"
-        self._attr_name = "NEM PD7DAY Market Intervention"
-        self.entity_id = "binary_sensor.nem_pd7day_intervention"
+        self._entry = entry
+        self._region = region
+        region_slug = _safe_slug(region)
+        self._attr_unique_id = f"{entry.entry_id}_{region_slug}_intervention"
+        self._attr_name = f"{_safe_slug(region).upper()} PD7DAY Market Intervention"
+        self.entity_id = f"binary_sensor.nem_pd7day_{region_slug}_intervention"
+        self._attr_attribution = ATTR_ATTRIBUTION
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
 
     @property
     def _data(self):
@@ -86,6 +125,7 @@ class PD7DayInterventionSensor(CoordinatorEntity[PD7DayCoordinator], BinarySenso
         if d is None:
             return {}
         return {
+            "region": self._region,
             ATTR_RUN_DATETIME: d.run_datetime,
             ATTR_LAST_CHANGED: d.last_changed,
             ATTR_SOURCE_FILE: (

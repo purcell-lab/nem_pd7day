@@ -47,7 +47,7 @@ from custom_components.nem_pd7day.pd7day_client import (
     CaseSolutionData,
     MarketSummaryData,
     InterconnectorData,
-    QLD_INTERCONNECTORS,
+    QLD1_INTERCONNECTORS,
 )
 
 NEM_TZ = timezone(timedelta(hours=10))
@@ -357,9 +357,9 @@ def test_interconnector_filter():
 
 
 def test_qld_interconnectors_constant():
-    """QLD_INTERCONNECTORS must include the two IDs used in production."""
-    assert "NSW1-QLD1" in QLD_INTERCONNECTORS, "NSW1-QLD1 missing from QLD_INTERCONNECTORS"
-    assert "N-Q-MNSP1" in QLD_INTERCONNECTORS, "N-Q-MNSP1 missing from QLD_INTERCONNECTORS"
+    """QLD1_INTERCONNECTORS must include the two IDs used in production."""
+    assert "NSW1-QLD1" in QLD1_INTERCONNECTORS, "NSW1-QLD1 missing from QLD1_INTERCONNECTORS"
+    assert "N-Q-MNSP1" in QLD1_INTERCONNECTORS, "N-Q-MNSP1 missing from QLD1_INTERCONNECTORS"
 
 
 def test_missing_interconnector_returns_empty():
