@@ -654,10 +654,28 @@ def test_native_value_returns_none_when_no_data():
 
 
 def test_native_value_returns_raw_when_no_store():
-    """Without a store, native_value must return current_value directly."""
+    """Without a store, native_value must return the value of the current period."""
+    from unittest.mock import patch
     sensor = make_sensor(store=None)
+
+    # Build a real-looking period covering now
+    from datetime import datetime, timedelta, timezone
+    NEM_TZ = timezone(timedelta(hours=10))
+    now = datetime.now(NEM_TZ)
+    interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
+    interval_end = interval_start + timedelta(minutes=30)
+
+    def _iso(dt):
+        return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
+
+    period = MagicMock()
+    period.time = _iso(interval_start)
+    period.nemtime = _iso(interval_end)
+    period.value = 0.085
+
     price_data = MagicMock()
-    price_data.current_value = 0.085
+    price_data.forecast = [period]
+    price_data.forecast_generated_at = _iso(now - timedelta(hours=1))
     sensor.coordinator.data = MagicMock()
     sensor.coordinator.data.prices = {"QLD1": price_data}
     assert abs(sensor.native_value - 0.085) < 1e-9

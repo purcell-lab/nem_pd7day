@@ -25,6 +25,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -126,7 +127,6 @@ async def async_setup_entry(
             entities.append(PD7DayInterconnectorSensor(coordinator, entry, region, ic_id))
 
     entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
-    entities.append(PD7DayForecastHistorySensor(coordinator, store, entry, region))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -177,19 +177,49 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     def available(self) -> bool:
         return self.coordinator.last_update_success and self._price_data is not None
 
+    def async_added_to_hass(self) -> None:
+        """Subscribe to 30-min interval ticks so state updates without a new fetch."""
+        super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                lambda _now: self.async_write_ha_state(),
+                minute=[0, 30],
+                second=5,
+            )
+        )
+
+    def _current_period(self, forecast: list):
+        """Return the forecast period whose interval covers the current NEM time."""
+        now = now_nem()
+        for period in forecast:
+            try:
+                interval_start = parse_iso(period.time)
+                interval_end = parse_iso(period.nemtime)
+                if interval_start <= now < interval_end:
+                    return period
+            except (ValueError, TypeError):
+                continue
+        # Fallback: first period (covers startup before first interval boundary)
+        return forecast[0] if forecast else None
+
     @property
     def native_value(self) -> float | None:
         d = self._price_data
         if d is None:
             return None
+        period = self._current_period(d.forecast)
+        if period is None:
+            return None
         if self._store:
-            cal = self._store.apply_to_price(
-                d.current_value,
-                horizon_hours=0.0,
-                hour_of_day=now_nem().hour,
-            )
+            h = _horizon_hours(d.forecast_generated_at, period.time)
+            try:
+                hour = parse_iso(period.time).hour
+            except (ValueError, TypeError):
+                hour = now_nem().hour
+            cal = self._store.apply_to_price(period.value, h, hour)
             return cal["calibrated"]
-        return d.current_value
+        return period.value
 
     def _calibrate_period(self, period, run_at_str: str | None) -> dict:
         """Build the enriched forecast dict for one PricePeriod."""
@@ -239,7 +269,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             ATTR_FORECAST_GENERATED_AT: run_at,
             ATTR_INTERVAL_MINUTES: d.interval_minutes,
             ATTR_NEXT_VALUE: (
-                calibrated_forecast[1]["calibrated"]
+                calibrated_forecast[1].get(ATTR_CAL_CALIBRATED, calibrated_forecast[1].get("value"))
                 if len(calibrated_forecast) > 1
                 else None
             ),
@@ -280,6 +310,18 @@ class PD7DayGasForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     _attr_has_entity_name = True
     _attr_should_poll = False
 
+    def async_added_to_hass(self) -> None:
+        """Subscribe to daily boundary ticks (gas is daily resolution)."""
+        super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                lambda _now: self.async_write_ha_state(),
+                minute=[0, 30],
+                second=5,
+            )
+        )
+
     def __init__(
         self,
         coordinator: PD7DayCoordinator,
@@ -308,10 +350,24 @@ class PD7DayGasForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     def available(self) -> bool:
         return self.coordinator.last_update_success and self._data is not None
 
+    def _current_gas_period(self, forecast: list):
+        """Return the gas period whose date matches today in NEM time."""
+        today = now_nem().date()
+        for period in forecast:
+            try:
+                if parse_iso(period.time).date() == today:
+                    return period
+            except (ValueError, TypeError):
+                continue
+        return forecast[0] if forecast else None
+
     @property
     def native_value(self) -> float | None:
         d = self._data
-        return d.current_tj if d else None
+        if d is None:
+            return None
+        period = self._current_gas_period(d.forecast)
+        return period.value_tj if period else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -480,17 +536,45 @@ class PD7DayInterconnectorSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     def available(self) -> bool:
         return self.coordinator.last_update_success and self._data is not None
 
+    def async_added_to_hass(self) -> None:
+        """Subscribe to 30-min interval ticks so state updates without a new fetch."""
+        super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                lambda _now: self.async_write_ha_state(),
+                minute=[0, 30],
+                second=5,
+            )
+        )
+
+    def _current_ic_period(self, forecast: list):
+        """Return the interconnector period covering the current NEM time."""
+        now = now_nem()
+        for period in forecast:
+            try:
+                interval_start = parse_iso(period.time)
+                interval_end = parse_iso(period.nemtime)
+                if interval_start <= now < interval_end:
+                    return period
+            except (ValueError, TypeError):
+                continue
+        return forecast[0] if forecast else None
+
     @property
     def native_value(self) -> float | None:
         d = self._data
-        return d.current_mwflow if d else None
+        if d is None:
+            return None
+        period = self._current_ic_period(d.forecast)
+        return period.mwflow if period else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         d = self._data
         if d is None:
             return {}
-        current = d.forecast[0] if d.forecast else None
+        current = self._current_ic_period(d.forecast)
         return {
             ATTR_INTERCONNECTOR_ID: d.interconnector_id,
             ATTR_RUN_DATETIME: d.run_datetime,
@@ -530,6 +614,7 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     _attr_icon = "mdi:chart-bell-curve-cumulative"
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self,
@@ -568,73 +653,22 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
             return {ATTR_CAL_STATUS: "store_unavailable"}
         attrs = self._store.summary_attributes()
         attrs[ATTR_REGION] = self._region
-        return attrs
-
-
-# ---------------------------------------------------------------------------
-# Forecast history diagnostic sensor
-# ---------------------------------------------------------------------------
-
-class PD7DayForecastHistorySensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
-    """Diagnostic sensor exposing forecast history storage metadata."""
-
-    _attr_icon = "mdi:database-clock"
-    _attr_has_entity_name = True
-    _attr_should_poll = False
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(
-        self,
-        coordinator: PD7DayCoordinator,
-        store,
-        entry: ConfigEntry,
-        region: str,
-    ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._region = region
-        self._store = store
-        region_slug = region.lower()
-        self._attr_unique_id = f"nem_pd7day_{region_slug}_forecast_history"
-        self._attr_name = "Forecast History"
-        self.entity_id = f"sensor.nem_pd7day_{region_slug}_forecast_history"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
-            name=f"NEM PD7DAY {self._region}",
-            manufacturer=DEVICE_MANUFACTURER,
-            model=DEVICE_MODEL,
-            configuration_url=DEVICE_CONFIGURATION_URL,
-        )
-
-    @property
-    def available(self) -> bool:
-        return self.coordinator.last_update_success
-
-    @property
-    def native_value(self) -> int:
-        if not self._store or not self._store._forecast_history:
-            return 0
-        return int(sum(len(v) for v in self._store._forecast_history.values()))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
+        # Merge forecast history metadata
         fh = self._store._forecast_history if self._store else {}
-        if not fh:
-            return {
-                "interval_keys": 0,
-                "oldest_interval": None,
-                "newest_interval": None,
-                "runs_per_interval_avg": 0,
-                "storage_key": storage_keys(self._region)[2],
-                "region": self._region,
-            }
-        return {
-            "interval_keys": len(fh),
-            "oldest_interval": min(fh.keys()),
-            "newest_interval": max(fh.keys()),
-            "runs_per_interval_avg": round(
+        if fh:
+            attrs["forecast_history_entries"] = int(
+                sum(len(v) for v in fh.values())
+            )
+            attrs["forecast_history_intervals"] = len(fh)
+            attrs["forecast_history_oldest"] = min(fh.keys())
+            attrs["forecast_history_newest"] = max(fh.keys())
+            attrs["forecast_history_runs_avg"] = round(
                 sum(len(v) for v in fh.values()) / len(fh), 1
-            ),
-            "storage_key": storage_keys(self._region)[2],
-            "region": self._region,
-        }
+            )
+        else:
+            attrs["forecast_history_entries"] = 0
+            attrs["forecast_history_intervals"] = 0
+            attrs["forecast_history_oldest"] = None
+            attrs["forecast_history_newest"] = None
+            attrs["forecast_history_runs_avg"] = 0
+        return attrs

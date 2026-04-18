@@ -19,7 +19,10 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
 - **Market intervention flag** — binary sensor from CASESOLUTION data
 - **Calibration diagnostic** — observation count, active bucket count, fit quality per bucket
 - **Forecast history diagnostic** — monitor forecast history storage health
-- **No polling** — fetches only at AEMO publish times (3 requests/day)
+- **Cloud polling** — two independent polling loops:
+  - **PD7DAY** fetches at AEMO publish times: 07:30, 13:00, 18:00 AEST (3 requests/day)
+  - **TradingIS** fetches actual 5-min dispatch prices every 30 minutes (48 requests/day)
+- **Live sensor state** — all forecast sensor states advance automatically every 30 minutes to reflect the current interval, with no fetch required
 - **No third-party accounts required** — actual prices sourced directly from AEMO TradingIS
 - **Pure Python** — zero external dependencies beyond Home Assistant
 
@@ -88,14 +91,38 @@ recorder:
 
 ---
 
-## Actual price sourcing
+## Data sources and polling
 
-From v2.0.0, actual prices are fetched directly from AEMO's TradingIS dispatch reports on NEMWeb:
+The integration runs two independent polling loops.
+
+### PD7DAY forecasts (3×/day)
+
+AEMO publishes 7-day ahead price forecasts three times per day. The integration fetches on the same schedule using `async_track_point_in_utc_time`:
+
+| NEM time (AEST) | UTC |
+|---|---|
+| 07:30 | 21:30 (previous day) |
+| 13:00 | 03:00 |
+| 18:00 | 08:00 |
+
+Source: [AEMO NEMWeb PD7DAY](https://www.nemweb.com.au/REPORTS/CURRENT/PD7Day/)
+
+### TradingIS actual prices (every 30 minutes)
+
+Actual NEM dispatch prices are fetched from AEMO's TradingIS reports and used to build calibration observations:
 
 - **URL**: `https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/`
-- **Schedule**: every 30 minutes, at HH:02 and HH:32 NEM time (2 minutes after each trading interval boundary)
-- **Method**: downloads the 6 × 5-minute dispatch files for each trading interval, averages the RRP values
-- **Observation tagging**: each observation records `actual_source: "tradingis"` for auditability
+- **Schedule**: at HH:02 and HH:32 NEM time — 2 minutes after each 30-minute trading interval closes
+- **Method**: downloads the 6 × 5-minute dispatch files for the closed interval, averages the RRP values ($/MWh → $/kWh)
+- **Observation tagging**: each calibration observation records `actual_source: "tradingis"`
+
+### Sensor state updates (every 30 minutes)
+
+Forecast sensor states — price forecast, interconnector flow, and gas generation — advance automatically at each 30-minute interval boundary (:00 and :30 past every hour). The state always reflects the current interval from the most recent fetch, without waiting for the next PD7DAY fetch. This means:
+
+- After the 07:30 fetch, the price forecast sensor state will step through each 30-minute interval for the rest of the day
+- After HA restart, the state reflects the current interval immediately on load
+- Between fetches, the raw forecast data is unchanged — only the *active interval* advances
 
 ---
 
@@ -180,7 +207,7 @@ Default interconnectors per region:
 
 ### Calibration
 
-`sensor.nem_pd7day_{region}_calibration` — calibration system diagnostic.
+`sensor.nem_pd7day_{region}_calibration` — calibration system diagnostic. This sensor is in the **Diagnostic** category and is hidden from the default HA dashboard (visible under the device's Diagnostic section).
 
 | Attribute | Description |
 |---|---|
@@ -192,20 +219,17 @@ Default interconnectors per region:
 
 ---
 
-### Forecast History
-
-`sensor.nem_pd7day_{region}_forecast_history` — forecast history storage diagnostic.
+The calibration sensor also includes forecast history metadata in its attributes:
 
 | Attribute | Description |
 |---|---|
-| `state` | Total forecast entries in storage across all tracked intervals |
-| `interval_keys` | Number of unique intervals tracked |
-| `oldest_interval` | ISO-8601 timestamp of the oldest tracked interval |
-| `newest_interval` | ISO-8601 timestamp of the newest tracked interval |
-| `runs_per_interval_avg` | Average number of forecast runs per interval |
-| `storage_key` | HA storage key for the forecast history store |
+| `forecast_history_entries` | Total forecast entries stored across all tracked intervals |
+| `forecast_history_intervals` | Number of unique interval keys in storage |
+| `forecast_history_oldest` | ISO-8601 timestamp of the oldest tracked interval |
+| `forecast_history_newest` | ISO-8601 timestamp of the most recent tracked interval |
+| `forecast_history_runs_avg` | Average number of forecast runs per interval |
 
-Useful for verifying that h48_96/h96plus calibration buckets are accumulating entries (they begin receiving observations ~48 hours after first install).
+Use these to verify h48_96/h96plus buckets are accumulating — `forecast_history_entries` should grow by ~3 per interval per day (one entry per AEMO fetch).
 
 ---
 
@@ -393,6 +417,7 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 | Version | Changes |
 |---|---|
 | 2.0.4 | Region-scoped storage keys — multi-instance safe, automatic migration from legacy names |
+| 2.0.4 | Region-scoped storage keys, automatic migration, gas_tj populated in forecast history |
 | 2.0.3 | Single-region enforcement — one region per integration instance, full calibration coverage |
 | 2.0.2 | Clean sensor names, remove Amber dependency, add Forecast History sensor |
 | 2.0.1 | Version bump post-integration |
