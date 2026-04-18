@@ -403,14 +403,26 @@ class CalibrationEngine:
 
             # OLS
             a_ols, b_ols = _ols(pairs)
+            a_ols = max(a_ols, 0.0)
             mae, rmse = _ols_metrics(pairs, a_ols, b_ols) if len(pairs) >= MIN_OBS else (None, None)
             model.ols = LinearCoeff(
                 a=a_ols, b=b_ols, n=len(pairs), mae=mae, rmse=rmse
             )
 
             # Quantile regression (P10, P50, P90)
+            q_results: dict[str, tuple[float, float, float]] = {}
             for q, attr in zip(QUANTILES, ("q10", "q50", "q90")):
                 a_q, b_q, pl = _quantile_regression(pairs, q)
+                q_results[attr] = (a_q, b_q, pl)
+
+            # Enforce monotonic ordering of quantile slopes: q10_a <= q50_a <= q90_a
+            q10_a, q50_a, q90_a = sorted([q_results["q10"][0], q_results["q50"][0], q_results["q90"][0]])
+            q_results["q10"] = (q10_a, q_results["q10"][1], q_results["q10"][2])
+            q_results["q50"] = (q50_a, q_results["q50"][1], q_results["q50"][2])
+            q_results["q90"] = (q90_a, q_results["q90"][1], q_results["q90"][2])
+
+            for q, attr in zip(QUANTILES, ("q10", "q50", "q90")):
+                a_q, b_q, pl = q_results[attr]
                 setattr(model, attr, QuantileCoeff(
                     quantile=q, a=a_q, b=b_q,
                     n=len(pairs),

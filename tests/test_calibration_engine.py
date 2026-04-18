@@ -367,6 +367,70 @@ def test_engine_multi_bucket_independence():
     )
 
 
+# ── Bug-fix regression tests ─────────────────────────────────────────────────
+
+def test_negative_ols_slope_clamped():
+    """
+    When OLS produces a negative slope (a < 0), the engine must clamp it to 0.
+    A negative slope would invert the forecast: higher raw → lower calibrated.
+    """
+    engine = CalibrationEngine()
+
+    # Synthetic data where forecast is positively correlated with some baseline
+    # but actual goes the opposite direction — OLS would fit a < 0.
+    rng = random.Random(123)
+    obs = []
+    for _ in range(60):
+        fc = rng.uniform(0.05, 0.25)
+        # actual = -0.5 * fc + 0.20 + noise  → negative true slope
+        actual = -0.5 * fc + 0.20 + rng.gauss(0, 0.002)
+        obs.append(make_obs(fc, actual, horizon_hours=30.0, hour_of_day=21))
+
+    result = engine.fit(obs)
+    bucket = result.get_bucket(horizon_hours=30.0, hour_of_day=21)
+
+    assert bucket.ols.a >= 0.0, (
+        f"OLS slope a={bucket.ols.a} is negative — should be clamped to >= 0"
+    )
+    print(f"  PASS: negative OLS slope clamped (a={bucket.ols.a})")
+
+
+def test_quantile_slopes_ordered_after_irls():
+    """
+    After IRLS, quantile slopes must satisfy q10_a <= q50_a <= q90_a.
+    Inverted slopes (q10_a > q90_a) would produce nonsensical confidence bands.
+    """
+    engine = CalibrationEngine()
+
+    # Heavily skewed noise that can cause IRLS to invert quantile slopes.
+    rng = random.Random(77)
+    obs = []
+    for _ in range(80):
+        fc = rng.uniform(0.05, 0.25)
+        # Mix of normal and extreme spike noise
+        if rng.random() < 0.2:
+            noise = rng.uniform(0.05, 0.15)  # large positive spike
+        else:
+            noise = rng.gauss(0, 0.003)
+        actual = 1.2 * fc + 0.01 + noise
+        obs.append(make_obs(fc, actual, horizon_hours=9.0, hour_of_day=12))
+
+    result = engine.fit(obs)
+    bucket = result.get_bucket(horizon_hours=9.0, hour_of_day=12)
+
+    assert bucket.q10.a <= bucket.q90.a, (
+        f"Quantile slopes inverted: q10_a={bucket.q10.a} > q90_a={bucket.q90.a}"
+    )
+    assert bucket.q10.a <= bucket.q50.a <= bucket.q90.a, (
+        f"Quantile slopes not ordered: q10_a={bucket.q10.a}, "
+        f"q50_a={bucket.q50.a}, q90_a={bucket.q90.a}"
+    )
+    print(
+        f"  PASS: quantile slopes ordered (q10_a={bucket.q10.a}, "
+        f"q50_a={bucket.q50.a}, q90_a={bucket.q90.a})"
+    )
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -391,6 +455,9 @@ TESTS = [
     test_engine_passthrough_below_min_obs,
     test_engine_serialisation_roundtrip,
     test_engine_multi_bucket_independence,
+    # Bug-fix regressions
+    test_negative_ols_slope_clamped,
+    test_quantile_slopes_ordered_after_irls,
 ]
 
 
