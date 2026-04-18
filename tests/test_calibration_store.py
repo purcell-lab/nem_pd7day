@@ -626,6 +626,10 @@ def test_ingest_forecast_populates_gas_tj():
 
     Fix: ingest_forecast accepts optional market_summary and matches gas_tj to
     each interval by date (gas forecast is daily resolution).
+
+    BUG (v2.0.5): gas_by_date used g.time[:10] but interval_start() subtracts
+    30 min from nemtime, so midnight timestamps shifted the date back one day.
+    Fix: use g.nemtime[:10] for the date key.
     """
     store = make_store()
 
@@ -636,16 +640,26 @@ def test_ingest_forecast_populates_gas_tj():
     period = make_price_period(interval_end_dt, value=0.095)
     price_data = make_price_data(run_dt, [period])
 
-    # Build a minimal MarketSummaryData-like object
+    # Build a minimal MarketSummaryData-like object matching real GasForecastPeriod.
+    # In production, nemtime is the raw AEMO timestamp (e.g. midnight for daily data)
+    # and time = interval_start(nemtime) = nemtime − 30 min.
     class FakeGasPeriod:
-        def __init__(self, time_str, value_tj):
-            self.time = time_str  # ISO string — date prefix used for matching
+        def __init__(self, nemtime_str, value_tj):
+            self.nemtime = nemtime_str
+            # Mimic real interval_start(): subtract 30 min from nemtime
+            self.time = nem_iso(
+                datetime.strptime(nemtime_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=NEM_TZ)
+                - timedelta(minutes=30)
+            )
             self.value_tj = value_tj
 
     class FakeMarketSummary:
         def __init__(self, forecast):
             self.forecast = forecast
 
+    # AEMO daily gas row: nemtime = "2026-04-19T00:00:00+10:00"
+    # time = interval_start → "2026-04-18T23:30:00+10:00" (date shifts!)
+    # The fix uses nemtime[:10] = "2026-04-19" for the lookup key.
     gas_period = FakeGasPeriod("2026-04-19T00:00:00+10:00", 142.7)
     market_summary = FakeMarketSummary([gas_period])
 
@@ -694,7 +708,10 @@ def test_ingest_forecast_gas_tj_none_for_unmatched_date():
 
     class FakeGasPeriod:
         def __init__(self):
-            self.time = "2026-04-19T00:00:00+10:00"
+            self.nemtime = "2026-04-19T00:00:00+10:00"
+            self.time = nem_iso(
+                datetime(2026, 4, 19, 0, 0, tzinfo=NEM_TZ) - timedelta(minutes=30)
+            )
             self.value_tj = 142.7
 
     class FakeMarketSummary:
@@ -708,4 +725,104 @@ def test_ingest_forecast_gas_tj_none_for_unmatched_date():
     entry = store._forecast_history[key][0]
     assert entry["gas_tj"] is None, (
         f"Expected gas_tj=None for unmatched date, got {entry['gas_tj']}"
+    )
+
+
+# ── Tests: per-interval qni_mwflow (not a single scalar) ────────────────────
+
+def _make_ic_period(nemtime_dt, mwflow, violationdegree=0.0):
+    """Create a minimal InterconnectorPeriod-like object."""
+    start_dt = nemtime_dt - timedelta(minutes=30)
+    return MagicMock(
+        nemtime=nem_iso(nemtime_dt),
+        time=nem_iso(start_dt),
+        mwflow=mwflow,
+        violationdegree=violationdegree,
+    )
+
+
+def test_qni_mwflow_per_interval_not_scalar():
+    """
+    BUG: ingest_forecast used qni.current_mwflow (a single scalar from
+    forecast[0]) for EVERY interval, so all 336 forecast_history entries
+    from one run got the same MW value.
+
+    Fix: build per-interval lookups keyed by period.time and look up per
+    interval inside the loop.
+    """
+    store = make_store()
+    run_dt = datetime(2026, 4, 19, 7, 30, tzinfo=NEM_TZ)
+
+    # Three consecutive 30-min price intervals
+    intervals = []
+    for i in range(3):
+        nemtime_dt = datetime(2026, 4, 19, 8, 30, tzinfo=NEM_TZ) + timedelta(minutes=30 * i)
+        intervals.append(nemtime_dt)
+
+    price_periods = [make_price_period(dt, value=0.10 + i * 0.01) for i, dt in enumerate(intervals)]
+    price_data = make_price_data(run_dt, price_periods)
+
+    # Interconnector forecast with DIFFERENT mwflow per interval
+    ic_periods = [_make_ic_period(dt, mwflow=-500.0 + i * 100, violationdegree=i * 0.5)
+                  for i, dt in enumerate(intervals)]
+    qni = MagicMock(forecast=ic_periods)
+    interconnectors = {"NSW1-QLD1": qni}
+
+    run_async(store.ingest_forecast("QLD1", price_data, interconnectors, None))
+
+    # Each interval should have its own distinct qni_mwflow
+    keys = sorted(store._forecast_history.keys())
+    assert len(keys) == 3, f"Expected 3 interval keys, got {len(keys)}"
+
+    mwflows = [store._forecast_history[k][0]["qni_mwflow"] for k in keys]
+    assert mwflows == [-500.0, -400.0, -300.0], (
+        f"Expected per-interval mwflows [-500, -400, -300], got {mwflows}. "
+        "qni_mwflow must vary per interval, not be a single scalar."
+    )
+
+    violations = [store._forecast_history[k][0]["qni_violation"] for k in keys]
+    assert violations == [0.0, 0.5, 1.0], (
+        f"Expected per-interval violations [0.0, 0.5, 1.0], got {violations}"
+    )
+
+
+def test_qni_mwflow_none_beyond_interconnector_window():
+    """
+    qni_mwflow must be None for price intervals that extend beyond the
+    interconnector forecast window (e.g. price forecast is 7 days but
+    interconnector data covers fewer intervals).
+    """
+    store = make_store()
+    run_dt = datetime(2026, 4, 19, 7, 30, tzinfo=NEM_TZ)
+
+    # Two price intervals, but interconnector only covers the first
+    nemtime_1 = datetime(2026, 4, 19, 8, 30, tzinfo=NEM_TZ)
+    nemtime_2 = datetime(2026, 4, 19, 9, 0, tzinfo=NEM_TZ)
+
+    price_periods = [
+        make_price_period(nemtime_1, value=0.10),
+        make_price_period(nemtime_2, value=0.11),
+    ]
+    price_data = make_price_data(run_dt, price_periods)
+
+    # Only one interconnector period (covers nemtime_1 only)
+    ic_periods = [_make_ic_period(nemtime_1, mwflow=-527.0, violationdegree=0.0)]
+    qni = MagicMock(forecast=ic_periods)
+    interconnectors = {"NSW1-QLD1": qni}
+
+    run_async(store.ingest_forecast("QLD1", price_data, interconnectors, None))
+
+    keys = sorted(store._forecast_history.keys())
+    assert len(keys) == 2
+
+    # First interval should have qni data
+    entry_1 = store._forecast_history[keys[0]][0]
+    assert entry_1["qni_mwflow"] == -527.0, (
+        f"Expected qni_mwflow=-527.0 for covered interval, got {entry_1['qni_mwflow']}"
+    )
+
+    # Second interval should be None (beyond interconnector window)
+    entry_2 = store._forecast_history[keys[1]][0]
+    assert entry_2["qni_mwflow"] is None, (
+        f"Expected qni_mwflow=None for interval beyond IC window, got {entry_2['qni_mwflow']}"
     )

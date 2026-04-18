@@ -45,7 +45,7 @@ from .const import (
 from .nem_time import now_nem, parse_iso, to_nem_iso
 
 if TYPE_CHECKING:
-    from .pd7day_client import PD7DayData, InterconnectorData, CaseSolutionData
+    from .pd7day_client import PD7DayData, InterconnectorData, CaseSolutionData, MarketSummaryData
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -180,17 +180,24 @@ class CalibrationStore:
         run_at_str = price_data.forecast_generated_at or to_nem_iso(now_nem())
         is_intervention = case.intervention if case else False
 
+        # Build per-interval lookups from the interconnector forecast
         qni = interconnectors.get("NSW1-QLD1")
-        qni_mwflow = qni.current_mwflow if qni else None
-        qni_violation = qni.current_violationdegree if qni else None
+        qni_mwflow_by_time: dict[str, float | None] = {}
+        qni_violation_by_time: dict[str, float | None] = {}
+        if qni:
+            for p in qni.forecast:
+                qni_mwflow_by_time[p.time] = p.mwflow
+                qni_violation_by_time[p.time] = p.violationdegree
 
         # Build a date→gas_tj lookup from market_summary for O(1) per-interval access.
-        # Gas forecast is daily resolution — key is the date portion of the interval ISO string.
+        # Gas forecast is daily resolution — key is the date portion of the AEMO nemtime.
+        # Use nemtime (interval-END / raw AEMO timestamp), NOT time (interval-START),
+        # because interval_start() subtracts 30 min, which for midnight timestamps
+        # shifts the date back by one day and breaks the lookup.
         gas_by_date: dict[str, float | None] = {}
         if market_summary:
             for g in market_summary.forecast:
-                # g.time is an ISO string like "2026-04-19T09:30:00+10:00" — take date prefix
-                date_key = g.time[:10]
+                date_key = g.nemtime[:10]
                 gas_by_date[date_key] = g.value_tj
 
         for period in price_data.forecast:
@@ -217,8 +224,8 @@ class CalibrationStore:
                 "run_at": run_at_str,
                 "forecast_price": period.value,
                 "gas_tj": gas_tj,
-                "qni_mwflow": qni_mwflow,
-                "qni_violation": qni_violation,
+                "qni_mwflow": qni_mwflow_by_time.get(key),
+                "qni_violation": qni_violation_by_time.get(key),
                 "is_intervention": is_intervention,
                 "region": region,
             }
