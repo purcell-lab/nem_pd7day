@@ -12,14 +12,12 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
 
 ## Features
 
-- **Multi-region support** — track any combination of QLD1, NSW1, VIC1, SA1, TAS1
-- **7-day price forecast** — calibrated $/kWh per region
-- **Confidence bands** — P10, P50, P90 quantile regression (IRLS) per forecast period
+- **7-day price forecast** — calibrated $/kWh with P10/P50/P90 confidence bands
 - **OLS calibration** — linear bias correction fitted on actual TradingIS vs PD7DAY pairs
 - **Gas generation forecast** — daily TJ forecast from MARKET_SUMMARY
-- **Interconnector flows** — per-region interconnector MW forecasts
+- **Interconnector flows** — interconnector MW flow forecasts for the configured region
 - **Market intervention flag** — binary sensor from CASESOLUTION data
-- **Calibration diagnostic** — observation count, active bucket count, fit quality
+- **Calibration diagnostic** — observation count, active bucket count, fit quality per bucket
 - **Forecast history diagnostic** — monitor forecast history storage health
 - **No polling** — fetches only at AEMO publish times (3 requests/day)
 - **No third-party accounts required** — actual prices sourced directly from AEMO TradingIS
@@ -56,23 +54,29 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
 
 ## Configuration
 
-The integration is configured via the UI config flow in a single step.
-
-**Step 1 — Regions**
+The integration is configured via a single-step UI flow.
 
 | Field | Default | Description |
 |---|---|---|
-| NEM Regions | QLD1 | One or more of QLD1, NSW1, VIC1, SA1, TAS1 |
+| NEM Region | QLD1 | The NEM region to monitor: `QLD1`, `NSW1`, `VIC1`, `SA1`, or `TAS1` |
 
-The first selected region is automatically used as the calibration region. Multi-region support means all regions get forecast sensors, but calibration (actual price matching) applies only to the primary region.
+The configured region is used for both price forecasting and calibration. No additional settings are required.
 
 > Actual prices are sourced directly from AEMO's TradingIS reports on NEMWeb — no third-party account required. The integration fetches actual 5-minute dispatch prices every 30 minutes and automatically matches them against forecast history to build calibration.
 
 No `configuration.yaml` entries are required.
 
+### Monitoring multiple regions
+
+Each integration instance monitors one NEM region with full independent calibration. To monitor multiple regions, add a separate integration instance for each via **Settings → Integrations → Add Integration → NEM PD7DAY**. Each instance maintains its own calibration store, observation log, and forecast sensors.
+
+### Upgrading from v2.0.0–v2.0.2
+
+Those versions supported multi-region configuration. From v2.0.3 onwards exactly one region is configured per integration instance. On upgrade, only the first region from a previous multi-region list is preserved — the integration migrates automatically. To reinstate additional regions, add new integration instances as described above.
+
 ### Recorder exclusion (recommended)
 
-The forecast sensors carry large attribute payloads (7 days x 48 intervals per region). Add the following to `configuration.yaml` to prevent recorder warnings and database bloat:
+The forecast sensors carry large attribute payloads (7 days × 48 intervals). Add the following to `configuration.yaml` to prevent recorder warnings and database bloat:
 
 ```yaml
 recorder:
@@ -90,18 +94,18 @@ From v2.0.0, actual prices are fetched directly from AEMO's TradingIS dispatch r
 
 - **URL**: `https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/`
 - **Schedule**: every 30 minutes, at HH:02 and HH:32 NEM time (2 minutes after each trading interval boundary)
-- **Method**: downloads the 6 x 5-minute dispatch files for each trading interval, averages the RRP values
+- **Method**: downloads the 6 × 5-minute dispatch files for each trading interval, averages the RRP values
 - **Observation tagging**: each observation records `actual_source: "tradingis"` for auditability
-
-No Amber Electric account or sensor is required.
 
 ---
 
 ## Sensors
 
-### `sensor.{region}_pd7day_forecast`
+All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (e.g. `NEM PD7DAY QLD1`).
 
-The primary price forecast sensor (one per configured region).
+### Price Forecast
+
+`sensor.nem_pd7day_{region}_price_forecast` — the primary calibrated price forecast sensor.
 
 | Attribute | Description |
 |---|---|
@@ -131,13 +135,13 @@ horizon_hours: 36.5                    # hours ahead
 value: 0.142                           # alias for calibrated (template compat)
 ```
 
-> **Timestamp convention**: `nemtime` is the interval END timestamp as published by AEMO. `time` is the interval START (nemtime - 30 minutes). This matches the AEMO dispatch interval convention.
+> **Timestamp convention**: `nemtime` is the interval END timestamp as published by AEMO. `time` is the interval START (`nemtime − 30 minutes`). This matches the AEMO dispatch interval convention.
 
 ---
 
-### `sensor.nem_pd7day_gas_forecast`
+### Gas Generation Forecast
 
-Gas-fired generation forecast from MARKET_SUMMARY.
+`sensor.nem_pd7day_gas_forecast` — gas-fired generation forecast from MARKET_SUMMARY.
 
 | Attribute | Description |
 |---|---|
@@ -146,9 +150,9 @@ Gas-fired generation forecast from MARKET_SUMMARY.
 
 ---
 
-### `sensor.pd7day_{region}_ic_{interconnector}`
+### Interconnector Flow
 
-Interconnector flow forecasts (one per region-interconnector pair).
+`sensor.pd7day_{region}_ic_{interconnector}` — one sensor per interconnector touching the configured region.
 
 | Attribute | Description |
 |---|---|
@@ -156,54 +160,61 @@ Interconnector flow forecasts (one per region-interconnector pair).
 | `interconnector_id` | Interconnector identifier |
 | `forecast` | List of forecast periods with `nemtime`, `time`, `mw` |
 
+Default interconnectors per region:
+
+| Region | Interconnectors |
+|---|---|
+| QLD1 | NSW1-QLD1, N-Q-MNSP1 |
+| NSW1 | NSW1-QLD1, VIC1-NSW1, N-Q-MNSP1 |
+| VIC1 | VIC1-NSW1, SA1-VIC1, V-S-MNSP1, T-V-MNSP1 |
+| SA1 | V-SA, V-S-MNSP1 |
+| TAS1 | T-V-MNSP1 |
+
 ---
 
-### `binary_sensor.nem_pd7day_{region}_intervention`
+### Market Intervention
 
-`ON` when AEMO has flagged a market intervention in the CASESOLUTION data. Under normal market conditions this is `OFF`.
+`binary_sensor.nem_pd7day_{region}_intervention` — `ON` when AEMO has flagged a market intervention in the CASESOLUTION data. Under normal market conditions this is `OFF`.
 
 ---
 
-### `sensor.nem_pd7day_{region}_calibration`
+### Calibration
 
-Calibration system diagnostic sensor.
+`sensor.nem_pd7day_{region}_calibration` — calibration system diagnostic.
 
 | Attribute | Description |
 |---|---|
 | `state` | Total observations logged |
-| `active_buckets` | Number of calibration buckets with >= 10 observations |
-| `total_buckets` | 24 (6 horizons x 4 time-of-day bands) |
+| `active_buckets` | Buckets with ≥ 10 observations (max 24) |
+| `total_buckets` | 24 (6 horizons × 4 time-of-day bands) |
 | `fitted_at` | ISO-8601 timestamp of last model refit |
-| `observation_count` | Same as state |
+| `summary` | Per-bucket coefficients, MAE, RMSE, quantile slopes |
 
 ---
 
-### `sensor.nem_pd7day_{region}_forecast_history`
+### Forecast History
 
-Forecast history storage diagnostic sensor.
+`sensor.nem_pd7day_{region}_forecast_history` — forecast history storage diagnostic.
 
 | Attribute | Description |
 |---|---|
-| `state` | Total number of forecast entries in storage across all tracked intervals |
+| `state` | Total forecast entries in storage across all tracked intervals |
 | `interval_keys` | Number of unique intervals tracked |
 | `oldest_interval` | ISO-8601 timestamp of the oldest tracked interval |
 | `newest_interval` | ISO-8601 timestamp of the newest tracked interval |
 | `runs_per_interval_avg` | Average number of forecast runs per interval |
 | `storage_key` | HA storage key for the forecast history store |
 
-**Purpose**: monitor the health and size of the forecast history store; useful for verifying that h48_96/h96plus buckets are accumulating entries after the v1.9.1 persistence fix.
+Useful for verifying that h48_96/h96plus calibration buckets are accumulating entries (they begin receiving observations ~48 hours after first install).
 
 ---
 
-### `sensor.nem_pd7day_{region}_source_file_datetime`
+### Source File Datetime / Data Updated
 
-Per-region diagnostic timestamp showing when the latest AEMO source file was published.
+- `sensor.nem_pd7day_{region}_source_file_datetime` — timestamp of the latest AEMO PD7DAY source file
+- `sensor.nem_pd7day_{region}_data_updated` — timestamp of the last coordinator data refresh
 
----
-
-### `sensor.nem_pd7day_{region}_data_updated_datetime`
-
-Per-region diagnostic timestamp showing when the coordinator last refreshed data.
+Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the default dashboard.
 
 ---
 
@@ -213,25 +224,39 @@ The calibration system corrects the known bias in AEMO's PD7DAY forecasts using 
 
 ### How it works
 
-1. **Forecast ingestion** — each fetch logs the forecast price for every future interval into persistent storage keyed by interval start time
+1. **Forecast ingestion** — each fetch logs the forecast price for every future interval into persistent storage, keyed by interval start time
 2. **Actual logging** — at HH:02 and HH:32, TradingIS dispatch prices are fetched from AEMO and logged against the just-closed interval
 3. **Matching** — when both forecast and actual exist for an interval, an observation pair is created
 4. **Bucketing** — observations are grouped into 24 buckets by horizon and time-of-day:
 
 | Horizon buckets | Time-of-day buckets |
 |---|---|
-| `h00_06` — 0 to 6 hours ahead | `solar` — 10:00-16:00 |
-| `h06_12` — 6 to 12 hours | `peak` — 16:00-20:00 |
-| `h12_24` — 12 to 24 hours | `shoulder` — 20:00-22:00 |
+| `h00_06` — 0 to 6 hours ahead | `solar` — 10:00–16:00 |
+| `h06_12` — 6 to 12 hours | `peak` — 16:00–20:00 |
+| `h12_24` — 12 to 24 hours | `shoulder` — 20:00–22:00 |
 | `h24_48` — 24 to 48 hours | `offpeak` — all other hours |
 | `h48_96` — 48 to 96 hours | |
 | `h96plus` — beyond 96 hours | |
 
-5. **Model fitting** — once a bucket has >= 10 observations, two models are fitted:
-   - **OLS** (ordinary least squares): `calibrated = a + b x raw` — corrects linear bias
-   - **IRLS quantile regression** (pinball loss): separate fits for P10, P50, P90
+5. **Model fitting** — once a bucket has ≥ 10 observations, two models are fitted:
+   - **OLS** (ordinary least squares): `calibrated = a × raw + b` — corrects linear bias
+   - **IRLS quantile regression** (pinball loss): separate P10, P50, P90 slope fits
 
 6. **Application** — at forecast time, each period's bucket is looked up. If active, OLS and quantile values are returned. Otherwise the raw value passes through unchanged.
+
+### AEMO forecast bias — QLD empirical findings
+
+After ~1 week of observations (QLD1), consistent structural patterns emerge:
+
+| Pattern | Buckets | Interpretation |
+|---|---|---|
+| Strong over-forecast | `h00_06__peak`, `h06_12__peak` | AEMO over-forecasts peak prices at short horizons; a ≈ 0.37–0.46 |
+| Flat intercept | `h12_24__peak`, `h24_48__peak` | a → 0, b ≈ $90/MWh — AEMO peak forecasts beyond 12h carry near-zero information |
+| Near-passthrough | `h06_12__offpeak` | a ≈ 0.99 — AEMO offpeak short-horizon forecasts are well-calibrated |
+| Under-forecast | `h12_24__offpeak` | a ≈ 1.04 — slight upward bias correction |
+| Solar correction | `h00_06__solar` through `h24_48__solar` | Modest over-forecast; a = 0.91–0.98 converging to passthrough at longer horizons |
+
+This is consistent with the academic literature (Sinclair et al. 2026): AEMO pre-dispatch RRP contributes >60% of model importance at 2–16h horizons, and AEMO systematically over-forecasts peak prices due to conservatism bias.
 
 ### Warm-up period
 
@@ -239,10 +264,10 @@ With 3 fetches per day, expect:
 
 | Day | Buckets active | Coverage |
 |---|---|---|
-| 1-3 | 0 | All passthrough |
-| 4-5 | h00_06, h06_12, h12_24 | Near-term calibrated |
-| 6-8 | h24_48 | 2-day horizon calibrated |
-| 10-14 | h48_96, h96plus | Full 7-day calibration |
+| 1–3 | 0 | All passthrough |
+| 4–5 | h00_06, h06_12, h12_24 | Near-term calibrated |
+| 6–8 | h24_48 | 2-day horizon calibrated |
+| 10–14 | h48_96, h96plus | Full 7-day calibration |
 
 ### Storage files
 
@@ -252,7 +277,7 @@ With 3 fetches per day, expect:
 | `nem_pd7day.calibration_coefficients` | Fitted OLS and quantile regression models per bucket |
 | `nem_pd7day.forecast_history` | Running forecast history indexed by interval time — enables calibration across HA restarts |
 
-To reset calibration (e.g. after changing regions):
+To reset calibration (e.g. after changing region):
 
 ```bash
 rm /config/.storage/nem_pd7day.observation_log
@@ -278,7 +303,7 @@ The integration uses `async_track_point_in_utc_time` which fires reliably at exa
 
 ## Template Sensor Examples
 
-The `value` key in each forecast period is an alias for `calibrated` (or `raw_value` in passthrough), maintained for backward compatibility with template sensors.
+The `value` key in each forecast period is an alias for `calibrated` (or `raw_value` in passthrough), maintained for backward compatibility.
 
 ### Next 24-hour minimum price
 
@@ -288,7 +313,7 @@ template:
       - name: "PD7DAY Min Price 24h"
         unit_of_measurement: "$/kWh"
         state: >
-          {{ state_attr('sensor.qld1_pd7day_forecast', 'min_24h_value') | round(4) }}
+          {{ state_attr('sensor.nem_pd7day_qld1_price_forecast', 'min_24h_value') | round(4) }}
 ```
 
 ### Cheapest 2-hour window start time
@@ -298,7 +323,23 @@ template:
   - sensor:
       - name: "PD7DAY Cheapest Window Start"
         state: >
-          {{ state_attr('sensor.qld1_pd7day_forecast', 'cheapest_2h_window')['time'] }}
+          {{ state_attr('sensor.nem_pd7day_qld1_price_forecast', 'cheapest_2h_window')['time'] }}
+```
+
+### Current calibrated price as a buy cost
+
+```yaml
+template:
+  - sensor:
+      - name: "QLD1 PD7DAY Buy Cost"
+        unit_of_measurement: "$/kWh"
+        state: >
+          {% set forecast = state_attr('sensor.nem_pd7day_qld1_price_forecast', 'forecast') %}
+          {% if forecast %}
+            {{ forecast[0]['calibrated'] | round(4) }}
+          {% else %}
+            unavailable
+          {% endif %}
 ```
 
 ---
@@ -307,15 +348,15 @@ template:
 
 All timestamps in this integration use **AEST (UTC+10:00)** with no daylight saving adjustment, matching AEMO's published data. Timestamps are always ISO-8601 with explicit `+10:00` suffix, e.g. `2026-04-14T07:30:00+10:00`.
 
-The `nemtime` field in forecast periods is the **interval end** timestamp (AEMO convention). The `time` field is the **interval start** (`nemtime - 30 minutes`).
+The `nemtime` field in forecast periods is the **interval end** timestamp (AEMO convention). The `time` field is the **interval start** (`nemtime − 30 minutes`).
 
 ---
 
 ## Data Source
 
-Price forecast data is sourced from [AEMO NEMWeb](https://www.nemweb.com.au/REPORTS/CURRENT/PD7Day/) — the Australian Energy Market Operator's public data portal. The PD7DAY dataset is updated three times per day and contains 7-day ahead dispatch price forecasts for all NEM regions.
+Price forecast data is sourced from [AEMO NEMWeb PD7DAY](https://www.nemweb.com.au/REPORTS/CURRENT/PD7Day/) — updated three times per day with 7-day ahead dispatch price forecasts for all NEM regions.
 
-Actual prices are sourced from [AEMO TradingIS Reports](https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/) — 5-minute dispatch price data published every 5 minutes.
+Actual prices are sourced from [AEMO TradingIS Reports](https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/) — 5-minute dispatch price data published after every dispatch interval.
 
 ---
 
@@ -331,7 +372,11 @@ The first fetch runs at integration load. Check **Settings → System → Logs**
 
 ### p10/p50/p90 values are `null`
 
-Normal for the first 3-5 days. Calibration requires at least 10 observations per bucket. Check `sensor.nem_pd7day_{region}_calibration` state for current observation count.
+Normal for the first 3–5 days. Calibration requires at least 10 observations per bucket. Check the `Calibration` sensor state for current observation count.
+
+### h48_96 / h96plus buckets show n=0
+
+These buckets require observations from intervals 2–4 days ahead. They begin accumulating approximately 48 hours after first install (or after upgrading from a version prior to v1.9.1 which fixed forecast history persistence).
 
 ### Recorder warnings about attribute size
 
@@ -343,14 +388,16 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 
 | Version | Changes |
 |---|---|
-| 2.0.2 | Clean sensor names (remove duplicate region prefix), remove Amber dependency, add forecast history sensor |
-| 2.0.1 | Version bump |
-| 2.0.0 | Multi-region support, TradingIS actual prices, forecast persistence |
+| 2.0.3 | Single-region enforcement — one region per integration instance, full calibration coverage |
+| 2.0.2 | Clean sensor names, remove Amber dependency, add Forecast History sensor |
+| 2.0.1 | Version bump post-integration |
+| 2.0.0 | Multi-region sensor support, TradingIS actual prices (no Amber required), forecast persistence |
+| 1.9.1 | Forecast history persistence fix — h48_96/h96plus calibration buckets now survive HA restarts |
 | 1.9.0 | Comprehensive pre-deployment test suite (107 tests) |
 | 1.5.0 | AEMO interval convention: `nemtime` (end) + `time` (start) on all forecast periods |
 | 1.4.0 | Timezone overhaul: all timestamps ISO-8601 +10:00, UTC-safe scheduling |
 | 1.3.0 | Replaced polling with `async_track_point_in_utc_time` at AEMO publish times |
-| 1.2.0 | OLS + IRLS quantile calibration engine, Amber listener, calibration diagnostic sensor |
+| 1.2.0 | OLS + IRLS quantile calibration engine, calibration diagnostic sensor |
 | 1.1.0 | CASESOLUTION (binary sensor), MARKET_SUMMARY (gas), INTERCONNECTORSOLUTION sensors |
 | 1.0.0 | Initial release: PRICESOLUTION forecast sensor |
 
