@@ -171,6 +171,7 @@ class CalibrationStore:
         price_data: "PD7DayData",
         interconnectors: dict[str, "InterconnectorData"],
         case: "CaseSolutionData | None",
+        market_summary: "MarketSummaryData | None" = None,
     ) -> None:
         """
         Called by the coordinator on each successful fetch.
@@ -182,6 +183,15 @@ class CalibrationStore:
         qni = interconnectors.get("NSW1-QLD1")
         qni_mwflow = qni.current_mwflow if qni else None
         qni_violation = qni.current_violationdegree if qni else None
+
+        # Build a date→gas_tj lookup from market_summary for O(1) per-interval access.
+        # Gas forecast is daily resolution — key is the date portion of the interval ISO string.
+        gas_by_date: dict[str, float | None] = {}
+        if market_summary:
+            for g in market_summary.forecast:
+                # g.time is an ISO string like "2026-04-19T09:30:00+10:00" — take date prefix
+                date_key = g.time[:10]
+                gas_by_date[date_key] = g.value_tj
 
         for period in price_data.forecast:
             # Key must be ISO string — period.time is already an ISO string
@@ -199,10 +209,14 @@ class CalibrationStore:
             if any(e["run_at"] == run_at_str for e in self._forecast_history[key]):
                 continue
 
+            # Match gas_tj by the date of the interval start
+            interval_date = key[:10]  # "YYYY-MM-DD" prefix of ISO string
+            gas_tj = gas_by_date.get(interval_date)  # None if no gas data for this date
+
             entry = {
                 "run_at": run_at_str,
                 "forecast_price": period.value,
-                "gas_tj": None,
+                "gas_tj": gas_tj,
                 "qni_mwflow": qni_mwflow,
                 "qni_violation": qni_violation,
                 "is_intervention": is_intervention,

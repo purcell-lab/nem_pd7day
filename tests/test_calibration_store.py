@@ -617,3 +617,95 @@ def test_horizon_uses_interval_start_not_nemtime():
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_ingest_forecast_populates_gas_tj():
+    """
+    BUG (pre-v2.0.4): ingest_forecast hardcoded gas_tj=None for every entry.
+    market_summary was parsed from the ZIP but never passed into ingest_forecast.
+
+    Fix: ingest_forecast accepts optional market_summary and matches gas_tj to
+    each interval by date (gas forecast is daily resolution).
+    """
+    store = make_store()
+
+    run_dt = datetime(2026, 4, 19, 7, 30, tzinfo=NEM_TZ)
+    interval_end_dt = datetime(2026, 4, 19, 10, 0, tzinfo=NEM_TZ)
+    interval_start_str = nem_iso(interval_end_dt - timedelta(minutes=30))  # 09:30
+
+    period = make_price_period(interval_end_dt, value=0.095)
+    price_data = make_price_data(run_dt, [period])
+
+    # Build a minimal MarketSummaryData-like object
+    class FakeGasPeriod:
+        def __init__(self, time_str, value_tj):
+            self.time = time_str  # ISO string — date prefix used for matching
+            self.value_tj = value_tj
+
+    class FakeMarketSummary:
+        def __init__(self, forecast):
+            self.forecast = forecast
+
+    gas_period = FakeGasPeriod("2026-04-19T00:00:00+10:00", 142.7)
+    market_summary = FakeMarketSummary([gas_period])
+
+    run_async(store.ingest_forecast(
+        "QLD1", price_data, {}, None, market_summary=market_summary
+    ))
+
+    key = interval_start_str
+    assert key in store._forecast_history, "Interval key missing from forecast history"
+    entry = store._forecast_history[key][0]
+    assert entry["gas_tj"] == 142.7, (
+        f"Expected gas_tj=142.7, got {entry['gas_tj']}. "
+        "ingest_forecast must populate gas_tj from market_summary by date."
+    )
+
+
+def test_ingest_forecast_gas_tj_none_when_no_market_summary():
+    """gas_tj must be None when market_summary is not provided (backward compat)."""
+    store = make_store()
+
+    run_dt = datetime(2026, 4, 19, 7, 30, tzinfo=NEM_TZ)
+    interval_end_dt = datetime(2026, 4, 19, 10, 0, tzinfo=NEM_TZ)
+
+    period = make_price_period(interval_end_dt, value=0.095)
+    price_data = make_price_data(run_dt, [period])
+
+    run_async(store.ingest_forecast("QLD1", price_data, {}, None))  # no market_summary
+
+    key = nem_iso(interval_end_dt - timedelta(minutes=30))
+    entry = store._forecast_history[key][0]
+    assert entry["gas_tj"] is None, (
+        f"Expected gas_tj=None when market_summary omitted, got {entry['gas_tj']}"
+    )
+
+
+def test_ingest_forecast_gas_tj_none_for_unmatched_date():
+    """gas_tj must be None for intervals on dates not covered by market_summary."""
+    store = make_store()
+
+    run_dt = datetime(2026, 4, 19, 7, 30, tzinfo=NEM_TZ)
+    # Interval is Apr 26 — gas data only covers Apr 19
+    interval_end_dt = datetime(2026, 4, 26, 10, 0, tzinfo=NEM_TZ)
+
+    period = make_price_period(interval_end_dt, value=0.095)
+    price_data = make_price_data(run_dt, [period])
+
+    class FakeGasPeriod:
+        def __init__(self):
+            self.time = "2026-04-19T00:00:00+10:00"
+            self.value_tj = 142.7
+
+    class FakeMarketSummary:
+        forecast = [FakeGasPeriod()]
+
+    run_async(store.ingest_forecast(
+        "QLD1", price_data, {}, None, market_summary=FakeMarketSummary()
+    ))
+
+    key = nem_iso(interval_end_dt - timedelta(minutes=30))
+    entry = store._forecast_history[key][0]
+    assert entry["gas_tj"] is None, (
+        f"Expected gas_tj=None for unmatched date, got {entry['gas_tj']}"
+    )

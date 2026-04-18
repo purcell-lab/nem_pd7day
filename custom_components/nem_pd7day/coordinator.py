@@ -81,6 +81,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                     price_data=price_data,
                     interconnectors=result.interconnectors,
                     case=result.case,
+                    market_summary=result.market_summary,
                 )
 
         return result
