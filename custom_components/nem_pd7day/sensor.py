@@ -177,9 +177,9 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     def available(self) -> bool:
         return self.coordinator.last_update_success and self._price_data is not None
 
-    def async_added_to_hass(self) -> None:
+    async def async_added_to_hass(self) -> None:
         """Subscribe to 30-min interval ticks so state updates without a new fetch."""
-        super().async_added_to_hass()
+        await super().async_added_to_hass()
         self.async_on_remove(
             async_track_time_change(
                 self.hass,
@@ -310,9 +310,9 @@ class PD7DayGasForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def async_added_to_hass(self) -> None:
+    async def async_added_to_hass(self) -> None:
         """Subscribe to daily boundary ticks (gas is daily resolution)."""
-        super().async_added_to_hass()
+        await super().async_added_to_hass()
         self.async_on_remove(
             async_track_time_change(
                 self.hass,
@@ -536,9 +536,9 @@ class PD7DayInterconnectorSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     def available(self) -> bool:
         return self.coordinator.last_update_success and self._data is not None
 
-    def async_added_to_hass(self) -> None:
+    async def async_added_to_hass(self) -> None:
         """Subscribe to 30-min interval ticks so state updates without a new fetch."""
-        super().async_added_to_hass()
+        await super().async_added_to_hass()
         self.async_on_remove(
             async_track_time_change(
                 self.hass,
