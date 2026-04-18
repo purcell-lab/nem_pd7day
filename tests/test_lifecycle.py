@@ -124,6 +124,7 @@ from custom_components.nem_pd7day.const import CONF_REGION, COORDINATOR_KEY, DOM
 def make_store(obs_count: int = 0) -> CalibrationStore:
     store = CalibrationStore.__new__(CalibrationStore)
     store._hass = MagicMock()
+    store._region = "QLD1"
     store._obs_store = MagicMock()
     store._obs_store.async_load = AsyncMock(return_value=None)
     store._obs_store.async_save = AsyncMock()

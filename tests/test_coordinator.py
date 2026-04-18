@@ -174,6 +174,7 @@ def make_store() -> CalibrationStore:
     )
     store = CalibrationStore.__new__(CalibrationStore)
     store._hass = hass
+    store._region = "QLD1"
     store._obs_store = MagicMock()
     store._obs_store.async_load = AsyncMock(return_value=None)
     store._obs_store.async_save = AsyncMock()

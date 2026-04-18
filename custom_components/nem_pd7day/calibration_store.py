@@ -33,13 +33,14 @@ from .calibration_engine import (
     Observation,
 )
 from .const import (
-    COEFF_STORAGE_KEY,
-    FORECAST_HISTORY_STORAGE_KEY,
+    _LEGACY_COEFF_KEY,
+    _LEGACY_FH_KEY,
+    _LEGACY_OBS_KEY,
     MAX_FORECAST_AGE_DAYS,
     MAX_HORIZON_HOURS,
     MAX_TOTAL_OBS,
-    OBS_STORAGE_KEY,
     STORAGE_VERSION,
+    storage_keys,
 )
 from .nem_time import now_nem, parse_iso, to_nem_iso
 
@@ -55,11 +56,13 @@ class CalibrationStore:
     forecast history caching for the calibration pipeline.
     """
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, region: str) -> None:
         self._hass = hass
-        self._obs_store = Store(hass, STORAGE_VERSION, OBS_STORAGE_KEY)
-        self._coeff_store = Store(hass, STORAGE_VERSION, COEFF_STORAGE_KEY)
-        self._fh_store = Store(hass, STORAGE_VERSION, FORECAST_HISTORY_STORAGE_KEY)
+        self._region = region
+        obs_key, coeff_key, fh_key = storage_keys(region)
+        self._obs_store = Store(hass, STORAGE_VERSION, obs_key)
+        self._coeff_store = Store(hass, STORAGE_VERSION, coeff_key)
+        self._fh_store = Store(hass, STORAGE_VERSION, fh_key)
         self._engine = CalibrationEngine()
 
         self._observations: list[dict] = []
@@ -81,12 +84,68 @@ class CalibrationStore:
     # ── Startup ───────────────────────────────────────────────────────────────
 
     async def async_load(self) -> None:
-        obs_data = await self._obs_store.async_load() or {}
-        self._observations = obs_data.get("observations", [])
-        # Rebuild accumulator index from loaded observations.
-        # On restart we treat each stored observation as count=1 at its stored value
-        # (we can't recover the individual 5-min readings, but new Amber readings
-        # within the current interval will continue to be averaged in).
+        """Load calibration state from storage, migrating legacy keys if needed."""
+
+        # ── Load observations ────────────────────────────────────────────────
+        obs_data = await self._obs_store.async_load()
+
+        if obs_data is None:
+            legacy_obs_store = Store(self._hass, STORAGE_VERSION, _LEGACY_OBS_KEY)
+            legacy_data = await legacy_obs_store.async_load()
+            if legacy_data:
+                _LOGGER.info(
+                    "Migrating observation log from legacy storage key to "
+                    "nem_pd7day.%s.observation_log", self._region.lower()
+                )
+                await self._obs_store.async_save(legacy_data)
+                obs_data = legacy_data
+
+        self._observations = (obs_data or {}).get("observations", [])
+
+        # ── Load coefficients ────────────────────────────────────────────────
+        coeff_data = await self._coeff_store.async_load()
+
+        if coeff_data is None:
+            legacy_coeff_store = Store(self._hass, STORAGE_VERSION, _LEGACY_COEFF_KEY)
+            legacy_data = await legacy_coeff_store.async_load()
+            if legacy_data:
+                _LOGGER.info(
+                    "Migrating calibration coefficients from legacy storage key to "
+                    "nem_pd7day.%s.calibration_coefficients", self._region.lower()
+                )
+                await self._coeff_store.async_save(legacy_data)
+                coeff_data = legacy_data
+
+        if coeff_data:
+            try:
+                self._calibration = self._engine.from_storage(coeff_data)
+                _LOGGER.info(
+                    "PD7DAY calibration: restored coefficients fitted at %s (%d obs)",
+                    self._calibration.fitted_at,
+                    self._calibration.total_observations,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "PD7DAY calibration: could not restore coefficients: %s", exc
+                )
+
+        # ── Load forecast history ─────────────────────────────────────────────
+        fh_data = await self._fh_store.async_load()
+
+        if fh_data is None:
+            legacy_fh_store = Store(self._hass, STORAGE_VERSION, _LEGACY_FH_KEY)
+            legacy_data = await legacy_fh_store.async_load()
+            if legacy_data:
+                _LOGGER.info(
+                    "Migrating forecast history from legacy storage key to "
+                    "nem_pd7day.%s.forecast_history", self._region.lower()
+                )
+                await self._fh_store.async_save(legacy_data)
+                fh_data = legacy_data
+
+        self._forecast_history = (fh_data or {}).get("forecast_history", {})
+
+        # Rebuild in-memory accumulator index from observations
         self._actual_accum = {
             (o["interval_time"], o["forecast_run_at"]): {
                 "sum": o["actual_rrp"],
@@ -96,31 +155,12 @@ class CalibrationStore:
             for i, o in enumerate(self._observations)
             if "interval_time" in o and "forecast_run_at" in o
         }
+
         _LOGGER.info(
-            "PD7DAY calibration: loaded %d observations from storage (%d unique pairs)",
+            "CalibrationStore loaded: %d observations, %d forecast history keys (region=%s)",
             len(self._observations),
-            len(self._actual_accum),
-        )
-
-        coeff_data = await self._coeff_store.async_load()
-        if coeff_data:
-            try:
-                self._calibration = self._engine.from_storage(coeff_data)
-                _LOGGER.info(
-                    "PD7DAY calibration: restored coefficients fitted at %s (%d obs)",
-                    self._calibration.fitted_at,
-                    self._calibration.total_observations,
-                )
-            except Exception as exc:
-                _LOGGER.warning(
-                    "PD7DAY calibration: could not restore coefficients: %s", exc
-                )
-
-        fh_data = await self._fh_store.async_load() or {}
-        self._forecast_history = fh_data.get("forecast_history", {})
-        _LOGGER.info(
-            "PD7DAY calibration: loaded %d forecast history keys from storage",
             len(self._forecast_history),
+            self._region,
         )
 
     # ── Forecast history management ───────────────────────────────────────────

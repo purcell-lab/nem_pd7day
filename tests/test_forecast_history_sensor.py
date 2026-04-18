@@ -120,7 +120,7 @@ _sensor_mod = _load(
 )
 
 from custom_components.nem_pd7day.sensor import PD7DayForecastHistorySensor
-from custom_components.nem_pd7day.const import FORECAST_HISTORY_STORAGE_KEY
+from custom_components.nem_pd7day.const import storage_keys
 
 
 def _make_sensor(forecast_history=None):
@@ -181,7 +181,7 @@ def test_forecast_history_sensor_attributes():
     assert attrs["oldest_interval"] == "2026-04-18T17:00:00+10:00"
     assert attrs["newest_interval"] == "2026-04-18T17:00:00+10:00"
     assert attrs["runs_per_interval_avg"] == 1.0
-    assert attrs["storage_key"] == FORECAST_HISTORY_STORAGE_KEY
+    assert attrs["storage_key"] == storage_keys("QLD1")[2]
     assert attrs["region"] == "QLD1"
 
 
@@ -194,7 +194,7 @@ def test_forecast_history_sensor_empty_store():
     assert attrs["oldest_interval"] is None
     assert attrs["newest_interval"] is None
     assert attrs["runs_per_interval_avg"] == 0
-    assert attrs["storage_key"] == FORECAST_HISTORY_STORAGE_KEY
+    assert attrs["storage_key"] == storage_keys("QLD1")[2]
 
 
 def test_forecast_history_sensor_none_store():

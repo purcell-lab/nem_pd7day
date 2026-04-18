@@ -42,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     interconnector_ids = interconnectors_for_regions([region])
 
     # ── Calibration store ────────────────────────────────────────────────────
-    store = CalibrationStore(hass)
+    store = CalibrationStore(hass, region)
     await store.async_load()
 
     # ── Coordinator (no automatic polling) ───────────────────────────────────

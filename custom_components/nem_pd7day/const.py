@@ -90,10 +90,23 @@ TOD_BUCKETS = {
 }
 
 # Calibration storage settings
-OBS_STORAGE_KEY = "nem_pd7day.observation_log"
-COEFF_STORAGE_KEY = "nem_pd7day.calibration_coefficients"
-FORECAST_HISTORY_STORAGE_KEY = "nem_pd7day.forecast_history"
 STORAGE_VERSION = 1
+
+
+def storage_keys(region: str) -> tuple[str, str, str]:
+    """Return (obs_key, coeff_key, forecast_history_key) scoped to region."""
+    r = region.lower()
+    return (
+        f"nem_pd7day.{r}.observation_log",
+        f"nem_pd7day.{r}.calibration_coefficients",
+        f"nem_pd7day.{r}.forecast_history",
+    )
+
+
+# Legacy (unscoped) key names — used only for one-time migration
+_LEGACY_OBS_KEY = "nem_pd7day.observation_log"
+_LEGACY_COEFF_KEY = "nem_pd7day.calibration_coefficients"
+_LEGACY_FH_KEY = "nem_pd7day.forecast_history"
 MAX_TOTAL_OBS = 20_000
 MAX_FORECAST_AGE_DAYS = 14
 MAX_HORIZON_HOURS = 168

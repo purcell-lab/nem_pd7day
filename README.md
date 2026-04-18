@@ -273,16 +273,20 @@ With 3 fetches per day, expect:
 
 | File | Contents |
 |---|---|
-| `nem_pd7day.observation_log` | All calibration observations (forecast vs actual pairs) |
-| `nem_pd7day.calibration_coefficients` | Fitted OLS and quantile regression models per bucket |
-| `nem_pd7day.forecast_history` | Running forecast history indexed by interval time — enables calibration across HA restarts |
+| `nem_pd7day.{region}.observation_log` | Calibration observations for the configured region |
+| `nem_pd7day.{region}.calibration_coefficients` | Fitted OLS and quantile models for the configured region |
+| `nem_pd7day.{region}.forecast_history` | Forecast history for the configured region |
+
+e.g. for QLD1: `nem_pd7day.qld1.observation_log`
+
+> **Upgrading from v2.0.3 or earlier?** Storage files are automatically migrated to the region-scoped naming on first load. Your existing observations and calibration coefficients are preserved.
 
 To reset calibration (e.g. after changing region):
 
 ```bash
-rm /config/.storage/nem_pd7day.observation_log
-rm /config/.storage/nem_pd7day.calibration_coefficients
-rm /config/.storage/nem_pd7day.forecast_history
+rm /config/.storage/nem_pd7day.qld1.observation_log
+rm /config/.storage/nem_pd7day.qld1.calibration_coefficients
+rm /config/.storage/nem_pd7day.qld1.forecast_history
 ```
 
 Then reload or restart the integration.
@@ -388,6 +392,7 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 
 | Version | Changes |
 |---|---|
+| 2.0.4 | Region-scoped storage keys — multi-instance safe, automatic migration from legacy names |
 | 2.0.3 | Single-region enforcement — one region per integration instance, full calibration coverage |
 | 2.0.2 | Clean sensor names, remove Amber dependency, add Forecast History sensor |
 | 2.0.1 | Version bump post-integration |

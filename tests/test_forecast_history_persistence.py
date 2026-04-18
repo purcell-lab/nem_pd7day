@@ -45,7 +45,20 @@ _ha_mock = MagicMock()
 sys.modules.setdefault("homeassistant", _ha_mock)
 sys.modules["homeassistant.core"] = MagicMock()
 sys.modules["homeassistant.helpers"] = MagicMock()
-sys.modules["homeassistant.helpers.storage"] = MagicMock()
+
+# Provide a fake Store whose async_load returns None (awaitable)
+class _FakeStore:
+    def __init__(self, hass, version, key):
+        self._key = key
+    async def async_load(self):
+        return None
+    async def async_save(self, data):
+        pass
+
+_storage_mock = MagicMock()
+_storage_mock.Store = _FakeStore
+sys.modules["homeassistant.helpers.storage"] = _storage_mock
+
 sys.modules["homeassistant.helpers.event"] = MagicMock()
 sys.modules["homeassistant.config_entries"] = MagicMock()
 sys.modules["homeassistant.const"] = MagicMock()
@@ -98,6 +111,7 @@ def make_store(fh_load_data=None) -> CalibrationStore:
     hass = MagicMock()
     store = CalibrationStore.__new__(CalibrationStore)
     store._hass = hass
+    store._region = "QLD1"
     store._obs_store = AsyncMock()
     store._obs_store.async_load = AsyncMock(return_value=None)
     store._obs_store.async_save = AsyncMock()

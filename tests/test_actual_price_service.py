@@ -108,6 +108,7 @@ def make_store() -> CalibrationStore:
     """Create a CalibrationStore with mocked HA storage."""
     store = CalibrationStore.__new__(CalibrationStore)
     store._hass = MagicMock()
+    store._region = "QLD1"
     store._obs_store = AsyncMock()
     store._obs_store.async_load = AsyncMock(return_value=None)
     store._obs_store.async_save = AsyncMock()

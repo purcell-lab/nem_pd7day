@@ -72,11 +72,11 @@ from .const import (
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DOMAIN,
-    FORECAST_HISTORY_STORAGE_KEY,
     get_region,
     interconnectors_for_regions,
     QLD1_INTERCONNECTORS,
     STORE_KEY,
+    storage_keys,
 )
 from .coordinator import PD7DayCoordinator
 
@@ -625,7 +625,7 @@ class PD7DayForecastHistorySensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
                 "oldest_interval": None,
                 "newest_interval": None,
                 "runs_per_interval_avg": 0,
-                "storage_key": FORECAST_HISTORY_STORAGE_KEY,
+                "storage_key": storage_keys(self._region)[2],
                 "region": self._region,
             }
         return {
@@ -635,6 +635,6 @@ class PD7DayForecastHistorySensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
             "runs_per_interval_avg": round(
                 sum(len(v) for v in fh.values()) / len(fh), 1
             ),
-            "storage_key": FORECAST_HISTORY_STORAGE_KEY,
+            "storage_key": storage_keys(self._region)[2],
             "region": self._region,
         }
