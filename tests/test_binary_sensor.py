@@ -144,7 +144,7 @@ def test_intervention_sensor_uses_slugified_ids_and_region_device():
 
         assert entity._attr_unique_id == "entry_1_nsw1_intervention"
         assert entity.entity_id == "binary_sensor.nem_pd7day_nsw1_intervention"
-        assert entity._attr_name == "NSW1 PD7DAY Market Intervention"
+        assert entity._attr_name == "Market Intervention"
         assert entity._attr_device_info["identifiers"] == {
             ("nem_pd7day", "entry_1_NSW1")
         }

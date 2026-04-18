@@ -7,24 +7,49 @@
         "data": {
           "regions": "NEM Regions"
         }
-      },
-      "calibration": {
-        "title": "Calibration Settings",
-        "description": "Configure calibration region and optional Amber sensor for price actuals.",
-        "data": {
-          "calibration_region": "Calibration Region",
-          "amber_sensor": "Amber Sensor Entity (optional)"
-        }
       }
     },
     "error": {
       "cannot_connect": "Could not reach NEMWeb. Check network/DNS and try again.",
       "invalid_data": "NEMWeb returned a file but no PRICESOLUTION rows matched the selected region.",
-      "invalid_option": "Selected calibration region is not in the configured regions.",
       "unknown": "Unexpected error. See the Home Assistant log for details."
     },
     "abort": {
       "already_configured": "An entry for this region combination already exists."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "nem_pd7day_intervention": {
+        "name": "Market Intervention",
+        "state": {
+          "on": "Active",
+          "off": "Normal"
+        }
+      }
+    },
+    "sensor": {
+      "nem_pd7day_forecast": {
+        "name": "Price Forecast"
+      },
+      "nem_pd7day_source_file_datetime": {
+        "name": "Source File Datetime"
+      },
+      "nem_pd7day_data_updated_datetime": {
+        "name": "Data Updated"
+      },
+      "nem_pd7day_interconnector": {
+        "name": "Interconnector"
+      },
+      "nem_pd7day_calibration": {
+        "name": "Calibration"
+      },
+      "nem_pd7day_gas_forecast": {
+        "name": "Gas Generation Forecast"
+      },
+      "nem_pd7day_forecast_history": {
+        "name": "Forecast History"
+      }
     }
   },
   "options": {
@@ -34,14 +59,6 @@
         "description": "Forecasts are fetched at {fetch_times} NEM time (AEST).",
         "data": {
           "regions": "NEM Regions"
-        }
-      },
-      "calibration": {
-        "title": "Calibration Settings",
-        "description": "Configure calibration region and optional Amber sensor.",
-        "data": {
-          "calibration_region": "Calibration Region",
-          "amber_sensor": "Amber Sensor Entity (optional)"
         }
       }
     }

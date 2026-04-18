@@ -13,8 +13,6 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import selector
 
 from .const import (
-    AMBER_ACTUAL_ENTITY,
-    CONF_AMBER_SENSOR,
     CONF_CALIBRATION_REGION,
     CONF_REGIONS,
     DEFAULT_CALIBRATION_REGION,
@@ -32,9 +30,6 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the initial setup UI."""
 
     VERSION = 1
-
-    def __init__(self) -> None:
-        self._pending_regions: list[str] = []
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -89,8 +84,19 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected error during PD7DAY setup: %s", exc)
                 errors["base"] = "unknown"
             else:
-                self._pending_regions = regions
-                return await self.async_step_calibration()
+                await self.async_set_unique_id("nem_pd7day")
+                self._abort_if_unique_id_configured()
+                fetch_times_str = ", ".join(
+                    f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM
+                )
+                return self.async_create_entry(
+                    title="NEM PD7DAY",
+                    data={
+                        CONF_REGIONS: regions,
+                        CONF_CALIBRATION_REGION: regions[0],
+                    },
+                    description_placeholders={"fetch_times": fetch_times_str},
+                )
 
         schema = vol.Schema(
             {
@@ -117,73 +123,6 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def async_step_calibration(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Collect calibration-specific options after region selection."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            calibration_region = user_input.get(CONF_CALIBRATION_REGION)
-            amber_sensor = user_input.get(CONF_AMBER_SENSOR, "")
-
-            if calibration_region not in self._pending_regions:
-                errors[CONF_CALIBRATION_REGION] = "invalid_option"
-            else:
-                await self.async_set_unique_id("nem_pd7day")
-                self._abort_if_unique_id_configured()
-                fetch_times_str = ", ".join(
-                    f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM
-                )
-                return self.async_create_entry(
-                    title="NEM PD7DAY",
-                    data={
-                        CONF_REGIONS: self._pending_regions,
-                        CONF_CALIBRATION_REGION: calibration_region,
-                        CONF_AMBER_SENSOR: amber_sensor,
-                    },
-                    description_placeholders={"fetch_times": fetch_times_str},
-                )
-
-        default_region = (
-            self._pending_regions[0]
-            if self._pending_regions
-            else DEFAULT_CALIBRATION_REGION
-        )
-
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_CALIBRATION_REGION,
-                    default=default_region,
-                ): selector.selector(
-                    {
-                        "select": {
-                            "options": self._pending_regions or DEFAULT_REGIONS,
-                            "multiple": False,
-                            "mode": "dropdown",
-                        }
-                    }
-                ),
-                vol.Optional(
-                    CONF_AMBER_SENSOR,
-                    default="",
-                ): selector.selector(
-                    {
-                        "entity": {
-                            "domain": "sensor",
-                        }
-                    }
-                ),
-            }
-        )
-
-        return self.async_show_form(
-            step_id="calibration",
-            data_schema=schema,
-            errors=errors,
-        )
-
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
@@ -195,10 +134,6 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
-        self._pending_regions = self._entry.options.get(
-            CONF_REGIONS,
-            self._entry.data.get(CONF_REGIONS, DEFAULT_REGIONS),
-        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -206,11 +141,11 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             selected_regions = user_input[CONF_REGIONS]
             if isinstance(selected_regions, str):
-                self._pending_regions = [selected_regions]
+                updated_regions = [selected_regions]
             else:
-                self._pending_regions = list(selected_regions)
+                updated_regions = list(selected_regions)
 
-            if not self._pending_regions:
+            if not updated_regions:
                 schema = vol.Schema(
                     {
                         vol.Required(
@@ -236,7 +171,26 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                         )
                     },
                 )
-            return await self.async_step_calibration()
+
+            # Keep existing calibration region if still valid, else use first
+            current_cal = self._entry.options.get(
+                CONF_CALIBRATION_REGION,
+                self._entry.data.get(
+                    CONF_CALIBRATION_REGION,
+                    updated_regions[0],
+                ),
+            )
+            calibration_region = (
+                current_cal if current_cal in updated_regions else updated_regions[0]
+            )
+
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_REGIONS: updated_regions,
+                    CONF_CALIBRATION_REGION: calibration_region,
+                },
+            )
 
         current_regions = self._entry.options.get(
             CONF_REGIONS,
@@ -265,69 +219,4 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                     f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM
                 )
             },
-        )
-
-    async def async_step_calibration(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Configure calibration region and Amber sensor for options flow."""
-        current_calibration_region = self._entry.options.get(
-            CONF_CALIBRATION_REGION,
-            self._entry.data.get(
-                CONF_CALIBRATION_REGION,
-                self._pending_regions[0] if self._pending_regions else DEFAULT_CALIBRATION_REGION,
-            ),
-        )
-        current_amber_sensor = self._entry.options.get(
-            CONF_AMBER_SENSOR,
-            self._entry.data.get(CONF_AMBER_SENSOR, ""),
-        )
-
-        if current_calibration_region not in self._pending_regions:
-            current_calibration_region = (
-                self._pending_regions[0]
-                if self._pending_regions
-                else DEFAULT_CALIBRATION_REGION
-            )
-
-        if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_REGIONS: self._pending_regions,
-                    CONF_CALIBRATION_REGION: user_input[CONF_CALIBRATION_REGION],
-                    CONF_AMBER_SENSOR: user_input.get(CONF_AMBER_SENSOR, ""),
-                },
-            )
-
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_CALIBRATION_REGION,
-                    default=current_calibration_region,
-                ): selector.selector(
-                    {
-                        "select": {
-                            "options": self._pending_regions,
-                            "multiple": False,
-                            "mode": "dropdown",
-                        }
-                    }
-                ),
-                vol.Optional(
-                    CONF_AMBER_SENSOR,
-                    default=current_amber_sensor,
-                ): selector.selector(
-                    {
-                        "entity": {
-                            "domain": "sensor",
-                        }
-                    }
-                ),
-            }
-        )
-
-        return self.async_show_form(
-            step_id="calibration",
-            data_schema=schema,
         )

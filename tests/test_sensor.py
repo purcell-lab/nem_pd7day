@@ -184,7 +184,7 @@ def make_sensor(store=None) -> PD7DayForecastSensor:
     sensor._region = "QLD1"
     sensor._store = store
     sensor._attr_unique_id = "nem_pd7day_qld1_forecast"
-    sensor._attr_name = "QLD1 PD7DAY Forecast"
+    sensor._attr_name = "Price Forecast"
     sensor.entity_id = "sensor.qld1_pd7day_forecast"
     return sensor
 

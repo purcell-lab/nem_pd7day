@@ -44,8 +44,6 @@ REGIONS = ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]
 # Config entry keys
 CONF_REGIONS = "regions"
 CONF_CALIBRATION_REGION = "calibration_region"
-CONF_AMBER_SENSOR = "amber_sensor"
-
 # TradingIS (actual price source)
 TRADINGIS_BASE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/"
 TRADINGIS_FETCH_MINUTES = [2, 32]
@@ -62,7 +60,6 @@ NEM_TZ = timezone(timedelta(hours=10), name="AEST")
 INTERVAL_DURATION = timedelta(minutes=30)
 
 # Lifecycle tuning
-AMBER_ACTUAL_ENTITY = "sensor.amber_express_amber_feed_in_price"
 DEFAULT_CALIBRATION_REGION = "QLD1"
 REFIT_INTERVAL = timedelta(hours=24)
 

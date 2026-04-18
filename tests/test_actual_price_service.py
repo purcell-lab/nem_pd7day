@@ -1,6 +1,6 @@
 """
 Tests for ActualPriceService — interval calculation, TradingIS integration,
-Amber fallback, and source field propagation.
+and source field propagation.
 
 Run with:  python -m pytest tests/test_actual_price_service.py -v
 """
@@ -128,7 +128,6 @@ def make_store() -> CalibrationStore:
 def make_service(
     store=None,
     regions=None,
-    amber_entity=None,
     fetch_price_return=None,
 ):
     """Create an ActualPriceService with mocked dependencies."""
@@ -139,7 +138,7 @@ def make_service(
         regions = ["QLD1"]
     session = MagicMock()
 
-    service = ActualPriceService(hass, store, regions, session, amber_entity)
+    service = ActualPriceService(hass, store, regions, session)
 
     # Mock the TradingIS client
     service._client = MagicMock()
@@ -221,46 +220,15 @@ def test_tradingis_success_records_observation():
 
 def test_tradingis_failure_no_observation():
     """
-    When TradingIS fetch returns None and no Amber entity is configured,
-    async_record_actual should NOT be called.
+    When TradingIS fetch returns None, async_record_actual should NOT be called.
     """
-    service, store = make_service(fetch_price_return=None, amber_entity=None)
+    service, store = make_service(fetch_price_return=None)
     store.async_record_actual = AsyncMock(return_value=0)
 
     now_utc = datetime(2026, 4, 18, 7, 32, 0, tzinfo=timezone.utc)
     run_async(service._on_tradingis_tick(now_utc))
 
     store.async_record_actual.assert_not_called()
-
-
-def test_tradingis_failure_amber_fallback():
-    """
-    When TradingIS fetch returns None and Amber entity IS configured,
-    should try Amber fallback and record with source="amber".
-    """
-    service, store = make_service(
-        fetch_price_return=None,
-        amber_entity="sensor.amber_test",
-    )
-    store.async_record_actual = AsyncMock(return_value=1)
-
-    # Mock Amber state
-    amber_state = MagicMock()
-    amber_state.state = "0.0956"
-    service._hass.states.get.return_value = amber_state
-
-    now_utc = datetime(2026, 4, 18, 7, 32, 0, tzinfo=timezone.utc)
-    run_async(service._on_tradingis_tick(now_utc))
-
-    store.async_record_actual.assert_called_once()
-    call_args = store.async_record_actual.call_args
-    interval_iso = call_args[0][0]
-    price = call_args[0][1]
-    source = call_args[1].get("source", call_args[0][2] if len(call_args[0]) > 2 else None)
-
-    assert interval_iso == "2026-04-18T17:00:00+10:00"
-    assert abs(price - 0.0956) < 1e-6
-    assert source == "amber"
 
 
 def test_source_field_tradingis():
@@ -341,22 +309,6 @@ def test_multiple_regions():
 
     # Should be called once per region
     assert store.async_record_actual.call_count == 2
-
-
-def test_amber_entity_none_no_fallback():
-    """When amber_entity is empty string, no Amber fallback should be attempted."""
-    service, store = make_service(
-        fetch_price_return=None,
-        amber_entity="",  # empty string = disabled
-    )
-    store.async_record_actual = AsyncMock(return_value=0)
-
-    now_utc = datetime(2026, 4, 18, 7, 32, 0, tzinfo=timezone.utc)
-    run_async(service._on_tradingis_tick(now_utc))
-
-    store.async_record_actual.assert_not_called()
-    # hass.states.get should not have been called either
-    service._hass.states.get.assert_not_called()
 
 
 if __name__ == "__main__":

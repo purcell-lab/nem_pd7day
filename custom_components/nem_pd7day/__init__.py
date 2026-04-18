@@ -16,8 +16,6 @@ from homeassistant.util import dt as dt_util
 
 from .calibration_store import CalibrationStore
 from .const import (
-    AMBER_ACTUAL_ENTITY,
-    CONF_AMBER_SENSOR,
     CONF_CALIBRATION_REGION,
     CONF_REGIONS,
     COORDINATOR_KEY,
@@ -55,10 +53,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     if calibration_region not in regions and regions:
         calibration_region = regions[0]
-    amber_sensor_entity: str = entry.options.get(
-        CONF_AMBER_SENSOR,
-        entry.data.get(CONF_AMBER_SENSOR, AMBER_ACTUAL_ENTITY),
-    )
     interconnector_ids = interconnectors_for_regions(regions)
 
     # ── Calibration store ────────────────────────────────────────────────────
@@ -149,12 +143,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ", ".join(utc_times),
     )
 
-    # ── Actual price service (TradingIS + optional Amber fallback) ─────────
-    amber_entity = amber_sensor_entity or None
-
+    # ── Actual price service (TradingIS) ────────────────────────────────────
     session = async_get_clientsession(hass)
     actual_service = ActualPriceService(
-        hass, store, regions, session, amber_entity,
+        hass, store, regions, session,
         calibration_region=calibration_region,
     )
     await actual_service.async_setup(entry)

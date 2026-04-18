@@ -170,7 +170,7 @@ def _load_config_flow_under_test():
 
 
 def test_user_step_creates_entry_with_all_selected_regions():
-    """Submitting regions should proceed to calibration step, then persist all settings."""
+    """Submitting regions should create entry directly in single step."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
     captured_fetch_args = []
 
@@ -193,32 +193,19 @@ def test_user_step_creates_entry_with_all_selected_regions():
             flow.async_step_user({const_mod.CONF_REGIONS: ["QLD1", "NSW1", "VIC1"]})
         )
 
-        assert result["type"] == "form"
-        assert result["step_id"] == "calibration"
-        # Connectivity check only probes one region by design.
-        assert captured_fetch_args == [["QLD1"]]
-
-        result = run_async(
-            flow.async_step_calibration(
-                {
-                    const_mod.CONF_CALIBRATION_REGION: "NSW1",
-                    const_mod.CONF_AMBER_SENSOR: "sensor.my_amber_feed_in",
-                }
-            )
-        )
-
         assert result["type"] == "create_entry"
         assert flow._unique_id == "nem_pd7day"
         assert result["title"] == "NEM PD7DAY"
         assert result["data"][const_mod.CONF_REGIONS] == ["QLD1", "NSW1", "VIC1"]
-        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "NSW1"
-        assert result["data"][const_mod.CONF_AMBER_SENSOR] == "sensor.my_amber_feed_in"
+        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "QLD1"
+        # Connectivity check only probes one region by design.
+        assert captured_fetch_args == [["QLD1"]]
     finally:
         restore()
 
 
 def test_user_step_normalizes_single_string_region_to_list():
-    """Single region selection must proceed to calibration and persist as list."""
+    """Single region selection must persist as list and create entry directly."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
 
     class _ClientStub:
@@ -237,20 +224,9 @@ def test_user_step_normalizes_single_string_region_to_list():
 
         result = run_async(flow.async_step_user({const_mod.CONF_REGIONS: "QLD1"}))
 
-        assert result["type"] == "form"
-        assert result["step_id"] == "calibration"
-
-        result = run_async(
-            flow.async_step_calibration(
-                {
-                    const_mod.CONF_CALIBRATION_REGION: "QLD1",
-                    const_mod.CONF_AMBER_SENSOR: "sensor.amber_express_amber_feed_in_price",
-                }
-            )
-        )
-
         assert result["type"] == "create_entry"
         assert result["data"][const_mod.CONF_REGIONS] == ["QLD1"]
+        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "QLD1"
     finally:
         restore()
 
@@ -289,40 +265,51 @@ def test_options_flow_defaults_to_current_options_not_entry_data():
         restore()
 
 
-def test_options_flow_calibration_step_persists_region_and_amber_sensor():
-    """Options flow must save regions + calibration region + amber sensor together."""
+def test_options_flow_creates_entry_with_regions_and_calibration_region():
+    """Options flow must save regions + calibration_region in single step."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
     entry = MagicMock()
     entry.data = {
         const_mod.CONF_REGIONS: ["QLD1"],
         const_mod.CONF_CALIBRATION_REGION: "QLD1",
-        const_mod.CONF_AMBER_SENSOR: "sensor.amber_express_amber_feed_in_price",
     }
     entry.options = {
         const_mod.CONF_REGIONS: ["NSW1", "VIC1"],
         const_mod.CONF_CALIBRATION_REGION: "NSW1",
-        const_mod.CONF_AMBER_SENSOR: "sensor.custom_amber",
     }
 
     try:
         flow = config_flow_mod.PD7DayOptionsFlow(entry)
         result = run_async(flow.async_step_init({const_mod.CONF_REGIONS: ["NSW1", "VIC1"]}))
 
-        assert result["type"] == "form"
-        assert result["step_id"] == "calibration"
-
-        result = run_async(
-            flow.async_step_calibration(
-                {
-                    const_mod.CONF_CALIBRATION_REGION: "VIC1",
-                    const_mod.CONF_AMBER_SENSOR: "sensor.alt_amber",
-                }
-            )
-        )
-
         assert result["type"] == "create_entry"
         assert result["data"][const_mod.CONF_REGIONS] == ["NSW1", "VIC1"]
-        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "VIC1"
-        assert result["data"][const_mod.CONF_AMBER_SENSOR] == "sensor.alt_amber"
+        # Existing calibration region NSW1 is still in updated regions, so keep it
+        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "NSW1"
+    finally:
+        restore()
+
+
+def test_options_flow_resets_calibration_region_when_removed():
+    """If current calibration region is removed from regions, default to first."""
+    config_flow_mod, const_mod, restore = _load_config_flow_under_test()
+    entry = MagicMock()
+    entry.data = {
+        const_mod.CONF_REGIONS: ["QLD1"],
+        const_mod.CONF_CALIBRATION_REGION: "QLD1",
+    }
+    entry.options = {
+        const_mod.CONF_REGIONS: ["QLD1", "NSW1"],
+        const_mod.CONF_CALIBRATION_REGION: "QLD1",
+    }
+
+    try:
+        flow = config_flow_mod.PD7DayOptionsFlow(entry)
+        # Remove QLD1 from regions — calibration region should reset to SA1
+        result = run_async(flow.async_step_init({const_mod.CONF_REGIONS: ["SA1", "VIC1"]}))
+
+        assert result["type"] == "create_entry"
+        assert result["data"][const_mod.CONF_REGIONS] == ["SA1", "VIC1"]
+        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "SA1"
     finally:
         restore()
