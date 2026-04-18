@@ -21,13 +21,12 @@ from .const import (
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
-    CONF_REGIONS,
-    DEFAULT_REGIONS,
     ATTR_LAST_CHANGED,
     ATTR_RUN_DATETIME,
     ATTR_SOURCE_FILE,
     COORDINATOR_KEY,
     DOMAIN,
+    get_region,
 )
 from .coordinator import PD7DayCoordinator
 
@@ -51,15 +50,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR_KEY]
-    regions: list[str] = entry.options.get(
-        CONF_REGIONS,
-        entry.data.get(CONF_REGIONS, DEFAULT_REGIONS),
+    region: str = get_region(entry)
+    async_add_entities(
+        [PD7DayInterventionSensor(coordinator, entry, region)],
+        update_before_add=True,
     )
-    entities = [
-        PD7DayInterventionSensor(coordinator, entry, region)
-        for region in regions
-    ]
-    async_add_entities(entities, update_before_add=True)
 
 
 class PD7DayInterventionSensor(CoordinatorEntity[PD7DayCoordinator], BinarySensorEntity):

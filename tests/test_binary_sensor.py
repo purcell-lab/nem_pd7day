@@ -92,14 +92,14 @@ def _load_binary_sensor_under_test():
     return binary_sensor_mod, const_mod, _restore
 
 
-def test_async_setup_entry_creates_one_binary_sensor_per_selected_region():
+def test_async_setup_entry_creates_one_binary_sensor_for_configured_region():
     binary_sensor_mod, const_mod, restore = _load_binary_sensor_under_test()
     try:
         coordinator = MagicMock()
         entry = MagicMock()
         entry.entry_id = "entry_1"
-        entry.data = {const_mod.CONF_REGIONS: ["QLD1"]}
-        entry.options = {const_mod.CONF_REGIONS: ["QLD1", "NSW1"]}
+        entry.data = {const_mod.CONF_REGION: "QLD1"}
+        entry.options = {}
 
         hass = MagicMock()
         hass.data = {
@@ -117,12 +117,8 @@ def test_async_setup_entry_creates_one_binary_sensor_per_selected_region():
 
         run_async(binary_sensor_mod.async_setup_entry(hass, entry, _add_entities))
 
-        assert len(created) == 2
-        entity_ids = sorted(ent.entity_id for ent in created)
-        assert entity_ids == [
-            "binary_sensor.nem_pd7day_nsw1_intervention",
-            "binary_sensor.nem_pd7day_qld1_intervention",
-        ]
+        assert len(created) == 1
+        assert created[0].entity_id == "binary_sensor.nem_pd7day_qld1_intervention"
     finally:
         restore()
 

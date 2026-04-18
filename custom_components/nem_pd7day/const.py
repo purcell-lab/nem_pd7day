@@ -42,14 +42,24 @@ def interconnectors_for_regions(regions: list[str]) -> set[str]:
 REGIONS = ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]
 
 # Config entry keys
-CONF_REGIONS = "regions"
-CONF_CALIBRATION_REGION = "calibration_region"
+CONF_REGION = "region"
+CONF_REGIONS = "regions"  # kept for migration from old list-based config
 # TradingIS (actual price source)
 TRADINGIS_BASE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/"
 TRADINGIS_FETCH_MINUTES = [2, 32]
 
 # Defaults
-DEFAULT_REGIONS = ["QLD1"]
+DEFAULT_REGION = "QLD1"
+
+
+def get_region(entry) -> str:
+    """Read region from config entry, handling migration from old list-based 'regions' key."""
+    region = entry.options.get(CONF_REGION) or entry.data.get(CONF_REGION)
+    if not region:
+        old = entry.options.get(CONF_REGIONS) or entry.data.get(CONF_REGIONS, DEFAULT_REGION)
+        region = old[0] if isinstance(old, list) else old
+    return region or DEFAULT_REGION
+
 
 # AEMO PD7DAY publish times (NEM local, hour, minute)
 # Fetches are scheduled 25-55 min after each publish to allow NEMWeb to settle.
@@ -60,7 +70,6 @@ NEM_TZ = timezone(timedelta(hours=10), name="AEST")
 INTERVAL_DURATION = timedelta(minutes=30)
 
 # Lifecycle tuning
-DEFAULT_CALIBRATION_REGION = "QLD1"
 REFIT_INTERVAL = timedelta(hours=24)
 
 # Calibration engine tuning

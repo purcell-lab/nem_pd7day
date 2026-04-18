@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "NEM PD7DAY Price Forecast",
-        "description": "Select one or more NEM regions to track. Forecasts are fetched at {fetch_times} NEM time (AEST) — matching AEMO's three daily publish windows.",
+        "description": "Select the NEM region to monitor. Forecasts are fetched at {fetch_times} NEM time (AEST).",
         "data": {
-          "regions": "NEM Regions"
+          "region": "NEM Region"
         }
       }
     },
@@ -15,7 +15,7 @@
       "unknown": "Unexpected error. See the Home Assistant log for details."
     },
     "abort": {
-      "already_configured": "An entry for this region combination already exists."
+      "already_configured": "This region is already configured."
     }
   },
   "entity": {
@@ -58,7 +58,7 @@
         "title": "NEM PD7DAY Options",
         "description": "Forecasts are fetched at {fetch_times} NEM time (AEST).",
         "data": {
-          "regions": "NEM Regions"
+          "region": "NEM Region"
         }
       }
     }

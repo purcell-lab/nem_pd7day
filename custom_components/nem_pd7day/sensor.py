@@ -67,16 +67,13 @@ from .const import (
     ATTR_RUN_DATETIME,
     ATTR_SOURCE_FILE,
     ATTR_VIOLATIONDEGREE,
-    CONF_CALIBRATION_REGION,
-    CONF_REGIONS,
     COORDINATOR_KEY,
-    DEFAULT_CALIBRATION_REGION,
-    DEFAULT_REGIONS,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DOMAIN,
     FORECAST_HISTORY_STORAGE_KEY,
+    get_region,
     interconnectors_for_regions,
     QLD1_INTERCONNECTORS,
     STORE_KEY,
@@ -109,43 +106,27 @@ async def async_setup_entry(
 ) -> None:
     coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR_KEY]
     store = hass.data[DOMAIN][entry.entry_id].get(STORE_KEY)
-    regions: list[str] = entry.options.get(
-        CONF_REGIONS,
-        entry.data.get(CONF_REGIONS, DEFAULT_REGIONS),
-    )
-    calibration_region: str = entry.options.get(
-        CONF_CALIBRATION_REGION,
-        entry.data.get(
-            CONF_CALIBRATION_REGION,
-            regions[0] if regions else DEFAULT_CALIBRATION_REGION,
-        ),
-    )
-    if calibration_region not in regions and regions:
-        calibration_region = regions[0]
-    selected_interconnector_ids = interconnectors_for_regions(regions)
+    region: str = get_region(entry)
 
     entities: list[SensorEntity] = []
 
-    for region in regions:
-        entities.append(PD7DayForecastSensor(coordinator, store, entry, region))
-        entities.append(PD7DayRegionSourceFileDatetimeSensor(coordinator, entry, region))
-        entities.append(PD7DayRegionDataUpdatedDatetimeSensor(coordinator, entry, region))
+    entities.append(PD7DayForecastSensor(coordinator, store, entry, region))
+    entities.append(PD7DayRegionSourceFileDatetimeSensor(coordinator, entry, region))
+    entities.append(PD7DayRegionDataUpdatedDatetimeSensor(coordinator, entry, region))
 
     entities.append(PD7DayGasForecastSensor(coordinator, entry))
 
-    live_interconnector_ids = set(coordinator.data.interconnectors) if (
+    # Interconnectors for this region
+    region_ic_ids = interconnectors_for_regions([region])
+    live_ic_ids = set(coordinator.data.interconnectors) if (
         coordinator.data and coordinator.data.interconnectors
     ) else set()
-    for region in regions:
-        region_interconnector_ids = interconnectors_for_regions([region])
-        interconnector_ids = live_interconnector_ids or region_interconnector_ids or QLD1_INTERCONNECTORS
-        for ic_id in sorted(interconnector_ids):
-            if ic_id in region_interconnector_ids:
-                entities.append(PD7DayInterconnectorSensor(coordinator, entry, region, ic_id))
+    for ic_id in sorted(region_ic_ids):
+        if ic_id in (live_ic_ids or region_ic_ids):
+            entities.append(PD7DayInterconnectorSensor(coordinator, entry, region, ic_id))
 
-    # Calibration diagnostic sensor bound to configured calibration region.
-    entities.append(PD7DayCalibrationSensor(coordinator, store, entry, calibration_region))
-    entities.append(PD7DayForecastHistorySensor(coordinator, store, entry, calibration_region))
+    entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
+    entities.append(PD7DayForecastHistorySensor(coordinator, store, entry, region))
 
     async_add_entities(entities, update_before_add=True)
 

@@ -1,8 +1,8 @@
 """
 Tests for config_flow.py — region selection handling and options defaults.
 
-Covers regression-prone behavior around multi-select regions and ensures
-OptionsFlow uses current options (not stale entry data).
+Covers single-region selection and ensures OptionsFlow uses current options
+(not stale entry data).
 
 Run with: python -m pytest tests/test_config_flow.py -v
 """
@@ -169,8 +169,8 @@ def _load_config_flow_under_test():
     return config_flow_mod, const_mod, _restore
 
 
-def test_user_step_creates_entry_with_all_selected_regions():
-    """Submitting regions should create entry directly in single step."""
+def test_user_step_creates_entry_with_selected_region():
+    """Submitting a region should create entry directly in single step."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
     captured_fetch_args = []
 
@@ -190,22 +190,21 @@ def test_user_step_creates_entry_with_all_selected_regions():
         flow.hass = MagicMock()
 
         result = run_async(
-            flow.async_step_user({const_mod.CONF_REGIONS: ["QLD1", "NSW1", "VIC1"]})
+            flow.async_step_user({const_mod.CONF_REGION: "QLD1"})
         )
 
         assert result["type"] == "create_entry"
         assert flow._unique_id == "nem_pd7day"
-        assert result["title"] == "NEM PD7DAY"
-        assert result["data"][const_mod.CONF_REGIONS] == ["QLD1", "NSW1", "VIC1"]
-        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "QLD1"
-        # Connectivity check only probes one region by design.
+        assert result["title"] == "NEM PD7DAY QLD1"
+        assert result["data"][const_mod.CONF_REGION] == "QLD1"
+        # Connectivity check probes the selected region.
         assert captured_fetch_args == [["QLD1"]]
     finally:
         restore()
 
 
-def test_user_step_normalizes_single_string_region_to_list():
-    """Single region selection must persist as list and create entry directly."""
+def test_user_step_creates_entry_with_nsw1_region():
+    """Selecting NSW1 should create entry with correct title and data."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
 
     class _ClientStub:
@@ -222,36 +221,21 @@ def test_user_step_normalizes_single_string_region_to_list():
         flow = config_flow_mod.PD7DayConfigFlow()
         flow.hass = MagicMock()
 
-        result = run_async(flow.async_step_user({const_mod.CONF_REGIONS: "QLD1"}))
+        result = run_async(flow.async_step_user({const_mod.CONF_REGION: "NSW1"}))
 
         assert result["type"] == "create_entry"
-        assert result["data"][const_mod.CONF_REGIONS] == ["QLD1"]
-        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "QLD1"
+        assert result["title"] == "NEM PD7DAY NSW1"
+        assert result["data"][const_mod.CONF_REGION] == "NSW1"
     finally:
         restore()
 
 
-def test_user_step_empty_region_selection_returns_form_error():
-    """Empty region selection must not create an entry and must return a required-field error."""
-    config_flow_mod, const_mod, restore = _load_config_flow_under_test()
-    try:
-        flow = config_flow_mod.PD7DayConfigFlow()
-        flow.hass = MagicMock()
-
-        result = run_async(flow.async_step_user({const_mod.CONF_REGIONS: []}))
-
-        assert result["type"] == "form"
-        assert result["errors"].get(const_mod.CONF_REGIONS) == "required"
-    finally:
-        restore()
-
-
-def test_options_flow_defaults_to_current_options_not_entry_data():
-    """Options init defaults must reflect entry.options regions when present."""
+def test_options_flow_defaults_to_current_options_region():
+    """Options init defaults must reflect entry.options region when present."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
     entry = MagicMock()
-    entry.data = {const_mod.CONF_REGIONS: ["QLD1"]}
-    entry.options = {const_mod.CONF_REGIONS: ["NSW1", "VIC1"]}
+    entry.data = {const_mod.CONF_REGION: "QLD1"}
+    entry.options = {const_mod.CONF_REGION: "NSW1"}
 
     try:
         flow = config_flow_mod.PD7DayOptionsFlow(entry)
@@ -260,56 +244,43 @@ def test_options_flow_defaults_to_current_options_not_entry_data():
         assert result["type"] == "form"
         # Voluptuous applies Required defaults when schema is called with empty dict.
         resolved = result["data_schema"]({})
-        assert resolved[const_mod.CONF_REGIONS] == ["NSW1", "VIC1"]
+        assert resolved[const_mod.CONF_REGION] == "NSW1"
     finally:
         restore()
 
 
-def test_options_flow_creates_entry_with_regions_and_calibration_region():
-    """Options flow must save regions + calibration_region in single step."""
+def test_options_flow_creates_entry_with_region():
+    """Options flow must save region in single step."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
     entry = MagicMock()
-    entry.data = {
-        const_mod.CONF_REGIONS: ["QLD1"],
-        const_mod.CONF_CALIBRATION_REGION: "QLD1",
-    }
-    entry.options = {
-        const_mod.CONF_REGIONS: ["NSW1", "VIC1"],
-        const_mod.CONF_CALIBRATION_REGION: "NSW1",
-    }
+    entry.data = {const_mod.CONF_REGION: "QLD1"}
+    entry.options = {const_mod.CONF_REGION: "NSW1"}
 
     try:
         flow = config_flow_mod.PD7DayOptionsFlow(entry)
-        result = run_async(flow.async_step_init({const_mod.CONF_REGIONS: ["NSW1", "VIC1"]}))
+        result = run_async(flow.async_step_init({const_mod.CONF_REGION: "VIC1"}))
 
         assert result["type"] == "create_entry"
-        assert result["data"][const_mod.CONF_REGIONS] == ["NSW1", "VIC1"]
-        # Existing calibration region NSW1 is still in updated regions, so keep it
-        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "NSW1"
+        assert result["data"][const_mod.CONF_REGION] == "VIC1"
     finally:
         restore()
 
 
-def test_options_flow_resets_calibration_region_when_removed():
-    """If current calibration region is removed from regions, default to first."""
+def test_options_flow_migrates_old_list_based_regions():
+    """Options flow must handle migration from old list-based regions config."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
     entry = MagicMock()
-    entry.data = {
-        const_mod.CONF_REGIONS: ["QLD1"],
-        const_mod.CONF_CALIBRATION_REGION: "QLD1",
-    }
-    entry.options = {
-        const_mod.CONF_REGIONS: ["QLD1", "NSW1"],
-        const_mod.CONF_CALIBRATION_REGION: "QLD1",
-    }
+    # Old-style config with list-based regions
+    entry.data = {const_mod.CONF_REGIONS: ["NSW1", "VIC1"]}
+    entry.options = {}
 
     try:
         flow = config_flow_mod.PD7DayOptionsFlow(entry)
-        # Remove QLD1 from regions — calibration region should reset to SA1
-        result = run_async(flow.async_step_init({const_mod.CONF_REGIONS: ["SA1", "VIC1"]}))
+        result = run_async(flow.async_step_init())
 
-        assert result["type"] == "create_entry"
-        assert result["data"][const_mod.CONF_REGIONS] == ["SA1", "VIC1"]
-        assert result["data"][const_mod.CONF_CALIBRATION_REGION] == "SA1"
+        assert result["type"] == "form"
+        # Should default to first element of old list
+        resolved = result["data_schema"]({})
+        assert resolved[const_mod.CONF_REGION] == "NSW1"
     finally:
         restore()

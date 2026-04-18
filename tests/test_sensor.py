@@ -139,8 +139,7 @@ _sensor_mod = _load(
 from custom_components.nem_pd7day.nem_time import NEM_TZ
 from custom_components.nem_pd7day.calibration_engine import CalibrationEngine, Observation
 from custom_components.nem_pd7day.const import (
-    CONF_CALIBRATION_REGION,
-    CONF_REGIONS,
+    CONF_REGION,
     COORDINATOR_KEY,
     DOMAIN,
     STORE_KEY,
@@ -189,19 +188,18 @@ def make_sensor(store=None) -> PD7DayForecastSensor:
     return sensor
 
 
-def test_async_setup_entry_uses_options_regions_for_forecast_entities():
+def test_async_setup_entry_creates_forecast_entity_for_single_region():
     """
-    Regression: region selection changed in OptionsFlow must control which
-    forecast entities are created. If entry.data is used instead of
-    entry.options, only the original first region appears.
+    Single-region config must create exactly one forecast entity for the
+    configured region.
     """
     coordinator = MagicMock()
     coordinator.data = None
 
     entry = MagicMock()
     entry.entry_id = "entry_1"
-    entry.data = {CONF_REGIONS: ["QLD1"]}
-    entry.options = {CONF_REGIONS: ["QLD1", "NSW1"]}
+    entry.data = {CONF_REGION: "QLD1"}
+    entry.options = {}
 
     hass = MagicMock()
     hass.data = {
@@ -225,15 +223,15 @@ def test_async_setup_entry_uses_options_regions_for_forecast_entities():
     ]
     regions = sorted(ent._region for ent in forecast_entities)
 
-    assert regions == ["NSW1", "QLD1"], (
-        "Forecast entities must match entry.options regions. "
+    assert regions == ["QLD1"], (
+        "Forecast entities must match configured single region. "
         f"Got regions={regions}"
     )
 
 
 def test_async_setup_entry_creates_selected_region_interconnector_entities():
     """
-    Regression: interconnector entities must be created from selected regions,
+    Interconnector entities must be created from the selected region,
     not always from the QLD-only default set.
     """
     coordinator = MagicMock()
@@ -241,8 +239,8 @@ def test_async_setup_entry_creates_selected_region_interconnector_entities():
 
     entry = MagicMock()
     entry.entry_id = "entry_2"
-    entry.data = {CONF_REGIONS: ["QLD1"]}
-    entry.options = {CONF_REGIONS: ["NSW1"]}
+    entry.data = {CONF_REGION: "NSW1"}
+    entry.options = {}
 
     hass = MagicMock()
     hass.data = {
@@ -272,18 +270,15 @@ def test_async_setup_entry_creates_selected_region_interconnector_entities():
     )
 
 
-def test_async_setup_entry_creates_calibration_sensor_for_selected_region():
-    """Calibration sensor must be created for configured calibration region."""
+def test_async_setup_entry_creates_calibration_sensor_for_configured_region():
+    """Calibration sensor must be created for the configured region."""
     coordinator = MagicMock()
     coordinator.data = None
 
     entry = MagicMock()
     entry.entry_id = "entry_3"
-    entry.data = {CONF_REGIONS: ["QLD1"]}
-    entry.options = {
-        CONF_REGIONS: ["QLD1", "NSW1"],
-        CONF_CALIBRATION_REGION: "NSW1",
-    }
+    entry.data = {CONF_REGION: "NSW1"}
+    entry.options = {}
 
     hass = MagicMock()
     hass.data = {
@@ -319,8 +314,8 @@ def test_async_setup_entry_creates_single_gas_forecast_sensor():
 
     entry = MagicMock()
     entry.entry_id = "entry_4"
-    entry.data = {CONF_REGIONS: ["QLD1"]}
-    entry.options = {CONF_REGIONS: ["QLD1", "NSW1"]}
+    entry.data = {CONF_REGION: "QLD1"}
+    entry.options = {}
 
     hass = MagicMock()
     hass.data = {
@@ -347,14 +342,14 @@ def test_async_setup_entry_creates_single_gas_forecast_sensor():
 
 
 def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
-    """Each region must get source-file and updated-at diagnostic timestamp sensors."""
+    """The region must get source-file and updated-at diagnostic timestamp sensors."""
     coordinator = MagicMock()
     coordinator.data = None
 
     entry = MagicMock()
     entry.entry_id = "entry_5"
-    entry.data = {CONF_REGIONS: ["QLD1"]}
-    entry.options = {CONF_REGIONS: ["QLD1", "NSW1"]}
+    entry.data = {CONF_REGION: "QLD1"}
+    entry.options = {}
 
     hass = MagicMock()
     hass.data = {
@@ -380,14 +375,10 @@ def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
         ent for ent in created if isinstance(ent, PD7DayRegionDataUpdatedDatetimeSensor)
     ]
 
-    assert sorted(ent.entity_id for ent in source_dt_entities) == [
-        "sensor.nem_pd7day_nsw1_source_file_datetime",
-        "sensor.nem_pd7day_qld1_source_file_datetime",
-    ]
-    assert sorted(ent.entity_id for ent in updated_dt_entities) == [
-        "sensor.nem_pd7day_nsw1_data_updated_datetime",
-        "sensor.nem_pd7day_qld1_data_updated_datetime",
-    ]
+    assert len(source_dt_entities) == 1
+    assert source_dt_entities[0].entity_id == "sensor.nem_pd7day_qld1_source_file_datetime"
+    assert len(updated_dt_entities) == 1
+    assert updated_dt_entities[0].entity_id == "sensor.nem_pd7day_qld1_data_updated_datetime"
 
 
 # ── Tests: _horizon_hours() ───────────────────────────────────────────────────

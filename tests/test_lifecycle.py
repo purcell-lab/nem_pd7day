@@ -118,7 +118,7 @@ _coord_mod = _load(
 
 from custom_components.nem_pd7day.calibration_store import CalibrationStore
 from custom_components.nem_pd7day.coordinator import PD7DayCoordinator
-from custom_components.nem_pd7day.const import CONF_REGIONS, COORDINATOR_KEY, DOMAIN, STORE_KEY
+from custom_components.nem_pd7day.const import CONF_REGION, COORDINATOR_KEY, DOMAIN, STORE_KEY
 
 
 def make_store(obs_count: int = 0) -> CalibrationStore:

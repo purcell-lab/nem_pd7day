@@ -13,10 +13,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import selector
 
 from .const import (
-    CONF_CALIBRATION_REGION,
+    CONF_REGION,
     CONF_REGIONS,
-    DEFAULT_CALIBRATION_REGION,
-    DEFAULT_REGIONS,
+    DEFAULT_REGION,
     DOMAIN,
     FETCH_TIMES_NEM,
     REGIONS,
@@ -37,43 +36,12 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            selected_regions = user_input[CONF_REGIONS]
-            if isinstance(selected_regions, str):
-                regions = [selected_regions]
-            else:
-                regions = list(selected_regions)
-
-            if not regions:
-                errors[CONF_REGIONS] = "required"
-                return self.async_show_form(
-                    step_id="user",
-                    data_schema=vol.Schema(
-                        {
-                            vol.Required(
-                                CONF_REGIONS, default=DEFAULT_REGIONS
-                            ): selector.selector(
-                                {
-                                    "select": {
-                                        "options": REGIONS,
-                                        "multiple": True,
-                                        "mode": "list",
-                                    }
-                                }
-                            ),
-                        }
-                    ),
-                    errors=errors,
-                    description_placeholders={
-                        "fetch_times": ", ".join(
-                            f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM
-                        )
-                    },
-                )
+            region = user_input[CONF_REGION]
 
             try:
                 session = async_get_clientsession(self.hass)
                 client = PD7DayClient(session)
-                await client.fetch_all(regions[:1])
+                await client.fetch_all([region])
             except aiohttp.ClientError as exc:
                 _LOGGER.warning("PD7DAY connectivity check failed: %s", exc)
                 errors["base"] = "cannot_connect"
@@ -90,22 +58,19 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM
                 )
                 return self.async_create_entry(
-                    title="NEM PD7DAY",
-                    data={
-                        CONF_REGIONS: regions,
-                        CONF_CALIBRATION_REGION: regions[0],
-                    },
+                    title=f"NEM PD7DAY {region}",
+                    data={CONF_REGION: region},
                     description_placeholders={"fetch_times": fetch_times_str},
                 )
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_REGIONS, default=DEFAULT_REGIONS): selector.selector(
+                vol.Required(CONF_REGION, default=DEFAULT_REGION): selector.selector(
                     {
                         "select": {
                             "options": REGIONS,
-                            "multiple": True,
-                            "mode": "list",
+                            "multiple": False,
+                            "mode": "dropdown",
                         }
                     }
                 ),
@@ -130,7 +95,7 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class PD7DayOptionsFlow(config_entries.OptionsFlow):
-    """Allow changing regions after initial setup."""
+    """Allow changing region after initial setup."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
@@ -139,72 +104,27 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         if user_input is not None:
-            selected_regions = user_input[CONF_REGIONS]
-            if isinstance(selected_regions, str):
-                updated_regions = [selected_regions]
-            else:
-                updated_regions = list(selected_regions)
-
-            if not updated_regions:
-                schema = vol.Schema(
-                    {
-                        vol.Required(
-                            CONF_REGIONS,
-                            default=DEFAULT_REGIONS,
-                        ): selector.selector(
-                            {
-                                "select": {
-                                    "options": REGIONS,
-                                    "multiple": True,
-                                    "mode": "list",
-                                }
-                            }
-                        ),
-                    }
-                )
-                return self.async_show_form(
-                    step_id="init",
-                    data_schema=schema,
-                    description_placeholders={
-                        "fetch_times": ", ".join(
-                            f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM
-                        )
-                    },
-                )
-
-            # Keep existing calibration region if still valid, else use first
-            current_cal = self._entry.options.get(
-                CONF_CALIBRATION_REGION,
-                self._entry.data.get(
-                    CONF_CALIBRATION_REGION,
-                    updated_regions[0],
-                ),
-            )
-            calibration_region = (
-                current_cal if current_cal in updated_regions else updated_regions[0]
-            )
-
             return self.async_create_entry(
                 title="",
-                data={
-                    CONF_REGIONS: updated_regions,
-                    CONF_CALIBRATION_REGION: calibration_region,
-                },
+                data={CONF_REGION: user_input[CONF_REGION]},
             )
 
-        current_regions = self._entry.options.get(
-            CONF_REGIONS,
-            self._entry.data.get(CONF_REGIONS, DEFAULT_REGIONS),
+        current_region = self._entry.options.get(
+            CONF_REGION,
+            self._entry.data.get(CONF_REGION) or
+            (self._entry.data.get(CONF_REGIONS, [DEFAULT_REGION])[0]
+             if isinstance(self._entry.data.get(CONF_REGIONS), list)
+             else self._entry.data.get(CONF_REGIONS, DEFAULT_REGION))
         )
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_REGIONS, default=current_regions): selector.selector(
+                vol.Required(CONF_REGION, default=current_region): selector.selector(
                     {
                         "select": {
                             "options": REGIONS,
-                            "multiple": True,
-                            "mode": "list",
+                            "multiple": False,
+                            "mode": "dropdown",
                         }
                     }
                 ),

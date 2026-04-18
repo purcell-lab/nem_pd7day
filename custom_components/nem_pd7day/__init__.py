@@ -16,12 +16,10 @@ from homeassistant.util import dt as dt_util
 
 from .calibration_store import CalibrationStore
 from .const import (
-    CONF_CALIBRATION_REGION,
-    CONF_REGIONS,
     COORDINATOR_KEY,
-    DEFAULT_CALIBRATION_REGION,
-    DEFAULT_REGIONS,
+    DEFAULT_REGION,
     DOMAIN,
+    get_region,
     interconnectors_for_regions,
     REFIT_INTERVAL,
     STORE_KEY,
@@ -40,20 +38,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
 
-    regions: list[str] = entry.options.get(
-        CONF_REGIONS,
-        entry.data.get(CONF_REGIONS, DEFAULT_REGIONS),
-    )
-    calibration_region: str = entry.options.get(
-        CONF_CALIBRATION_REGION,
-        entry.data.get(
-            CONF_CALIBRATION_REGION,
-            regions[0] if regions else DEFAULT_CALIBRATION_REGION,
-        ),
-    )
-    if calibration_region not in regions and regions:
-        calibration_region = regions[0]
-    interconnector_ids = interconnectors_for_regions(regions)
+    region: str = get_region(entry)
+    interconnector_ids = interconnectors_for_regions([region])
 
     # ── Calibration store ────────────────────────────────────────────────────
     store = CalibrationStore(hass)
@@ -62,7 +48,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── Coordinator (no automatic polling) ───────────────────────────────────
     coordinator = PD7DayCoordinator(
         hass,
-        regions,
+        [region],
         store,
         interconnector_ids=interconnector_ids,
     )
@@ -146,8 +132,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── Actual price service (TradingIS) ────────────────────────────────────
     session = async_get_clientsession(hass)
     actual_service = ActualPriceService(
-        hass, store, regions, session,
-        calibration_region=calibration_region,
+        hass, store, [region], session,
+        calibration_region=region,
     )
     await actual_service.async_setup(entry)
 
