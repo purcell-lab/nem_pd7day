@@ -180,6 +180,9 @@ def make_store() -> CalibrationStore:
     store._coeff_store = MagicMock()
     store._coeff_store.async_load = AsyncMock(return_value=None)
     store._coeff_store.async_save = AsyncMock()
+    store._fh_store = MagicMock()
+    store._fh_store.async_load = AsyncMock(return_value=None)
+    store._fh_store.async_save = AsyncMock()
     from custom_components.nem_pd7day.calibration_engine import CalibrationEngine
     store._engine = CalibrationEngine()
     store._observations = []
@@ -249,12 +252,12 @@ def test_coordinator_ingest_with_real_store_populates_history():
 
     # Run the ingest directly
     for region, price_data in result.prices.items():
-        store.ingest_forecast(
+        run_async(store.ingest_forecast(
             region=region,
             price_data=price_data,
             interconnectors=result.interconnectors,
             case=result.case,
-        )
+        ))
 
     expected_key = nem_iso(period_end_dt - timedelta(minutes=30))
     assert expected_key in store._forecast_history, (
@@ -284,9 +287,9 @@ def test_restart_reingest_same_file_no_duplicate():
     price_data = make_pd7day_data(run_at_dt, periods)
 
     # First ingest (startup)
-    store.ingest_forecast("QLD1", price_data, {}, make_case())
+    run_async(store.ingest_forecast("QLD1", price_data, {}, make_case()))
     # Second ingest (restart-triggered, same AEMO file = same run_at)
-    store.ingest_forecast("QLD1", price_data, {}, make_case())
+    run_async(store.ingest_forecast("QLD1", price_data, {}, make_case()))
 
     key = nem_iso(period_end_dt - timedelta(minutes=30))
     entries = store._forecast_history[key]
@@ -310,7 +313,7 @@ def test_new_aemo_publish_adds_second_entry():
     for run_at_dt in [run1, run2]:
         periods = [make_price_period(period_end_dt, value=0.10)]
         price_data = make_pd7day_data(run_at_dt, periods)
-        store.ingest_forecast("QLD1", price_data, {}, make_case())
+        run_async(store.ingest_forecast("QLD1", price_data, {}, make_case()))
 
     key = nem_iso(period_end_dt - timedelta(minutes=30))
     entries = store._forecast_history[key]
@@ -334,7 +337,7 @@ def test_intervention_flag_propagated_to_history():
     periods = [make_price_period(period_end_dt)]
     price_data = make_pd7day_data(run_at_dt, periods)
 
-    store.ingest_forecast("QLD1", price_data, {}, make_case(intervention=True))
+    run_async(store.ingest_forecast("QLD1", price_data, {}, make_case(intervention=True)))
 
     key = nem_iso(period_end_dt - timedelta(minutes=30))
     assert store._forecast_history[key][0]["is_intervention"] is True, (
@@ -360,7 +363,7 @@ def test_intervention_observations_excluded_from_ols():
     price_data = make_pd7day_data(run_at_dt, periods)
 
     # Ingest as intervention
-    store.ingest_forecast("QLD1", price_data, {}, make_case(intervention=True))
+    run_async(store.ingest_forecast("QLD1", price_data, {}, make_case(intervention=True)))
 
     # Record an actual for that interval
     run_async(store.async_record_actual(period_start_str, 0.095))
@@ -428,7 +431,7 @@ def test_forecast_price_stored_is_raw_not_calibrated():
     # from float(row[8]) / 1000.  Calibration is applied later in sensor.py.
     period = make_price_period(period_end_dt, value=raw_value)
     price_data = make_pd7day_data(run_at_dt, [period])
-    store.ingest_forecast("QLD1", price_data, {}, make_case())
+    run_async(store.ingest_forecast("QLD1", price_data, {}, make_case()))
 
     key = nem_iso(period_end_dt - timedelta(minutes=30))
     entry = store._forecast_history[key][0]

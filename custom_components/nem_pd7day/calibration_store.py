@@ -41,6 +41,7 @@ _LOGGER = logging.getLogger(__name__)
 
 OBS_STORAGE_KEY = "nem_pd7day.observation_log"
 COEFF_STORAGE_KEY = "nem_pd7day.calibration_coefficients"
+FORECAST_HISTORY_STORAGE_KEY = "nem_pd7day.forecast_history"
 STORAGE_VERSION = 1
 
 MAX_TOTAL_OBS = 20_000
@@ -58,6 +59,7 @@ class CalibrationStore:
         self._hass = hass
         self._obs_store = Store(hass, STORAGE_VERSION, OBS_STORAGE_KEY)
         self._coeff_store = Store(hass, STORAGE_VERSION, COEFF_STORAGE_KEY)
+        self._fh_store = Store(hass, STORAGE_VERSION, FORECAST_HISTORY_STORAGE_KEY)
         self._engine = CalibrationEngine()
 
         self._observations: list[dict] = []
@@ -114,9 +116,16 @@ class CalibrationStore:
                     "PD7DAY calibration: could not restore coefficients: %s", exc
                 )
 
+        fh_data = await self._fh_store.async_load() or {}
+        self._forecast_history = fh_data.get("forecast_history", {})
+        _LOGGER.info(
+            "PD7DAY calibration: loaded %d forecast history keys from storage",
+            len(self._forecast_history),
+        )
+
     # ── Forecast history management ───────────────────────────────────────────
 
-    def ingest_forecast(
+    async def ingest_forecast(
         self,
         region: str,
         price_data: "PD7DayData",
@@ -168,6 +177,11 @@ class CalibrationStore:
         self._forecast_history = {
             k: v for k, v in self._forecast_history.items() if k >= cutoff
         }
+
+        await self._save_forecast_history()
+
+    async def _save_forecast_history(self) -> None:
+        await self._fh_store.async_save({"forecast_history": self._forecast_history})
 
     # ── Observation logging ───────────────────────────────────────────────────
 

@@ -75,7 +75,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         # Feed forecast history into calibration store
         if self._store is not None:
             for region, price_data in result.prices.items():
-                self._store.ingest_forecast(
+                await self._store.ingest_forecast(
                     region=region,
                     price_data=price_data,
                     interconnectors=result.interconnectors,

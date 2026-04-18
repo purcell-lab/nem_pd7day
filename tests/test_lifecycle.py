@@ -130,6 +130,9 @@ def make_store(obs_count: int = 0) -> CalibrationStore:
     store._coeff_store = MagicMock()
     store._coeff_store.async_load = AsyncMock(return_value=None)
     store._coeff_store.async_save = AsyncMock()
+    store._fh_store = MagicMock()
+    store._fh_store.async_load = AsyncMock(return_value=None)
+    store._fh_store.async_save = AsyncMock()
     from custom_components.nem_pd7day.calibration_engine import CalibrationEngine
     store._engine = CalibrationEngine()
     store._observations = [{"dummy": i} for i in range(obs_count)]
