@@ -270,17 +270,28 @@ The calibration system corrects the known bias in AEMO's PD7DAY forecasts using 
 
 ### AEMO forecast bias — QLD empirical findings
 
-After ~1 week of observations (QLD1), consistent structural patterns emerge:
+![QLD Duck Curve and AEMO Bias Analysis](docs/qld_duck_curve_bias.png)
 
-| Pattern | Buckets | Interpretation |
-|---|---|---|
-| Strong over-forecast | `h00_06__peak`, `h06_12__peak` | AEMO over-forecasts peak prices at short horizons; a ≈ 0.37–0.46 |
-| Flat intercept | `h12_24__peak`, `h24_48__peak` | a → 0, b ≈ $90/MWh — AEMO peak forecasts beyond 12h carry near-zero information |
-| Near-passthrough | `h06_12__offpeak` | a ≈ 0.99 — AEMO offpeak short-horizon forecasts are well-calibrated |
-| Under-forecast | `h12_24__offpeak` | a ≈ 1.04 — slight upward bias correction |
-| Solar correction | `h00_06__solar` through `h24_48__solar` | Modest over-forecast; a = 0.91–0.98 converging to passthrough at longer horizons |
+The chart above shows three panels derived from 648 forecast vs actual observation pairs collected over the first five days of operation (Apr 15–19 2026, QLD1):
 
-This is consistent with the academic literature (Sinclair et al. 2026): AEMO pre-dispatch RRP contributes >60% of model importance at 2–16h horizons, and AEMO systematically over-forecasts peak prices due to conservatism bias.
+**Panel 1 — Duck curve**: The stylised QLD wholesale price profile. Actual prices follow the classic duck curve shape — a solar-driven trough around 13:00 and a sharp evening ramp as rooftop solar drops off and demand peaks around 18:30. AEMO's raw PD7DAY forecast over-estimates the evening peak height and under-corrects the solar trough depth. The calibrated forecast applies the OLS correction to bring both in line.
+
+**Panel 2 — OLS slope heatmap**: Each cell shows the fitted slope `a` for that horizon × time-of-day bucket. Green (a≈1) means AEMO's forecast is unbiased. Red (a<1) means AEMO over-forecasts and the calibration compresses the signal. Yellow-green (a>1) means AEMO under-forecasts. Confidence indicators show observation count: ●●● (n≥40), ●●○ (n≥15), ●○○ (n<15).
+
+**Panel 3 — Key bias patterns**: The most actionable signals after five days of data.
+
+The consistent structural patterns emerging from the data:
+
+| Pattern | Buckets | Observed | Interpretation |
+|---|---|---|---|
+| Strong over-forecast | `h00_06__peak`, `h06_12__peak` | a ≈ 0.36–0.38 | AEMO over-forecasts evening peak at short horizons; calibration reduces to ~37% of raw signal |
+| Flat intercept | `h12_24__peak`, `h24_48__peak` | a ≈ 0.10, 0.04 · b ≈ $90/MWh | AEMO peak forecasts beyond 12h carry near-zero information — calibration collapses to flat ~$90/MWh regardless of raw value |
+| Solar over-forecast | `h00_06__solar` through `h12_24__solar` | a ≈ 0.72–0.91 | Modest compression; converges to near-passthrough at h24_48 (a=0.985) |
+| Near-passthrough | `h06_12__offpeak` | a ≈ 0.88 | AEMO offpeak 6–12h forecasts are well-calibrated |
+| Mild under-forecast | `h12_24__offpeak` | a ≈ 1.04 | Slight upward correction for mid-range offpeak horizons |
+| Shoulder anomaly | `h06_12__shoulder`, `h12_24__shoulder` | a ≈ 1.41–1.58 | AEMO under-forecasts shoulder (20:00–22:00) persistence; n=10, provisional |
+
+This is consistent with the academic literature — Sinclair et al. (2026) found AEMO pre-dispatch RRP contributes >60% of model importance at 2–16h horizons, and AEMO systematically over-forecasts peak prices due to conservatism bias. The flat-intercept pattern at `h24_48__peak` (a→0, b≈$90/MWh) is particularly striking: the raw AEMO 24–48h peak forecast contains essentially no predictive information and the calibration model correctly learns to ignore it.
 
 ### Warm-up period
 
