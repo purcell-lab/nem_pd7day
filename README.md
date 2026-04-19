@@ -402,6 +402,7 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 
 | Version | Changes |
 |---|---|
+| 2.0.7 | Calibration: passthrough when raw <= 0 (negative price regime); clamp quantile slopes to 0 |
 | 2.0.6 | Fix missing await on async_added_to_hass — sensors now register correctly on HA restart |
 | 2.0.5 | Live sensor state advance (30-min intervals); gas_tj fix; calibration sensor → diagnostic; forecast history merged into calibration sensor |
 | 2.0.4 | Region-scoped storage keys (multi-instance safe, auto-migration); gas_tj populated in forecast history |
