@@ -36,8 +36,11 @@ _engine_mod = _load(
 
 from custom_components.nem_pd7day.calibration_engine import (
     MIN_OBS,
+    BucketModel,
     CalibrationEngine,
+    LinearCoeff,
     Observation,
+    QuantileCoeff,
     _bucket_key,
     _horizon_label,
     _tod_label,
@@ -431,6 +434,83 @@ def test_quantile_slopes_ordered_after_irls():
     )
 
 
+def test_quantile_slopes_clamped_to_zero():
+    """
+    When IRLS produces negative quantile slopes, the engine must clamp them to 0.
+    Negative quantile slopes produce nonsensical near-zero or negative P10/P90
+    bands for positive raw prices.
+    """
+    engine = CalibrationEngine()
+
+    # Synthetic data where actual decreases as forecast increases — IRLS will
+    # try to fit negative slopes for all quantiles.
+    rng = random.Random(999)
+    obs = []
+    for _ in range(80):
+        fc = rng.uniform(0.05, 0.25)
+        actual = -0.3 * fc + 0.15 + rng.gauss(0, 0.002)
+        obs.append(make_obs(fc, actual, horizon_hours=30.0, hour_of_day=20))
+
+    result = engine.fit(obs)
+    bucket = result.get_bucket(horizon_hours=30.0, hour_of_day=20)
+
+    assert bucket.q10.a >= 0.0, (
+        f"q10 slope a={bucket.q10.a} is negative — should be clamped to >= 0"
+    )
+    assert bucket.q50.a >= 0.0, (
+        f"q50 slope a={bucket.q50.a} is negative — should be clamped to >= 0"
+    )
+    assert bucket.q90.a >= 0.0, (
+        f"q90 slope a={bucket.q90.a} is negative — should be clamped to >= 0"
+    )
+    print(
+        f"  PASS: quantile slopes clamped to >= 0 "
+        f"(q10_a={bucket.q10.a}, q50_a={bucket.q50.a}, q90_a={bucket.q90.a})"
+    )
+
+
+def test_negative_raw_passthrough():
+    """
+    When raw forecast is negative, calibration must return the raw value
+    unchanged. The model is trained on positive prices only — extrapolating
+    through positive intercepts would actively worsen the forecast.
+    """
+    model = BucketModel(
+        bucket_key="h24_48__shoulder",
+        ols=LinearCoeff(a=0.8, b=0.02, n=100, mae=0.01, rmse=0.02),
+        q10=QuantileCoeff(quantile=0.1, a=0.6, b=0.01, n=100),
+        q50=QuantileCoeff(quantile=0.5, a=0.8, b=0.02, n=100),
+        q90=QuantileCoeff(quantile=0.9, a=1.0, b=0.03, n=100),
+    )
+
+    result = model.apply_all(-0.005)
+    assert result["calibrated"] == round(-0.005, 6), (
+        f"Negative raw should pass through unchanged, got {result['calibrated']}"
+    )
+    assert result["calibrated_source"] == "passthrough_negative"
+    print(f"  PASS: negative raw passthrough (calibrated={result['calibrated']})")
+
+
+def test_zero_raw_passthrough():
+    """
+    When raw forecast is exactly 0.0, calibration must return 0.0 unchanged.
+    """
+    model = BucketModel(
+        bucket_key="h24_48__shoulder",
+        ols=LinearCoeff(a=0.8, b=0.02, n=100, mae=0.01, rmse=0.02),
+        q10=QuantileCoeff(quantile=0.1, a=0.6, b=0.01, n=100),
+        q50=QuantileCoeff(quantile=0.5, a=0.8, b=0.02, n=100),
+        q90=QuantileCoeff(quantile=0.9, a=1.0, b=0.03, n=100),
+    )
+
+    result = model.apply_all(0.0)
+    assert result["calibrated"] == 0.0, (
+        f"Zero raw should pass through unchanged, got {result['calibrated']}"
+    )
+    assert result["calibrated_source"] == "passthrough_negative"
+    print(f"  PASS: zero raw passthrough (calibrated={result['calibrated']})")
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -458,6 +538,9 @@ TESTS = [
     # Bug-fix regressions
     test_negative_ols_slope_clamped,
     test_quantile_slopes_ordered_after_irls,
+    test_quantile_slopes_clamped_to_zero,
+    test_negative_raw_passthrough,
+    test_zero_raw_passthrough,
 ]
 
 

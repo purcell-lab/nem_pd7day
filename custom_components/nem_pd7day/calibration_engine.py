@@ -132,6 +132,16 @@ class BucketModel:
 
     def apply_all(self, x: float) -> dict:
         """Return calibrated point estimate + confidence interval."""
+        if x <= 0.0:
+            return {
+                "calibrated": round(x, 6),
+                "p10": round(x, 6),
+                "p50": round(x, 6),
+                "p90": round(x, 6),
+                "calibrated_source": "passthrough_negative",
+                "n_obs": self.ols.n,
+            }
+
         if self.ols.is_default:
             return {
                 "calibrated": round(x, 6),
@@ -417,6 +427,10 @@ class CalibrationEngine:
 
             # Enforce monotonic ordering of quantile slopes: q10_a <= q50_a <= q90_a
             q10_a, q50_a, q90_a = sorted([q_results["q10"][0], q_results["q50"][0], q_results["q90"][0]])
+            # Clamp negative quantile slopes to 0 (same logic as OLS clamp)
+            q10_a = max(q10_a, 0.0)
+            q50_a = max(q50_a, 0.0)
+            q90_a = max(q90_a, 0.0)
             q_results["q10"] = (q10_a, q_results["q10"][1], q_results["q10"][2])
             q_results["q50"] = (q50_a, q_results["q50"][1], q_results["q50"][2])
             q_results["q90"] = (q90_a, q_results["q90"][1], q_results["q90"][2])
