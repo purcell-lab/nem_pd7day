@@ -24,7 +24,13 @@ def _load(name, path):
     spec.loader.exec_module(mod)
     return mod
 
-# Load nem_time first (no HA deps), then calibration_engine
+# Load const first, then nem_time (no HA deps), then calibration_engine.
+# Loading const before nem_time prevents the relative import in nem_time
+# from triggering the full package __init__.py (which needs HA).
+_const = _load(
+    "custom_components.nem_pd7day.const",
+    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
+)
 _nem_time = _load(
     "custom_components.nem_pd7day.nem_time",
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
@@ -36,6 +42,8 @@ _engine_mod = _load(
 
 from custom_components.nem_pd7day.calibration_engine import (
     MIN_OBS,
+    OBSERVATION_WINDOW_DAYS,
+    SPIKE_THRESHOLD,
     BucketModel,
     CalibrationEngine,
     LinearCoeff,
@@ -511,6 +519,180 @@ def test_zero_raw_passthrough():
     print(f"  PASS: zero raw passthrough (calibrated={result['calibrated']})")
 
 
+# ── Spike passthrough tests ──────────────────────────────────────────────────
+
+def test_spike_passthrough_above_threshold():
+    """
+    When raw forecast >= SPIKE_THRESHOLD (0.30 $/kWh), calibration must
+    return the raw value unchanged with calibrated_source="passthrough_high".
+    """
+    model = BucketModel(
+        bucket_key="h12_24__peak",
+        ols=LinearCoeff(a=1.5, b=0.02, n=100, mae=0.01, rmse=0.02),
+        q10=QuantileCoeff(quantile=0.1, a=1.2, b=0.01, n=100),
+        q50=QuantileCoeff(quantile=0.5, a=1.5, b=0.02, n=100),
+        q90=QuantileCoeff(quantile=0.9, a=1.8, b=0.03, n=100),
+    )
+
+    result = model.apply_all(0.35)
+    assert result["calibrated"] == round(0.35, 6), (
+        f"Spike raw should pass through unchanged, got {result['calibrated']}"
+    )
+    assert result["calibrated_source"] == "passthrough_high"
+    assert result["p10"] == round(0.35, 6)
+    assert result["p50"] == round(0.35, 6)
+    assert result["p90"] == round(0.35, 6)
+    print(f"  PASS: spike passthrough above threshold (raw=0.35, source={result['calibrated_source']})")
+
+
+def test_below_spike_threshold_uses_ols():
+    """
+    When raw forecast < SPIKE_THRESHOLD (e.g. 0.25), calibration should
+    proceed through the normal OLS path.
+    """
+    model = BucketModel(
+        bucket_key="h12_24__peak",
+        ols=LinearCoeff(a=1.5, b=0.02, n=100, mae=0.01, rmse=0.02),
+        q10=QuantileCoeff(quantile=0.1, a=1.2, b=0.01, n=100),
+        q50=QuantileCoeff(quantile=0.5, a=1.5, b=0.02, n=100),
+        q90=QuantileCoeff(quantile=0.9, a=1.8, b=0.03, n=100),
+    )
+
+    result = model.apply_all(0.25)
+    # OLS: 1.5 * 0.25 + 0.02 = 0.395
+    expected_calibrated = round(1.5 * 0.25 + 0.02, 6)
+    assert result["calibrated"] == expected_calibrated, (
+        f"Expected OLS calibrated={expected_calibrated}, got {result['calibrated']}"
+    )
+    assert result["calibrated_source"] == "ols"
+    assert result["p10"] is not None
+    assert result["p90"] is not None
+    print(f"  PASS: below spike threshold uses OLS (raw=0.25, calibrated={result['calibrated']})")
+
+
+# ── Rolling observation window tests ─────────────────────────────────────────
+
+def test_rolling_window_filters_old_observations():
+    """
+    Observations older than OBSERVATION_WINDOW_DAYS are excluded from the fit.
+    Create 100 days of observations; only the most recent 90 should be used.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    engine = CalibrationEngine()
+
+    # Create observations spanning 100 days — 1 per day, all in the same bucket
+    # (h12_24 / solar, horizon=18, hour=12)
+    rng = random.Random(42)
+    now = datetime.now(timezone.utc)
+
+    all_obs = []
+    for day_offset in range(100):
+        obs_time = now - timedelta(days=99 - day_offset)  # oldest first
+        iso_str = obs_time.strftime("%Y-%m-%dT%H:%M:%S+10:00")
+        fc = rng.uniform(0.05, 0.25)
+        actual = 2.0 * fc + 0.01 + rng.gauss(0, 0.003)
+        all_obs.append(Observation(
+            interval_time=iso_str,
+            horizon_hours=18.0,
+            pd7day_forecast=fc,
+            actual_rrp=actual,
+            forecast_run_at=iso_str,
+            hour_of_day=12,
+            day_of_week=0,
+            month=4,
+            gas_forecast_tj=None,
+            qni_mwflow=None,
+            qni_violation_degree=None,
+            is_intervention=False,
+        ))
+
+    result = engine.fit(all_obs)
+
+    # observations_in_window should be ~90 (within the rolling window)
+    assert result.observations_in_window <= 91, (
+        f"observations_in_window should be ~90, got {result.observations_in_window}"
+    )
+    assert result.observations_in_window >= 89, (
+        f"observations_in_window should be ~90, got {result.observations_in_window}"
+    )
+
+    # total_observations counts non-intervention obs in window (all are non-intervention here)
+    assert result.total_observations == result.observations_in_window, (
+        f"total_observations should equal observations_in_window for non-intervention data, "
+        f"got {result.total_observations} vs {result.observations_in_window}"
+    )
+
+    # The bucket should have n reflecting the windowed count, not 100
+    bucket = result.get_bucket(horizon_hours=18.0, hour_of_day=12)
+    assert bucket.ols.n <= 91, (
+        f"Bucket n should be ~90, got {bucket.ols.n}"
+    )
+    assert bucket.ols.n >= 89, (
+        f"Bucket n should be ~90, got {bucket.ols.n}"
+    )
+    print(
+        f"  PASS: rolling window filters old observations "
+        f"(input=100, in_window={result.observations_in_window}, bucket_n={bucket.ols.n})"
+    )
+
+
+def test_rolling_window_storage_unchanged():
+    """
+    The rolling window is a fit-time filter. All observations remain
+    available in the input list — the engine does not mutate or trim them.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    engine = CalibrationEngine()
+
+    now = datetime.now(timezone.utc)
+    rng = random.Random(123)
+
+    all_obs = []
+    for day_offset in range(100):
+        obs_time = now - timedelta(days=99 - day_offset)
+        iso_str = obs_time.strftime("%Y-%m-%dT%H:%M:%S+10:00")
+        fc = rng.uniform(0.05, 0.25)
+        actual = 2.0 * fc + 0.01
+        all_obs.append(Observation(
+            interval_time=iso_str,
+            horizon_hours=18.0,
+            pd7day_forecast=fc,
+            actual_rrp=actual,
+            forecast_run_at=iso_str,
+            hour_of_day=12,
+            day_of_week=0,
+            month=4,
+            gas_forecast_tj=None,
+            qni_mwflow=None,
+            qni_violation_degree=None,
+            is_intervention=False,
+        ))
+
+    original_len = len(all_obs)
+    result = engine.fit(all_obs)
+
+    # Engine must NOT mutate or trim the input list
+    assert len(all_obs) == original_len, (
+        f"Engine mutated input list: was {original_len}, now {len(all_obs)}"
+    )
+    # observations_in_window should be less than the total input (100)
+    assert result.observations_in_window < original_len, (
+        f"observations_in_window ({result.observations_in_window}) should be < "
+        f"input length ({original_len}) — old observations should be excluded from fit"
+    )
+    # All 100 observations still in the input list (storage unchanged)
+    assert len(all_obs) == 100, (
+        f"Input list should still have 100 entries, got {len(all_obs)}"
+    )
+    print(
+        f"  PASS: rolling window storage unchanged "
+        f"(input_len={len(all_obs)}, "
+        f"in_window={result.observations_in_window})"
+    )
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -541,6 +723,12 @@ TESTS = [
     test_quantile_slopes_clamped_to_zero,
     test_negative_raw_passthrough,
     test_zero_raw_passthrough,
+    # Spike passthrough
+    test_spike_passthrough_above_threshold,
+    test_below_spike_threshold_uses_ols,
+    # Rolling observation window
+    test_rolling_window_filters_old_observations,
+    test_rolling_window_storage_unchanged,
 ]
 
 

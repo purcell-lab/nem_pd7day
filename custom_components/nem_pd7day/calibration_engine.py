@@ -50,6 +50,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
 from .const import (
@@ -67,6 +68,20 @@ from .const import (
 from .nem_time import now_nem, to_nem_iso
 
 _LOGGER = logging.getLogger(__name__)
+
+# ── Spike regime threshold ────────────────────────────────────────────────────
+# When the raw AEMO forecast is at or above this level, AEMO is already
+# signalling a significant price event.  The linear calibration model (trained
+# on normal prices) should not attempt to correct it — pass through unchanged.
+# 0.30 $/kWh = $300/MWh ≈ 3× normal peak price.
+SPIKE_THRESHOLD = 0.30  # $/kWh
+
+# ── Rolling observation window ────────────────────────────────────────────────
+# Only observations within the last N days are used when fitting the
+# calibration model.  This prevents stale/seasonal data from corrupting the
+# model while all observations are still retained in storage for
+# total_increasing state class accounting.
+OBSERVATION_WINDOW_DAYS = 90
 
 
 # ── Data structures ───────────────────────────────────────────────────────────
@@ -142,6 +157,16 @@ class BucketModel:
                 "n_obs": self.ols.n,
             }
 
+        if x >= SPIKE_THRESHOLD:
+            return {
+                "calibrated": round(x, 6),
+                "p10": round(x, 6),
+                "p50": round(x, 6),
+                "p90": round(x, 6),
+                "calibrated_source": "passthrough_high",
+                "n_obs": self.ols.n,
+            }
+
         if self.ols.is_default:
             return {
                 "calibrated": round(x, 6),
@@ -207,6 +232,7 @@ class CalibrationResult:
     """Full set of fitted models across all buckets."""
     fitted_at: str
     total_observations: int
+    observations_in_window: int = 0
     models: dict[str, BucketModel] = field(default_factory=dict)
 
     def get_bucket(self, horizon_hours: float, hour_of_day: int) -> BucketModel:
@@ -221,6 +247,8 @@ class CalibrationResult:
         out = {
             "fitted_at": self.fitted_at,
             "total_observations": self.total_observations,
+            "observation_window_days": OBSERVATION_WINDOW_DAYS,
+            "observations_in_window": self.observations_in_window,
             "buckets": {},
         }
         for key, model in self.models.items():
@@ -390,12 +418,32 @@ class CalibrationEngine:
         """
         Partition observations into buckets, fit all models.
         Returns a CalibrationResult ready to apply to new forecasts.
+
+        Only observations within the last OBSERVATION_WINDOW_DAYS are used
+        for fitting.  All observations remain in storage (the window is a
+        fit-time filter only).
         """
+        # ── Rolling window filter ────────────────────────────────────────────
+        cutoff = datetime.now(timezone.utc) - timedelta(days=OBSERVATION_WINDOW_DAYS)
+        windowed: list[Observation] = []
+        for obs in observations:
+            try:
+                obs_dt = datetime.fromisoformat(obs.interval_time)
+                if obs_dt.tzinfo is None:
+                    # Legacy naive timestamp — assume NEM time (UTC+10)
+                    obs_dt = obs_dt.replace(tzinfo=timezone(timedelta(hours=10)))
+                if obs_dt >= cutoff:
+                    windowed.append(obs)
+            except (ValueError, TypeError):
+                # Unparseable timestamp — include defensively
+                windowed.append(obs)
+        observations_in_window = len(windowed)
+
         # Partition
         buckets: dict[str, list[tuple[float, float]]] = {
             k: [] for k in all_bucket_keys()
         }
-        for obs in observations:
+        for obs in windowed:
             if obs.is_intervention:
                 # Skip intervention periods — prices are not market-driven
                 continue
@@ -452,16 +500,20 @@ class CalibrationEngine:
                     model.q10.a, model.q90.a,
                 )
 
-        total = len([o for o in observations if not o.is_intervention])
+        total = len([o for o in windowed if not o.is_intervention])
         _LOGGER.info(
-            "Calibration fit complete: %d observations, %d buckets active",
+            "Calibration fit complete: %d observations in %d-day window "
+            "(%d total stored), %d buckets active",
             total,
+            OBSERVATION_WINDOW_DAYS,
+            len(observations),
             sum(1 for m in models.values() if not m.ols.is_default),
         )
 
         return CalibrationResult(
             fitted_at=now_str,
             total_observations=total,
+            observations_in_window=observations_in_window,
             models=models,
         )
 
@@ -470,6 +522,7 @@ class CalibrationEngine:
         out: dict = {
             "fitted_at": result.fitted_at,
             "total_observations": result.total_observations,
+            "observations_in_window": result.observations_in_window,
             "models": {},
         }
         for key, model in result.models.items():
@@ -506,5 +559,6 @@ class CalibrationEngine:
         return CalibrationResult(
             fitted_at=data.get("fitted_at", ""),
             total_observations=data.get("total_observations", 0),
+            observations_in_window=data.get("observations_in_window", 0),
             models=models,
         )

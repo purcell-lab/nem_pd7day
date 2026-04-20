@@ -28,6 +28,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .calibration_engine import (
+    OBSERVATION_WINDOW_DAYS,
     CalibrationEngine,
     CalibrationResult,
     Observation,
@@ -415,6 +416,8 @@ class CalibrationStore:
             "status": "active",
             "fitted_at": self._calibration.fitted_at,
             "observation_count": self.observation_count,
+            "observation_window_days": OBSERVATION_WINDOW_DAYS,
+            "observations_in_window": self._calibration.observations_in_window,
             "active_buckets": self.active_bucket_count,
             "total_buckets": 24,
             "summary": self._calibration.summary(),
