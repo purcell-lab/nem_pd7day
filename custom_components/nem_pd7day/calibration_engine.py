@@ -76,6 +76,14 @@ _LOGGER = logging.getLogger(__name__)
 # 3.00 $/kWh = $3000/MWh — genuine extreme spike territory.
 SPIKE_THRESHOLD = 3.00  # $/kWh
 
+# ── Negative passthrough threshold ───────────────────────────────────────────
+# When raw <= this value, pass through unchanged without calibration.
+# During the solar window AEMO often forecasts mild negatives (~−$0.03/kWh)
+# while actuals are near zero — the linear model can correct these usefully.
+# Only deeply negative raws (genuine negative-price events) should bypass
+# calibration.  Set to −0.10 $/kWh (−$100/MWh) as the passthrough boundary.
+NEGATIVE_PASSTHROUGH_THRESHOLD = -0.10  # $/kWh
+
 # ── Rolling observation window ────────────────────────────────────────────────
 # Only observations within the last N days are used when fitting the
 # calibration model.  This prevents stale/seasonal data from corrupting the
@@ -147,7 +155,7 @@ class BucketModel:
 
     def apply_all(self, x: float) -> dict:
         """Return calibrated point estimate + confidence interval."""
-        if x <= 0.0:
+        if x <= NEGATIVE_PASSTHROUGH_THRESHOLD:
             return {
                 "calibrated": round(x, 6),
                 "p10": round(x, 6),

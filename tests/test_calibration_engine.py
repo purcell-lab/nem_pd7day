@@ -43,6 +43,7 @@ _engine_mod = _load(
 from custom_components.nem_pd7day.calibration_engine import (
     MIN_OBS,
     OBSERVATION_WINDOW_DAYS,
+    NEGATIVE_PASSTHROUGH_THRESHOLD,
     SPIKE_THRESHOLD,
     BucketModel,
     CalibrationEngine,
@@ -479,9 +480,8 @@ def test_quantile_slopes_clamped_to_zero():
 
 def test_negative_raw_passthrough():
     """
-    When raw forecast is negative, calibration must return the raw value
-    unchanged. The model is trained on positive prices only — extrapolating
-    through positive intercepts would actively worsen the forecast.
+    When raw forecast is <= NEGATIVE_PASSTHROUGH_THRESHOLD (-0.10 $/kWh),
+    calibration must return the raw value unchanged — genuine negative-price event.
     """
     model = BucketModel(
         bucket_key="h24_48__shoulder",
@@ -491,17 +491,43 @@ def test_negative_raw_passthrough():
         q90=QuantileCoeff(quantile=0.9, a=1.0, b=0.03, n=100),
     )
 
-    result = model.apply_all(-0.005)
-    assert result["calibrated"] == round(-0.005, 6), (
-        f"Negative raw should pass through unchanged, got {result['calibrated']}"
+    result = model.apply_all(-0.15)
+    assert result["calibrated"] == round(-0.15, 6), (
+        f"Deeply negative raw should pass through unchanged, got {result['calibrated']}"
     )
     assert result["calibrated_source"] == "passthrough_negative"
     print(f"  PASS: negative raw passthrough (calibrated={result['calibrated']})")
 
 
-def test_zero_raw_passthrough():
+def test_mild_negative_raw_uses_ols():
     """
-    When raw forecast is exactly 0.0, calibration must return 0.0 unchanged.
+    When raw forecast is mildly negative (> NEGATIVE_PASSTHROUGH_THRESHOLD,
+    e.g. -0.03 $/kWh), calibration should apply OLS correction.
+    This is common in the solar window where AEMO over-corrects the trough
+    but actual prices are near zero.
+    """
+    model = BucketModel(
+        bucket_key="h12_24__solar",
+        ols=LinearCoeff(a=0.928, b=0.012, n=70, mae=0.010, rmse=0.012),
+        q10=QuantileCoeff(quantile=0.1, a=0.920, b=0.012, n=70),
+        q50=QuantileCoeff(quantile=0.5, a=0.928, b=0.012, n=70),
+        q90=QuantileCoeff(quantile=0.9, a=0.931, b=0.012, n=70),
+    )
+
+    result = model.apply_all(-0.03)
+    # OLS: 0.928 * -0.03 + 0.012 = -0.01584 — closer to zero than raw
+    expected = round(0.928 * -0.03 + 0.012, 6)
+    assert result["calibrated"] == expected, (
+        f"Mild negative raw should use OLS, got {result['calibrated']}, expected {expected}"
+    )
+    assert result["calibrated_source"] == "ols"
+    print(f"  PASS: mild negative raw uses OLS (raw=-0.03, calibrated={result['calibrated']})")
+
+
+def test_zero_raw_uses_ols():
+    """
+    When raw forecast is exactly 0.0, calibration should apply OLS
+    (above the -0.10 passthrough threshold).
     """
     model = BucketModel(
         bucket_key="h24_48__shoulder",
@@ -512,11 +538,31 @@ def test_zero_raw_passthrough():
     )
 
     result = model.apply_all(0.0)
-    assert result["calibrated"] == 0.0, (
-        f"Zero raw should pass through unchanged, got {result['calibrated']}"
+    # OLS: 0.8 * 0.0 + 0.02 = 0.02
+    expected = round(0.8 * 0.0 + 0.02, 6)
+    assert result["calibrated"] == expected, (
+        f"Zero raw should use OLS, got {result['calibrated']}, expected {expected}"
     )
+    assert result["calibrated_source"] == "ols"
+    print(f"  PASS: zero raw uses OLS (calibrated={result['calibrated']})")
+
+
+def test_threshold_boundary_exact():
+    """
+    Raw exactly at NEGATIVE_PASSTHROUGH_THRESHOLD (-0.10) must pass through.
+    """
+    model = BucketModel(
+        bucket_key="h12_24__solar",
+        ols=LinearCoeff(a=0.928, b=0.012, n=70, mae=0.010, rmse=0.012),
+        q10=QuantileCoeff(quantile=0.1, a=0.920, b=0.012, n=70),
+        q50=QuantileCoeff(quantile=0.5, a=0.928, b=0.012, n=70),
+        q90=QuantileCoeff(quantile=0.9, a=0.931, b=0.012, n=70),
+    )
+
+    result = model.apply_all(-0.10)
+    assert result["calibrated"] == round(-0.10, 6)
     assert result["calibrated_source"] == "passthrough_negative"
-    print(f"  PASS: zero raw passthrough (calibrated={result['calibrated']})")
+    print(f"  PASS: threshold boundary exact passthrough (raw=-0.10)")
 
 
 # ── Spike passthrough tests ──────────────────────────────────────────────────
@@ -722,10 +768,13 @@ TESTS = [
     test_quantile_slopes_ordered_after_irls,
     test_quantile_slopes_clamped_to_zero,
     test_negative_raw_passthrough,
-    test_zero_raw_passthrough,
+    test_mild_negative_raw_uses_ols,
+    test_zero_raw_uses_ols,
+    test_threshold_boundary_exact,
     # Spike passthrough
     test_spike_passthrough_above_threshold,
     test_below_spike_threshold_uses_ols,
+
     # Rolling observation window
     test_rolling_window_filters_old_observations,
     test_rolling_window_storage_unchanged,
