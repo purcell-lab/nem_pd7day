@@ -523,7 +523,7 @@ def test_zero_raw_passthrough():
 
 def test_spike_passthrough_above_threshold():
     """
-    When raw forecast >= SPIKE_THRESHOLD (0.30 $/kWh), calibration must
+    When raw forecast >= SPIKE_THRESHOLD (3.00 $/kWh), calibration must
     return the raw value unchanged with calibrated_source="passthrough_high".
     """
     model = BucketModel(
@@ -534,20 +534,20 @@ def test_spike_passthrough_above_threshold():
         q90=QuantileCoeff(quantile=0.9, a=1.8, b=0.03, n=100),
     )
 
-    result = model.apply_all(0.35)
-    assert result["calibrated"] == round(0.35, 6), (
+    result = model.apply_all(3.50)
+    assert result["calibrated"] == round(3.50, 6), (
         f"Spike raw should pass through unchanged, got {result['calibrated']}"
     )
     assert result["calibrated_source"] == "passthrough_high"
-    assert result["p10"] == round(0.35, 6)
-    assert result["p50"] == round(0.35, 6)
-    assert result["p90"] == round(0.35, 6)
-    print(f"  PASS: spike passthrough above threshold (raw=0.35, source={result['calibrated_source']})")
+    assert result["p10"] == round(3.50, 6)
+    assert result["p50"] == round(3.50, 6)
+    assert result["p90"] == round(3.50, 6)
+    print(f"  PASS: spike passthrough above threshold (raw=3.50, source={result['calibrated_source']})")
 
 
 def test_below_spike_threshold_uses_ols():
     """
-    When raw forecast < SPIKE_THRESHOLD (e.g. 0.25), calibration should
+    When raw forecast < SPIKE_THRESHOLD (e.g. 2.50 $/kWh), calibration should
     proceed through the normal OLS path.
     """
     model = BucketModel(

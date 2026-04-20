@@ -73,8 +73,8 @@ _LOGGER = logging.getLogger(__name__)
 # When the raw AEMO forecast is at or above this level, AEMO is already
 # signalling a significant price event.  The linear calibration model (trained
 # on normal prices) should not attempt to correct it — pass through unchanged.
-# 0.30 $/kWh = $300/MWh ≈ 3× normal peak price.
-SPIKE_THRESHOLD = 0.30  # $/kWh
+# 3.00 $/kWh = $3000/MWh — genuine extreme spike territory.
+SPIKE_THRESHOLD = 3.00  # $/kWh
 
 # ── Rolling observation window ────────────────────────────────────────────────
 # Only observations within the last N days are used when fitting the
