@@ -88,6 +88,6 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                     market_summary=result.market_summary,
                 )
             # Recompute time-of-day statistics from updated observations
-            self.tod_stats = _tod_stats.compute(self._store.observations)
+            self.tod_stats = _tod_stats.compute(self._store.observations, calibration_result=self._store.calibration)
 
         return result

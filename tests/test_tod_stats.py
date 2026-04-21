@@ -174,3 +174,70 @@ def test_bias_chart_renders_png_from_calibration():
     assert isinstance(png, bytes)
     assert len(png) > 5000
     assert png[:4] == b'\x89PNG'
+
+
+# ── render_chart region parameter tests ──────────────────────────────────────
+
+def test_render_chart_accepts_region_parameter():
+    """render_chart must accept a region parameter and not crash for non-QLD1 regions."""
+    obs = [
+        _make_obs(f"2026-04-{18+d:02d}T{h:02d}:{m:02d}:00+10:00", 0.05 + h * 0.005)
+        for d in range(3)
+        for h, m in [(8, 0), (8, 30), (12, 0)]
+    ]
+    stats = compute(obs)
+    png = render_chart(stats, region="NSW1")
+    assert isinstance(png, bytes)
+    assert len(png) > 1000
+    assert png[:4] == b'\x89PNG'
+
+
+# ── bias_chart with tod_stats parameter ──────────────────────────────────────
+
+def test_bias_chart_renders_with_tod_stats():
+    """bias_chart.render_chart must accept tod_stats and produce a valid PNG."""
+    from custom_components.nem_pd7day.bias_chart import render_chart as bc_render
+    from custom_components.nem_pd7day.calibration_engine import (
+        BucketModel, LinearCoeff, QuantileCoeff, CalibrationResult
+    )
+
+    buckets = {
+        "h00_06__peak": BucketModel("h00_06__peak", LinearCoeff(a=0.40, b=0.060, n=50, mae=0.01, rmse=0.02), QuantileCoeff(0.1, a=0.38, b=0.060, n=50), QuantileCoeff(0.5, a=0.40, b=0.060, n=50), QuantileCoeff(0.9, a=0.47, b=0.060, n=50)),
+    }
+    cal = CalibrationResult(fitted_at="2026-04-21T18:00:00+10:00", total_observations=100, models=buckets)
+
+    # Build TodStats with mean_raw and mean_calibrated
+    stats = TodStats(
+        slots=[
+            SlotStats(hour=h, minute=m, n=10, mean=0.05 + h * 0.003,
+                      median=0.05, p10=0.03, p25=0.04, p75=0.06, p90=0.07,
+                      mean_raw=0.06 + h * 0.003, mean_calibrated=0.055 + h * 0.003)
+            for h in range(0, 24) for m in (0, 30)
+        ],
+        unique_intervals=48,
+        date_from="18 Apr",
+        date_to="20 Apr 2026",
+    )
+
+    png = bc_render(cal, obs_count=100, region="SA1", tod_stats=stats)
+    assert isinstance(png, bytes)
+    assert len(png) > 5000
+    assert png[:4] == b'\x89PNG'
+
+
+def test_bias_chart_renders_without_tod_stats():
+    """bias_chart.render_chart must still work when tod_stats is None (placeholder)."""
+    from custom_components.nem_pd7day.bias_chart import render_chart as bc_render
+    from custom_components.nem_pd7day.calibration_engine import (
+        BucketModel, LinearCoeff, QuantileCoeff, CalibrationResult
+    )
+
+    buckets = {
+        "h00_06__peak": BucketModel("h00_06__peak", LinearCoeff(a=0.40, b=0.060, n=50, mae=0.01, rmse=0.02), QuantileCoeff(0.1, a=0.38, b=0.060, n=50), QuantileCoeff(0.5, a=0.40, b=0.060, n=50), QuantileCoeff(0.9, a=0.47, b=0.060, n=50)),
+    }
+    cal = CalibrationResult(fitted_at="2026-04-21T18:00:00+10:00", total_observations=100, models=buckets)
+
+    png = bc_render(cal, obs_count=100, region="QLD1", tod_stats=None)
+    assert isinstance(png, bytes)
+    assert len(png) > 5000
+    assert png[:4] == b'\x89PNG'

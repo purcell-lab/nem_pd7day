@@ -19,6 +19,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+if TYPE_CHECKING:
+    from .calibration_engine import CalibrationResult
+
 _LOGGER = logging.getLogger(__name__)
 
 # Number of slots in a day (48 × 30-min)
@@ -38,13 +41,17 @@ class SlotStats:
     p25: float
     p75: float
     p90: float
+    # Mean raw PD7DAY forecast for this slot (across all observations with a raw value)
+    mean_raw: float | None = None
+    # Mean calibrated forecast for this slot (None if no calibration available)
+    mean_calibrated: float | None = None
 
     @property
     def label(self) -> str:
         return f"{self.hour:02d}:{self.minute:02d}"
 
     def as_dict(self) -> dict:
-        return {
+        d = {
             "hour": self.hour,
             "minute": self.minute,
             "label": self.label,
@@ -56,6 +63,11 @@ class SlotStats:
             "p75_kwh": round(self.p75, 6),
             "p90_kwh": round(self.p90, 6),
         }
+        if self.mean_raw is not None:
+            d["mean_raw_kwh"] = round(self.mean_raw, 6)
+        if self.mean_calibrated is not None:
+            d["mean_calibrated_kwh"] = round(self.mean_calibrated, 6)
+        return d
 
 
 @dataclass
@@ -84,46 +96,89 @@ class TodStats:
         }
 
 
-def compute(observations: list[dict]) -> TodStats:
+def compute(
+    observations: list[dict],
+    calibration_result: "CalibrationResult | None" = None,
+) -> TodStats:
     """
     Compute per-slot statistics from a list of observation dicts.
 
     Each dict must have:
-      - interval_time: ISO-8601 string (NEM time, UTC+10)
-      - actual_rrp:    float | None  ($/kWh)
+      - interval_time:   ISO-8601 string (NEM time, UTC+10)
+      - actual_rrp:      float | None  ($/kWh)
+      - pd7day_forecast: float | None  ($/kWh, raw AEMO forecast)
+      - horizon_hours:   float | None
+      - hour_of_day:     int | None
 
     Multiple observations for the same interval_time (from different forecast
-    runs) are deduplicated — the actual_rrp is identical across runs for the
-    same interval.
-    """
-    # Deduplicate by interval_time
-    seen: dict[str, float] = {}
-    for o in observations:
-        it = o.get("interval_time")
-        rrp = o.get("actual_rrp")
-        if it is None or rrp is None:
-            continue
-        if it not in seen:
-            seen[it] = float(rrp)
+    runs) are deduplicated — actual_rrp is identical across runs for the same
+    interval; raw forecasts are averaged across runs.
 
-    if not seen:
+    If calibration_result is provided, mean_calibrated is also computed for
+    each slot using the fitted OLS model for that interval's horizon + ToD.
+    """
+    from .calibration_engine import _bucket_key
+
+    # Collect actuals (deduplicated) and raw forecasts (averaged across runs)
+    actuals: dict[str, float]       = {}
+    raw_acc: dict[str, list[float]] = defaultdict(list)
+    cal_acc: dict[str, list[float]] = defaultdict(list)
+
+    for o in observations:
+        it  = o.get("interval_time")
+        rrp = o.get("actual_rrp")
+        raw = o.get("pd7day_forecast")
+        if it is None:
+            continue
+        if rrp is not None and it not in actuals:
+            actuals[it] = float(rrp)
+        if raw is not None:
+            raw_acc[it].append(float(raw))
+            if calibration_result is not None:
+                h   = o.get("horizon_hours")
+                hod = o.get("hour_of_day")
+                if h is not None and hod is not None:
+                    key = _bucket_key(float(h), int(hod))
+                    bm  = calibration_result.models.get(key)
+                    if bm is not None:
+                        cal_val = bm.apply_all(float(raw))["calibrated"]
+                        cal_acc[it].append(float(cal_val))
+
+    if not actuals:
         return TodStats()
 
+    mean_raw: dict[str, float] = {
+        it: float(np.mean(vals)) for it, vals in raw_acc.items() if vals
+    }
+    mean_cal: dict[str, float] = {
+        it: float(np.mean(vals)) for it, vals in cal_acc.items() if vals
+    }
+
     # Bucket by (hour, minute)
-    buckets: dict[tuple[int, int], list[float]] = defaultdict(list)
+    act_buckets: dict[tuple[int, int], list[float]] = defaultdict(list)
+    raw_buckets: dict[tuple[int, int], list[float]] = defaultdict(list)
+    cal_buckets: dict[tuple[int, int], list[float]] = defaultdict(list)
     dates: list[str] = []
-    for iso, rrp in seen.items():
-        dt = datetime.fromisoformat(iso)
-        buckets[(dt.hour, dt.minute)].append(rrp)
+
+    for iso, rrp in actuals.items():
+        dt  = datetime.fromisoformat(iso)
+        key = (dt.hour, dt.minute)
+        act_buckets[key].append(rrp)
         dates.append(iso)
+        if iso in mean_raw:
+            raw_buckets[key].append(mean_raw[iso])
+        if iso in mean_cal:
+            cal_buckets[key].append(mean_cal[iso])
 
     dates_sorted = sorted(dates)
     date_from = datetime.fromisoformat(dates_sorted[0]).strftime("%d %b")
     date_to   = datetime.fromisoformat(dates_sorted[-1]).strftime("%d %b %Y")
 
     slots: list[SlotStats] = []
-    for (h, m) in sorted(buckets.keys()):
-        vals = np.array(buckets[(h, m)])
+    for (h, m) in sorted(act_buckets.keys()):
+        vals = np.array(act_buckets[(h, m)])
+        raws = raw_buckets.get((h, m))
+        cals = cal_buckets.get((h, m))
         slots.append(SlotStats(
             hour=h,
             minute=m,
@@ -134,17 +189,19 @@ def compute(observations: list[dict]) -> TodStats:
             p25=float(np.percentile(vals, 25)),
             p75=float(np.percentile(vals, 75)),
             p90=float(np.percentile(vals, 90)),
+            mean_raw=float(np.mean(raws)) if raws else None,
+            mean_calibrated=float(np.mean(cals)) if cals else None,
         ))
 
     return TodStats(
         slots=slots,
-        unique_intervals=len(seen),
+        unique_intervals=len(actuals),
         date_from=date_from,
         date_to=date_to,
     )
 
 
-def render_chart(stats: TodStats) -> bytes:
+def render_chart(stats: TodStats, region: str = "QLD1") -> bytes:
     """
     Render the time-of-day price chart as PNG bytes.
 
@@ -211,7 +268,7 @@ def render_chart(stats: TodStats) -> bytes:
     ax.set_xticklabels(tick_labels, color="#333333", fontsize=9)
     ax.set_xlim(-0.5, len(slots) - 0.5)
     ax.set_title(
-        f"QLD1 Actual Price by Time of Day\n"
+        f"{region} Actual Price by Time of Day\n"
         f"{stats.date_from} – {stats.date_to}  ·  {stats.unique_intervals} unique intervals",
         color="#111111", fontsize=13, fontweight="bold", pad=10,
     )

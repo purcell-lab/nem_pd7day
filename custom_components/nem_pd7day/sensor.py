@@ -340,7 +340,7 @@ class PD7DayGasForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     ) -> None:
         super().__init__(coordinator)
         self._entry = entry
-        self._attr_unique_id = "nem_pd7day_gas_forecast"
+        self._attr_unique_id = f"{entry.entry_id}_nem_pd7day_gas_forecast"
         self._attr_name = "NEM PD7DAY Gas Generation Forecast"
         self.entity_id = "sensor.nem_pd7day_gas_forecast"
         self._attr_device_info = DeviceInfo(
@@ -725,7 +725,7 @@ class PD7DayTodSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, self._entry.entry_id)})
+        return DeviceInfo(identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")})
 
     @property
     def native_value(self) -> float | None:

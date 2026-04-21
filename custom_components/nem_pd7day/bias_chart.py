@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .calibration_engine import CalibrationResult
+    from .tod_stats import TodStats
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,7 +59,12 @@ def _bucket_data(calibration_result: "CalibrationResult") -> dict[tuple[str, str
     return data
 
 
-def render_chart(calibration_result: "CalibrationResult | None", obs_count: int = 0, region: str = "QLD1") -> bytes:
+def render_chart(
+    calibration_result: "CalibrationResult | None",
+    obs_count: int = 0,
+    region: str = "QLD1",
+    tod_stats: "TodStats | None" = None,
+) -> bytes:
     """
     Render the duck-curve bias chart as PNG bytes.
 
@@ -70,6 +76,10 @@ def render_chart(calibration_result: "CalibrationResult | None", obs_count: int 
         Total observation count for the subtitle.
     region : str
         Region label for titles.
+    tod_stats : TodStats | None
+        Real time-of-day statistics.  When provided, Panel A plots actual
+        mean, raw forecast mean, and calibrated forecast mean per slot
+        instead of the stylised curves.
 
     Returns
     -------
@@ -106,79 +116,50 @@ def render_chart(calibration_result: "CalibrationResult | None", obs_count: int 
     ax1 = fig.add_subplot(gs[0, :])
     ax1.set_facecolor(_PAN)
 
-    h = np.linspace(0, 24, 500)
+    _has_tod = tod_stats is not None and bool(getattr(tod_stats, "slots", None))
 
-    def _actual(h):
-        base = 0.068
-        return (base
-                + 0.008 * np.sin(np.pi * h / 24)
-                - 0.033 * np.exp(-0.5 * ((h - 13) / 2.4) ** 2)
-                + 0.120 * np.exp(-0.5 * ((h - 18.5) / 1.4) ** 2)
-                + 0.028 * np.exp(-0.5 * ((h - 7.5) / 1.1) ** 2))
+    if _has_tod:
+        # Real ToD data — plot actual, raw forecast, calibrated per slot
+        slots = sorted(tod_stats.slots, key=lambda s: s.hour + s.minute / 60)
+        x_vals = [s.hour + s.minute / 60 for s in slots]
+        act_y = [s.mean for s in slots]
 
-    def _aemo(h):
-        base = 0.068
-        return (base
-                + 0.009 * np.sin(np.pi * h / 24)
-                - 0.016 * np.exp(-0.5 * ((h - 13) / 2.4) ** 2)
-                + 0.200 * np.exp(-0.5 * ((h - 18.5) / 1.4) ** 2)
-                + 0.042 * np.exp(-0.5 * ((h - 7.5) / 1.1) ** 2))
+        l1, = ax1.plot(x_vals, act_y, color="#1A6FBF", lw=2.5, label="Actual", zorder=5)
+        handles = [l1]
 
-    def _calib(h):
-        raw = _aemo(h)
-        pk  = 0.200 * np.exp(-0.5 * ((h - 18.5) / 1.4) ** 2)
-        return raw - 0.55 * pk + 0.008 * np.exp(-0.5 * ((h - 13) / 2.4) ** 2)
+        raw_y = [s.mean_raw for s in slots]
+        if any(v is not None for v in raw_y):
+            raw_x = [x for x, v in zip(x_vals, raw_y) if v is not None]
+            raw_v = [v for v in raw_y if v is not None]
+            l2, = ax1.plot(raw_x, raw_v, color="#E08A2B", lw=2.0, ls="--",
+                           label="AEMO Raw Forecast", zorder=4)
+            handles.append(l2)
 
-    act_y  = _actual(h)
-    aemo_y = _aemo(h)
-    cal_y  = _calib(h)
+        cal_y = [s.mean_calibrated for s in slots]
+        if any(v is not None for v in cal_y):
+            cal_x = [x for x, v in zip(x_vals, cal_y) if v is not None]
+            cal_v = [v for v in cal_y if v is not None]
+            l3, = ax1.plot(cal_x, cal_v, color="#2CA02C", lw=2.0, ls="--",
+                           label="Calibrated", zorder=4)
+            handles.append(l3)
 
-    for start, end, tod in [(10, 16, "solar"), (16, 20, "peak"), (20, 22, "shoulder")]:
-        ax1.axvspan(start, end, alpha=0.10, color=_TOD_COL[tod], zorder=1)
+        ax1.set_xlim(0, 24)
+        ax1.set_xticks(range(0, 25, 2))
+        ax1.set_xticklabels([f"{int(t):02d}:00" for t in range(0, 25, 2)],
+                            color="#333333", fontsize=10, rotation=25)
+        ax1.set_ylabel("$/kWh", color="#444444", fontsize=11)
+        ax1.set_title(f"{region} Spot Price — Average by Time of Day",
+                      color="#111111", fontsize=13, fontweight="bold", pad=8)
+        ax1.legend(handles=handles, facecolor=_PAN, edgecolor="#CCCCCC",
+                   labelcolor="#111111", fontsize=11, loc="upper left", framealpha=0.95)
+    else:
+        # No ToD data — placeholder
+        ax1.text(0.5, 0.5, "No time-of-day data available",
+                 transform=ax1.transAxes, ha="center", va="center",
+                 fontsize=14, color="#999999")
+        ax1.set_title(f"{region} Spot Price — Average by Time of Day",
+                      color="#111111", fontsize=13, fontweight="bold", pad=8)
 
-    ax1.fill_between(h, act_y,  alpha=0.15, color="#0A7C6E", zorder=2)
-    ax1.fill_between(h, aemo_y, alpha=0.08, color="#C0392B", zorder=2)
-
-    l1, = ax1.plot(h, act_y,  color="#0A7C6E", lw=2.5, label="Actual price",        zorder=5)
-    l2, = ax1.plot(h, aemo_y, color="#C0392B", lw=2.0, label="AEMO PD7DAY (raw)",   zorder=4, ls="--")
-    l3, = ax1.plot(h, cal_y,  color="#B7770D", lw=2.0, label="Calibrated forecast", zorder=4, ls="-.")
-
-    for start, end, tod, lbl in [
-        (10, 16, "solar",    "Solar 10–16h"),
-        (16, 20, "peak",     "Peak 16–20h"),
-        (20, 22, "shoulder", "Shoulder 20–22h"),
-    ]:
-        ax1.text((start + end) / 2, 0.262, lbl, ha="center", va="bottom",
-                 fontsize=10, color=_TOD_COL[tod], fontweight="bold")
-
-    ax1.annotate(
-        "Over-forecast (a≈0.36)",
-        xy=(18.5, 0.188), xytext=(21.0, 0.235),
-        fontsize=10, color="#C0392B", fontweight="bold",
-        arrowprops=dict(arrowstyle="->", color="#C0392B", lw=1.5),
-        bbox=dict(boxstyle="round,pad=0.4", fc="#FEE8E8", ec="#C0392B", alpha=0.95),
-    )
-    ax1.annotate(
-        "Solar trough under-corrected",
-        xy=(13.0, 0.040), xytext=(5.0, 0.080),
-        fontsize=10, color="#B7770D", fontweight="bold",
-        arrowprops=dict(arrowstyle="->", color="#B7770D", lw=1.5),
-        bbox=dict(boxstyle="round,pad=0.4", fc="#FEF5E0", ec="#B7770D", alpha=0.95),
-    )
-
-    ax1.set_xlim(0, 24)
-    ax1.set_ylim(0.02, 0.285)
-    ax1.set_xticks(range(0, 25, 2))
-    ax1.set_xticklabels([f"{int(x):02d}:00" for x in range(0, 25, 2)],
-                        color="#333333", fontsize=10, rotation=25)
-    ax1.set_yticks([0.04, 0.08, 0.12, 0.16, 0.20, 0.24])
-    ax1.set_yticklabels([f"${v:.2f}" for v in [0.04, 0.08, 0.12, 0.16, 0.20, 0.24]],
-                        color="#333333", fontsize=10)
-    ax1.set_ylabel("Price  ($/kWh)", color="#444444", fontsize=11)
-    ax1.set_title(f"QLD Duck Curve — Actual vs AEMO PD7DAY Forecast (stylised)",
-                  color="#111111", fontsize=13, fontweight="bold", pad=8)
-    ax1.legend(handles=[l1, l2, l3], facecolor=_PAN, edgecolor="#CCCCCC",
-               labelcolor="#111111", fontsize=11, loc="upper left", framealpha=0.95)
     ax1.tick_params(colors="#666666", length=3)
     ax1.grid(axis="y", color=_GRD, lw=0.7, zorder=0)
     for sp in ax1.spines.values():

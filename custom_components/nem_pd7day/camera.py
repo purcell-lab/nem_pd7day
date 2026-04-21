@@ -69,7 +69,7 @@ class NemPd7dayTodCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
     def device_info(self):
         from homeassistant.helpers.device_registry import DeviceInfo
         return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
         )
 
     async def async_added_to_hass(self) -> None:
@@ -89,7 +89,7 @@ class NemPd7dayTodCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
             return
         from . import tod_stats as _ts
         try:
-            self._image_bytes = _ts.render_chart(tod_stats)
+            self._image_bytes = _ts.render_chart(tod_stats, region=self._region)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("ToD chart render failed")
 
@@ -136,7 +136,7 @@ class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
     def device_info(self):
         from homeassistant.helpers.device_registry import DeviceInfo
         return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
         )
 
     async def async_added_to_hass(self) -> None:
@@ -161,6 +161,7 @@ class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
                 cal,
                 obs_count=store.observation_count,
                 region=self._region,
+                tod_stats=self.coordinator.tod_stats,
             )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Bias chart render failed")
