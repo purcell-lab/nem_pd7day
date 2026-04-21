@@ -44,9 +44,6 @@
       "nem_pd7day_calibration": {
         "name": "Calibration"
       },
-      "nem_pd7day_gas_forecast": {
-        "name": "Gas Generation Forecast"
-      },
       "nem_pd7day_forecast_history": {
         "name": "Forecast History"
       }

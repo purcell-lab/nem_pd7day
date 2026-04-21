@@ -147,7 +147,6 @@ from custom_components.nem_pd7day.const import (
 from custom_components.nem_pd7day.sensor import (
     _horizon_hours,
     PD7DayCalibrationSensor,
-    PD7DayGasForecastSensor,
     PD7DayForecastSensor,
     PD7DayRegionDataUpdatedDatetimeSensor,
     PD7DayRegionSourceFileDatetimeSensor,
@@ -305,41 +304,6 @@ def test_async_setup_entry_creates_calibration_sensor_for_configured_region():
     assert cal_entities[0]._region == "NSW1"
     assert cal_entities[0].entity_id == "sensor.nem_pd7day_nsw1_calibration"
     assert cal_entities[0]._attr_unique_id == "nem_pd7day_nsw1_calibration"
-
-
-def test_async_setup_entry_creates_single_gas_forecast_sensor():
-    """Gas forecast must be a single standalone sensor/device."""
-    coordinator = MagicMock()
-    coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "entry_4"
-    entry.data = {CONF_REGION: "QLD1"}
-    entry.options = {}
-
-    hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
-
-    created = []
-
-    def _add_entities(entities, update_before_add=False):
-        created.extend(entities)
-
-    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
-
-    gas_entities = [
-        ent for ent in created if isinstance(ent, PD7DayGasForecastSensor)
-    ]
-    assert len(gas_entities) == 1
-    # entity_id is derived by HA from unique_id — no hardcoded value
-
 
 def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
     """The region must get source-file and updated-at diagnostic timestamp sensors."""
@@ -651,45 +615,6 @@ def test_native_value_returns_none_when_no_data():
     sensor = make_sensor(store=None)
     sensor.coordinator.data = None
     assert sensor.native_value is None
-
-
-def test_gas_forecast_unique_id_includes_entry_id():
-    """GasForecastSensor.unique_id must include entry_id to avoid multi-instance collision."""
-    coordinator = MagicMock()
-    coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "config_entry_abc"
-    entry.data = {CONF_REGION: "QLD1"}
-    entry.options = {}
-
-    hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
-
-    created = []
-
-    def _add_entities(entities, update_before_add=False):
-        created.extend(entities)
-
-    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
-
-    gas_entities = [
-        ent for ent in created if isinstance(ent, PD7DayGasForecastSensor)
-    ]
-    assert len(gas_entities) == 1
-    uid = gas_entities[0]._attr_unique_id
-    assert "config_entry_abc" in uid, (
-        f"Gas sensor unique_id must include entry_id for multi-instance support. "
-        f"Got: {uid}"
-    )
-
 
 def test_tod_sensor_device_info_includes_region():
     """PD7DayTodSensor.device_info must include region in identifiers."""

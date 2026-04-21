@@ -12,7 +12,7 @@
     "error": {
       "cannot_connect": "Could not reach NEMWeb. Check network access.",
       "invalid_data": "NEMWeb returned data but no matching region rows were found.",
-      "unknown": "Unexpected error — check the Home Assistant log."
+      "unknown": "Unexpected error \u2014 check the Home Assistant log."
     },
     "abort": {
       "already_configured": "This region is already configured."
@@ -43,9 +43,6 @@
       },
       "nem_pd7day_calibration": {
         "name": "Calibration"
-      },
-      "nem_pd7day_gas_forecast": {
-        "name": "Gas Generation Forecast"
       },
       "nem_pd7day_forecast_history": {
         "name": "Forecast History"

@@ -4,7 +4,6 @@ NEM PD7DAY sensor platform.
 Sensors
 -------
 PD7DayForecastSensor          -- regional spot price, calibrated + confidence interval
-PD7DayGasForecastSensor       -- NEM-wide gas generation pressure (TJ/day)
 PD7DayInterconnectorSensor    -- interconnector MW flow + constraint forecast
 PD7DayCalibrationSensor       -- calibration status, observation count, MAE by bucket
 PD7DayTodSensor               -- time-of-day actual price stats (mean/spread per 30-min slot)
@@ -46,11 +45,9 @@ from .const import (
     ATTR_CAL_SUMMARY,
     ATTR_CAL_TOTAL_BUCKETS,
     ATTR_CHEAPEST_2H,
-    ATTR_CURRENT_TJ,
     ATTR_EXPORTLIMIT,
     ATTR_FORECAST,
     ATTR_FORECAST_GENERATED_AT,
-    ATTR_GAS_FORECAST,
     ATTR_IC_FORECAST,
     ATTR_IMPORTLIMIT,
     ATTR_INTERCONNECTOR_ID,
@@ -59,7 +56,6 @@ from .const import (
     ATTR_LAST_CHANGED,
     ATTR_MARGINALVALUE,
     ATTR_MAX_24H,
-    ATTR_MAX_7D_TJ,
     ATTR_MAX_VIOLATION_7D,
     ATTR_METEREDMWFLOW,
     ATTR_MIN_24H,
@@ -117,7 +113,6 @@ async def async_setup_entry(
     entities.append(PD7DayRegionSourceFileDatetimeSensor(coordinator, entry, region))
     entities.append(PD7DayRegionDataUpdatedDatetimeSensor(coordinator, entry, region))
 
-    entities.append(PD7DayGasForecastSensor(coordinator, entry))
 
     # Interconnectors for this region
     region_ic_ids = interconnectors_for_regions([region])
@@ -303,100 +298,6 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             ),
         }
 
-
-# ---------------------------------------------------------------------------
-# Gas generation pressure sensor
-# ---------------------------------------------------------------------------
-
-class PD7DayGasForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
-    """NEM-wide gas-powered generation forecast (TJ/day)."""
-
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "TJ"
-    _attr_icon = "mdi:fire"
-    _attr_has_entity_name = True
-    _attr_should_poll = False
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to daily boundary ticks (gas is daily resolution)."""
-        await super().async_added_to_hass()
-
-        async def _handle_tick(_now) -> None:
-            self.async_write_ha_state()
-
-        self.async_on_remove(
-            async_track_time_change(
-                self.hass,
-                _handle_tick,
-                minute=[0, 30],
-                second=5,
-            )
-        )
-
-    def __init__(
-        self,
-        coordinator: PD7DayCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_nem_pd7day_gas_forecast"
-        self._attr_name = "NEM PD7DAY Gas Generation Forecast"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry.entry_id}_gas")},
-            name="NEM PD7DAY Gas Generation",
-            manufacturer=DEVICE_MANUFACTURER,
-            model=DEVICE_MODEL,
-            configuration_url=DEVICE_CONFIGURATION_URL,
-        )
-
-    @property
-    def _data(self):
-        if not self.coordinator.data:
-            return None
-        return self.coordinator.data.market_summary
-
-    @property
-    def available(self) -> bool:
-        return self.coordinator.last_update_success and self._data is not None
-
-    def _current_gas_period(self, forecast: list):
-        """Return the gas period whose date matches today in NEM time."""
-        today = now_nem().date()
-        for period in forecast:
-            try:
-                if parse_iso(period.time).date() == today:
-                    return period
-            except (ValueError, TypeError):
-                continue
-        return forecast[0] if forecast else None
-
-    @property
-    def native_value(self) -> float | None:
-        d = self._data
-        if d is None:
-            return None
-        period = self._current_gas_period(d.forecast)
-        return period.value_tj if period else None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        d = self._data
-        if d is None:
-            return {}
-        return {
-            ATTR_RUN_DATETIME: d.run_datetime,
-            ATTR_CURRENT_TJ: d.current_tj,
-            ATTR_MAX_7D_TJ: d.max_7d_tj,
-            ATTR_GAS_FORECAST: [
-                {
-                    "nemtime": to_nem_iso(parse_iso(p.nemtime)),
-                    "time": to_nem_iso(parse_iso(p.time)),
-                    "value_tj": p.value_tj,
-                }
-                for p in d.forecast
-            ],
-        }
 
 
 class PD7DayRegionSourceFileDatetimeSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
