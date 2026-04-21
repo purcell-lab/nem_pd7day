@@ -375,6 +375,11 @@ class CalibrationStore:
         return self._calibration
 
     @property
+    def observations(self) -> list[dict]:
+        """Read-only view of the raw observation list (for tod_stats computation)."""
+        return self._observations
+
+    @property
     def observation_count(self) -> int:
         return len(self._observations)
 

@@ -11,6 +11,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DOMAIN, QLD1_INTERCONNECTORS, interconnectors_for_regions
 from .pd7day_client import PD7DayClient, PD7DayResult
+from . import tod_stats as _tod_stats
+from .tod_stats import TodStats
 
 if TYPE_CHECKING:
     from .calibration_store import CalibrationStore
@@ -49,6 +51,8 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         self._interconnector_ids = interconnector_ids or derived_ids or QLD1_INTERCONNECTORS
         self._store = store
         self._session: aiohttp.ClientSession | None = None
+        # Cached time-of-day statistics, updated after each refit
+        self.tod_stats: TodStats = TodStats()
 
     def _get_client(self) -> PD7DayClient:
         if self._session is None or self._session.closed:
@@ -83,5 +87,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                     case=result.case,
                     market_summary=result.market_summary,
                 )
+            # Recompute time-of-day statistics from updated observations
+            self.tod_stats = _tod_stats.compute(self._store.observations)
 
         return result

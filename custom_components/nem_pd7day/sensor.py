@@ -3,10 +3,11 @@ NEM PD7DAY sensor platform.
 
 Sensors
 -------
-PD7DayForecastSensor          — regional spot price, calibrated + confidence interval
-PD7DayGasForecastSensor       — NEM-wide gas generation pressure (TJ/day)
-PD7DayInterconnectorSensor    — interconnector MW flow + constraint forecast
-PD7DayCalibrationSensor       — calibration status, observation count, MAE by bucket
+PD7DayForecastSensor          -- regional spot price, calibrated + confidence interval
+PD7DayGasForecastSensor       -- NEM-wide gas generation pressure (TJ/day)
+PD7DayInterconnectorSensor    -- interconnector MW flow + constraint forecast
+PD7DayCalibrationSensor       -- calibration status, observation count, MAE by bucket
+PD7DayTodSensor               -- time-of-day actual price stats (mean/spread per 30-min slot)
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import tod_stats as _tod_stats
 from .const import (
     ATTR_ATTRIBUTION,
     ATTR_CAL_ACTIVE_BUCKETS,
@@ -127,6 +129,7 @@ async def async_setup_entry(
             entities.append(PD7DayInterconnectorSensor(coordinator, entry, region, ic_id))
 
     entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
+    entities.append(PD7DayTodSensor(coordinator, entry, region))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -684,3 +687,74 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
             attrs["forecast_history_newest"] = None
             attrs["forecast_history_runs_avg"] = 0
         return attrs
+
+
+# ---------------------------------------------------------------------------
+# Time-of-day actual price statistics sensor
+# ---------------------------------------------------------------------------
+
+class PD7DayTodSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """
+    Reports the mean actual price for the current 30-minute time-of-day slot
+    ($/kWh), with full per-slot statistics as attributes.
+
+    State:   mean actual $/kWh for the current slot (or None before enough data)
+    Attrs:   unique_intervals, date_from, date_to, slots (list of 48 dicts)
+
+    Updates every 30 minutes alongside the forecast sensors via
+    async_track_time_change, and on every coordinator refresh.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Price ToD Stats"
+    _attr_native_unit_of_measurement = "$/kWh"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:clock-time-four-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._region = region
+        self._entry = entry
+        self._attr_unique_id = f"nem_pd7day_{region.lower()}_tod_stats"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry.entry_id)})
+
+    @property
+    def native_value(self) -> float | None:
+        tod = getattr(self.coordinator, "tod_stats", None)
+        if tod is None:
+            return None
+        slot = tod.slot_for_now(now_nem())
+        if slot is None or slot.n == 0:
+            return None
+        return round(slot.mean, 6)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        tod = getattr(self.coordinator, "tod_stats", None)
+        if tod is None:
+            return {}
+        return tod.as_attributes()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        async def _handle_tick(_now) -> None:
+            self.async_write_ha_state()
+
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                _handle_tick,
+                minute=[0, 30],
+                second=5,
+            )
+        )
