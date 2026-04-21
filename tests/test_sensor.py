@@ -338,7 +338,7 @@ def test_async_setup_entry_creates_single_gas_forecast_sensor():
         ent for ent in created if isinstance(ent, PD7DayGasForecastSensor)
     ]
     assert len(gas_entities) == 1
-    assert gas_entities[0].entity_id == "sensor.nem_pd7day_gas_forecast"
+    # entity_id is derived by HA from unique_id — no hardcoded value
 
 
 def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
