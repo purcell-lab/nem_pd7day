@@ -18,12 +18,15 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
 - **Interconnector flows** — interconnector MW flow forecasts for the configured region
 - **Market intervention flag** — binary sensor from CASESOLUTION data
 - **Calibration diagnostic** — observation count, active bucket count, fit quality per bucket
+- **Live charts** — two camera entities updated after each refit:
+  - **Price ToD Chart** — actual price by time of day (mean, median, P10–P90 spread across all observed intervals)
+  - **Bias Chart** — duck curve, live OLS slope heatmap, and key bias patterns (updates from live calibration coefficients)
 - **Cloud polling** — two independent polling loops:
   - **PD7DAY** fetches at AEMO publish times: 07:30, 13:00, 18:00 AEST (3 requests/day)
   - **TradingIS** fetches actual 5-min dispatch prices every 30 minutes (48 requests/day)
 - **Live sensor state** — all forecast sensor states advance automatically every 30 minutes to reflect the current interval, with no fetch required
 - **No third-party accounts required** — actual prices sourced directly from AEMO TradingIS
-- **Pure Python** — zero external dependencies beyond Home Assistant
+- **Dependencies** — `matplotlib` and `numpy` for chart rendering (installed automatically by HACS/HA)
 
 ---
 
@@ -228,12 +231,38 @@ Use these to verify h48_96/h96plus buckets are accumulating — `forecast_histor
 
 ---
 
+### Price ToD Stats
+
+`sensor.nem_pd7day_{region}_price_tod_stats` (Diagnostic) — current 30-minute slot's mean actual price ($/kWh), with full 48-slot statistics as attributes.
+
+| Attribute | Description |
+|---|---|
+| `state` | Mean actual $/kWh for the current time-of-day slot |
+| `unique_intervals` | Total unique intervals with actuals |
+| `date_from` / `date_to` | Date range of recorded actuals |
+| `slots` | List of 48 dicts — one per 30-min slot, each with `mean_kwh`, `median_kwh`, `p10_kwh`, `p25_kwh`, `p75_kwh`, `p90_kwh`, `n` |
+
+---
+
 ### Source File Datetime / Data Updated
 
 - `sensor.nem_pd7day_{region}_source_file_datetime` — timestamp of the latest AEMO PD7DAY source file
 - `sensor.nem_pd7day_{region}_data_updated` — timestamp of the last coordinator data refresh
 
 Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the default dashboard.
+
+---
+
+### Camera Entities
+
+Two camera entities are registered on the device and can be added to any HA dashboard using a **Picture** or **Camera** card.
+
+| Entity | Description |
+|---|---|
+| `camera.nem_pd7day_{region}_price_tod_chart` | Actual price by time of day — mean, median, and P10–P90 spread across all observed intervals |
+| `camera.nem_pd7day_{region}_bias_chart` | Duck curve + live OLS slope heatmap + key bias patterns |
+
+Both charts are re-rendered after each calibration refit (07:30, 13:00, 18:00 NEM). The bias chart reads live coefficients so the heatmap values, n counts and confidence indicators update as calibration matures.
 
 ---
 
@@ -274,6 +303,12 @@ The chart above shows three panels derived from 648 forecast vs actual observati
 **Panel 2 — OLS slope heatmap**: Each cell shows the fitted slope `a` for that horizon × time-of-day bucket. Green (a≈1) means AEMO's forecast is unbiased. Red (a<1) means AEMO over-forecasts and the calibration compresses the signal. Yellow-green (a>1) means AEMO under-forecasts. Confidence indicators show observation count: ●●● (n≥40), ●●○ (n≥15), ●○○ (n<15).
 
 **Panel 3 — Key bias patterns**: The most actionable signals after five days of data.
+
+### Observed actual prices by time of day
+
+![QLD Actual Price by Time of Day](docs/qld_actual_price_tod.png)
+
+This chart is generated from the rolling observation log and updated after each refit. Each 30-minute slot shows the mean and median actual price, with P10–P90 spread bands. The solar window (typically 10:00–15:00) frequently shows negative or near-zero prices. The bar chart below shows how many actuals have been recorded per slot — slots with fewer observations (n<10) have wider, less reliable bands.
 
 The consistent structural patterns emerging from the data:
 
@@ -402,6 +437,7 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 
 | Version | Changes |
 |---|---|
+| 2.0.9 | Camera entities: Price ToD Chart (actual price by time of day) and Bias Chart (live duck curve + OLS heatmap); Price ToD Stats sensor; matplotlib + numpy dependencies |
 | 2.0.8 | Fix 30-min sensor state advance (async lambda bug); spike passthrough at $3/kWh; 90-day rolling window; negative passthrough threshold -$0.10/kWh (solar trough correction) |
 | 2.0.7 | Calibration: passthrough when raw <= 0 (negative price regime); clamp quantile slopes to 0 |
 | 2.0.6 | Fix missing await on async_added_to_hass — sensors now register correctly on HA restart |
