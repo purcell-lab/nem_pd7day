@@ -725,7 +725,10 @@ class PD7DayTodSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")})
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+        )
 
     @property
     def native_value(self) -> float | None:

@@ -70,6 +70,7 @@ class NemPd7dayTodCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
         from homeassistant.helpers.device_registry import DeviceInfo
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
         )
 
     async def async_added_to_hass(self) -> None:
@@ -137,6 +138,7 @@ class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
         from homeassistant.helpers.device_registry import DeviceInfo
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
         )
 
     async def async_added_to_hass(self) -> None:
