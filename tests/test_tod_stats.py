@@ -140,3 +140,37 @@ def test_render_chart_empty_returns_empty():
     stats = TodStats()
     result = render_chart(stats)
     assert result == b""
+
+
+# ── bias_chart smoke tests ────────────────────────────────────────────────────
+
+def test_bias_chart_none_calibration_returns_empty():
+    from custom_components.nem_pd7day.bias_chart import render_chart
+    assert render_chart(None) == b""
+
+
+def test_bias_chart_renders_png_from_calibration():
+    """Smoke test: render_chart produces valid PNG bytes from a CalibrationResult."""
+    from custom_components.nem_pd7day.bias_chart import render_chart
+    from custom_components.nem_pd7day.calibration_engine import (
+        BucketModel, LinearCoeff, QuantileCoeff, CalibrationResult
+    )
+    from datetime import datetime, timezone, timedelta
+
+    # Build a minimal CalibrationResult with a few fitted buckets
+    buckets = {
+        "h00_06__peak":    BucketModel("h00_06__peak",    LinearCoeff(a=0.40, b=0.060, n=50,  mae=0.01, rmse=0.02), QuantileCoeff(0.1, a=0.38, b=0.060, n=50), QuantileCoeff(0.5, a=0.40, b=0.060, n=50), QuantileCoeff(0.9, a=0.47, b=0.060, n=50)),
+        "h00_06__solar":   BucketModel("h00_06__solar",   LinearCoeff(a=0.95, b=0.012, n=70,  mae=0.01, rmse=0.01), QuantileCoeff(0.1, a=0.85, b=0.012, n=70), QuantileCoeff(0.5, a=0.95, b=0.012, n=70), QuantileCoeff(0.9, a=0.97, b=0.012, n=70)),
+        "h12_24__shoulder": BucketModel("h12_24__shoulder", LinearCoeff(a=1.50, b=-0.057, n=18, mae=0.01, rmse=0.01), QuantileCoeff(0.1, a=1.49, b=-0.057, n=18), QuantileCoeff(0.5, a=1.50, b=-0.057, n=18), QuantileCoeff(0.9, a=1.65, b=-0.057, n=18)),
+        "h24_48__peak":    BucketModel("h24_48__peak",    LinearCoeff(a=0.05, b=0.087, n=76,  mae=0.007, rmse=0.009), QuantileCoeff(0.1, a=0.05, b=0.087, n=76), QuantileCoeff(0.5, a=0.05, b=0.087, n=76), QuantileCoeff(0.9, a=0.06, b=0.087, n=76)),
+    }
+    result = CalibrationResult(
+        fitted_at="2026-04-21T18:00:00+10:00",
+        total_observations=500,
+        models=buckets,
+    )
+
+    png = render_chart(result, obs_count=500, region="QLD1")
+    assert isinstance(png, bytes)
+    assert len(png) > 5000
+    assert png[:4] == b'\x89PNG'
