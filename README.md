@@ -14,7 +14,6 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
 
 - **7-day price forecast** — calibrated $/kWh with P10/P50/P90 confidence bands
 - **OLS calibration** — linear bias correction fitted on actual TradingIS vs PD7DAY pairs
-- **Gas generation forecast** — daily TJ forecast from MARKET_SUMMARY
 - **Interconnector flows** — interconnector MW flow forecasts for the configured region
 - **Market intervention flag** — binary sensor from CASESOLUTION data
 - **Calibration diagnostic** — observation count, active bucket count, fit quality per bucket
@@ -118,7 +117,7 @@ Actual NEM dispatch prices are fetched from AEMO's TradingIS reports and used to
 
 ### Sensor state updates (every 30 minutes)
 
-Forecast sensor states — price forecast, interconnector flow, and gas generation — advance automatically at each 30-minute interval boundary (:00 and :30 past every hour). The state always reflects the current interval from the most recent fetch, without waiting for the next PD7DAY fetch. This means:
+Forecast sensor states — price forecast and interconnector flow — advance automatically at each 30-minute interval boundary (:00 and :30 past every hour). The state always reflects the current interval from the most recent fetch, without waiting for the next PD7DAY fetch. This means:
 
 - After the 07:30 fetch, the price forecast sensor state will step through each 30-minute interval for the rest of the day
 - After HA restart, the state reflects the current interval immediately on load
@@ -165,15 +164,6 @@ value: 0.142                           # alias for calibrated (template compat)
 > **Timestamp convention**: `nemtime` is the interval END timestamp as published by AEMO. `time` is the interval START (`nemtime − 30 minutes`). This matches the AEMO dispatch interval convention.
 
 ---
-
-### Gas Generation Forecast
-
-`sensor.nem_pd7day_gas_forecast` — gas-fired generation forecast from MARKET_SUMMARY.
-
-| Attribute | Description |
-|---|---|
-| `state` | Gas generation for the current period (TJ/day) |
-| `forecast` | List of daily gas forecast periods |
 
 ---
 
@@ -437,6 +427,9 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 
 | Version | Changes |
 |---|---|
+| 2.1.2 | Multi-region audit: remove hardcoded `entity_id` from Gas sensor; drop Gas Generation Forecast sensor (not relevant to regional price forecasting) |
+| 2.1.1 | Multi-region fix: add `name=` to camera and ToD Stats sensor `device_info` so HA generates correctly scoped entity IDs per region |
+| 2.1.0 | Multi-region support: region-scoped `unique_id` and `device_info` for all entities; real ToD curves in bias chart (actual / AEMO raw / calibrated); `calibration_result` passed into `tod_stats.compute()` |
 | 2.0.9 | Camera entities: Price ToD Chart (actual price by time of day) and Bias Chart (live duck curve + OLS heatmap); Price ToD Stats sensor; matplotlib + numpy dependencies |
 | 2.0.8 | Fix 30-min sensor state advance (async lambda bug); spike passthrough at $3/kWh; 90-day rolling window; negative passthrough threshold -$0.10/kWh (solar trough correction) |
 | 2.0.7 | Calibration: passthrough when raw <= 0 (negative price regime); clamp quantile slopes to 0 |
