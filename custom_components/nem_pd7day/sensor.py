@@ -622,6 +622,7 @@ class PD7DayTodSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._region = region
         self._entry = entry
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_tod_stats"
+        self.entity_id = f"sensor.nem_pd7day_{region.lower()}_tod_stats"
 
     @property
     def device_info(self) -> DeviceInfo:
