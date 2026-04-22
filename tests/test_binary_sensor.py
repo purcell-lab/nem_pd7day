@@ -118,7 +118,6 @@ def test_async_setup_entry_creates_one_binary_sensor_for_configured_region():
         run_async(binary_sensor_mod.async_setup_entry(hass, entry, _add_entities))
 
         assert len(created) == 1
-        assert created[0].entity_id == "binary_sensor.nem_pd7day_qld1_intervention"
     finally:
         restore()
 
@@ -139,7 +138,6 @@ def test_intervention_sensor_uses_slugified_ids_and_region_device():
         entity = binary_sensor_mod.PD7DayInterventionSensor(coordinator, entry, "NSW1")
 
         assert entity._attr_unique_id == "entry_1_nsw1_intervention"
-        assert entity.entity_id == "binary_sensor.nem_pd7day_nsw1_intervention"
         assert entity._attr_name == "Market Intervention"
         assert entity._attr_device_info["identifiers"] == {
             ("nem_pd7day", "entry_1_NSW1")

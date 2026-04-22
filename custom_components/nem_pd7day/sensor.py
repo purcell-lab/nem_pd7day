@@ -156,7 +156,6 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{slug}_forecast"
         self._attr_name = "Price Forecast"
-        self.entity_id = f"sensor.{slug}_pd7day_forecast"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",
@@ -316,7 +315,6 @@ class PD7DayRegionSourceFileDatetimeSensor(CoordinatorEntity[PD7DayCoordinator],
         region_slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{region_slug}_source_file_datetime"
         self._attr_name = "Source File Datetime"
-        self.entity_id = f"sensor.nem_pd7day_{region_slug}_source_file_datetime"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",
@@ -369,7 +367,6 @@ class PD7DayRegionDataUpdatedDatetimeSensor(CoordinatorEntity[PD7DayCoordinator]
         region_slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{region_slug}_data_updated_datetime"
         self._attr_name = "Data Updated"
-        self.entity_id = f"sensor.nem_pd7day_{region_slug}_data_updated_datetime"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",
@@ -428,7 +425,6 @@ class PD7DayInterconnectorSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
         region_slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{region_slug}_ic_{ic_slug}"
         self._attr_name = f"Interconnector {ic_id}"
-        self.entity_id = f"sensor.pd7day_{region_slug}_ic_{ic_slug}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",
@@ -545,7 +541,6 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
         region_slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{region_slug}_calibration"
         self._attr_name = "Calibration"
-        self.entity_id = f"sensor.nem_pd7day_{region_slug}_calibration"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",
@@ -622,7 +617,6 @@ class PD7DayTodSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._region = region
         self._entry = entry
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_tod_stats"
-        self.entity_id = f"sensor.nem_pd7day_{region.lower()}_tod_stats"
 
     @property
     def device_info(self) -> DeviceInfo:

@@ -85,7 +85,6 @@ class PD7DayInterventionSensor(CoordinatorEntity[PD7DayCoordinator], BinarySenso
         region_slug = _safe_slug(region)
         self._attr_unique_id = f"{entry.entry_id}_{region_slug}_intervention"
         self._attr_name = "Market Intervention"
-        self.entity_id = f"binary_sensor.nem_pd7day_{region_slug}_intervention"
         self._attr_attribution = ATTR_ATTRIBUTION
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},

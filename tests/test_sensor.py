@@ -183,7 +183,6 @@ def make_sensor(store=None) -> PD7DayForecastSensor:
     sensor._store = store
     sensor._attr_unique_id = "nem_pd7day_qld1_forecast"
     sensor._attr_name = "Price Forecast"
-    sensor.entity_id = "sensor.qld1_pd7day_forecast"
     return sensor
 
 
@@ -302,7 +301,6 @@ def test_async_setup_entry_creates_calibration_sensor_for_configured_region():
 
     assert len(cal_entities) == 1
     assert cal_entities[0]._region == "NSW1"
-    assert cal_entities[0].entity_id == "sensor.nem_pd7day_nsw1_calibration"
     assert cal_entities[0]._attr_unique_id == "nem_pd7day_nsw1_calibration"
 
 def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
@@ -340,9 +338,7 @@ def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
     ]
 
     assert len(source_dt_entities) == 1
-    assert source_dt_entities[0].entity_id == "sensor.nem_pd7day_qld1_source_file_datetime"
     assert len(updated_dt_entities) == 1
-    assert updated_dt_entities[0].entity_id == "sensor.nem_pd7day_qld1_data_updated_datetime"
 
 
 # ── Tests: _horizon_hours() ───────────────────────────────────────────────────

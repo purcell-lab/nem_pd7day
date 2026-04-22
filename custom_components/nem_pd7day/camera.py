@@ -64,7 +64,6 @@ class NemPd7dayTodCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
         self._entry = entry
         self._image_bytes: bytes = _PLACEHOLDER
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_tod_chart"
-        self.entity_id = f"camera.nem_pd7day_{region.lower()}_price_tod_chart"
 
     @property
     def device_info(self):
@@ -133,7 +132,6 @@ class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
         self._entry = entry
         self._image_bytes: bytes = _PLACEHOLDER
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_bias_chart"
-        self.entity_id = f"camera.nem_pd7day_{region.lower()}_bias_chart"
 
     @property
     def device_info(self):
