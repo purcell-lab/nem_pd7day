@@ -457,12 +457,23 @@ These buckets require observations from intervals 2–4 days ahead. They begin a
 
 Add the recorder exclusions shown in the [Configuration](#configuration) section.
 
+### QLD1 (or any region) price forecast showing flat line / not updating
+
+This occurs when HA's entity registry has a stale `entity_id` from a previous version registration. SA1 installs are unaffected as they were registered after the fix. To resolve:
+
+1. Go to **Settings → Devices & Services → NEM PD7DAY [region]** device
+2. Delete or disable/re-enable each affected entity
+3. Restart HA — entities re-register with correct IDs
+
+> **Note:** historical data for the affected entity will restart from the re-registration date. This is a one-time migration step.
+
 ---
 
 ## Version History
 
 | Version | Changes |
 |---|---|
+| 2.2.1 | Fix `total_buckets` sensor attribute (was hardcoded 18, now derived dynamically as `len(TOD_LABELS) × len(HORIZON_BANDS)` = 24); add `nem_pd7day.force_refit` service — triggers immediate calibration refit and coordinator refresh for one or all regions without waiting for the next scheduled fetch; fix GitHub Actions CI workflow — install `astral`, `numpy`, `matplotlib` in test runner |
 | 2.2.0 | Adaptive Calibration — weighted OLS with exponential time decay (λ=0.033, half-life≈21d); solar elevation angle ToD classification via `astral` (peak/solar/morning_ramp/shoulder); 4 labels × 6 horizon bands = 24 active buckets; `astral>=2.2` dependency |
 | 2.1.3 | Version bump |
 | 2.1.2 | Multi-region audit: remove hardcoded `entity_id` from Gas sensor; drop Gas Generation Forecast sensor (not relevant to regional price forecasting) |
