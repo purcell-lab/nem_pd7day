@@ -134,10 +134,11 @@ def test_tod_labels():
 
 def test_all_bucket_keys():
     keys = all_bucket_keys()
-    assert len(keys) == 18   # 6 horizons × 3 tod buckets
+    assert len(keys) == 24   # 6 horizons × 4 tod buckets
     assert "h00_06__peak" in keys
     assert "h96plus__shoulder" in keys
     assert "h12_24__solar" in keys
+    assert "h06_12__morning_ramp" in keys
     # offpeak no longer exists
     assert not any("offpeak" in k for k in keys)
     print(f"  PASS: all_bucket_keys — {len(keys)} keys")
@@ -822,6 +823,36 @@ def test_tod_label_solar_hobart_winter_early_morning():
     print("  PASS: Hobart winter 7am → shoulder")
 
 
+def test_tod_label_solar_morning_ramp_brisbane_april():
+    """Brisbane April 7am — sun above horizon but low (el ~11°) → morning_ramp."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    dt = datetime(2026, 4, 15, 7, 0, tzinfo=nem_tz)
+    label = _tod_label_solar(dt, "QLD1", "shoulder")
+    assert label == "morning_ramp", f"Brisbane April 7am should be morning_ramp, got {label}"
+    print("  PASS: Brisbane April 7am → morning_ramp")
+
+
+def test_tod_label_solar_predawn_brisbane_april():
+    """Brisbane April 6am — sun below horizon (el ~ -2°) → shoulder."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    dt = datetime(2026, 4, 15, 6, 0, tzinfo=nem_tz)
+    label = _tod_label_solar(dt, "QLD1", "shoulder")
+    assert label == "shoulder", f"Brisbane April 6am should be shoulder, got {label}"
+    print("  PASS: Brisbane April 6am → shoulder")
+
+
+def test_tod_label_solar_overnight_brisbane():
+    """Brisbane 11pm — well below horizon → shoulder."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    dt = datetime(2026, 4, 15, 23, 0, tzinfo=nem_tz)
+    label = _tod_label_solar(dt, "QLD1", "shoulder")
+    assert label == "shoulder", f"Brisbane 11pm should be shoulder, got {label}"
+    print("  PASS: Brisbane 11pm → shoulder")
+
+
 def test_region_coords_all_regions():
     """All 5 NEM regions have coordinates."""
     expected = {"QLD1", "NSW1", "VIC1", "SA1", "TAS1"}
@@ -950,6 +981,9 @@ TESTS = [
     test_tod_label_solar_unknown_region_fallback,
     test_tod_label_solar_brisbane_summer_morning,
     test_tod_label_solar_hobart_winter_early_morning,
+    test_tod_label_solar_morning_ramp_brisbane_april,
+    test_tod_label_solar_predawn_brisbane_april,
+    test_tod_label_solar_overnight_brisbane,
     test_region_coords_all_regions,
     # Weighted OLS
     test_weighted_ols_uniform_weights_match_unweighted,

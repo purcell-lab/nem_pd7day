@@ -25,12 +25,13 @@ _LOGGER = logging.getLogger(__name__)
 # Horizons and ToDs shown in heatmap (h48_96+ excluded — too sparse early on)
 _HORIZONS   = ["h00_06", "h06_12", "h12_24", "h24_48"]
 _HOR_LABELS = ["0–6h ahead", "6–12h ahead", "12–24h ahead", "24–48h ahead"]
-_TODS       = ["solar", "peak", "shoulder"]
-_TOD_LABELS = ["Solar\nel>15°", "Peak\n16–21h", "Shoulder"]
+_TODS       = ["shoulder", "morning_ramp", "solar", "peak"]
+_TOD_LABELS = ["Shoulder\nel≤0°", "Morning Ramp\n0°<el≤15°", "Solar\nel>15°", "Peak\n16–21h"]
 _TOD_COL    = {
-    "solar":    "#D4860A",
-    "peak":     "#C0392B",
-    "shoulder": "#7D3C98",
+    "shoulder":     "#7D3C98",
+    "morning_ramp": "#E67E22",
+    "solar":        "#D4860A",
+    "peak":         "#C0392B",
 }
 
 # Palette

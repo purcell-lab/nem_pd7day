@@ -334,6 +334,8 @@ def _tod_label_solar(dt_nem: datetime, region: str, raw_label: str) -> str:
 
     if el > 15.0:
         return "solar"
+    if el > 0.0:
+        return "morning_ramp"
     return "shoulder"
 
 
