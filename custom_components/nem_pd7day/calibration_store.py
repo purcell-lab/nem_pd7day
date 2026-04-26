@@ -362,7 +362,7 @@ class CalibrationStore:
         ]
 
         result = await self._hass.async_add_executor_job(
-            self._engine.fit, obs_list
+            self._engine.fit, obs_list, self._region
         )
         self._calibration = result
         await self._coeff_store.async_save(self._engine.to_storage(result))
@@ -424,6 +424,6 @@ class CalibrationStore:
             "observation_window_days": OBSERVATION_WINDOW_DAYS,
             "observations_in_window": self._calibration.observations_in_window,
             "active_buckets": self.active_bucket_count,
-            "total_buckets": 24,
+            "total_buckets": 18,
             "summary": self._calibration.summary(),
         }

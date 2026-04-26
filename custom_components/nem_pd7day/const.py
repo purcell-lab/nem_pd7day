@@ -82,6 +82,7 @@ MAX_INTERCEPT_ABS = 1.0
 MAX_CALIBRATED_RATIO = 5.0
 HORIZON_EDGES = [0, 6, 12, 24, 48, 96]
 HORIZON_LABELS = ["h00_06", "h06_12", "h12_24", "h24_48", "h48_96", "h96plus"]
+TOD_LABELS = ["solar", "peak", "shoulder"]
 TOD_BUCKETS = {
     "solar": (10, 16),
     "peak": (16, 20),

@@ -41,9 +41,11 @@ _engine_mod = _load(
 )
 
 from custom_components.nem_pd7day.calibration_engine import (
+    DECAY_LAMBDA,
     MIN_OBS,
     OBSERVATION_WINDOW_DAYS,
     NEGATIVE_PASSTHROUGH_THRESHOLD,
+    REGION_COORDS,
     SPIKE_THRESHOLD,
     BucketModel,
     CalibrationEngine,
@@ -51,8 +53,10 @@ from custom_components.nem_pd7day.calibration_engine import (
     Observation,
     QuantileCoeff,
     _bucket_key,
+    _bucket_key_solar,
     _horizon_label,
     _tod_label,
+    _tod_label_solar,
     _ols,
     _ols_metrics,
     _quantile_regression,
@@ -69,12 +73,14 @@ def make_obs(
     hour_of_day: int = 14,
     is_intervention: bool = False,
 ) -> Observation:
+    # Build interval_time that matches hour_of_day so solar classification is consistent
+    interval_time = f"2026-04-13T{hour_of_day:02d}:00:00+10:00"
     return Observation(
-        interval_time="2026-04-13T14:00:00",
+        interval_time=interval_time,
         horizon_hours=horizon_hours,
         pd7day_forecast=forecast,
         actual_rrp=actual,
-        forecast_run_at="2026-04-12T03:30:00",
+        forecast_run_at="2026-04-12T03:30:00+10:00",
         hour_of_day=hour_of_day,
         day_of_week=0,
         month=4,
@@ -112,24 +118,28 @@ def test_horizon_labels():
 
 
 def test_tod_labels():
-    assert _tod_label(0) == "offpeak"
-    assert _tod_label(6) == "offpeak"   # shoulder start not defined separately
+    # With the 3-label system: peak (16-21), solar (10-16), shoulder (everything else)
+    assert _tod_label(0) == "shoulder"
+    assert _tod_label(6) == "shoulder"
     assert _tod_label(10) == "solar"
     assert _tod_label(15) == "solar"
     assert _tod_label(16) == "peak"
     assert _tod_label(19) == "peak"
-    assert _tod_label(20) == "shoulder"
+    assert _tod_label(20) == "peak"
     assert _tod_label(21) == "shoulder"
-    assert _tod_label(22) == "offpeak"
-    assert _tod_label(23) == "offpeak"
+    assert _tod_label(22) == "shoulder"
+    assert _tod_label(23) == "shoulder"
     print("  PASS: time-of-day labels")
 
 
 def test_all_bucket_keys():
     keys = all_bucket_keys()
-    assert len(keys) == 24   # 6 horizons × 4 tod buckets
+    assert len(keys) == 18   # 6 horizons × 3 tod buckets
     assert "h00_06__peak" in keys
-    assert "h96plus__offpeak" in keys
+    assert "h96plus__shoulder" in keys
+    assert "h12_24__solar" in keys
+    # offpeak no longer exists
+    assert not any("offpeak" in k for k in keys)
     print(f"  PASS: all_bucket_keys — {len(keys)} keys")
 
 
@@ -634,8 +644,9 @@ def test_rolling_window_filters_old_observations():
 
     all_obs = []
     for day_offset in range(100):
-        obs_time = now - timedelta(days=99 - day_offset)  # oldest first
-        iso_str = obs_time.strftime("%Y-%m-%dT%H:%M:%S+10:00")
+        obs_date = now - timedelta(days=99 - day_offset)  # oldest first
+        # Fix hour to 12:00 NEM so solar classification → "solar" bucket
+        iso_str = obs_date.strftime("%Y-%m-%dT") + "12:00:00+10:00"
         fc = rng.uniform(0.05, 0.25)
         actual = 2.0 * fc + 0.01 + rng.gauss(0, 0.003)
         all_obs.append(Observation(
@@ -697,8 +708,9 @@ def test_rolling_window_storage_unchanged():
 
     all_obs = []
     for day_offset in range(100):
-        obs_time = now - timedelta(days=99 - day_offset)
-        iso_str = obs_time.strftime("%Y-%m-%dT%H:%M:%S+10:00")
+        obs_date = now - timedelta(days=99 - day_offset)
+        # Fix hour to 12:00 NEM so solar classification is consistent
+        iso_str = obs_date.strftime("%Y-%m-%dT") + "12:00:00+10:00"
         fc = rng.uniform(0.05, 0.25)
         actual = 2.0 * fc + 0.01
         all_obs.append(Observation(
@@ -737,6 +749,159 @@ def test_rolling_window_storage_unchanged():
         f"(input_len={len(all_obs)}, "
         f"in_window={result.observations_in_window})"
     )
+
+
+# ── Solar elevation ToD tests ────────────────────────────────────────────────
+
+def test_tod_label_solar_peak_window():
+    """Peak window (16-21 NEM) is always classified as 'peak' regardless of elevation."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    for hour in (16, 17, 18, 19, 20):
+        dt = datetime(2026, 1, 15, hour, 0, tzinfo=nem_tz)
+        for region in REGION_COORDS:
+            label = _tod_label_solar(dt, region, "fallback")
+            assert label == "peak", (
+                f"Hour {hour} in {region} should be peak, got {label}"
+            )
+    print("  PASS: peak window 16-21 NEM hardcoded for all regions")
+
+
+def test_tod_label_solar_noon_all_regions():
+    """At noon NEM in all regions, solar elevation > 15° → 'solar'."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    dt = datetime(2026, 3, 15, 12, 0, tzinfo=nem_tz)  # noon, March (autumn)
+    for region in REGION_COORDS:
+        label = _tod_label_solar(dt, region, "fallback")
+        assert label == "solar", (
+            f"Noon March in {region} should be solar, got {label}"
+        )
+    print("  PASS: noon NEM → solar for all regions")
+
+
+def test_tod_label_solar_midnight_all_regions():
+    """At midnight NEM in all regions, sun is below horizon → 'shoulder'."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    dt = datetime(2026, 6, 15, 0, 0, tzinfo=nem_tz)  # midnight, June (winter)
+    for region in REGION_COORDS:
+        label = _tod_label_solar(dt, region, "fallback")
+        assert label == "shoulder", (
+            f"Midnight June in {region} should be shoulder, got {label}"
+        )
+    print("  PASS: midnight NEM → shoulder for all regions")
+
+
+def test_tod_label_solar_unknown_region_fallback():
+    """Unknown region falls back to raw_label."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    dt = datetime(2026, 3, 15, 12, 0, tzinfo=nem_tz)
+    assert _tod_label_solar(dt, "UNKNOWN", "my_fallback") == "my_fallback"
+    print("  PASS: unknown region falls back to raw_label")
+
+
+def test_tod_label_solar_brisbane_summer_morning():
+    """Brisbane summer morning 8am — sun should be above 15° → solar."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    dt = datetime(2026, 1, 15, 8, 0, tzinfo=nem_tz)  # summer 8am
+    label = _tod_label_solar(dt, "QLD1", "shoulder")
+    assert label == "solar", f"Brisbane summer 8am should be solar, got {label}"
+    print("  PASS: Brisbane summer 8am → solar")
+
+
+def test_tod_label_solar_hobart_winter_early_morning():
+    """Hobart winter 7am — sun is very low → shoulder."""
+    from datetime import datetime, timezone, timedelta
+    nem_tz = timezone(timedelta(hours=10))
+    dt = datetime(2026, 7, 15, 7, 0, tzinfo=nem_tz)  # winter 7am
+    label = _tod_label_solar(dt, "TAS1", "shoulder")
+    assert label == "shoulder", f"Hobart winter 7am should be shoulder, got {label}"
+    print("  PASS: Hobart winter 7am → shoulder")
+
+
+def test_region_coords_all_regions():
+    """All 5 NEM regions have coordinates."""
+    expected = {"QLD1", "NSW1", "VIC1", "SA1", "TAS1"}
+    assert set(REGION_COORDS.keys()) == expected
+    for region, (lat, lon) in REGION_COORDS.items():
+        assert -50 < lat < -20, f"{region} latitude {lat} out of range"
+        assert 130 < lon < 160, f"{region} longitude {lon} out of range"
+    print("  PASS: all 5 NEM regions have valid coordinates")
+
+
+# ── Weighted OLS tests ──────────────────────────────────────────────────────
+
+def test_weighted_ols_uniform_weights_match_unweighted():
+    """Uniform weights should produce the same result as unweighted OLS."""
+    pairs = _pairs(50, a=1.8, b=0.02, noise=0.005)
+    a_uw, b_uw = _ols(pairs)
+    weights = [1.0] * len(pairs)
+    a_w, b_w = _ols(pairs, weights=weights)
+    assert abs(a_uw - a_w) < 1e-6, f"Weighted a={a_w} != unweighted a={a_uw}"
+    assert abs(b_uw - b_w) < 1e-6, f"Weighted b={b_w} != unweighted b={b_uw}"
+    print("  PASS: uniform weights match unweighted OLS")
+
+
+def test_weighted_ols_recent_obs_higher_weight():
+    """
+    Recent observations with higher weight should dominate the fit.
+    Create two groups: old (a=1.0) and new (a=2.0). With decay, fit
+    should be closer to 2.0 than 1.0.
+    """
+    rng = random.Random(42)
+    pairs = []
+    weights = []
+    # Old observations (low weight): y = 1.0 * x + 0.0
+    for _ in range(30):
+        x = rng.uniform(0.05, 0.25)
+        pairs.append((x, 1.0 * x + 0.0))
+        weights.append(math.exp(-DECAY_LAMBDA * 80))  # 80 days ago
+    # Recent observations (high weight): y = 2.0 * x + 0.0
+    for _ in range(30):
+        x = rng.uniform(0.05, 0.25)
+        pairs.append((x, 2.0 * x + 0.0))
+        weights.append(math.exp(-DECAY_LAMBDA * 5))   # 5 days ago
+    a, b = _ols(pairs, weights=weights)
+    assert a > 1.5, f"Weighted OLS a={a} should be > 1.5 (closer to recent a=2.0)"
+    print(f"  PASS: weighted OLS favors recent (a={a:.4f}, closer to 2.0 than 1.0)")
+
+
+def test_weighted_ols_passthrough_insufficient_data():
+    """Weighted OLS should still return passthrough when n < MIN_OBS."""
+    pairs = _pairs(MIN_OBS - 1, a=2.0, b=0.1)
+    weights = [1.0] * len(pairs)
+    a, b = _ols(pairs, weights=weights)
+    assert a == 1.0 and b == 0.0
+    print(f"  PASS: weighted OLS passthrough with n={MIN_OBS - 1}")
+
+
+def test_weighted_ols_decay_correctness():
+    """Verify weight formula: weight = exp(-0.033 * days_ago)."""
+    w0 = math.exp(-DECAY_LAMBDA * 0)
+    w21 = math.exp(-DECAY_LAMBDA * 21)
+    w90 = math.exp(-DECAY_LAMBDA * 90)
+    assert abs(w0 - 1.0) < 1e-10, f"Weight at day 0 should be 1.0, got {w0}"
+    assert abs(w21 - 0.5) < 0.02, f"Weight at day 21 (half-life) should be ~0.5, got {w21}"
+    assert w90 < 0.06, f"Weight at day 90 should be < 0.06, got {w90}"
+    print(f"  PASS: decay weights correct (day0={w0:.3f}, day21={w21:.3f}, day90={w90:.4f})")
+
+
+def test_engine_weighted_fit_produces_result():
+    """Engine fit with region parameter should produce a valid CalibrationResult."""
+    engine = CalibrationEngine()
+    observations = _make_obs_batch(
+        n=50, a=2.0, b=0.01, horizon_hours=18.0, hour_of_day=12
+    )
+    result = engine.fit(observations, region="QLD1")
+    assert result.observations_in_window == 50
+    assert result.total_observations == 50
+    bucket = result.get_bucket(horizon_hours=18.0, hour_of_day=12)
+    assert bucket.ols.n == 50
+    assert bucket.ols.a > 0
+    print(f"  PASS: engine weighted fit produces valid result (n={bucket.ols.n})")
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
@@ -778,6 +943,20 @@ TESTS = [
     # Rolling observation window
     test_rolling_window_filters_old_observations,
     test_rolling_window_storage_unchanged,
+    # Solar elevation ToD
+    test_tod_label_solar_peak_window,
+    test_tod_label_solar_noon_all_regions,
+    test_tod_label_solar_midnight_all_regions,
+    test_tod_label_solar_unknown_region_fallback,
+    test_tod_label_solar_brisbane_summer_morning,
+    test_tod_label_solar_hobart_winter_early_morning,
+    test_region_coords_all_regions,
+    # Weighted OLS
+    test_weighted_ols_uniform_weights_match_unweighted,
+    test_weighted_ols_recent_obs_higher_weight,
+    test_weighted_ols_passthrough_insufficient_data,
+    test_weighted_ols_decay_correctness,
+    test_engine_weighted_fit_produces_result,
 ]
 
 

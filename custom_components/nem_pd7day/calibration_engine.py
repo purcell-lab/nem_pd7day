@@ -53,6 +53,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
+from astral import LocationInfo
+from astral.sun import elevation as solar_elevation
+
 from .const import (
     HORIZON_EDGES,
     HORIZON_LABELS,
@@ -63,7 +66,7 @@ from .const import (
     MAX_OBS,
     MIN_OBS,
     QUANTILES,
-    TOD_BUCKETS,
+    TOD_LABELS,
 )
 from .nem_time import now_nem, to_nem_iso
 
@@ -90,6 +93,23 @@ NEGATIVE_PASSTHROUGH_THRESHOLD = -0.10  # $/kWh
 # model while all observations are still retained in storage for
 # total_increasing state class accounting.
 OBSERVATION_WINDOW_DAYS = 90
+
+# ── Weighted OLS decay ────────────────────────────────────────────────────────
+# Exponential time decay constant for weighted OLS.
+# λ = 0.033 → half-life ≈ 21 days (ln2 / 0.033 ≈ 21).
+DECAY_LAMBDA = 0.033
+
+# NEM timezone for weight calculations
+_NEM_TZ = timezone(timedelta(hours=10))
+
+# ── Region capital coordinates (latitude, longitude) ─────────────────────────
+REGION_COORDS: dict[str, tuple[float, float]] = {
+    "QLD1": (-27.4698, 153.0251),  # Brisbane
+    "NSW1": (-33.8688, 151.2093),  # Sydney
+    "VIC1": (-37.8136, 144.9631),  # Melbourne
+    "SA1":  (-34.9285, 138.6007),  # Adelaide
+    "TAS1": (-42.8821, 147.3272),  # Hobart
+}
 
 
 # ── Data structures ───────────────────────────────────────────────────────────
@@ -282,46 +302,101 @@ def _horizon_label(horizon_hours: float) -> str:
 
 
 def _tod_label(hour: int) -> str:
-    for label, bounds in TOD_BUCKETS.items():
-        if bounds is None:
-            continue
-        lo, hi = bounds
-        if lo <= hour < hi:
-            return label
-    return "offpeak"
+    """Legacy clock-hour ToD label (used as fallback when no region/datetime available)."""
+    if 16 <= hour < 21:
+        return "peak"
+    if 10 <= hour < 16:
+        return "solar"
+    return "shoulder"
+
+
+def _tod_label_solar(dt_nem: datetime, region: str, raw_label: str) -> str:
+    """
+    Classify a NEM interval into ToD label using solar elevation.
+
+    dt_nem: aware datetime in NEM timezone (UTC+10)
+    region: NEM region string e.g. "QLD1"
+    raw_label: fallback label if region not in REGION_COORDS
+    """
+    nem_hour = dt_nem.hour
+    # Peak: hardcoded 16:00–21:00 NEM (hour 16,17,18,19,20)
+    if 16 <= nem_hour < 21:
+        return "peak"
+
+    coords = REGION_COORDS.get(region)
+    if coords is None:
+        return raw_label  # fallback for unknown regions
+
+    lat, lon = coords
+    loc = LocationInfo(latitude=lat, longitude=lon)
+    dt_utc = dt_nem.astimezone(timezone.utc)
+    el = solar_elevation(loc.observer, dt_utc)
+
+    if el > 15.0:
+        return "solar"
+    return "shoulder"
 
 
 def _bucket_key(horizon_hours: float, hour_of_day: int) -> str:
     return f"{_horizon_label(horizon_hours)}__{_tod_label(hour_of_day)}"
 
 
+def _bucket_key_solar(horizon_hours: float, dt_nem: datetime, region: str) -> str:
+    """Bucket key using solar elevation ToD classification."""
+    raw = _tod_label(dt_nem.hour)
+    tod = _tod_label_solar(dt_nem, region, raw)
+    return f"{_horizon_label(horizon_hours)}__{tod}"
+
+
 def all_bucket_keys() -> list[str]:
     return [
         f"{h}__{t}"
         for h in HORIZON_LABELS
-        for t in TOD_BUCKETS
+        for t in TOD_LABELS
     ]
 
 
 # ── Pure-Python OLS ───────────────────────────────────────────────────────────
 
-def _ols(pairs: list[tuple[float, float]]) -> tuple[float, float]:
+def _ols(
+    pairs: list[tuple[float, float]],
+    weights: list[float] | None = None,
+) -> tuple[float, float]:
     """
     Fit actual = a * forecast + b using ordinary least squares.
+
+    If *weights* is provided, performs weighted OLS using the sqrt-scaling
+    trick: multiply both sides of the design matrix by sqrt(w).
+
     Returns (a, b).  Falls back to (1, 0) if degenerate.
     """
     n = len(pairs)
     if n < MIN_OBS:
         return 1.0, 0.0
-    sx = sum(x for x, _ in pairs)
-    sy = sum(y for _, y in pairs)
-    sxx = sum(x * x for x, _ in pairs)
-    sxy = sum(x * y for x, y in pairs)
-    denom = n * sxx - sx * sx
-    if abs(denom) < 1e-12:
-        return 1.0, 0.0
-    a = (n * sxy - sx * sy) / denom
-    b = (sy - a * sx) / n
+
+    if weights is not None:
+        # Weighted OLS via sqrt-scaling
+        sw = [math.sqrt(w) for w in weights]
+        sx = sum(sw[i] * sw[i] * pairs[i][0] for i in range(n))
+        sy = sum(sw[i] * sw[i] * pairs[i][1] for i in range(n))
+        sxx = sum(sw[i] * sw[i] * pairs[i][0] * pairs[i][0] for i in range(n))
+        sxy = sum(sw[i] * sw[i] * pairs[i][0] * pairs[i][1] for i in range(n))
+        wsum = sum(w for w in weights)
+        denom = wsum * sxx - sx * sx
+        if abs(denom) < 1e-12:
+            return 1.0, 0.0
+        a = (wsum * sxy - sx * sy) / denom
+        b = (sy - a * sx) / wsum
+    else:
+        sx = sum(x for x, _ in pairs)
+        sy = sum(y for _, y in pairs)
+        sxx = sum(x * x for x, _ in pairs)
+        sxy = sum(x * y for x, y in pairs)
+        denom = n * sxx - sx * sx
+        if abs(denom) < 1e-12:
+            return 1.0, 0.0
+        a = (n * sxy - sx * sy) / denom
+        b = (sy - a * sx) / n
     return a, b
 
 
@@ -418,11 +493,15 @@ class CalibrationEngine:
     Usage
     -----
     engine = CalibrationEngine()
-    result = engine.fit(observations)   # CPU-bound; run in executor
+    result = engine.fit(observations, region="QLD1")   # CPU-bound; run in executor
     calibrated = result.apply(raw_price, horizon_hours, hour_of_day)
     """
 
-    def fit(self, observations: list[Observation]) -> CalibrationResult:
+    def fit(
+        self,
+        observations: list[Observation],
+        region: str = "QLD1",
+    ) -> CalibrationResult:
         """
         Partition observations into buckets, fit all models.
         Returns a CalibrationResult ready to apply to new forecasts.
@@ -430,45 +509,61 @@ class CalibrationEngine:
         Only observations within the last OBSERVATION_WINDOW_DAYS are used
         for fitting.  All observations remain in storage (the window is a
         fit-time filter only).
+
+        Weights are computed per-observation using exponential time decay:
+          weight = exp(-DECAY_LAMBDA * days_ago)
+        Region is used for solar elevation ToD classification.
         """
+        now_utc = datetime.now(timezone.utc)
+        now_nem_dt = now_utc.astimezone(_NEM_TZ)
         # ── Rolling window filter ────────────────────────────────────────────
-        cutoff = datetime.now(timezone.utc) - timedelta(days=OBSERVATION_WINDOW_DAYS)
-        windowed: list[Observation] = []
+        cutoff = now_utc - timedelta(days=OBSERVATION_WINDOW_DAYS)
+        windowed: list[tuple[Observation, datetime]] = []
         for obs in observations:
             try:
                 obs_dt = datetime.fromisoformat(obs.interval_time)
                 if obs_dt.tzinfo is None:
                     # Legacy naive timestamp — assume NEM time (UTC+10)
-                    obs_dt = obs_dt.replace(tzinfo=timezone(timedelta(hours=10)))
+                    obs_dt = obs_dt.replace(tzinfo=_NEM_TZ)
                 if obs_dt >= cutoff:
-                    windowed.append(obs)
+                    windowed.append((obs, obs_dt))
             except (ValueError, TypeError):
-                # Unparseable timestamp — include defensively
-                windowed.append(obs)
+                # Unparseable timestamp — include defensively; use now for weight
+                windowed.append((obs, now_nem_dt))
         observations_in_window = len(windowed)
 
-        # Partition
+        # Partition into buckets using solar elevation ToD classification
         buckets: dict[str, list[tuple[float, float]]] = {
             k: [] for k in all_bucket_keys()
         }
-        for obs in windowed:
+        bucket_weights: dict[str, list[float]] = {
+            k: [] for k in all_bucket_keys()
+        }
+        for obs, obs_dt in windowed:
             if obs.is_intervention:
                 # Skip intervention periods — prices are not market-driven
                 continue
-            key = _bucket_key(obs.horizon_hours, obs.hour_of_day)
+            # Solar elevation ToD classification
+            obs_nem = obs_dt.astimezone(_NEM_TZ)
+            key = _bucket_key_solar(obs.horizon_hours, obs_nem, region)
             if key in buckets:
                 # Cap per-bucket to avoid memory bloat; keep most recent
                 if len(buckets[key]) < MAX_OBS:
                     buckets[key].append((obs.pd7day_forecast, obs.actual_rrp))
+                    # Compute exponential time-decay weight
+                    days_ago = (now_nem_dt - obs_nem).total_seconds() / 86400.0
+                    weight = math.exp(-DECAY_LAMBDA * max(days_ago, 0.0))
+                    bucket_weights[key].append(weight)
 
         now_str = to_nem_iso(now_nem())
         models: dict[str, BucketModel] = {}
 
         for key, pairs in buckets.items():
             model = BucketModel(bucket_key=key)
+            weights = bucket_weights[key]
 
-            # OLS
-            a_ols, b_ols = _ols(pairs)
+            # OLS (weighted)
+            a_ols, b_ols = _ols(pairs, weights=weights if weights else None)
             a_ols = max(a_ols, 0.0)
             mae, rmse = _ols_metrics(pairs, a_ols, b_ols) if len(pairs) >= MIN_OBS else (None, None)
             model.ols = LinearCoeff(
@@ -508,7 +603,7 @@ class CalibrationEngine:
                     model.q10.a, model.q90.a,
                 )
 
-        total = len([o for o in windowed if not o.is_intervention])
+        total = len([obs for obs, _ in windowed if not obs.is_intervention])
         _LOGGER.info(
             "Calibration fit complete: %d observations in %d-day window "
             "(%d total stored), %d buckets active",

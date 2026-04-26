@@ -25,13 +25,12 @@ _LOGGER = logging.getLogger(__name__)
 # Horizons and ToDs shown in heatmap (h48_96+ excluded — too sparse early on)
 _HORIZONS   = ["h00_06", "h06_12", "h12_24", "h24_48"]
 _HOR_LABELS = ["0–6h ahead", "6–12h ahead", "12–24h ahead", "24–48h ahead"]
-_TODS       = ["solar", "peak", "shoulder", "offpeak"]
-_TOD_LABELS = ["Solar\n10–16h", "Peak\n16–20h", "Shoulder\n20–22h", "Offpeak"]
+_TODS       = ["solar", "peak", "shoulder"]
+_TOD_LABELS = ["Solar\nel>15°", "Peak\n16–21h", "Shoulder"]
 _TOD_COL    = {
     "solar":    "#D4860A",
     "peak":     "#C0392B",
     "shoulder": "#7D3C98",
-    "offpeak":  "#1A6EA8",
 }
 
 # Palette
@@ -173,8 +172,9 @@ def render_chart(
     norm  = TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=1.7)
     cmap  = plt.cm.RdYlGn
 
+    n_tod = len(_TODS)
     ax2.imshow(a_mat.T, cmap=cmap, norm=norm, aspect="auto",
-               extent=[-0.5, 3.5, -0.5, 3.5])
+               extent=[-0.5, 3.5, -0.5, n_tod - 0.5])
 
     for i, hor in enumerate(_HORIZONS):
         for j, tod in enumerate(_TODS):
@@ -191,7 +191,7 @@ def render_chart(
 
     ax2.set_xticks(range(4))
     ax2.set_xticklabels(_HOR_LABELS, color="#111111", fontsize=11)
-    ax2.set_yticks(range(4))
+    ax2.set_yticks(range(n_tod))
     ax2.set_yticklabels(_TOD_LABELS, color="#111111", fontsize=11)
     ax2.set_title(
         "Calibration: calibrated = a \u00d7 raw + b\n"
