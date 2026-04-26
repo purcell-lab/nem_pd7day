@@ -25,7 +25,7 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
   - **TradingIS** fetches actual 5-min dispatch prices every 30 minutes (48 requests/day)
 - **Live sensor state** — all forecast sensor states advance automatically every 30 minutes to reflect the current interval, with no fetch required
 - **No third-party accounts required** — actual prices sourced directly from AEMO TradingIS
-- **Dependencies** — `matplotlib` and `numpy` for chart rendering (installed automatically by HACS/HA)
+- **Dependencies** — `matplotlib`, `numpy` for chart rendering, `astral` for solar elevation (installed automatically by HACS/HA)
 
 ---
 
@@ -202,8 +202,8 @@ Default interconnectors per region:
 | Attribute | Description |
 |---|---|
 | `state` | Total observations logged |
-| `active_buckets` | Buckets with ≥ 10 observations (max 24) |
-| `total_buckets` | 24 (6 horizons × 4 time-of-day bands) |
+| `active_buckets` | Buckets with ≥ 20 observations (max 24) |
+| `total_buckets` | 24 (6 horizons × 4 time-of-day labels) |
 | `fitted_at` | ISO-8601 timestamp of last model refit |
 | `summary` | Per-bucket coefficients, MAE, RMSE, quantile slopes |
 
@@ -269,18 +269,54 @@ The calibration system corrects the known bias in AEMO's PD7DAY forecasts using 
 
 | Horizon buckets | Time-of-day buckets |
 |---|---|
-| `h00_06` — 0 to 6 hours ahead | `solar` — 10:00–16:00 |
-| `h06_12` — 6 to 12 hours | `peak` — 16:00–20:00 |
-| `h12_24` — 12 to 24 hours | `shoulder` — 20:00–22:00 |
-| `h24_48` — 24 to 48 hours | `offpeak` — all other hours |
+| `h00_06` — 0 to 6 hours ahead | `peak` — NEM 16:00–21:00 (hardcoded) |
+| `h06_12` — 6 to 12 hours | `solar` — sun elevation > 15° and not peak |
+| `h12_24` — 12 to 24 hours | `morning_ramp` — sun elevation 0°–15° and not peak |
+| `h24_48` — 24 to 48 hours | `shoulder` — sun below horizon (elevation ≤ 0°) |
 | `h48_96` — 48 to 96 hours | |
 | `h96plus` — beyond 96 hours | |
 
-5. **Model fitting** — once a bucket has ≥ 10 observations, two models are fitted:
-   - **OLS** (ordinary least squares): `calibrated = a × raw + b` — corrects linear bias
+   Time-of-day classification uses **solar elevation angle** (via the `astral` library with capital city coordinates for each NEM region) instead of fixed clock-hour boundaries. This tracks the seasonal shift in the solar generation window (~1–2 hours between summer and winter) and naturally captures the duck curve inflection points.
+
+5. **Weighted OLS fitting** — once a bucket has ≥ 20 observations, two models are fitted using exponential time decay weighting:
+   - **Weighted OLS**: `calibrated = a × raw + b` — corrects linear bias, with `weight = exp(-0.033 × days_ago)` (half-life ≈ 21 days)
    - **IRLS quantile regression** (pinball loss): separate P10, P50, P90 slope fits
 
+   Recent observations are weighted more heavily: observations from 21 days ago have half the influence of today's; observations from 90 days ago have ~5% influence. This allows the model to adapt to seasonal price dynamics, changing generation mix, and week-to-week market shifts without discarding historical data.
+
 6. **Application** — at forecast time, each period's bucket is looked up. If active, OLS and quantile values are returned. Otherwise the raw value passes through unchanged.
+
+### ToD classification details
+
+The integration classifies each 30-minute NEM interval into one of four time-of-day buckets based on solar elevation angle (using the `astral` library with the capital city coordinates for each NEM region — Brisbane, Sydney, Melbourne, Adelaide, Hobart):
+
+| Label | Condition | Typical NEM hours |
+|---|---|---|
+| `peak` | NEM hour 16–21, unconditional | 16:00–21:00 |
+| `solar` | elevation > 15° and not peak | ~09:00–16:00 |
+| `morning_ramp` | elevation 0°–15° and not peak | ~05:00–09:00 |
+| `shoulder` | elevation ≤ 0° (overnight) | ~21:00–05:00 |
+
+**Why solar elevation instead of clock hours?**
+- The solar generation window shifts by ~1–2 hours between summer and winter
+- Clock-hour buckets cannot capture this seasonal drift
+- Solar elevation naturally tracks the duck curve inflection points
+- `morning_ramp` captures the pre-solar demand spike (gas peakers, morning load) that behaves very differently from true overnight prices
+
+**Why morning_ramp matters:**
+The 05:00–09:00 NEM window has materially different price dynamics from true overnight — demand climbs fast, gas peakers fire, and solar hasn't started yet. Previous clock-hour buckets lumped this into "offpeak", causing systematic upward bias in that window. The `morning_ramp` bucket captures this independently.
+
+### Weighted OLS decay
+
+Each OLS bucket fit uses exponential time decay weighting:
+- `weight = exp(-0.033 × days_ago)` — half-life ≈ 21 days
+- Observations from 21 days ago have half the influence of today's observations
+- Observations from 90 days ago have ~5% influence (near zero)
+- This allows the model to adapt to seasonal price dynamics, changing generation mix, and week-to-week market shifts without discarding historical data
+
+### Bucket structure
+
+4 ToD labels × 6 horizon bands = 24 active buckets per region. Minimum 20 observations required per bucket before it activates. New installs will see buckets activate progressively over the first few days.
 
 ### AEMO forecast bias — QLD empirical findings
 
@@ -315,14 +351,14 @@ This is consistent with the academic literature — Sinclair et al. (2026) found
 
 ### Warm-up period
 
-With 3 fetches per day, expect:
+With 3 fetches per day and MIN_OBS=20, expect:
 
 | Day | Buckets active | Coverage |
 |---|---|---|
-| 1–3 | 0 | All passthrough |
-| 4–5 | h00_06, h06_12, h12_24 | Near-term calibrated |
-| 6–8 | h24_48 | 2-day horizon calibrated |
-| 10–14 | h48_96, h96plus | Full 7-day calibration |
+| 1–5 | 0 | All passthrough |
+| 5–7 | h00_06, h06_12, h12_24 | Near-term calibrated |
+| 8–10 | h24_48 | 2-day horizon calibrated |
+| 12–16 | h48_96, h96plus | Full 7-day calibration |
 
 ### Storage files
 
@@ -411,7 +447,7 @@ The first fetch runs at integration load. Check **Settings → System → Logs**
 
 ### p10/p50/p90 values are `null`
 
-Normal for the first 3–5 days. Calibration requires at least 10 observations per bucket. Check the `Calibration` sensor state for current observation count.
+Normal for the first 5–7 days. Calibration requires at least 20 observations per bucket. Check the `Calibration` sensor state for current observation count.
 
 ### h48_96 / h96plus buckets show n=0
 
@@ -427,6 +463,8 @@ Add the recorder exclusions shown in the [Configuration](#configuration) section
 
 | Version | Changes |
 |---|---|
+| 2.2.0 | Adaptive Calibration — weighted OLS with exponential time decay (λ=0.033, half-life≈21d); solar elevation angle ToD classification via `astral` (peak/solar/morning_ramp/shoulder); 4 labels × 6 horizon bands = 24 active buckets; `astral>=2.2` dependency |
+| 2.1.3 | Version bump |
 | 2.1.2 | Multi-region audit: remove hardcoded `entity_id` from Gas sensor; drop Gas Generation Forecast sensor (not relevant to regional price forecasting) |
 | 2.1.1 | Multi-region fix: add `name=` to camera and ToD Stats sensor `device_info` so HA generates correctly scoped entity IDs per region |
 | 2.1.0 | Multi-region support: region-scoped `unique_id` and `device_info` for all entities; real ToD curves in bias chart (actual / AEMO raw / calibrated); `calibration_result` passed into `tod_stats.compute()` |
