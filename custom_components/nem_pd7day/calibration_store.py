@@ -32,6 +32,7 @@ from .calibration_engine import (
     CalibrationEngine,
     CalibrationResult,
     Observation,
+    all_bucket_keys,
 )
 from .const import (
     _LEGACY_COEFF_KEY,
@@ -424,6 +425,6 @@ class CalibrationStore:
             "observation_window_days": OBSERVATION_WINDOW_DAYS,
             "observations_in_window": self._calibration.observations_in_window,
             "active_buckets": self.active_bucket_count,
-            "total_buckets": 18,
+            "total_buckets": len(all_bucket_keys()),
             "summary": self._calibration.summary(),
         }

@@ -826,3 +826,36 @@ def test_qni_mwflow_none_beyond_interconnector_window():
     assert entry_2["qni_mwflow"] is None, (
         f"Expected qni_mwflow=None for interval beyond IC window, got {entry_2['qni_mwflow']}"
     )
+
+
+# ── Tests: total_buckets attribute ────────────────────────────────────────────
+
+def test_total_buckets_matches_tod_labels_times_horizon_labels():
+    """
+    BUG: total_buckets was hardcoded to 18 (3 ToD labels × 6 horizon bands).
+    After adding morning_ramp as a 4th ToD label, total_buckets must be 24.
+    summary_attributes() must derive this from the actual constants.
+    """
+    from custom_components.nem_pd7day.calibration_engine import all_bucket_keys
+    from custom_components.nem_pd7day.const import TOD_LABELS, HORIZON_LABELS
+
+    store = make_store()
+    store._observations = [{"dummy": i} for i in range(20)]
+    # Simulate a calibration result so summary_attributes returns the "active" branch
+    cal = MagicMock()
+    cal.fitted_at = "2026-04-15T08:17:00+10:00"
+    cal.observations_in_window = 20
+    cal.summary.return_value = {"fitted_at": cal.fitted_at, "total_observations": 20, "buckets": {}}
+    store._calibration = cal
+
+    attrs = store.summary_attributes()
+    expected = len(TOD_LABELS) * len(HORIZON_LABELS)
+    assert expected == 24, f"Expected 4 ToD × 6 horizon = 24, got {expected}"
+    assert attrs["total_buckets"] == expected, (
+        f"total_buckets={attrs['total_buckets']} must be {expected} "
+        f"(len(TOD_LABELS)={len(TOD_LABELS)} × len(HORIZON_LABELS)={len(HORIZON_LABELS)}), "
+        f"not hardcoded."
+    )
+    assert attrs["total_buckets"] == len(all_bucket_keys()), (
+        f"total_buckets must equal len(all_bucket_keys())={len(all_bucket_keys())}"
+    )

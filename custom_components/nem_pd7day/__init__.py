@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers.event import (
     async_track_time_interval,
     async_track_point_in_utc_time,
@@ -150,6 +150,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_track_time_interval(hass, _refit, REFIT_INTERVAL)
     )
 
+    # ── Manual refit service ───────────────────────────────────────────────
+    async def _handle_force_refit(call: ServiceCall) -> None:
+        """Handle nem_pd7day.force_refit service call."""
+        entry_id = call.data.get("entry_id")
+        for cfg_entry in hass.config_entries.async_entries(DOMAIN):
+            if entry_id and cfg_entry.entry_id != entry_id:
+                continue
+            entry_data = hass.data[DOMAIN].get(cfg_entry.entry_id)
+            if not entry_data:
+                continue
+            coord = entry_data[COORDINATOR_KEY]
+            st = entry_data[STORE_KEY]
+            _LOGGER.info(
+                "force_refit service: refitting entry %s (%d observations)",
+                cfg_entry.entry_id,
+                st.observation_count,
+            )
+            await st.async_refit()
+            await coord.async_refresh()
+
+    if not hass.services.has_service(DOMAIN, "force_refit"):
+        hass.services.async_register(DOMAIN, "force_refit", _handle_force_refit)
+
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
@@ -159,6 +182,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+        if not hass.data[DOMAIN] and hass.services.has_service(DOMAIN, "force_refit"):
+            hass.services.async_remove(DOMAIN, "force_refit")
     return unload_ok
 
 

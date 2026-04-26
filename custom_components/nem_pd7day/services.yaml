@@ -1,0 +1,10 @@
+force_refit:
+  name: Force Calibration Refit
+  description: Immediately trigger a calibration refit for one or all NEM regions, reclassifying all stored observations with the current ToD label logic.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Config entry ID to refit (optional — omit to refit all regions)
+      required: false
+      selector:
+        text:

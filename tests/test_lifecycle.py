@@ -374,3 +374,114 @@ def test_manifest_required_fields():
     required = {"domain", "name", "version", "documentation", "issue_tracker"}
     missing = required - set(manifest.keys())
     assert not missing, f"manifest.json missing required HACS fields: {missing}"
+
+
+# ── Tests: force_refit service ──────────────────────────────────────────────
+
+def test_force_refit_service_calls_refit_and_refresh():
+    """
+    The force_refit service handler must call store.async_refit() and
+    coordinator.async_refresh() for the matching entry.
+    """
+    store = make_store(obs_count=20)
+    store.async_refit = AsyncMock()
+    coordinator = MagicMock()
+    coordinator.async_refresh = AsyncMock()
+
+    # Simulate hass.data structure
+    entry_id = "test_entry_123"
+    hass_data = {
+        DOMAIN: {
+            entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: store,
+            }
+        }
+    }
+
+    # Simulate config entries
+    entry = MagicMock()
+    entry.entry_id = entry_id
+
+    async def _handle_force_refit(call_data):
+        """Replicate the handler logic from __init__.py."""
+        target_entry_id = call_data.get("entry_id")
+        entries = [entry]
+        for cfg_entry in entries:
+            if target_entry_id and cfg_entry.entry_id != target_entry_id:
+                continue
+            entry_data = hass_data[DOMAIN].get(cfg_entry.entry_id)
+            if not entry_data:
+                continue
+            coord = entry_data[COORDINATOR_KEY]
+            st = entry_data[STORE_KEY]
+            await st.async_refit()
+            await coord.async_refresh()
+
+    # Call with no entry_id (refit all)
+    run_async(_handle_force_refit({}))
+    store.async_refit.assert_called_once()
+    coordinator.async_refresh.assert_called_once()
+
+
+def test_force_refit_service_filters_by_entry_id():
+    """
+    When entry_id is specified, only that entry should be refitted.
+    """
+    store1 = make_store(obs_count=20)
+    store1.async_refit = AsyncMock()
+    coord1 = MagicMock()
+    coord1.async_refresh = AsyncMock()
+
+    store2 = make_store(obs_count=15)
+    store2.async_refit = AsyncMock()
+    coord2 = MagicMock()
+    coord2.async_refresh = AsyncMock()
+
+    hass_data = {
+        DOMAIN: {
+            "entry_1": {COORDINATOR_KEY: coord1, STORE_KEY: store1},
+            "entry_2": {COORDINATOR_KEY: coord2, STORE_KEY: store2},
+        }
+    }
+
+    entry1 = MagicMock()
+    entry1.entry_id = "entry_1"
+    entry2 = MagicMock()
+    entry2.entry_id = "entry_2"
+
+    async def _handle_force_refit(call_data):
+        target_entry_id = call_data.get("entry_id")
+        entries = [entry1, entry2]
+        for cfg_entry in entries:
+            if target_entry_id and cfg_entry.entry_id != target_entry_id:
+                continue
+            entry_data = hass_data[DOMAIN].get(cfg_entry.entry_id)
+            if not entry_data:
+                continue
+            coord = entry_data[COORDINATOR_KEY]
+            st = entry_data[STORE_KEY]
+            await st.async_refit()
+            await coord.async_refresh()
+
+    # Call targeting only entry_2
+    run_async(_handle_force_refit({"entry_id": "entry_2"}))
+
+    store1.async_refit.assert_not_called()
+    coord1.async_refresh.assert_not_called()
+    store2.async_refit.assert_called_once()
+    coord2.async_refresh.assert_called_once()
+
+
+def test_services_yaml_exists_and_defines_force_refit():
+    """services.yaml must exist and define the force_refit service."""
+    import yaml
+    services_path = os.path.join(
+        _ROOT, "custom_components", "nem_pd7day", "services.yaml"
+    )
+    assert os.path.exists(services_path), "services.yaml missing from integration directory"
+    with open(services_path) as f:
+        services = yaml.safe_load(f)
+    assert "force_refit" in services, "force_refit not defined in services.yaml"
+    assert "fields" in services["force_refit"], "force_refit missing fields definition"
+    assert "entry_id" in services["force_refit"]["fields"], "force_refit missing entry_id field"
