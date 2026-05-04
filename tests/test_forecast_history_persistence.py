@@ -131,6 +131,9 @@ def make_store(fh_load_data=None) -> CalibrationStore:
 
 BASE_DT = datetime(2026, 4, 14, 18, 0, tzinfo=NEM_TZ)
 
+# Pin _now_nem() close to test dates so forecast-history pruning doesn't discard data
+_store_mod._now_nem = lambda: BASE_DT + timedelta(hours=1)
+
 
 # ── Tests: forecast history persistence ──────────────────────────────────────
 

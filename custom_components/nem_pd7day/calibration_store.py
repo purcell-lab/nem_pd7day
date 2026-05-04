@@ -21,7 +21,7 @@ so they are correct regardless of the HA system timezone.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
@@ -41,10 +41,10 @@ from .const import (
     MAX_FORECAST_AGE_DAYS,
     MAX_HORIZON_HOURS,
     MAX_TOTAL_OBS,
+    NEM_TZ,
     STORAGE_VERSION,
     storage_keys,
 )
-from .nem_time import now_nem, parse_iso, to_nem_iso
 
 if TYPE_CHECKING:
     from .pd7day_client import PD7DayData, InterconnectorData, CaseSolutionData, MarketSummaryData
@@ -52,11 +52,24 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _now_nem() -> datetime:
+    """Return the current time in NEM timezone (AEST, UTC+10)."""
+    return datetime.now(NEM_TZ)
+
+
 class CalibrationStore:
     """
     Coordinates observation logging, coefficient persistence, and
     forecast history caching for the calibration pipeline.
     """
+
+    @staticmethod
+    def _parse_nem_iso(s: str) -> datetime:
+        """Parse an ISO-8601 NEM time string to a tz-aware datetime."""
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=NEM_TZ)
+        return dt
 
     def __init__(self, hass: HomeAssistant, region: str) -> None:
         self._hass = hass
@@ -179,7 +192,7 @@ class CalibrationStore:
         Called by the coordinator on each successful fetch.
         All interval_time keys and run_at values are ISO-8601 +10:00 strings.
         """
-        run_at_str = price_data.forecast_generated_at or to_nem_iso(now_nem())
+        run_at_str = price_data.forecast_generated_at or _now_nem().isoformat()
         is_intervention = case.intervention if case else False
 
         # Build per-interval lookups from the interconnector forecast
@@ -206,7 +219,7 @@ class CalibrationStore:
             # Key must be ISO string — period.time is already an ISO string
             # (interval START). current_nem_interval() also returns ISO strings
             # so both sides of the lookup are consistent str keys.
-            key = period.time if isinstance(period.time, str) else to_nem_iso(period.time)
+            key = period.time if isinstance(period.time, str) else period.time.astimezone(NEM_TZ).isoformat()
             if key not in self._forecast_history:
                 self._forecast_history[key] = []
 
@@ -234,9 +247,7 @@ class CalibrationStore:
             self._forecast_history[key].append(entry)
 
         # Prune old history — compare ISO strings directly (fixed offset sorts correctly)
-        cutoff = to_nem_iso(
-            now_nem() - timedelta(days=MAX_FORECAST_AGE_DAYS)
-        )
+        cutoff = (_now_nem() - timedelta(days=MAX_FORECAST_AGE_DAYS)).isoformat()
         self._forecast_history = {
             k: v for k, v in self._forecast_history.items() if k >= cutoff
         }
@@ -267,7 +278,7 @@ class CalibrationStore:
             )
             return 0
 
-        interval_dt = parse_iso(interval_time)
+        interval_dt = self._parse_nem_iso(interval_time)
         new_count = 0
 
         for fc in forecasts:
@@ -275,7 +286,7 @@ class CalibrationStore:
                 continue
 
             try:
-                run_dt = parse_iso(fc["run_at"])
+                run_dt = self._parse_nem_iso(fc["run_at"])
             except (ValueError, KeyError):
                 continue
 

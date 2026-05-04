@@ -32,7 +32,6 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .const import FILE_PATTERN, NEMWEB_BASE_URL, QLD1_INTERCONNECTORS
-from .nem_time import interval_start, now_nem, parse_nem_csv, to_nem_iso
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -276,6 +275,8 @@ def _parse_all_tables(
     MarketSummaryData | None,
     dict[str, list[InterconnectorPeriod]],
 ]:
+    from .nem_time import interval_start, parse_nem_csv, to_nem_iso  # noqa: E402
+
     text = raw.decode("utf-8", errors="ignore")
     reader = csv.reader(io.StringIO(text))
 
@@ -442,6 +443,8 @@ class PD7DayClient:
         All timestamps in the returned PD7DayResult are ISO-8601 strings
         with an explicit +10:00 (NEM time) offset.
         """
+        from .nem_time import now_nem, to_nem_iso  # noqa: E402
+
         file_meta = await self._newest_file()
         source_name, csv_bytes = await self._get_csv_bytes(file_meta)
 

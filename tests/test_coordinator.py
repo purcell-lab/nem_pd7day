@@ -112,6 +112,9 @@ from custom_components.nem_pd7day.pd7day_client import (
 
 NEM_TZ = timezone(timedelta(hours=10))
 
+# Pin _now_nem() close to test dates so forecast-history pruning doesn't discard data
+_store_mod._now_nem = lambda: datetime(2026, 4, 15, 19, 0, tzinfo=NEM_TZ)
+
 
 def run_async(coro):
     return asyncio.new_event_loop().run_until_complete(coro)

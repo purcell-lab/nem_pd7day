@@ -121,6 +121,9 @@ def make_store() -> CalibrationStore:
 
 BASE_DT = datetime(2026, 4, 14, 18, 0, tzinfo=NEM_TZ)  # 18:00 NEM forecast run
 
+# Pin _now_nem() to BASE_DT + 1h so forecast-history pruning doesn't discard test data
+_store_mod._now_nem = lambda: BASE_DT + timedelta(hours=1)
+
 import asyncio
 
 def run_async(coro):

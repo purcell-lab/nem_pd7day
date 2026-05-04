@@ -25,7 +25,6 @@ from .const import (
     STORE_KEY,
 )
 from .coordinator import PD7DayCoordinator
-from .nem_time import fetch_times_as_utc, now_nem
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +34,7 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.C
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up NEM PD7DAY from a config entry."""
     from .actual_price_service import ActualPriceService
+    from .nem_time import fetch_times_as_utc, now_nem
 
     hass.data.setdefault(DOMAIN, {})
 

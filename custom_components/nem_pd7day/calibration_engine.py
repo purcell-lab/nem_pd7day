@@ -68,7 +68,6 @@ from .const import (
     QUANTILES,
     TOD_LABELS,
 )
-from .nem_time import now_nem, to_nem_iso
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -557,7 +556,7 @@ class CalibrationEngine:
                     weight = math.exp(-DECAY_LAMBDA * max(days_ago, 0.0))
                     bucket_weights[key].append(weight)
 
-        now_str = to_nem_iso(now_nem())
+        now_str = now_nem_dt.isoformat()
         models: dict[str, BucketModel] = {}
 
         for key, pairs in buckets.items():
