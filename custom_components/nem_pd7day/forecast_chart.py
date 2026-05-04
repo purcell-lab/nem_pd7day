@@ -145,7 +145,7 @@ def render_forecast_chart(forecast_data: list, region: str) -> bytes:
         max_val = max(pt_vals)
         mid_time = pt_times_list[len(pt_times_list) // 2]
         ax.annotate(
-            f'AEMO spike forecast  max ${max_val * 1000:.0f}/MWh (clipped)',
+            f'AEMO spike forecast  max ${max_val:.3f}/kWh (clipped)',
             xy=(mid_time, CLIP_Y),
             xytext=(30, 38), textcoords='offset points',
             fontsize=7.5, color='#C62828', ha='left', va='bottom',
