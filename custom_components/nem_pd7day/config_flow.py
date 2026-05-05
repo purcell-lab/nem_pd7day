@@ -52,7 +52,7 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected error during PD7DAY setup: %s", exc)
                 errors["base"] = "unknown"
             else:
-                await self.async_set_unique_id("nem_pd7day")
+                await self.async_set_unique_id(f"nem_pd7day_{region}")
                 self._abort_if_unique_id_configured()
                 fetch_times_str = ", ".join(
                     f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM

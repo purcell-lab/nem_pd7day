@@ -194,7 +194,7 @@ def test_user_step_creates_entry_with_selected_region():
         )
 
         assert result["type"] == "create_entry"
-        assert flow._unique_id == "nem_pd7day"
+        assert flow._unique_id == "nem_pd7day_QLD1"
         assert result["title"] == "NEM PD7DAY QLD1"
         assert result["data"][const_mod.CONF_REGION] == "QLD1"
         # Connectivity check probes the selected region.
