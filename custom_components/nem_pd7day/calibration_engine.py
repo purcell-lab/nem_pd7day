@@ -72,10 +72,10 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 # ── Spike regime threshold ────────────────────────────────────────────────────
-# When the raw AEMO forecast is at or above this level, AEMO is already
-# signalling a significant price event.  The linear calibration model (trained
-# on normal prices) should not attempt to correct it — pass through unchanged.
-# 3.00 $/kWh = $3000/MWh — genuine extreme spike territory.
+# SPIKE_THRESHOLD applies in two places:
+#   1. Forecast output: raw forecasts >= threshold are passed through unchanged (passthrough_high)
+#   2. Observation training: actual_rrp >= threshold are excluded from OLS fit
+# $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
 SPIKE_THRESHOLD = 3.00  # $/kWh
 
 # ── Negative passthrough threshold ───────────────────────────────────────────
@@ -544,6 +544,12 @@ class CalibrationEngine:
             if obs.is_intervention:
                 # Skip intervention periods — prices are not market-driven
                 continue
+            if obs.actual_rrp >= SPIKE_THRESHOLD:
+                # Skip spike actuals — extreme prices follow a different
+                # distribution and poison the OLS fit for typical conditions.
+                # SPIKE_THRESHOLD applies to actual_rrp only; the forecast
+                # passthrough path uses the same constant independently.
+                continue
             # Solar elevation ToD classification
             obs_nem = obs_dt.astimezone(_NEM_TZ)
             key = _bucket_key_solar(obs.horizon_hours, obs_nem, region)
@@ -604,7 +610,10 @@ class CalibrationEngine:
                     model.q10.a, model.q90.a,
                 )
 
-        total = len([obs for obs, _ in windowed if not obs.is_intervention])
+        total = len([
+            obs for obs, _ in windowed
+            if not obs.is_intervention and obs.actual_rrp < SPIKE_THRESHOLD
+        ])
         _LOGGER.info(
             "Calibration fit complete: %d observations in %d-day window "
             "(%d total stored), %d buckets active",

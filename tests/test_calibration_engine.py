@@ -627,6 +627,60 @@ def test_below_spike_threshold_uses_ols():
     print(f"  PASS: below spike threshold uses OLS (raw=0.25, calibrated={result['calibrated']})")
 
 
+def test_spike_actuals_excluded_from_ols_buckets():
+    """
+    Observations where actual_rrp >= SPIKE_THRESHOLD must be excluded from
+    OLS training buckets.  Spike actuals ($3,000+/MWh) follow a different
+    distribution and collapse OLS slopes to near zero when included.
+    """
+    engine = CalibrationEngine()
+    rng = random.Random(555)
+
+    # 60 normal observations: actual ≈ 2.0 * forecast + 0.01
+    normal_obs = []
+    for _ in range(60):
+        fc = rng.uniform(0.05, 0.25)
+        actual = 2.0 * fc + 0.01 + rng.gauss(0, 0.003)
+        normal_obs.append(make_obs(fc, actual, horizon_hours=18.0, hour_of_day=12))
+
+    # 15 spike observations: actual_rrp >= SPIKE_THRESHOLD (e.g. $8-$15/kWh)
+    spike_obs = []
+    for _ in range(15):
+        fc = rng.uniform(0.05, 0.25)
+        actual = rng.uniform(8.0, 15.0)  # $8,000-$15,000/MWh spike
+        spike_obs.append(make_obs(fc, actual, horizon_hours=18.0, hour_of_day=12))
+
+    # Fit with both normal + spike observations
+    result = engine.fit(normal_obs + spike_obs)
+    bucket = result.get_bucket(horizon_hours=18.0, hour_of_day=12)
+
+    # Spike observations must NOT have entered the bucket
+    assert bucket.ols.n == 60, (
+        f"Bucket n should be 60 (normal only), got {bucket.ols.n} — "
+        f"spike observations leaked into the OLS fit"
+    )
+
+    # OLS slope should be healthy (~2.0), not collapsed
+    assert bucket.ols.a > 0.1, (
+        f"OLS slope a={bucket.ols.a} is near zero — spike observations "
+        f"likely corrupted the fit"
+    )
+    assert abs(bucket.ols.a - 2.0) < 0.3, (
+        f"OLS slope a={bucket.ols.a} too far from expected ~2.0 — "
+        f"spike observations may have affected the fit"
+    )
+
+    # total_observations should also exclude spike obs
+    assert result.total_observations == 60, (
+        f"total_observations should be 60 (normal only), got {result.total_observations}"
+    )
+
+    print(
+        f"  PASS: spike actuals excluded from OLS buckets "
+        f"(n={bucket.ols.n}, a={bucket.ols.a:.4f}, total={result.total_observations})"
+    )
+
+
 # ── Rolling observation window tests ─────────────────────────────────────────
 
 def test_rolling_window_filters_old_observations():
@@ -970,6 +1024,7 @@ TESTS = [
     # Spike passthrough
     test_spike_passthrough_above_threshold,
     test_below_spike_threshold_uses_ols,
+    test_spike_actuals_excluded_from_ols_buckets,
 
     # Rolling observation window
     test_rolling_window_filters_old_observations,
