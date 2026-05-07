@@ -544,11 +544,12 @@ class CalibrationEngine:
             if obs.is_intervention:
                 # Skip intervention periods — prices are not market-driven
                 continue
-            if obs.actual_rrp >= SPIKE_THRESHOLD:
-                # Exclude spike actuals from OLS training — extreme prices
+            if obs.actual_rrp >= SPIKE_THRESHOLD or obs.pd7day_forecast >= SPIKE_THRESHOLD:
+                # Exclude spike observations from OLS training — extreme prices
                 # follow a different distribution and poison the fit.
-                # SPIKE_THRESHOLD applies to actual_rrp only; the forecast
-                # passthrough path uses the same constant independently.
+                # Both sides must be checked: spike actuals poison y, and spike
+                # forecasts (served as passthrough) are extreme x leverage points
+                # that collapse the OLS slope even when actual_rrp is bounded.
                 continue
             # Solar elevation ToD classification
             obs_nem = obs_dt.astimezone(_NEM_TZ)
@@ -612,7 +613,7 @@ class CalibrationEngine:
 
         total = len([
             obs for obs, _ in windowed
-            if not obs.is_intervention and obs.actual_rrp < SPIKE_THRESHOLD
+            if not obs.is_intervention and obs.actual_rrp < SPIKE_THRESHOLD and obs.pd7day_forecast < SPIKE_THRESHOLD
         ])
         _LOGGER.info(
             "Calibration fit complete: %d observations in %d-day window "

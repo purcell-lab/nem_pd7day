@@ -681,6 +681,62 @@ def test_spike_actuals_excluded_from_ols_buckets():
     )
 
 
+def test_spike_forecasts_excluded_from_ols_buckets():
+    """
+    Observations where pd7day_forecast >= SPIKE_THRESHOLD must also be excluded
+    from OLS training buckets.  During spike events the passthrough path serves
+    the raw AEMO forecast unchanged, so pd7day_forecast can be $8-$15/kWh.
+    These extreme x-values are high-leverage points that collapse the OLS slope
+    to near zero even when actual_rrp is also high (since actual is also excluded
+    by the actual_rrp guard).  The key risk is forecasts with spike-range x but
+    moderate y (e.g. spike forecast issued but actual didn't materialise).
+    """
+    engine = CalibrationEngine()
+    rng = random.Random(777)
+
+    # 60 normal observations: actual ≈ 1.5 * forecast + 0.02
+    normal_obs = []
+    for _ in range(60):
+        fc = rng.uniform(0.05, 0.25)
+        actual = 1.5 * fc + 0.02 + rng.gauss(0, 0.003)
+        normal_obs.append(make_obs(fc, actual, horizon_hours=36.0, hour_of_day=17))
+
+    # 15 spike-forecast observations: pd7day_forecast >= SPIKE_THRESHOLD
+    # (spike forecast issued, actual moderated — the classic leverage poison case)
+    spike_fc_obs = []
+    for _ in range(15):
+        fc = rng.uniform(3.0, 15.0)  # spike-range forecast
+        actual = rng.uniform(0.05, 0.30)  # actual stayed normal
+        spike_fc_obs.append(make_obs(fc, actual, horizon_hours=36.0, hour_of_day=17))
+
+    result = engine.fit(normal_obs + spike_fc_obs)
+    bucket = result.get_bucket(horizon_hours=36.0, hour_of_day=17)
+
+    # Spike-forecast observations must NOT have entered the bucket
+    assert bucket.ols.n == 60, (
+        f"Bucket n should be 60 (normal only), got {bucket.ols.n} — "
+        f"spike-forecast observations leaked into the OLS fit"
+    )
+
+    # OLS slope should be healthy (~1.5), not collapsed
+    assert bucket.ols.a > 0.1, (
+        f"OLS slope a={bucket.ols.a} is near zero — spike-forecast observations "
+        f"likely corrupted the fit via leverage"
+    )
+    assert abs(bucket.ols.a - 1.5) < 0.3, (
+        f"OLS slope a={bucket.ols.a} too far from expected ~1.5"
+    )
+
+    assert result.total_observations == 60, (
+        f"total_observations should be 60 (normal only), got {result.total_observations}"
+    )
+
+    print(
+        f"  PASS: spike forecasts excluded from OLS buckets "
+        f"(n={bucket.ols.n}, a={bucket.ols.a:.4f}, total={result.total_observations})"
+    )
+
+
 # ── Rolling observation window tests ─────────────────────────────────────────
 
 def test_rolling_window_filters_old_observations():
@@ -1025,6 +1081,7 @@ TESTS = [
     test_spike_passthrough_above_threshold,
     test_below_spike_threshold_uses_ols,
     test_spike_actuals_excluded_from_ols_buckets,
+    test_spike_forecasts_excluded_from_ols_buckets,
 
     # Rolling observation window
     test_rolling_window_filters_old_observations,
