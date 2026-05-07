@@ -545,8 +545,8 @@ class CalibrationEngine:
                 # Skip intervention periods — prices are not market-driven
                 continue
             if obs.actual_rrp >= SPIKE_THRESHOLD:
-                # Skip spike actuals — extreme prices follow a different
-                # distribution and poison the OLS fit for typical conditions.
+                # Exclude spike actuals from OLS training — extreme prices
+                # follow a different distribution and poison the fit.
                 # SPIKE_THRESHOLD applies to actual_rrp only; the forecast
                 # passthrough path uses the same constant independently.
                 continue
