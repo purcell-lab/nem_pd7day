@@ -18,7 +18,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: pip install pytest "astral>=2.2" "numpy>=1.24.0" "matplotlib>=3.7.0"
+        run: pip install pytest "astral>=2.2" "numpy>=1.24.0" "matplotlib>=3.7.0" pyyaml
 
       - name: Run tests
         run: pytest tests/ -v
