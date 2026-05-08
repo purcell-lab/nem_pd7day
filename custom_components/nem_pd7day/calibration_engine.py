@@ -115,14 +115,18 @@ _LOGGER = logging.getLogger(__name__)
 # ── Spike regime threshold ────────────────────────────────────────────────────
 # SPIKE_THRESHOLD applies in two places:
 #   1. Forecast output: raw forecasts >= threshold are passed through unchanged (passthrough_high)
-#   2. Observation training: actual_rrp >= threshold are excluded from OLS fit
+#   2. Observation training: observations where EITHER actual_rrp OR pd7day_forecast
+#      >= threshold are excluded from isotonic/quantile fitting.  Spike actuals
+#      poison the y-side of the fit; spike forecasts (served as passthrough) are
+#      extreme x leverage points that collapse slopes at non-spike forecast levels.
 # $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
 SPIKE_THRESHOLD = 3.00  # $/kWh
 
 # ── Negative passthrough threshold ───────────────────────────────────────────
 # When raw <= this value, pass through unchanged without calibration.
 # During the solar window AEMO often forecasts mild negatives (~−$0.03/kWh)
-# while actuals are near zero — the linear model can correct these usefully.
+# while actuals are near zero — the isotonic model can correct these usefully
+# (the step function maps mild negatives toward zero).
 # Only deeply negative raws (genuine negative-price events) should bypass
 # calibration.  Set to −0.10 $/kWh (−$100/MWh) as the passthrough boundary.
 NEGATIVE_PASSTHROUGH_THRESHOLD = -0.10  # $/kWh
@@ -134,9 +138,10 @@ NEGATIVE_PASSTHROUGH_THRESHOLD = -0.10  # $/kWh
 # total_increasing state class accounting.
 OBSERVATION_WINDOW_DAYS = 90
 
-# ── Weighted OLS decay ────────────────────────────────────────────────────────
-# Exponential time decay constant for weighted OLS.
+# ── Observation decay weights ────────────────────────────────────────────────
+# Exponential time decay constant for IsotonicRegression sample_weight.
 # λ = 0.033 → half-life ≈ 21 days (ln2 / 0.033 ≈ 21).
+# Applied to both isotonic and quantile regression fitting.
 DECAY_LAMBDA = 0.033
 
 # NEM timezone for weight calculations
@@ -172,7 +177,14 @@ class Observation(NamedTuple):
 
 @dataclass
 class LinearCoeff:
-    """OLS fit: actual ≈ a * forecast + b"""
+    """Diagnostic coefficients from the weighted OLS fit.
+
+    OLS (actual ≈ a × forecast + b) is retained alongside IsotonicRegression
+    to provide interpretable diagnostic attributes in the HA sensor state
+    (a, b, mae, rmse) and to initialise the quantile regression solver.
+    The OLS prediction (apply()) is no longer used as the primary calibrated
+    value — that role belongs to BucketModel.iso_model.
+    """
     a: float = 1.0
     b: float = 0.0
     n: int = 0
@@ -184,6 +196,7 @@ class LinearCoeff:
         return self.n < MIN_OBS
 
     def apply(self, x: float) -> float:
+        """OLS point estimate — used only for quantile initialisation and diagnostics."""
         return self.a * x + self.b
 
 
