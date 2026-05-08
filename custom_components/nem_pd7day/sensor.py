@@ -244,7 +244,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 ATTR_CAL_P10: cal["p10"],
                 ATTR_CAL_P50: cal["p50"],
                 ATTR_CAL_P90: cal["p90"],
-                ATTR_CAL_MAE: cal.get("mae"),
+                ATTR_CAL_MAE: cal.get("ols_mae"),
                 ATTR_CAL_SOURCE: cal["calibrated_source"],
                 ATTR_CAL_N_OBS: cal["n_obs"],
                 "value": cal["calibrated"],

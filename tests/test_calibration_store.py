@@ -433,7 +433,7 @@ def test_sanity_guard_passes_normal_values():
     result = engine.fit(obs)
     out = result.apply(0.10, horizon_hours=3.0, hour_of_day=21)
     # With normal data the guard must not interfere
-    assert out["calibrated_source"] in ("isotonic", "ols"), (
+    assert out["calibrated_source"] == "isotonic", (
         f"Sanity guard incorrectly rejected a valid bucket: {out}"
     )
 

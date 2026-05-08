@@ -3,7 +3,7 @@ NEM PD7DAY Calibration Engine
 ==============================
 Implementation of:
 
-  1. Isotonic Regression (sklearn IsotonicRegression)
+  1. Isotonic Regression (pure-numpy PAV IsotonicRegression)
        actual ≈ f(forecast),  f monotone non-decreasing
      Used as the primary point-estimate calibrator per horizon/ToD bucket.
      Replaces the previous weighted OLS (actual = a * forecast + b) to handle
@@ -312,11 +312,11 @@ class BucketModel:
     q10: QuantileCoeff = field(default_factory=lambda: QuantileCoeff(0.1))
     q50: QuantileCoeff = field(default_factory=lambda: QuantileCoeff(0.5))
     q90: QuantileCoeff = field(default_factory=lambda: QuantileCoeff(0.9))
-    # Fitted IsotonicRegression instance (sklearn), or None when the bucket
+    # Fitted IsotonicRegression instance (internal PAV), or None when the bucket
     # has fewer than MIN_OBS training observations.  Set during engine.fit().
     # Uses out_of_bounds='clip': forecasts outside the training x-range are
     # clipped to the nearest boundary rather than extrapolated.
-    iso_model: object = None
+    iso_model: IsotonicRegression | None = None
 
     def apply_all(self, x: float) -> dict:
         """Return calibrated point estimate + confidence interval.
@@ -352,12 +352,17 @@ class BucketModel:
             }
 
         if self.iso_model is None:
-            # Insufficient training data (< MIN_OBS) — pass raw forecast through
+            # Isotonic model not available (< MIN_OBS or not persisted) —
+            # pass raw forecast through but still compute quantile intervals
+            # if the quantile coefficients are fitted (they survive serialisation).
+            p10 = self.q10.apply(x) if not self.q10.is_default else None
+            p50 = self.q50.apply(x) if not self.q50.is_default else None
+            p90 = self.q90.apply(x) if not self.q90.is_default else None
             return {
                 "calibrated": round(x, 6),
-                "p10": None,
-                "p50": None,
-                "p90": None,
+                "p10": round(p10, 6) if p10 is not None else None,
+                "p50": round(p50, 6) if p50 is not None else None,
+                "p90": round(p90, 6) if p90 is not None else None,
                 "calibrated_source": "passthrough",
                 "n_obs": self.ols.n,
             }
@@ -382,7 +387,7 @@ class BucketModel:
             return {
                 "calibrated": round(x, 6),
                 "p10": None, "p50": None, "p90": None,
-                "mae": None,
+                "ols_mae": None,
                 "calibrated_source": "passthrough_sanity",
                 "n_obs": self.ols.n,
             }
@@ -396,7 +401,7 @@ class BucketModel:
             "p10": round(p10, 6) if p10 is not None else None,
             "p50": round(p50, 6) if p50 is not None else None,
             "p90": round(p90, 6) if p90 is not None else None,
-            "mae": self.ols.mae,
+            "ols_mae": self.ols.mae,
             "calibrated_source": "isotonic",
             "n_obs": self.ols.n,
         }
@@ -778,7 +783,7 @@ class CalibrationEngine:
                 a=a_ols, b=b_ols, n=len(pairs), mae=mae, rmse=rmse
             )
 
-            # Isotonic regression (sklearn IsotonicRegression) — primary point estimator.
+            # Isotonic regression (internal PAV IsotonicRegression) — primary point estimator.
             # Fitted with exponential decay sample weights (same as OLS above).
             # out_of_bounds='clip': forecasts outside the training x-range are clipped
             # to the nearest training boundary rather than extrapolated.

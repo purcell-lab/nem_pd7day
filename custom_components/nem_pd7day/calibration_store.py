@@ -441,7 +441,7 @@ class CalibrationStore:
                 "p10": None,
                 "p50": None,
                 "p90": None,
-                "mae": None,
+                "ols_mae": None,
                 "calibrated_source": "passthrough",
                 "n_obs": 0,
             }

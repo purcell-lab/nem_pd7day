@@ -294,7 +294,7 @@ def test_engine_fit_applies_correctly():
 
     calibrated = result.apply(test_forecast, horizon_hours=18.0, hour_of_day=12)
 
-    assert calibrated["calibrated_source"] in ("isotonic", "ols"), "Expected calibration"
+    assert calibrated["calibrated_source"] == "isotonic", "Expected isotonic calibration"
     assert calibrated["p10"] is not None, "Expected P10"
     assert calibrated["p90"] is not None, "Expected P90"
 
@@ -361,18 +361,34 @@ def test_engine_serialisation_roundtrip():
     orig = result.apply(test_price, horizon_hours=8.0, hour_of_day=17)
     rest = restored.apply(test_price, horizon_hours=8.0, hour_of_day=17)
 
-    # Original result uses isotonic calibration; restored result uses passthrough
-    # (iso_model not serialised) — this is expected behaviour.
-    assert orig["calibrated_source"] in ("isotonic", "ols"), (
-        f"Original should use isotonic or ols, got {orig['calibrated_source']}"
+    # Pre-serialisation: isotonic must be active (not passthrough)
+    assert orig["calibrated_source"] == "isotonic", (
+        f"Expected isotonic before serialisation, got {orig['calibrated_source']}"
     )
+    assert orig["calibrated"] != round(test_price, 6), (
+        "Isotonic must alter the forecast — raw passthrough before serialisation"
+    )
+
+    # Post-serialisation: iso_model not persisted → passthrough
     assert rest["calibrated_source"] == "passthrough", (
-        f"Restored (no iso_model) should passthrough, got {rest['calibrated_source']}"
+        f"Expected passthrough after serialisation (iso not persisted), got {rest['calibrated_source']}"
     )
-    # OLS coefficients are preserved in storage; quantile intervals should round-trip
-    if orig["p10"] is not None and rest["p10"] is not None:
-        assert abs(orig["p10"] - rest["p10"]) < 1e-6
-    print("  PASS: serialisation roundtrip (isotonic not serialised — expected passthrough on restore)")
+    assert rest["calibrated"] == round(test_price, 6), (
+        "Post-serialisation passthrough must return raw price unchanged"
+    )
+
+    # Quantile intervals survive roundtrip
+    assert orig["p10"] is not None
+    assert orig["p90"] is not None
+    assert rest["p10"] is not None
+    assert rest["p90"] is not None
+    assert math.isclose(orig["p10"], rest["p10"], rel_tol=1e-6), (
+        f"P10 changed after serialisation: {orig['p10']} vs {rest['p10']}"
+    )
+    assert math.isclose(orig["p90"], rest["p90"], rel_tol=1e-6), (
+        f"P90 changed after serialisation: {orig['p90']} vs {rest['p90']}"
+    )
+    print("  PASS: serialisation roundtrip (isotonic active pre, passthrough post, quantiles survive)")
 
 
 def test_engine_multi_bucket_independence():
@@ -629,15 +645,15 @@ def test_below_spike_threshold_uses_ols():
     result_fitted = engine.fit(obs)
     result = result_fitted.apply(0.25, horizon_hours=18.0, hour_of_day=17)
 
-    assert result["calibrated_source"] in ("isotonic", "ols"), (
-        f"Below-spike forecast should use isotonic/ols, got {result['calibrated_source']}"
+    assert result["calibrated_source"] == "isotonic", (
+        f"Below-spike forecast should use isotonic, got {result['calibrated_source']}"
     )
-    assert result["calibrated_source"] != "passthrough_high", (
-        f"Below-spike forecast must not use spike passthrough"
+    assert result["calibrated"] != round(0.25, 6), (
+        "Isotonic must alter a sub-threshold forecast from the raw value"
     )
     assert result["p10"] is not None
     assert result["p90"] is not None
-    print(f"  PASS: below spike threshold uses OLS (raw=0.25, calibrated={result['calibrated']})")
+    print(f"  PASS: below spike threshold uses isotonic (raw=0.25, calibrated={result['calibrated']})")
 
 
 def test_spike_actuals_excluded_from_ols_buckets():

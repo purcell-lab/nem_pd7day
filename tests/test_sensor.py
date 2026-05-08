@@ -491,7 +491,7 @@ def test_calibrate_period_with_active_calibration():
         "p10": 0.055,
         "p50": 0.070,
         "p90": 0.095,
-        "mae": 0.012,
+        "ols_mae": 0.012,
         "calibrated_source": "ols",
         "n_obs": 42,
     }
@@ -502,7 +502,7 @@ def test_calibrate_period_with_active_calibration():
 
     result = sensor._calibrate_period(period, "2026-04-15T07:30:00+10:00")
 
-    cal_keys = {"calibrated", "p10", "p50", "p90", "mae", "calibrated_source", "n_obs"}
+    cal_keys = {"calibrated", "p10", "p50", "p90", "ols_mae", "calibrated_source", "n_obs"}
     missing = cal_keys - set(result.keys())
     assert not missing, f"Calibration keys missing from output: {missing}"
     assert abs(result["value"] - 0.072) < 1e-9, (
@@ -521,7 +521,7 @@ def test_calibrate_period_horizon_used_for_store_lookup():
     mock_store.calibration = MagicMock()
     mock_store.apply_to_price.return_value = {
         "calibrated": 0.085, "p10": None, "p50": None, "p90": None,
-        "mae": None, "calibrated_source": "passthrough", "n_obs": 0,
+        "ols_mae": None, "calibrated_source": "passthrough", "n_obs": 0,
     }
 
     sensor = make_sensor(store=mock_store)
