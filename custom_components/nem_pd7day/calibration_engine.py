@@ -1,35 +1,73 @@
 """
 NEM PD7DAY Calibration Engine
 ==============================
-Pure-Python, zero-dependency implementation of:
+Implementation of:
 
-  1. Ordinary Least Squares (OLS) linear regression
-       actual = a * forecast + b
+  1. Isotonic Regression (sklearn IsotonicRegression)
+       actual ≈ f(forecast),  f monotone non-decreasing
      Used as the primary point-estimate calibrator per horizon/ToD bucket.
+     Replaces the previous weighted OLS (actual = a * forecast + b) to handle
+     the non-linear saturation of AEMO PD7DAY at high forecast levels and
+     longer horizons.  At h24_48+ the OLS actual/forecast ratio collapses to
+     0.60–0.69 for the top forecast decile; isotonic regression fits this
+     saturation without a linearity assumption.
 
   2. Quantile Regression (pinball loss, IRLS)
        Fits P10, P50, P90 simultaneously.
      Gives a confidence interval that widens correctly at longer horizons
      and captures price spike probability without requiring scipy/numpy.
+     Retained alongside isotonic for interval estimation.
 
   3. Bucket routing
      Observations are partitioned into 6 horizon × 4 time-of-day = 24
      independent models.  Each bucket is fit separately, so the accuracy
      at 6-hour horizon doesn't contaminate the 5-day horizon model.
 
+     Horizon bands:
+       h00_06:   0 ≤ horizon_hours < 6
+       h06_12:   6 ≤ horizon_hours < 12
+       h12_24:  12 ≤ horizon_hours < 24
+       h24_48:  24 ≤ horizon_hours < 48
+       h48_96:  48 ≤ horizon_hours < 96
+       h96plus:  horizon_hours ≥ 96
+
+     ToD labels (solar elevation via astral, NEM UTC+10):
+       peak:          NEM hour 16–20 (hardcoded, overrides solar)
+       solar:         solar elevation > 15°, not peak
+       morning_ramp:  solar elevation 0°–15°, not peak (~05:00–09:00 NEM)
+       shoulder:      solar elevation ≤ 0° (overnight)
+
   4. Feature vector
      Each observation carries the full feature set collected by the
      integration so the external ML stage (Stage 3, optional) can consume
      the raw log without re-processing.
 
+IsotonicRegression clipping behaviour
+--------------------------------------
+out_of_bounds="clip" — forecasts outside the training x-range are clipped
+to the nearest training boundary rather than extrapolated.  This is
+conservative and appropriate: spike forecasts (≥ SPIKE_THRESHOLD) are
+handled by the independent passthrough path before reaching the isotonic
+model, so the clip boundary is never reached in normal operation.
+
+Decay weights
+--------------
+w_i = exp(-DECAY_LAMBDA × days_ago), half-life ≈ 21 days (ln2/0.033).
+Passed as sample_weight to IsotonicRegression so recent observations
+influence the fit more strongly.
+
+MIN_OBS guard
+--------------
+Buckets with < MIN_OBS observations return the raw pd7day_forecast
+unchanged (passthrough) until data accumulates.
+
 Design constraints
 ------------------
-- No external imports beyond stdlib.
+- Requires scikit-learn >= 1.3.0 (IsotonicRegression).
 - Safe to call from inside the HA event loop (all CPU work is sync/fast;
   the coordinator offloads fitting to executor via hass.async_add_executor_job).
 - Graceful degradation: any bucket with < MIN_OBS observations returns
-  passthrough coefficients (a=1, b=0) so raw PD7DAY values flow through
-  unchanged until data accumulates.
+  passthrough so raw PD7DAY values flow through unchanged.
 
 Quantile regression algorithm
 ------------------------------
@@ -53,8 +91,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
+import numpy as np
+
 from astral import LocationInfo
 from astral.sun import elevation as solar_elevation
+from sklearn.isotonic import IsotonicRegression
 
 from .const import (
     HORIZON_EDGES,
@@ -171,9 +212,25 @@ class BucketModel:
     q10: QuantileCoeff = field(default_factory=lambda: QuantileCoeff(0.1))
     q50: QuantileCoeff = field(default_factory=lambda: QuantileCoeff(0.5))
     q90: QuantileCoeff = field(default_factory=lambda: QuantileCoeff(0.9))
+    # Fitted IsotonicRegression instance (sklearn), or None when the bucket
+    # has fewer than MIN_OBS training observations.  Set during engine.fit().
+    # Uses out_of_bounds='clip': forecasts outside the training x-range are
+    # clipped to the nearest boundary rather than extrapolated.
+    iso_model: object = None
 
     def apply_all(self, x: float) -> dict:
-        """Return calibrated point estimate + confidence interval."""
+        """Return calibrated point estimate + confidence interval.
+
+        Calibration path (evaluated in order):
+          1. Negative passthrough  — deeply negative forecasts bypass calibration.
+          2. Spike passthrough     — forecasts >= SPIKE_THRESHOLD served unchanged;
+                                     completely independent of the isotonic model.
+          3. Insufficient data     — raw forecast returned if iso_model is None
+                                     (bucket has < MIN_OBS training observations).
+          4. Isotonic calibration  — IsotonicRegression.predict([x]), clipped >= 0.
+          5. Ratio sanity guard    — falls back to passthrough if calibrated/raw
+                                     exceeds MAX_CALIBRATED_RATIO.
+        """
         if x <= NEGATIVE_PASSTHROUGH_THRESHOLD:
             return {
                 "calibrated": round(x, 6),
@@ -194,7 +251,8 @@ class BucketModel:
                 "n_obs": self.ols.n,
             }
 
-        if self.ols.is_default:
+        if self.iso_model is None:
+            # Insufficient training data (< MIN_OBS) — pass raw forecast through
             return {
                 "calibrated": round(x, 6),
                 "p10": None,
@@ -204,27 +262,17 @@ class BucketModel:
                 "n_obs": self.ols.n,
             }
 
-        calibrated = self.ols.apply(x)
+        # ── Isotonic calibration ────────────────────────────────────────────
+        # IsotonicRegression.predict() with out_of_bounds='clip': forecasts
+        # outside the training x-range are clipped to the nearest boundary.
+        # Result floored at 0.0 — calibrated prices cannot be physically
+        # negative (negative forecasts are caught by passthrough_negative).
+        calibrated = float(max(self.iso_model.predict([x])[0], 0.0))
 
-        # ── Sanity guard ──────────────────────────────────────────────────────
-        # If the OLS intercept is physically implausible, or if the calibrated
-        # value is wildly different from the raw value, fall back to passthrough
-        # rather than emitting nonsense.  This protects against corrupt training
-        # data (e.g. duplicate observations, interval key mismatches).
-        if abs(self.ols.b) > MAX_INTERCEPT_ABS:
-            _LOGGER.warning(
-                "Bucket %s sanity check FAILED: intercept b=%.3f exceeds limit %.1f "
-                "— falling back to passthrough (raw=%.4f)",
-                self.bucket_key, self.ols.b, MAX_INTERCEPT_ABS, x,
-            )
-            return {
-                "calibrated": round(x, 6),
-                "p10": None, "p50": None, "p90": None,
-                "mae": None,
-                "calibrated_source": "passthrough_sanity",
-                "n_obs": self.ols.n,
-            }
 
+        # ── Ratio sanity guard ────────────────────────────────────────────
+        # Isotonic regression with clipping is well-behaved, but guard against
+        # corrupt training data producing a wildly implausible calibrated value.
         if abs(x) > 0.01 and abs(calibrated / x) > MAX_CALIBRATED_RATIO:
             _LOGGER.warning(
                 "Bucket %s sanity check FAILED: calibrated/raw ratio=%.1f exceeds limit %.1f "
@@ -249,7 +297,7 @@ class BucketModel:
             "p50": round(p50, 6) if p50 is not None else None,
             "p90": round(p90, 6) if p90 is not None else None,
             "mae": self.ols.mae,
-            "calibrated_source": "ols",
+            "calibrated_source": "isotonic",
             "n_obs": self.ols.n,
         }
 
@@ -570,13 +618,31 @@ class CalibrationEngine:
             model = BucketModel(bucket_key=key)
             weights = bucket_weights[key]
 
-            # OLS (weighted)
+            # OLS (weighted) — retained to populate LinearCoeff for quantile
+            # regression initialisation and diagnostic attributes (a, b, mae, rmse).
+            # The OLS calibrated value is no longer used in apply_all(); that path
+            # now uses the isotonic model below.
             a_ols, b_ols = _ols(pairs, weights=weights if weights else None)
             a_ols = max(a_ols, 0.0)
             mae, rmse = _ols_metrics(pairs, a_ols, b_ols) if len(pairs) >= MIN_OBS else (None, None)
             model.ols = LinearCoeff(
                 a=a_ols, b=b_ols, n=len(pairs), mae=mae, rmse=rmse
             )
+
+            # Isotonic regression (sklearn IsotonicRegression) — primary point estimator.
+            # Fitted with exponential decay sample weights (same as OLS above).
+            # out_of_bounds='clip': forecasts outside the training x-range are clipped
+            # to the nearest training boundary rather than extrapolated.
+            # MIN_OBS guard: iso_model remains None below threshold; apply_all() falls
+            # back to passthrough when iso_model is None.
+            if len(pairs) >= MIN_OBS:
+                _xs = np.array([p[0] for p in pairs])
+                _ys = np.array([p[1] for p in pairs])
+                _ws = np.array(weights) if weights else np.ones(len(pairs))
+                iso = IsotonicRegression(increasing=True, out_of_bounds="clip")
+                iso.fit(_xs, _ys, sample_weight=_ws)
+                model.iso_model = iso
+            # else: iso_model stays None (set by dataclass default)
 
             # Quantile regression (P10, P50, P90)
             q_results: dict[str, tuple[float, float, float]] = {}
@@ -605,7 +671,7 @@ class CalibrationEngine:
             models[key] = model
             if len(pairs) >= MIN_OBS:
                 _LOGGER.debug(
-                    "Bucket %s: n=%d OLS(a=%.3f, b=%.4f) MAE=%.4f "
+                    "Bucket %s: n=%d isotonic+OLS(a=%.3f, b=%.4f) MAE=%.4f "
                     "Q10(a=%.3f) Q90(a=%.3f)",
                     key, len(pairs), a_ols, b_ols, mae or 0,
                     model.q10.a, model.q90.a,
