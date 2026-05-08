@@ -41,7 +41,7 @@ async def async_setup_entry(
     region = entry.data.get("region", "QLD1").upper()
     async_add_entities([
         NemPd7dayTodCamera(coordinator, region, entry),
-        NemPd7dayBiasChartCamera(coordinator, region, entry),
+        NemPd7dayIsoChartCamera(coordinator, region, entry),
         NemPd7dayForecastChartCamera(coordinator, region, entry),
     ])
 
@@ -178,6 +178,79 @@ class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
             )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Bias chart render failed")
+
+    async def async_camera_image(
+        self,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> bytes | None:
+        return self._image_bytes if self._image_bytes else None
+
+
+class NemPd7dayIsoChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
+    """
+    Camera entity that serves the isotonic calibration goodness dashboard.
+
+    Replaces the OLS bias chart. Rendered from live CalibrationResult after
+    each coordinator refresh. Shows compression ratio heatmap, iso_mae bars,
+    PAV complexity scatter, and compression_ratio drift time-series.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Calibration Chart"
+    _attr_content_type = "image/png"
+    _attr_supported_features = CameraEntityFeature(0)
+    _attr_is_streaming = False
+    _attr_brand = "AEMO NEM"
+    _attr_model = "NEM PD7DAY"
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        region: str,
+        entry: ConfigEntry,
+    ) -> None:
+        CoordinatorEntity.__init__(self, coordinator)
+        Camera.__init__(self)
+        self._region = region
+        self._entry = entry
+        self._image_bytes: bytes = _PLACEHOLDER
+        self._attr_unique_id = f"nem_pd7day_{region.lower()}_iso_chart"
+
+    @property
+    def device_info(self):
+        from homeassistant.helpers.device_registry import DeviceInfo
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._refresh_image()
+
+    def _handle_coordinator_update(self) -> None:
+        self._refresh_image()
+        self.async_write_ha_state()
+
+    def _refresh_image(self) -> None:
+        """Re-render the iso chart from the coordinator's calibration result."""
+        store = getattr(self.coordinator, "_store", None)
+        if store is None:
+            return
+        cal = store.calibration
+        if cal is None:
+            return
+        from . import iso_chart as _ic
+        try:
+            self._image_bytes = _ic.render_iso_chart(
+                cal,
+                iso_history=store.iso_history.get(self._region, []),
+                obs_count=store.observation_count,
+                region=self._region,
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Iso chart render failed")
 
     async def async_camera_image(
         self,

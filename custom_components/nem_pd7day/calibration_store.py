@@ -96,6 +96,10 @@ class CalibrationStore:
         # obs_idx is the index into _observations so we can update actual_rrp in-place.
         self._actual_accum: dict[tuple[str, str], dict] = {}
 
+        # Rolling history of compression_ratio per bucket across recent fit cycles.
+        # In-memory only (not persisted) — resets on HA restart.
+        self._iso_history: dict[str, list[dict]] = {}
+
     # ── Startup ───────────────────────────────────────────────────────────────
 
     async def async_load(self) -> None:
@@ -378,6 +382,22 @@ class CalibrationStore:
         )
         self._calibration = result
         await self._coeff_store.async_save(self._engine.to_storage(result))
+
+        # Append compression_ratio snapshot to rolling iso_history.
+        summary = result.summary()
+        history_record = {
+            "fitted_at": result.fitted_at,
+            "buckets": {
+                key: bucket["compression_ratio"]
+                for key, bucket in summary["buckets"].items()
+            },
+        }
+        region_history = self._iso_history.setdefault(self._region, [])
+        region_history.append(history_record)
+        # Keep at most 48 records (48 × 8h fetches ≈ 16 days).
+        if len(region_history) > 48:
+            self._iso_history[self._region] = region_history[-48:]
+
         return result
 
     # ── Public accessors ──────────────────────────────────────────────────────
@@ -403,6 +423,11 @@ class CalibrationStore:
             1 for m in self._calibration.models.values()
             if not m.ols.is_default
         )
+
+    @property
+    def iso_history(self) -> dict[str, list[dict]]:
+        """Rolling compression_ratio history per region (in-memory only)."""
+        return self._iso_history
 
     def apply_to_price(
         self,

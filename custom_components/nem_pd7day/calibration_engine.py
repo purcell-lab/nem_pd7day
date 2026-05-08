@@ -418,7 +418,23 @@ class CalibrationResult:
         return self.get_bucket(horizon_hours, hour_of_day).apply_all(forecast)
 
     def summary(self) -> dict:
-        """Compact summary for diagnostic sensor attributes."""
+        """Compact summary for diagnostic sensor attributes.
+
+        Per-bucket fields emitted:
+          n              — training observation count
+          ols_a          — OLS slope (diagnostic only, not used for calibration)
+          iso_n_steps    — number of distinct PAV step levels (None if < MIN_OBS)
+          x_min          — minimum training forecast value (clip lower bound)
+          x_max          — maximum training forecast value (clip upper bound)
+          compression_ratio — (y_max - y_min) / (x_max - x_min); <1 = over-forecast
+                              None if x_range < 1e-6 or < MIN_OBS
+          iso_mae        — isotonic training MAE (mean |y_fitted - y_actual|)
+                           None if < MIN_OBS
+          spot_010       — calibrated output at 0.10 $/kWh forecast
+          spot_020       — calibrated output at 0.20 $/kWh forecast
+          q10_a          — quantile P10 slope (used for P10 interval)
+          q90_a          — quantile P90 slope (used for P90 interval)
+        """
         out = {
             "fitted_at": self.fitted_at,
             "total_observations": self.total_observations,
@@ -427,16 +443,49 @@ class CalibrationResult:
             "buckets": {},
         }
         for key, model in self.models.items():
-            out["buckets"][key] = {
+            bucket = {
                 "n": model.ols.n,
-                "a": model.ols.a,
-                "b": model.ols.b,
-                "mae": model.ols.mae,
-                "rmse": model.ols.rmse,
-                "q10_a": model.q10.a,
-                "q90_a": model.q90.a,
+                "ols_a": round(model.ols.a, 4),
+                "iso_n_steps": None,
+                "x_min": None,
+                "x_max": None,
+                "compression_ratio": None,
+                "iso_mae": None,
+                "spot_010": None,
+                "spot_020": None,
+                "q10_a": round(model.q10.a, 4),
+                "q90_a": round(model.q90.a, 4),
             }
+            iso = model.iso_model
+            if iso is not None and iso._x_thresholds is not None and len(iso._x_thresholds) > 0:
+                xt = iso._x_thresholds
+                yt = iso._y_thresholds
+                x_min = float(xt[0])
+                x_max = float(xt[-1])
+                y_min = float(yt[0])
+                y_max = float(yt[-1])
+                x_range = x_max - x_min
+                # n_steps: count distinct PAV blocks (unique consecutive y values)
+                n_steps = int(1 + np.sum(np.diff(yt) != 0))
+                bucket["iso_n_steps"] = n_steps
+                bucket["x_min"] = round(x_min, 4)
+                bucket["x_max"] = round(x_max, 4)
+                if x_range > 1e-6:
+                    bucket["compression_ratio"] = round((y_max - y_min) / x_range, 4)
+                # iso_mae: mean absolute calibration shift (mean |fitted - raw|)
+                # This measures how much the isotonic model moves forecasts on average.
+                calibration_shift_mae = float(np.mean(np.abs(yt - xt)))
+                bucket["iso_mae"] = round(calibration_shift_mae, 6)
+                # Spot values
+                bucket["spot_010"] = round(float(iso.predict(np.array([0.10]))[0]), 4)
+                bucket["spot_020"] = round(float(iso.predict(np.array([0.20]))[0]), 4)
+            out["buckets"][key] = bucket
         return out
+
+    def get_iso_diagnostics(self, bucket_key: str) -> dict | None:
+        """Return the isotonic diagnostics dict for a single bucket, or None."""
+        s = self.summary()
+        return s["buckets"].get(bucket_key)
 
 
 # ── Bucket routing helpers ─────────────────────────────────────────────────────
