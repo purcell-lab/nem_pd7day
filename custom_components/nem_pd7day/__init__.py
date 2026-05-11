@@ -143,8 +143,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Refit calibration models and refresh sensors (24-hour timer)."""
         hass.async_create_task(_do_refit())
 
-    if store.observation_count >= 10 and store.calibration is None:
-        _refit()
+    # Always refit on startup to populate iso_model (not persisted to storage).
+    # Run as a background task so integration setup completes immediately.
+    # Guard: skip if fewer than MIN_OBS observations (nothing to fit).
+    if store.observation_count >= 10:
+        hass.async_create_task(_do_refit())
 
     entry.async_on_unload(
         async_track_time_interval(hass, _refit, REFIT_INTERVAL)

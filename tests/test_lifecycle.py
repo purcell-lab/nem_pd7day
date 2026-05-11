@@ -485,3 +485,23 @@ def test_services_yaml_exists_and_defines_force_refit():
     assert "force_refit" in services, "force_refit not defined in services.yaml"
     assert "fields" in services["force_refit"], "force_refit missing fields definition"
     assert "entry_id" in services["force_refit"]["fields"], "force_refit missing entry_id field"
+
+
+# ── Tests: startup refit is unconditional ────────────────────────────────────
+
+def test_startup_always_refits_when_obs_available():
+    """Startup refit fires unconditionally when obs >= 10, even if calibration loaded from storage."""
+    # This is a documentation/intent test — the key assertion is that the
+    # old 'store.calibration is None' guard is NOT present in __init__.py
+    import pathlib
+    src = pathlib.Path(
+        os.path.join(_ROOT, "custom_components", "nem_pd7day", "__init__.py")
+    ).read_text()
+    # Ensure the old conditional guard is gone
+    assert "store.calibration is None" not in src, (
+        "Startup refit must be unconditional — 'store.calibration is None' guard "
+        "prevents iso_model from being populated after HA restart"
+    )
+    # Ensure the unconditional refit is present
+    assert "store.observation_count >= 10" in src
+    assert "_do_refit" in src
