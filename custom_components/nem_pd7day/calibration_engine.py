@@ -191,6 +191,8 @@ from .const import (
     IRLS_ITER,
     MAX_CALIBRATED_RATIO,
     MAX_INTERCEPT_ABS,
+    SANITY_ABS_DIFF_LIMIT,
+    SANITY_RATIO_RAW_FLOOR,
     MAX_OBS,
     MIN_OBS,
     QUANTILES,
@@ -328,8 +330,9 @@ class BucketModel:
           3. Insufficient data     — raw forecast returned if iso_model is None
                                      (bucket has < MIN_OBS training observations).
           4. Isotonic calibration  — IsotonicRegression.predict([x]), clipped >= 0.
-          5. Ratio sanity guard    — falls back to passthrough if calibrated/raw
-                                     exceeds MAX_CALIBRATED_RATIO.
+          5. Sanity guard          — falls back to passthrough if ratio exceeds
+                                     MAX_CALIBRATED_RATIO (above raw floor) or
+                                     absolute difference exceeds SANITY_ABS_DIFF_LIMIT.
         """
         if x <= NEGATIVE_PASSTHROUGH_THRESHOLD:
             return {
@@ -375,14 +378,27 @@ class BucketModel:
         calibrated = float(max(self.iso_model.predict([x])[0], 0.0))
 
 
-        # ── Ratio sanity guard ────────────────────────────────────────────
-        # Isotonic regression with clipping is well-behaved, but guard against
-        # corrupt training data producing a wildly implausible calibrated value.
-        if abs(x) > 0.01 and abs(calibrated / x) > MAX_CALIBRATED_RATIO:
+        # ── Sanity guard ─────────────────────────────────────────────────
+        # Guard against corrupt training data producing wildly implausible output.
+        #
+        # Two independent checks:
+        #   1. Ratio check — only when raw >= SANITY_RATIO_RAW_FLOOR (0.05 $/kWh).
+        #      Below this floor the isotonic step-function minimum dominates and
+        #      the ratio is meaningless (e.g. raw=0.010 → isotonic lifts to 0.054
+        #      floor = ratio 5.4, which is correct behaviour, not corruption).
+        #   2. Absolute difference check — always active.
+        #      |calibrated − raw| > SANITY_ABS_DIFF_LIMIT (0.30 $/kWh = 300 $/MWh)
+        #      is implausible regardless of ratio.
+        ratio_fail = (
+            abs(x) >= SANITY_RATIO_RAW_FLOOR
+            and abs(calibrated / x) > MAX_CALIBRATED_RATIO
+        )
+        abs_fail = abs(calibrated - x) > SANITY_ABS_DIFF_LIMIT
+        if ratio_fail or abs_fail:
             _LOGGER.warning(
-                "Bucket %s sanity check FAILED: calibrated/raw ratio=%.1f exceeds limit %.1f "
+                "Bucket %s sanity check FAILED: ratio_fail=%s abs_fail=%s "
                 "(raw=%.4f calibrated=%.4f) — falling back to passthrough",
-                self.bucket_key, calibrated / x, MAX_CALIBRATED_RATIO, x, calibrated,
+                self.bucket_key, ratio_fail, abs_fail, x, calibrated,
             )
             return {
                 "calibrated": round(x, 6),

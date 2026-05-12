@@ -70,7 +70,8 @@ _store_mod = _load(
 
 from custom_components.nem_pd7day.nem_time import NEM_TZ, to_nem_iso, current_nem_interval
 from custom_components.nem_pd7day.calibration_engine import (
-    CalibrationEngine, Observation, MAX_INTERCEPT_ABS, MAX_CALIBRATED_RATIO
+    CalibrationEngine, Observation, MAX_INTERCEPT_ABS, MAX_CALIBRATED_RATIO,
+    SANITY_RATIO_RAW_FLOOR, SANITY_ABS_DIFF_LIMIT,
 )
 from custom_components.nem_pd7day.calibration_store import CalibrationStore
 
@@ -388,30 +389,86 @@ def test_sanity_guard_rejects_large_intercept():
     )
 
 
-def test_sanity_guard_rejects_large_ratio():
+def test_sanity_guard_ratio_fires_above_floor():
     """
-    If calibrated/raw ratio exceeds MAX_CALIBRATED_RATIO, fall back to passthrough.
-    Simulate with observations that produce a valid intercept but wildly wrong ratio
-    for small raw values: slope=50, intercept=0.05 → at raw=0.10, calibrated=5.05 (50x).
+    Ratio check fires when raw >= SANITY_RATIO_RAW_FLOOR and ratio exceeds limit.
+    raw=0.10, calibrated=0.60 → ratio=6.0 > MAX_CALIBRATED_RATIO=5.0 → passthrough.
     """
     import random
     rng = random.Random(7)
-    # High slope, moderate intercept — intercept passes guard but ratio fails for large x
-    # actual = 50 * forecast + 0.05 → at forecast=0.10, calibrated=5.05, ratio=50.5x
+    # High slope: actual ≈ 6 * forecast → at raw=0.10, calibrated ≈ 0.60, ratio=6x
     obs = [
         _make_obs(
             forecast=rng.uniform(0.08, 0.12),
-            actual=50 * rng.uniform(0.08, 0.12) + 0.05 + rng.gauss(0, 0.01),
+            actual=6 * rng.uniform(0.08, 0.12) + rng.gauss(0, 0.005),
             horizon=3.0, hour=21
         )
         for _ in range(40)
     ]
     engine = CalibrationEngine()
     result = engine.fit(obs)
-    # At raw=0.10, calibrated ≈ 5.05, ratio ≈ 50x >> MAX_CALIBRATED_RATIO=5
     out = result.apply(0.10, horizon_hours=3.0, hour_of_day=21)
     assert out["calibrated_source"] in ("passthrough", "passthrough_sanity"), (
-        f"Expected passthrough_sanity for large ratio, got {out['calibrated_source']} "
+        f"Expected passthrough_sanity for large ratio above floor, got {out['calibrated_source']} "
+        f"calibrated={out['calibrated']:.4f} vs raw=0.10"
+    )
+    assert abs(out["calibrated"] - 0.10) < 1e-9, "Passthrough must return raw value unchanged"
+
+
+def test_sanity_guard_ratio_skipped_below_floor():
+    """
+    Ratio check must NOT fire when raw < SANITY_RATIO_RAW_FLOOR, even if the ratio
+    is large. This is the real-world case: raw=0.010 → isotonic lifts to ~0.054
+    (step function minimum), ratio=5.4 — correct behaviour, not corruption.
+    """
+    import random
+    rng = random.Random(42)
+    # Observations: forecast ~0.01 (10 $/MWh), actual ~0.054 (54 $/MWh)
+    # The isotonic model will learn the step function floor ≈ 0.054.
+    obs = [
+        _make_obs(
+            forecast=rng.uniform(0.008, 0.012),
+            actual=rng.uniform(0.050, 0.058),
+            horizon=3.0, hour=21
+        )
+        for _ in range(40)
+    ]
+    engine = CalibrationEngine()
+    result = engine.fit(obs)
+    out = result.apply(0.010, horizon_hours=3.0, hour_of_day=21)
+    # The ratio is ~5.4 but raw is below floor, so ratio check is skipped.
+    # Absolute diff ≈ 0.044 which is well below SANITY_ABS_DIFF_LIMIT (0.30).
+    assert out["calibrated_source"] == "isotonic", (
+        f"Expected isotonic for near-zero raw (ratio guard should be skipped), "
+        f"got {out['calibrated_source']} calibrated={out['calibrated']:.4f}"
+    )
+    assert out["calibrated"] > 0.04, (
+        f"Isotonic floor should lift near-zero raw to ~0.054, got {out['calibrated']:.4f}"
+    )
+
+
+def test_sanity_guard_abs_diff_fires():
+    """
+    Absolute difference check fires when |calibrated - raw| > SANITY_ABS_DIFF_LIMIT (0.30).
+    raw=0.10, calibrated=0.45 → abs diff=0.35 > 0.30 → passthrough.
+    """
+    import random
+    rng = random.Random(99)
+    # actual ≈ 4.5 * forecast → at raw=0.10, calibrated ≈ 0.45, abs_diff=0.35
+    # ratio = 4.5 < MAX_CALIBRATED_RATIO so ratio check passes, but abs check fails
+    obs = [
+        _make_obs(
+            forecast=rng.uniform(0.08, 0.12),
+            actual=4.5 * rng.uniform(0.08, 0.12) + rng.gauss(0, 0.005),
+            horizon=3.0, hour=21
+        )
+        for _ in range(40)
+    ]
+    engine = CalibrationEngine()
+    result = engine.fit(obs)
+    out = result.apply(0.10, horizon_hours=3.0, hour_of_day=21)
+    assert out["calibrated_source"] in ("passthrough", "passthrough_sanity"), (
+        f"Expected passthrough_sanity for abs_diff > 0.30, got {out['calibrated_source']} "
         f"calibrated={out['calibrated']:.4f} vs raw=0.10"
     )
     assert abs(out["calibrated"] - 0.10) < 1e-9, "Passthrough must return raw value unchanged"
