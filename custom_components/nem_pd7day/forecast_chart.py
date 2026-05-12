@@ -137,9 +137,10 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     ax.fill_between(times, np.clip(p10s, None, CLIP_Y), np.clip(p90s, None, CLIP_Y),
                     color='#BBDEFB', alpha=0.45, zorder=2)
 
-    # Raw PD7day line
+    # Raw PD7day line — dashed to distinguish from calibrated
     ax.plot(times, np.clip(raws, None, CLIP_Y),
-            color='#AAAAAA', linewidth=1.0, alpha=0.75, label='PD7day Raw', zorder=3)
+            color='#888888', linewidth=0.8, alpha=0.6, linestyle='--',
+            label='PD7day Raw', zorder=3)
 
     # Calibrated line
     ax.plot(times, np.clip(cals, None, CLIP_Y),

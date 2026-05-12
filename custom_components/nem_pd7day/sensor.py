@@ -130,9 +130,7 @@ async def async_setup_entry(
     entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
     entities.append(PD7DayTodSensor(coordinator, entry, region))
 
-    notice_store = hass.data[DOMAIN][entry.entry_id].get("notice_store")
-    if notice_store is not None:
-        entities.append(NemPd7dayGridNoticesSensor(coordinator, region, notice_store))
+    entities.append(NemPd7dayGridNoticesSensor(coordinator, region, coordinator.notice_store))
 
     async_add_entities(entities, update_before_add=True)
 

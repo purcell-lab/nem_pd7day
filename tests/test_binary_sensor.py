@@ -117,7 +117,7 @@ def test_async_setup_entry_creates_one_binary_sensor_for_configured_region():
 
         run_async(binary_sensor_mod.async_setup_entry(hass, entry, _add_entities))
 
-        assert len(created) == 1
+        assert len(created) == 2  # intervention + grid stress (notice_store via coordinator)
     finally:
         restore()
 

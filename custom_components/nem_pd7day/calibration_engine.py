@@ -412,6 +412,13 @@ class BucketModel:
         p10 = self.q10.apply(x) if not self.q10.is_default else None
         p50 = self.q50.apply(x) if not self.q50.is_default else None
         p90 = self.q90.apply(x) if not self.q90.is_default else None
+
+        # Clamp P10/P90 so the confidence band always contains calibrated
+        if p10 is not None:
+            p10 = max(0.0, min(p10, calibrated))
+        if p90 is not None:
+            p90 = max(calibrated, p90)
+
         return {
             "calibrated": round(calibrated, 6),
             "p10": round(p10, 6) if p10 is not None else None,

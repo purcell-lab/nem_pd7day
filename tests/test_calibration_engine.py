@@ -1155,6 +1155,47 @@ def test_engine_weighted_fit_produces_result():
     print(f"  PASS: engine weighted fit produces valid result (n={bucket.ols.n})")
 
 
+def test_p10_p90_never_outside_calibrated():
+    """P10 must be <= calibrated and P90 must be >= calibrated after apply_all."""
+    from datetime import datetime, timezone, timedelta
+
+    NEM_TZ = timezone(timedelta(hours=10))
+    random.seed(42)
+    obs = []
+    for i in range(40):
+        x = 0.05 + random.uniform(0, 0.15)
+        y = x * 0.75
+        obs.append(Observation(
+            interval_time=datetime(2026, 3, i % 28 + 1, 10, 0, tzinfo=NEM_TZ).isoformat(),
+            horizon_hours=4.0, pd7day_forecast=x, actual_rrp=y,
+            forecast_run_at=datetime(2026, 3, i % 28 + 1, 6, 0, tzinfo=NEM_TZ).isoformat(),
+            hour_of_day=10, day_of_week=0, month=3,
+            gas_forecast_tj=None, qni_mwflow=None,
+            qni_violation_degree=None, is_intervention=False,
+        ))
+    engine = CalibrationEngine()
+    result = engine.fit(obs, region="QLD1")
+
+    violations = []
+    for key, model in result.models.items():
+        if model.ols.n < 10:
+            continue
+        for x_test in [0.05, 0.10, 0.15, 0.20]:
+            out = model.apply_all(x_test)
+            if out["calibrated_source"] not in ("isotonic", "ols"):
+                continue
+            cal = out["calibrated"]
+            p10 = out.get("p10")
+            p90 = out.get("p90")
+            if p10 is not None and p10 > cal + 1e-9:
+                violations.append(f"{key} x={x_test}: p10={p10} > cal={cal}")
+            if p90 is not None and p90 < cal - 1e-9:
+                violations.append(f"{key} x={x_test}: p90={p90} < cal={cal}")
+
+    assert not violations, f"P10/P90 violations: {violations}"
+    print(f"  PASS: P10 <= calibrated <= P90 for all buckets and test inputs")
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -1214,6 +1255,8 @@ TESTS = [
     test_weighted_ols_passthrough_insufficient_data,
     test_weighted_ols_decay_correctness,
     test_engine_weighted_fit_produces_result,
+    # P10/P90 clamping
+    test_p10_p90_never_outside_calibrated,
 ]
 
 

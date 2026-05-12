@@ -48,8 +48,6 @@ def _safe_slug(value: str) -> str:
     return re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_")
 
 
-NOTICE_STORE_KEY = "notice_store"
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -59,11 +57,9 @@ async def async_setup_entry(
     coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR_KEY]
     region: str = get_region(entry)
     entities = [PD7DayInterventionSensor(coordinator, entry, region)]
-    notice_store = hass.data[DOMAIN][entry.entry_id].get(NOTICE_STORE_KEY)
-    if notice_store is not None:
-        entities.append(
-            NemPd7dayGridStressBinarySensor(coordinator, entry, region, notice_store)
-        )
+    entities.append(
+        NemPd7dayGridStressBinarySensor(coordinator, entry, region, coordinator.notice_store)
+    )
     async_add_entities(entities, update_before_add=True)
 
 
