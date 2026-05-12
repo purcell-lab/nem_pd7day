@@ -49,11 +49,13 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     from collections import defaultdict
     import matplotlib
     matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # needed for Line2D legend proxies only
     import matplotlib.dates as mdates
+    import matplotlib.figure as mplfig
     import matplotlib.patches as mpatches
     import matplotlib.ticker as ticker
     import numpy as np
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
 
     NEM_TZ = datetime.timezone(datetime.timedelta(hours=10))
 
@@ -102,8 +104,9 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
             'max': max(pts, key=lambda x: x[1]),
         }
 
-    fig, ax = plt.subplots(figsize=(15, 6))
-    fig.patch.set_facecolor('white')
+    fig = mplfig.Figure(figsize=(15, 6), facecolor='white')
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
     ax.set_facecolor('white')
 
     # ── Grid stress annotations ──────────────────────────────────────────────
@@ -213,7 +216,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
             f'clip: p99+15% = ${CLIP_Y:.2f}/kWh',
             fontsize=7, color='#C62828', va='bottom', alpha=0.85)
 
-    # Y-axis right: $/MWh
+    # Y-axis right: $/MWh — use twinx on the figure's ax (OO API, thread-safe)
     ax2 = ax.twinx()
     ax2.set_ylim(ax.get_ylim()[0] * 1000, ax.get_ylim()[1] * 1000)
     ax2.set_ylabel('$/MWh', fontsize=10, labelpad=8)
@@ -242,10 +245,9 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
               framealpha=0.92, edgecolor='#CCCCCC', borderpad=0.7)
 
     ax.set_xlim(times[0], times[-1] + datetime.timedelta(minutes=30))
-    plt.tight_layout(pad=1.2)
+    fig.tight_layout(pad=1.2)
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=110, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
+    fig.savefig(buf, format='png', dpi=110, bbox_inches='tight', facecolor='white')
     buf.seek(0)
     return buf.getvalue()

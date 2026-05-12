@@ -213,8 +213,9 @@ def render_chart(stats: TodStats, region: str = "QLD1") -> bytes:
     try:
         import matplotlib
         matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        import matplotlib.figure as mplfig
         import matplotlib.ticker as ticker
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
     except ImportError:
         _LOGGER.warning("tod_stats: matplotlib not available, chart unavailable")
         return b""
@@ -239,12 +240,10 @@ def render_chart(stats: TodStats, region: str = "QLD1") -> bytes:
     tick_pos    = [i for i, s in enumerate(slots) if s.minute == 0]
     tick_labels = [f"{slots[i].hour:02d}:00" for i in tick_pos]
 
-    fig, (ax, ax2) = plt.subplots(
-        2, 1, figsize=(16, 9),
-        gridspec_kw={"height_ratios": [4, 1]},
-        facecolor=BG,
-    )
+    fig = mplfig.Figure(figsize=(16, 9), facecolor=BG)
+    FigureCanvasAgg(fig)
     fig.patch.set_facecolor(BG)
+    ax, ax2 = fig.subplots(2, 1, gridspec_kw={"height_ratios": [4, 1]})
 
     # ── Main chart ────────────────────────────────────────────────────────────
     ax.set_facecolor(PAN)
@@ -291,10 +290,9 @@ def render_chart(stats: TodStats, region: str = "QLD1") -> bytes:
     for sp in ax2.spines.values():
         sp.set_edgecolor("#CCCCCC")
 
-    plt.tight_layout(pad=1.5)
+    fig.tight_layout(pad=1.5)
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=BG)
-    plt.close(fig)
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=BG)
     buf.seek(0)
     return buf.read()

@@ -91,9 +91,11 @@ def render_chart(
     try:
         import matplotlib
         matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        import matplotlib.figure as mplfig
+        import matplotlib.pyplot as plt  # needed for plt.cm stateless references only
         import matplotlib.gridspec as gridspec
         import numpy as np
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.colors import TwoSlopeNorm
     except ImportError:
         _LOGGER.warning("bias_chart: matplotlib not available")
@@ -104,7 +106,8 @@ def render_chart(
     fitted_str = fitted_at[:16].replace("T", " ") if fitted_at else ""
 
     # ── Figure layout ─────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(18, 16), facecolor=_BG)
+    fig = mplfig.Figure(figsize=(18, 16), facecolor=_BG)
+    FigureCanvasAgg(fig)
     gs  = gridspec.GridSpec(
         2, 2, figure=fig,
         hspace=0.52, wspace=0.32,
@@ -274,7 +277,6 @@ def render_chart(
     )
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=_BG)
-    plt.close(fig)
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=_BG)
     buf.seek(0)
     return buf.read()

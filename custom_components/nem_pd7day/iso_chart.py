@@ -64,8 +64,9 @@ def render_iso_chart(
 
     import matplotlib
     matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    import matplotlib.figure as mplfig
     import matplotlib.gridspec as gridspec
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.colors import TwoSlopeNorm
 
     summary = calibration_result.summary()
@@ -75,7 +76,8 @@ def render_iso_chart(
     if iso_history is None:
         iso_history = []
 
-    fig = plt.figure(figsize=(18, 20), dpi=150, facecolor=_BG)
+    fig = mplfig.Figure(figsize=(18, 20), dpi=150, facecolor=_BG)
+    FigureCanvasAgg(fig)
     gs = gridspec.GridSpec(3, 2, figure=fig, hspace=0.35, wspace=0.28)
 
     fig.suptitle(
@@ -109,7 +111,6 @@ def render_iso_chart(
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", facecolor=_BG)
-    plt.close(fig)
     buf.seek(0)
     return buf.read()
 
