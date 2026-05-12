@@ -82,16 +82,17 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     p10s  = np.array(p10s)
     p90s  = np.array(p90s)
 
-    # Dynamic clip: 99th percentile of OLS calibrated values + 15% headroom, min 0.15
-    ols_mask = np.array([s == 'ols' for s in sources])
-    ols_cals = cals[ols_mask] if ols_mask.any() else cals
-    p99 = float(np.percentile(ols_cals, 99)) if len(ols_cals) > 0 else 0.20
+    # Dynamic clip: 99th percentile of calibrated values + 15% headroom, min 0.15
+    # Exclude spike passthrough values from CLIP_Y to avoid compressing the chart
+    non_spike_mask = np.array([s != 'passthrough_high' for s in sources])
+    non_spike_cals = cals[non_spike_mask] if non_spike_mask.any() else cals
+    p99 = float(np.percentile(non_spike_cals, 99)) if len(non_spike_cals) > 0 else 0.20
     CLIP_Y = float(np.ceil(max(p99 * 1.15, 0.15) / 0.05) * 0.05)
 
-    # Per-day min/max on OLS calibrated values
+    # Per-day min/max on calibrated values (exclude spike passthroughs)
     by_day = defaultdict(list)
     for i, (t, s) in enumerate(zip(times, sources)):
-        if s == 'ols':
+        if s != 'passthrough_high':
             by_day[t.strftime('%Y-%m-%d')].append((i, float(cals[i])))
     day_extremes = {}
     for day, pts in by_day.items():

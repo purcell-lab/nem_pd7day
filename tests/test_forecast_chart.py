@@ -167,3 +167,31 @@ def test_render_invalid_nemtime_skipped():
     result = render_forecast_chart(forecast, "QLD1")
     assert isinstance(result, bytes)
     assert len(result) > 0
+
+
+# ── Isotonic source regression tests ────────────────────────────────────────
+
+def test_forecast_chart_daily_minmax_with_isotonic_source():
+    """Daily min/max dots must render when calibrated_source is 'isotonic' (not 'ols')."""
+    from datetime import datetime, timezone, timedelta
+
+    NEM_TZ = timezone(timedelta(hours=10))
+    base = datetime(2026, 5, 12, 18, 0, tzinfo=NEM_TZ)
+
+    # Build 48 half-hourly intervals (2 days) with isotonic source
+    data = []
+    for i in range(48):
+        t = base + timedelta(minutes=30 * i)
+        data.append({
+            "nemtime": t.isoformat(),
+            "raw_value": 0.08 + (i % 10) * 0.005,
+            "calibrated": 0.07 + (i % 10) * 0.004,
+            "p10": 0.05,
+            "p90": 0.12,
+            "calibrated_source": "isotonic",
+        })
+
+    png = render_forecast_chart(data, region="QLD1")
+    assert isinstance(png, bytes)
+    assert len(png) > 1000
+    assert png[:4] == b'\x89PNG'
