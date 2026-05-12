@@ -130,7 +130,7 @@ async def async_setup_entry(
     entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
     entities.append(PD7DayTodSensor(coordinator, entry, region))
 
-    entities.append(NemPd7dayGridNoticesSensor(coordinator, region, coordinator.notice_store))
+    entities.append(NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -685,6 +685,7 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     def __init__(
         self,
         coordinator: "PD7DayCoordinator",
+        entry: ConfigEntry,
         region: str,
         notice_store: "GridNoticeStore",
     ) -> None:
@@ -692,6 +693,13 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
         self._region = region
         self._notice_store = notice_store
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_grid_notices"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry.entry_id}_{region}")},
+            name=f"NEM PD7DAY {region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
 
     @property
     def available(self) -> bool:  # type: ignore[override]
