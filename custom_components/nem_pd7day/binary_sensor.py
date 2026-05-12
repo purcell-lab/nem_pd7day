@@ -1,9 +1,10 @@
-"""NEM PD7DAY binary sensor platform — market intervention flag."""
+"""NEM PD7DAY binary sensor platform — market intervention flag + grid stress."""
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from datetime import datetime, timezone, timedelta
+from typing import Any, TYPE_CHECKING
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -30,6 +31,9 @@ from .const import (
 )
 from .coordinator import PD7DayCoordinator
 
+if TYPE_CHECKING:
+    from .notice_store import GridNoticeStore
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -44,6 +48,9 @@ def _safe_slug(value: str) -> str:
     return re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_")
 
 
+NOTICE_STORE_KEY = "notice_store"
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -51,10 +58,13 @@ async def async_setup_entry(
 ) -> None:
     coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR_KEY]
     region: str = get_region(entry)
-    async_add_entities(
-        [PD7DayInterventionSensor(coordinator, entry, region)],
-        update_before_add=True,
-    )
+    entities = [PD7DayInterventionSensor(coordinator, entry, region)]
+    notice_store = hass.data[DOMAIN][entry.entry_id].get(NOTICE_STORE_KEY)
+    if notice_store is not None:
+        entities.append(
+            NemPd7dayGridStressBinarySensor(coordinator, entry, region, notice_store)
+        )
+    async_add_entities(entities, update_before_add=True)
 
 
 class PD7DayInterventionSensor(CoordinatorEntity[PD7DayCoordinator], BinarySensorEntity):
@@ -125,4 +135,67 @@ class PD7DayInterventionSensor(CoordinatorEntity[PD7DayCoordinator], BinarySenso
             ATTR_SOURCE_FILE: (
                 self.coordinator.data.source_file if self.coordinator.data else None
             ),
+        }
+
+
+class NemPd7dayGridStressBinarySensor(CoordinatorEntity[PD7DayCoordinator], BinarySensorEntity):
+    """
+    Binary sensor: ON when any active LOR2+ or MSL2+ notice exists for the
+    region within the next 48 hours.
+
+    Attributes expose details of the highest-level active notice.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Grid Stress"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:transmission-tower-off"
+    _attr_should_poll = False
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+        notice_store: "GridNoticeStore",
+    ) -> None:
+        super().__init__(coordinator)
+        self._region = region
+        self._notice_store = notice_store
+        self._entry = entry
+        region_slug = _safe_slug(region)
+        self._attr_unique_id = f"nem_pd7day_{region_slug}_grid_stress"
+        self._attr_attribution = ATTR_ATTRIBUTION
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
+
+    @property
+    def is_on(self) -> bool:
+        return self._notice_store.has_active_stress(self._region, horizon_hours=48)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        now = datetime.now(timezone(timedelta(hours=10)))
+        upcoming = self._notice_store.get_upcoming_stress(self._region, horizon_hours=48)
+        all_active = self._notice_store.get_active_notices(
+            self._region,
+            from_dt=now,
+            to_dt=now + timedelta(hours=168),
+        )
+        highest = max(upcoming, key=lambda n: n.level, default=None)
+        return {
+            "region": self._region,
+            "stress_level": highest.level if highest else None,
+            "stress_type": highest.notice_type if highest else None,
+            "stress_from": highest.period_from.isoformat() if highest else None,
+            "stress_to": highest.period_to.isoformat() if highest else None,
+            "notice_id": highest.notice_id if highest else None,
+            "active_notices_7d": [n.to_dict() for n in all_active],
+            "lor1_count_7d": sum(1 for n in all_active if n.notice_type == "LOR" and n.level >= 1),
+            "msl1_count_7d": sum(1 for n in all_active if n.notice_type == "MSL" and n.level >= 1),
         }

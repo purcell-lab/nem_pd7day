@@ -16,6 +16,8 @@ from .tod_stats import TodStats
 
 if TYPE_CHECKING:
     from .calibration_store import CalibrationStore
+    from .market_notice_client import MarketNoticeClient
+    from .notice_store import GridNoticeStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +41,8 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         regions: list[str],
         store: "CalibrationStore | None" = None,
         interconnector_ids: set[str] | None = None,
+        notice_store: "GridNoticeStore | None" = None,
+        notice_client: "MarketNoticeClient | None" = None,
     ) -> None:
         super().__init__(
             hass,
@@ -53,6 +57,8 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         self._session: aiohttp.ClientSession | None = None
         # Cached time-of-day statistics, updated after each refit
         self.tod_stats: TodStats = TodStats()
+        self.notice_store: "GridNoticeStore | None" = notice_store
+        self._notice_client: "MarketNoticeClient | None" = notice_client
 
     def _get_client(self) -> PD7DayClient:
         if self._session is None or self._session.closed:
@@ -90,4 +96,18 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             # Recompute time-of-day statistics from updated observations
             self.tod_stats = _tod_stats.compute(self._store.observations, calibration_result=self._store.calibration)
 
+        # Fetch new market notices (LOR/MSL)
+        await self.async_fetch_notices()
+
         return result
+
+    async def async_fetch_notices(self) -> None:
+        """Fetch new market notices and persist."""
+        if self._notice_client is None or self.notice_store is None:
+            return
+        self._notice_client.last_seen_notice_id = self.notice_store.last_seen_notice_id
+        new_notices = await self._notice_client.fetch_new_notices()
+        if new_notices:
+            self.notice_store.add_notices(new_notices)
+            await self.notice_store.async_save()
+            _LOGGER.info("Fetched %d new market notices", len(new_notices))

@@ -43,7 +43,7 @@ def _tod_label(hour: int) -> str:
     return "shoulder"
 
 
-def render_forecast_chart(forecast_data: list, region: str) -> bytes:
+def render_forecast_chart(forecast_data: list, region: str, annotations: list | None = None) -> bytes:
     """Render the 7-day forecast chart. Returns PNG bytes."""
     import datetime
     from collections import defaultdict
@@ -103,6 +103,34 @@ def render_forecast_chart(forecast_data: list, region: str) -> bytes:
     fig, ax = plt.subplots(figsize=(15, 6))
     fig.patch.set_facecolor('white')
     ax.set_facecolor('white')
+
+    # ── Grid stress annotations ──────────────────────────────────────────────
+    if annotations:
+        NOTICE_COLORS = {
+            ("LOR", 1): ("#F39C12", 0.15, "LOR1"),   # amber
+            ("LOR", 2): ("#E67E22", 0.20, "LOR2"),   # orange
+            ("LOR", 3): ("#C0392B", 0.30, "LOR3"),   # red
+            ("MSL", 1): ("#8E44AD", 0.15, "MSL1"),   # purple
+            ("MSL", 2): ("#7D3C98", 0.22, "MSL2"),
+            ("MSL", 3): ("#6C3483", 0.30, "MSL3"),
+        }
+        for ann in annotations:
+            if ann.is_cancelled:
+                continue
+            color_info = NOTICE_COLORS.get((ann.notice_type, ann.level))
+            if not color_info:
+                continue
+            color, alpha, label = color_info
+            ax.axvspan(
+                ann.period_from, ann.period_to,
+                alpha=alpha, color=color, zorder=1, linewidth=0
+            )
+            mid = ann.period_from + (ann.period_to - ann.period_from) / 2
+            ax.text(
+                mid, CLIP_Y * 1.28, label,
+                ha="center", va="top", fontsize=7, color=color,
+                fontweight="bold", zorder=5,
+            )
 
     # p10/p90 confidence band
     ax.fill_between(times, np.clip(p10s, None, CLIP_Y), np.clip(p90s, None, CLIP_Y),

@@ -25,6 +25,8 @@ from .const import (
     STORE_KEY,
 )
 from .coordinator import PD7DayCoordinator
+from .market_notice_client import MarketNoticeClient
+from .notice_store import GridNoticeStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,18 +47,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = CalibrationStore(hass, region)
     await store.async_load()
 
+    # ── Market notice store + client ─────────────────────────────────────────
+    notice_store = GridNoticeStore(hass)
+    await notice_store.async_load()
+    session = async_get_clientsession(hass)
+    notice_client = MarketNoticeClient(session)
+
     # ── Coordinator (no automatic polling) ───────────────────────────────────
     coordinator = PD7DayCoordinator(
         hass,
         [region],
         store,
         interconnector_ids=interconnector_ids,
+        notice_store=notice_store,
+        notice_client=notice_client,
     )
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = {
         COORDINATOR_KEY: coordinator,
         STORE_KEY: store,
+        "notice_store": notice_store,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -368,9 +368,26 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
         if not forecast_data:
             return
         from . import forecast_chart as _fc
+
+        # Collect grid stress annotations overlapping the chart window
+        annotations = None
+        notice_store = getattr(self.coordinator, "notice_store", None)
+        if notice_store is not None and forecast_data:
+            from .nem_time import parse_iso
+            try:
+                chart_start = parse_iso(forecast_data[0]["nemtime"])
+                chart_end = parse_iso(forecast_data[-1]["nemtime"])
+                annotations = notice_store.get_active_notices(
+                    self._region,
+                    from_dt=chart_start,
+                    to_dt=chart_end,
+                )
+            except (KeyError, ValueError, TypeError):
+                pass
+
         try:
             self._image_bytes = _fc.render_forecast_chart(
-                forecast_data, region=self._region,
+                forecast_data, region=self._region, annotations=annotations,
             )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Forecast chart render failed")
