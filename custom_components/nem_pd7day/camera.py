@@ -86,22 +86,26 @@ class NemPd7dayTodCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        # Render immediately if stats are already available
-        self._refresh_image()
+        await self._async_refresh_image()
 
     def _handle_coordinator_update(self) -> None:
         """Called by CoordinatorEntity on every coordinator refresh."""
-        self._refresh_image()
+        self.hass.async_create_task(self._async_refresh_image())
         self.async_write_ha_state()
 
-    def _refresh_image(self) -> None:
-        """Re-render the chart from the coordinator's cached tod_stats."""
+    def _render(self) -> bytes:
+        """Blocking render — called in executor thread."""
         tod_stats = getattr(self.coordinator, "tod_stats", None)
         if tod_stats is None or not tod_stats.slots:
-            return
+            return self._image_bytes
         from . import tod_stats as _ts
+        return _ts.render_chart(tod_stats, region=self._region)
+
+    async def _async_refresh_image(self) -> None:
         try:
-            self._image_bytes = _ts.render_chart(tod_stats, region=self._region)
+            result = await self.hass.async_add_executor_job(self._render)
+            if result:
+                self._image_bytes = result
         except Exception:  # noqa: BLE001
             _LOGGER.exception("ToD chart render failed")
 
@@ -154,28 +158,33 @@ class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._refresh_image()
+        await self._async_refresh_image()
 
     def _handle_coordinator_update(self) -> None:
-        self._refresh_image()
+        self.hass.async_create_task(self._async_refresh_image())
         self.async_write_ha_state()
 
-    def _refresh_image(self) -> None:
-        """Re-render the bias chart from the coordinator's calibration result."""
+    def _render(self) -> bytes:
+        """Blocking render — called in executor thread."""
         store = getattr(self.coordinator, "_store", None)
         if store is None:
-            return
+            return self._image_bytes
         cal = store.calibration
         if cal is None:
-            return
+            return self._image_bytes
         from . import bias_chart as _bc
+        return _bc.render_chart(
+            cal,
+            obs_count=store.observation_count,
+            region=self._region,
+            tod_stats=self.coordinator.tod_stats,
+        )
+
+    async def _async_refresh_image(self) -> None:
         try:
-            self._image_bytes = _bc.render_chart(
-                cal,
-                obs_count=store.observation_count,
-                region=self._region,
-                tod_stats=self.coordinator.tod_stats,
-            )
+            result = await self.hass.async_add_executor_job(self._render)
+            if result:
+                self._image_bytes = result
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Bias chart render failed")
 
@@ -227,28 +236,33 @@ class NemPd7dayIsoChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._refresh_image()
+        await self._async_refresh_image()
 
     def _handle_coordinator_update(self) -> None:
-        self._refresh_image()
+        self.hass.async_create_task(self._async_refresh_image())
         self.async_write_ha_state()
 
-    def _refresh_image(self) -> None:
-        """Re-render the iso chart from the coordinator's calibration result."""
+    def _render(self) -> bytes:
+        """Blocking render — called in executor thread."""
         store = getattr(self.coordinator, "_store", None)
         if store is None:
-            return
+            return self._image_bytes
         cal = store.calibration
         if cal is None:
-            return
+            return self._image_bytes
         from . import iso_chart as _ic
+        return _ic.render_iso_chart(
+            cal,
+            iso_history=store.iso_history.get(self._region, []),
+            obs_count=store.observation_count,
+            region=self._region,
+        )
+
+    async def _async_refresh_image(self) -> None:
         try:
-            self._image_bytes = _ic.render_iso_chart(
-                cal,
-                iso_history=store.iso_history.get(self._region, []),
-                obs_count=store.observation_count,
-                region=self._region,
-            )
+            result = await self.hass.async_add_executor_job(self._render)
+            if result:
+                self._image_bytes = result
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Iso chart render failed")
 
@@ -312,10 +326,10 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._refresh_image()
+        await self._async_refresh_image()
 
     def _handle_coordinator_update(self) -> None:
-        self._refresh_image()
+        self.hass.async_create_task(self._async_refresh_image())
         self.async_write_ha_state()
 
     def _build_forecast_data(self) -> list[dict]:
@@ -362,18 +376,17 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
 
         return result
 
-    def _refresh_image(self) -> None:
-        """Re-render the forecast chart from coordinator data."""
+    def _render(self) -> bytes:
+        """Blocking render — called in executor thread."""
         forecast_data = self._build_forecast_data()
         if not forecast_data:
-            return
+            return self._image_bytes
         from . import forecast_chart as _fc
 
         # Collect grid stress annotations overlapping the chart window
         annotations = None
         notice_store = getattr(self.coordinator, "notice_store", None)
-        if notice_store is not None and forecast_data:
-            from .nem_time import parse_iso
+        if notice_store is not None:
             try:
                 chart_start = parse_iso(forecast_data[0]["nemtime"])
                 chart_end = parse_iso(forecast_data[-1]["nemtime"])
@@ -385,10 +398,15 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
             except (KeyError, ValueError, TypeError):
                 pass
 
+        return _fc.render_forecast_chart(
+            forecast_data, region=self._region, annotations=annotations,
+        )
+
+    async def _async_refresh_image(self) -> None:
         try:
-            self._image_bytes = _fc.render_forecast_chart(
-                forecast_data, region=self._region, annotations=annotations,
-            )
+            result = await self.hass.async_add_executor_job(self._render)
+            if result:
+                self._image_bytes = result
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Forecast chart render failed")
 

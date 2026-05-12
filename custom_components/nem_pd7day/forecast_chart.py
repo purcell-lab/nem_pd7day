@@ -65,10 +65,11 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         try:
             dt = datetime.datetime.fromisoformat(p['nemtime'])
             times.append(dt)
-            raws.append(float(p.get('raw_value', 0)))
-            cals.append(float(p.get('calibrated', p.get('value', 0))))
-            p10s.append(float(p.get('p10', p.get('calibrated', 0))))
-            p90s.append(float(p.get('p90', p.get('calibrated', 0))))
+            raws.append(float(p.get('raw_value') or 0))
+            cal_val = float(p.get('calibrated') or p.get('value') or 0)
+            cals.append(cal_val)
+            p10s.append(float(p.get('p10') if p.get('p10') is not None else cal_val))
+            p90s.append(float(p.get('p90') if p.get('p90') is not None else cal_val))
             sources.append(p.get('calibrated_source', 'ols'))
         except (KeyError, ValueError):
             continue

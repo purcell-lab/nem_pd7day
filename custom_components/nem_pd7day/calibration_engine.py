@@ -395,7 +395,7 @@ class BucketModel:
         )
         abs_fail = abs(calibrated - x) > SANITY_ABS_DIFF_LIMIT
         if ratio_fail or abs_fail:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Bucket %s sanity check FAILED: ratio_fail=%s abs_fail=%s "
                 "(raw=%.4f calibrated=%.4f) — falling back to passthrough",
                 self.bucket_key, ratio_fail, abs_fail, x, calibrated,
