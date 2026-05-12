@@ -42,6 +42,7 @@ class GridNoticeStore:
         self._store = Store(hass, NOTICE_STORE_VERSION, NOTICE_STORE_KEY)
         self._notices: dict[str, list[GridNoticeAnnotation]] = {}
         self._last_seen_notice_id: int = 0
+        self.last_fetched_at: datetime | None = None
 
     async def async_load(self) -> None:
         """Load notices from .storage. Call once on integration setup."""
@@ -53,6 +54,10 @@ class GridNoticeStore:
             self._notices[region] = [
                 GridNoticeAnnotation.from_dict(n) for n in notice_list
             ]
+        # Set last_fetched_at to the most recent issued_at across all loaded notices
+        all_notices = [n for ns in self._notices.values() for n in ns]
+        if all_notices:
+            self.last_fetched_at = max(n.issued_at for n in all_notices)
         _LOGGER.debug(
             "Loaded %d notices from storage, last_seen_id=%d",
             sum(len(v) for v in self._notices.values()),
@@ -77,6 +82,7 @@ class GridNoticeStore:
         references a prior notice_id via cancels_notice_id, mark the referenced
         notice as is_cancelled=True.
         """
+        self.last_fetched_at = datetime.now(timezone(timedelta(hours=10)))
         for notice in notices:
             region = notice.region
             if region not in self._notices:

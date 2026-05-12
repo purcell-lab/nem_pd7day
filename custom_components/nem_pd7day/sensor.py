@@ -7,11 +7,12 @@ PD7DayForecastSensor          -- regional spot price, calibrated + confidence in
 PD7DayInterconnectorSensor    -- interconnector MW flow + constraint forecast
 PD7DayCalibrationSensor       -- calibration status, observation count, MAE by bucket
 PD7DayTodSensor               -- time-of-day actual price stats (mean/spread per 30-min slot)
+NemPd7dayGridNoticesSensor    -- active MSL/LOR market notice count + structured attributes
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .nem_time import now_nem, parse_iso, to_nem_iso
 
@@ -79,6 +80,9 @@ from .const import (
 )
 from .coordinator import PD7DayCoordinator
 
+if TYPE_CHECKING:
+    from .notice_store import GridNoticeStore
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -125,6 +129,10 @@ async def async_setup_entry(
 
     entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
     entities.append(PD7DayTodSensor(coordinator, entry, region))
+
+    notice_store = hass.data[DOMAIN][entry.entry_id].get("notice_store")
+    if notice_store is not None:
+        entities.append(NemPd7dayGridNoticesSensor(coordinator, region, notice_store))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -656,3 +664,71 @@ class PD7DayTodSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 second=5,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Grid Notices sensor — active MSL/LOR notice count
+# ---------------------------------------------------------------------------
+
+class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """
+    Sensor reporting count of active MSL/LOR market notices for the region.
+
+    State: integer count of active (non-cancelled) notices within next 7 days.
+    Attributes: structured notice list + summary counts by type/level.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Grid Notices"
+    _attr_icon = "mdi:alert-circle-outline"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "notices"
+
+    def __init__(
+        self,
+        coordinator: "PD7DayCoordinator",
+        region: str,
+        notice_store: "GridNoticeStore",
+    ) -> None:
+        super().__init__(coordinator)
+        self._region = region
+        self._notice_store = notice_store
+        self._attr_unique_id = f"nem_pd7day_{region.lower()}_grid_notices"
+
+    @property
+    def native_value(self) -> int:
+        """Count of active non-cancelled notices within next 7 days."""
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone(timedelta(hours=10)))
+        horizon = now + timedelta(days=7)
+        return len(self._notice_store.get_active_notices(
+            self._region, from_dt=now, to_dt=horizon
+        ))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone(timedelta(hours=10)))
+        horizon = now + timedelta(days=7)
+        active = self._notice_store.get_active_notices(
+            self._region, from_dt=now, to_dt=horizon
+        )
+        lor_notices = [n for n in active if n.notice_type == "LOR"]
+        msl_notices = [n for n in active if n.notice_type == "MSL"]
+        max_lor = max((n.level for n in lor_notices), default=None)
+        max_msl = max((n.level for n in msl_notices), default=None)
+        next_from = min((n.period_from for n in active), default=None)
+
+        return {
+            "region": self._region,
+            "active_count": len(active),
+            "lor_active": len(lor_notices),
+            "msl_active": len(msl_notices),
+            "max_lor_level": max_lor,
+            "max_msl_level": max_msl,
+            "next_notice_from": next_from.isoformat() if next_from else None,
+            "notices": [n.to_dict() for n in active],
+            "last_fetched": self._notice_store.last_fetched_at.isoformat()
+                if hasattr(self._notice_store, "last_fetched_at") and self._notice_store.last_fetched_at
+                else None,
+        }
