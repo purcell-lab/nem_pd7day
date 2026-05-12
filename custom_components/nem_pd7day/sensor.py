@@ -694,8 +694,15 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_grid_notices"
 
     @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Sensor is available only when the notice store is initialised."""
+        return self._notice_store is not None and self.coordinator.last_update_success
+
+    @property
     def native_value(self) -> int:
         """Count of active non-cancelled notices within next 7 days."""
+        if self._notice_store is None:
+            return 0
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone(timedelta(hours=10)))
         horizon = now + timedelta(days=7)
@@ -705,6 +712,8 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
 
     @property
     def extra_state_attributes(self) -> dict:
+        if self._notice_store is None:
+            return {"region": self._region}
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone(timedelta(hours=10)))
         horizon = now + timedelta(days=7)

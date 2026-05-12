@@ -137,14 +137,14 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     ax.fill_between(times, np.clip(p10s, None, CLIP_Y), np.clip(p90s, None, CLIP_Y),
                     color='#BBDEFB', alpha=0.45, zorder=2)
 
-    # Raw PD7day line — dashed to distinguish from calibrated
-    ax.plot(times, np.clip(raws, None, CLIP_Y),
-            color='#888888', linewidth=0.8, alpha=0.6, linestyle='--',
-            label='PD7day Raw', zorder=3)
-
-    # Calibrated line
+    # Calibrated line — drawn first so raw line sits on top
     ax.plot(times, np.clip(cals, None, CLIP_Y),
             color='#1565C0', linewidth=2.0, label='Calibrated', zorder=4)
+
+    # Raw PD7day line — dashed, drawn above calibrated so it remains visible
+    ax.plot(times, np.clip(raws, None, CLIP_Y),
+            color='#888888', linewidth=1.0, alpha=0.7, linestyle='--',
+            label='PD7day Raw', zorder=5)
 
     # Per-day min/max labels
     for day, ex in sorted(day_extremes.items()):
@@ -225,7 +225,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
 
     # Legend
     line_legend = [
-        plt.Line2D([0], [0], color='#AAAAAA', linewidth=1.5, label='PD7day Raw'),
+        plt.Line2D([0], [0], color='#888888', linewidth=1.0, linestyle='--', alpha=0.7, label='PD7day Raw'),
         plt.Line2D([0], [0], color='#1565C0', linewidth=2.5, label='Calibrated'),
         mpatches.Patch(color='#BBDEFB', alpha=0.6, label='p10–p90 band'),
         plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='#C62828',

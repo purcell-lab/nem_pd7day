@@ -171,11 +171,20 @@ class NemPd7dayGridStressBinarySensor(CoordinatorEntity[PD7DayCoordinator], Bina
         )
 
     @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Sensor is available only when the notice store is initialised."""
+        return self._notice_store is not None and self.coordinator.last_update_success
+
+    @property
     def is_on(self) -> bool:
+        if self._notice_store is None:
+            return False
         return self._notice_store.has_active_stress(self._region, horizon_hours=48)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        if self._notice_store is None:
+            return {"region": self._region}
         now = datetime.now(timezone(timedelta(hours=10)))
         upcoming = self._notice_store.get_upcoming_stress(self._region, horizon_hours=48)
         all_active = self._notice_store.get_active_notices(
