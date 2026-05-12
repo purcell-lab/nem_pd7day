@@ -1,6 +1,7 @@
 """Tests for MarketNoticeClient parser."""
 import pytest
 from datetime import timezone, timedelta, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 from custom_components.nem_pd7day.market_notice_client import (
     _parse_directory_listing,
     _parse_notice_body,
@@ -175,3 +176,53 @@ def test_notice_store_cancellation():
     # Original should now be marked cancelled
     orig = [n for n in notices["VIC1"] if n.notice_id == 124467][0]
     assert orig.is_cancelled
+
+
+@pytest.mark.asyncio
+async def test_first_run_initialises_cursor_without_fetching():
+    """On first run (last_seen=0), cursor initialised to max notice_id, no files fetched."""
+    from custom_components.nem_pd7day.market_notice_client import MarketNoticeClient
+
+    mock_session = MagicMock()
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = AsyncMock(return_value=DIRECTORY_HTML)
+    mock_session.get = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=mock_resp),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+
+    client = MarketNoticeClient(mock_session)
+    assert client.last_seen_notice_id == 0
+
+    result = await client.fetch_new_notices()
+    assert result == []
+    assert client.last_seen_notice_id == 133910  # highest in DIRECTORY_HTML
+
+    # Second call with no new files also returns []
+    result2 = await client.fetch_new_notices()
+    assert result2 == []
+
+
+@pytest.mark.asyncio
+async def test_incremental_fetch_skips_old_notices():
+    """With last_seen set, only newer notices are fetched."""
+    from custom_components.nem_pd7day.market_notice_client import MarketNoticeClient
+
+    mock_session = MagicMock()
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = AsyncMock(return_value=DIRECTORY_HTML)
+    mock_session.get = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=mock_resp),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+
+    client = MarketNoticeClient(mock_session)
+    client.last_seen_notice_id = 133909  # one behind the latest
+
+    # _fetch_and_parse will be called for 133910 only
+    with patch.object(client, '_fetch_and_parse', new=AsyncMock(return_value=None)) as mock_fetch:
+        result = await client.fetch_new_notices()
+        assert mock_fetch.call_count == 1
+        assert mock_fetch.call_args[0][0] == 133910

@@ -59,6 +59,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         self.tod_stats: TodStats = TodStats()
         self.notice_store: "GridNoticeStore | None" = notice_store
         self._notice_client: "MarketNoticeClient | None" = notice_client
+        self._first_refresh_done = False
 
     def _get_client(self) -> PD7DayClient:
         if self._session is None or self._session.closed:
@@ -96,8 +97,12 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             # Recompute time-of-day statistics from updated observations
             self.tod_stats = _tod_stats.compute(self._store.observations, calibration_result=self._store.calibration)
 
-        # Fetch new market notices (LOR/MSL)
-        await self.async_fetch_notices()
+        # Skip notice fetch during bootstrap first refresh to avoid timeout.
+        # The first fetch runs after HA setup completes (second coordinator update).
+        if self._first_refresh_done:
+            await self.async_fetch_notices()
+        else:
+            self._first_refresh_done = True
 
         return result
 

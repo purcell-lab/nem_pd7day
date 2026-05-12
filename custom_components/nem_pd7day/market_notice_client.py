@@ -242,7 +242,10 @@ class MarketNoticeClient:
     async def fetch_new_notices(self) -> list[GridNoticeAnnotation]:
         """
         Fetch and parse any new notices since last_seen_notice_id.
-        Returns list of GridNoticeAnnotation (LOR and MSL only, all regions).
+
+        On first run (last_seen_notice_id == 0): initialises cursor to the
+        highest current notice ID without fetching any files, then returns [].
+        Subsequent calls fetch only new notices incrementally.
         """
         try:
             async with self._session.get(
@@ -255,6 +258,19 @@ class MarketNoticeClient:
             return []
 
         files = _parse_directory_listing(html)
+        if not files:
+            return []
+
+        # First-run bootstrap: initialise cursor to highest current notice ID
+        # without fetching any files. Only notices issued after this point matter.
+        if self.last_seen_notice_id == 0:
+            self.last_seen_notice_id = files[-1][0]
+            _LOGGER.info(
+                "Market notice client initialised at notice_id=%d (no backfill)",
+                self.last_seen_notice_id,
+            )
+            return []
+
         new_files = [(nid, fname) for nid, fname in files if nid > self.last_seen_notice_id]
 
         if not new_files:
