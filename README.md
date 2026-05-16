@@ -13,13 +13,13 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
 ## Features
 
 - **7-day price forecast** — calibrated $/kWh with P10/P50/P90 confidence bands
-- **OLS calibration** — linear bias correction fitted on actual TradingIS vs PD7DAY pairs
+- **Isotonic calibration** — monotone PAV regression bias correction fitted on actual TradingIS vs PD7DAY pairs, with per-bucket compression ratio, iso_mae, and P10/P90 confidence intervals
 - **Interconnector flows** — interconnector MW flow forecasts for the configured region
 - **Market intervention flag** — binary sensor from CASESOLUTION data
 - **Calibration diagnostic** — observation count, active bucket count, fit quality per bucket
 - **Live charts** — two camera entities updated after each refit:
   - **Price ToD Chart** — actual price by time of day (mean, median, P10–P90 spread across all observed intervals)
-  - **Bias Chart** — duck curve, live OLS slope heatmap, and key bias patterns (updates from live calibration coefficients)
+  - **Calibration Chart** — isotonic calibration goodness dashboard: compression ratio heatmap, iso_mae bars, PAV complexity scatter, and compression ratio drift time-series
 - **Cloud polling** — two independent polling loops:
   - **PD7DAY** fetches at AEMO publish times: 07:30, 13:00, 18:00 AEST (3 requests/day)
   - **TradingIS** fetches actual 5-min dispatch prices every 30 minutes (48 requests/day)
@@ -150,12 +150,12 @@ Each entry in `forecast` contains:
 nemtime: "2026-04-15T17:30:00+10:00"   # interval END (AEMO convention)
 time:    "2026-04-15T17:00:00+10:00"   # interval START
 raw_value: 0.084                        # raw AEMO forecast ($/kWh)
-calibrated: 0.142                       # OLS-calibrated value
+calibrated: 0.142                       # isotonic-calibrated value
 p10: 0.091                             # 10th percentile (optimistic)
 p50: 0.138                             # 50th percentile (median)
 p90: 0.231                             # 90th percentile (conservative)
-mae: 0.038                             # mean absolute error of OLS fit
-calibrated_source: ols                 # "ols" or "passthrough"
+ols_mae: 0.038                         # mean absolute error of calibration fit
+calibrated_source: isotonic            # "isotonic", "passthrough_high", "passthrough_sanity", or "passthrough"
 n_obs: 147                             # observations used for this bucket
 horizon_hours: 36.5                    # hours ahead
 value: 0.142                           # alias for calibrated (template compat)
@@ -205,7 +205,7 @@ Default interconnectors per region:
 | `active_buckets` | Buckets with ≥ 20 observations (max 24) |
 | `total_buckets` | 24 (6 horizons × 4 time-of-day labels) |
 | `fitted_at` | ISO-8601 timestamp of last model refit |
-| `summary` | Per-bucket coefficients, MAE, RMSE, quantile slopes |
+| `summary` | Per-bucket isotonic diagnostics: n, iso_n_steps, compression_ratio, iso_mae, x_min, x_max, q10_a, q90_a |
 
 #### Forecast history attributes
 
@@ -250,9 +250,10 @@ Two camera entities are registered on the device and can be added to any HA dash
 | Entity | Description |
 |---|---|
 | `camera.nem_pd7day_{region}_price_tod_chart` | Actual price by time of day — mean, median, and P10–P90 spread across all observed intervals |
-| `camera.nem_pd7day_{region}_bias_chart` | Duck curve + live OLS slope heatmap + key bias patterns |
+| `camera.nem_pd7day_{region}_calibration_chart` | Isotonic calibration goodness dashboard: compression ratio heatmap, iso_mae bars, PAV complexity scatter, and compression ratio drift time-series |
+| `camera.nem_pd7day_{region}_forecast_chart` | 7-Day Pre-Dispatch Spot Price Forecast — raw vs calibrated with p10/p90 confidence band, per-day min/max labels, spike annotations |
 
-Both charts are re-rendered after each calibration refit (07:30, 13:00, 18:00 NEM). The bias chart reads live coefficients so the heatmap values, n counts and confidence indicators update as calibration matures.
+Both charts are re-rendered after each calibration refit (07:30, 13:00, 18:00 NEM). The calibration chart reads live isotonic diagnostics so the heatmap values, n counts and confidence indicators update as calibration matures.
 
 ---
 
@@ -278,13 +279,13 @@ The calibration system corrects the known bias in AEMO's PD7DAY forecasts using 
 
    Time-of-day classification uses **solar elevation angle** (via the `astral` library with capital city coordinates for each NEM region) instead of fixed clock-hour boundaries. This tracks the seasonal shift in the solar generation window (~1–2 hours between summer and winter) and naturally captures the duck curve inflection points.
 
-5. **Weighted OLS fitting** — once a bucket has ≥ 20 observations, two models are fitted using exponential time decay weighting:
-   - **Weighted OLS**: `calibrated = a × raw + b` — corrects linear bias, with `weight = exp(-0.033 × days_ago)` (half-life ≈ 21 days)
-   - **IRLS quantile regression** (pinball loss): separate P10, P50, P90 slope fits
+5. **Isotonic (PAV) fitting** — once a bucket has ≥ 20 observations, a monotone isotonic regression (Pool Adjacent Violators) is fitted using exponential time decay weighting (`weight = exp(-0.033 × days_ago)`, half-life ≈ 21 days). Separate P10 and P90 quantile slopes are also fitted. Key diagnostics per bucket:
+   - `compression_ratio` — (y_max − y_min) / (x_max − x_min); values <1 indicate AEMO over-forecasts
+   - `iso_mae` — mean absolute calibration shift |y_fitted − x_raw|
+   - `iso_n_steps` — number of distinct steps in the fitted isotonic function (complexity)
+   - `q10_a` / `q90_a` — quantile slopes driving P10/P90 confidence intervals
 
-   Recent observations are weighted more heavily: observations from 21 days ago have half the influence of today's; observations from 90 days ago have ~5% influence. This allows the model to adapt to seasonal price dynamics, changing generation mix, and week-to-week market shifts without discarding historical data.
-
-6. **Application** — at forecast time, each period's bucket is looked up. If active, OLS and quantile values are returned. Otherwise the raw value passes through unchanged.
+6. **Application** — at forecast time, each period's bucket is looked up. If active, isotonic and quantile values are returned. Otherwise the raw value passes through unchanged.
 
 ### ToD classification details
 
@@ -306,9 +307,9 @@ The integration classifies each 30-minute NEM interval into one of four time-of-
 **Why morning_ramp matters:**
 The 05:00–09:00 NEM window has materially different price dynamics from true overnight — demand climbs fast, gas peakers fire, and solar hasn't started yet. Previous clock-hour buckets lumped this into "offpeak", causing systematic upward bias in that window. The `morning_ramp` bucket captures this independently.
 
-### Weighted OLS decay
+### Isotonic decay weighting
 
-Each OLS bucket fit uses exponential time decay weighting:
+Each isotonic bucket fit uses exponential time decay weighting:
 - `weight = exp(-0.033 × days_ago)` — half-life ≈ 21 days
 - Observations from 21 days ago have half the influence of today's observations
 - Observations from 90 days ago have ~5% influence (near zero)
@@ -324,9 +325,9 @@ Each OLS bucket fit uses exponential time decay weighting:
 
 The chart above shows three panels derived from 648 forecast vs actual observation pairs collected over the first five days of operation (Apr 15–19 2026, QLD1):
 
-**Panel 1 — Duck curve**: The stylised QLD wholesale price profile. Actual prices follow the classic duck curve shape — a solar-driven trough around 13:00 and a sharp evening ramp as rooftop solar drops off and demand peaks around 18:30. AEMO's raw PD7DAY forecast over-estimates the evening peak height and under-corrects the solar trough depth. The calibrated forecast applies the OLS correction to bring both in line.
+**Panel 1 — Duck curve**: The stylised QLD wholesale price profile. Actual prices follow the classic duck curve shape — a solar-driven trough around 13:00 and a sharp evening ramp as rooftop solar drops off and demand peaks around 18:30. AEMO's raw PD7DAY forecast over-estimates the evening peak height and under-corrects the solar trough depth. The calibrated forecast applies the isotonic correction to bring both in line.
 
-**Panel 2 — OLS slope heatmap**: Each cell shows the fitted slope `a` for that horizon × time-of-day bucket. Green (a≈1) means AEMO's forecast is unbiased. Red (a<1) means AEMO over-forecasts and the calibration compresses the signal. Yellow-green (a>1) means AEMO under-forecasts. Confidence indicators show observation count: ●●● (n≥40), ●●○ (n≥15), ●○○ (n<15).
+**Panel 2 — Compression ratio heatmap**: Each cell shows the `compression_ratio` for that horizon × time-of-day bucket. Green (compression_ratio≈1) means AEMO's forecast is unbiased. Red (compression_ratio<1) means AEMO over-forecasts and the calibration compresses the signal. Yellow-green (compression_ratio>1) means AEMO under-forecasts. Confidence indicators show observation count: ●●● (n≥40), ●●○ (n≥15), ●○○ (n<15).
 
 **Panel 3 — Key bias patterns**: The most actionable signals after five days of data.
 
@@ -340,14 +341,14 @@ The consistent structural patterns emerging from the data:
 
 | Pattern | Buckets | Observed | Interpretation |
 |---|---|---|---|
-| Strong over-forecast | `h00_06__peak`, `h06_12__peak` | a ≈ 0.36–0.38 | AEMO over-forecasts evening peak at short horizons; calibration reduces to ~37% of raw signal |
-| Flat intercept | `h12_24__peak`, `h24_48__peak` | a ≈ 0.10, 0.04 · b ≈ $90/MWh | AEMO peak forecasts beyond 12h carry near-zero information — calibration collapses to flat ~$90/MWh regardless of raw value |
-| Solar over-forecast | `h00_06__solar` through `h12_24__solar` | a ≈ 0.72–0.91 | Modest compression; converges to near-passthrough at h24_48 (a=0.985) |
-| Near-passthrough | `h06_12__offpeak` | a ≈ 0.88 | AEMO offpeak 6–12h forecasts are well-calibrated |
-| Mild under-forecast | `h12_24__offpeak` | a ≈ 1.04 | Slight upward correction for mid-range offpeak horizons |
-| Shoulder anomaly | `h06_12__shoulder`, `h12_24__shoulder` | a ≈ 1.41–1.58 | AEMO under-forecasts shoulder (20:00–22:00) persistence; n=10, provisional |
+| Strong over-forecast | `h00_06__peak`, `h06_12__peak` | compression_ratio ≈ 0.36–0.38 | AEMO over-forecasts evening peak at short horizons; calibration reduces to ~37% of raw signal |
+| Flat intercept | `h12_24__peak`, `h24_48__peak` | compression_ratio ≈ 0.10, 0.04 | AEMO peak forecasts beyond 12h carry near-zero information — calibration collapses to a near-constant value |
+| Solar over-forecast | `h00_06__solar` through `h12_24__solar` | compression_ratio ≈ 0.72–0.91 | Modest compression; converges to near-passthrough at h24_48 (compression_ratio≈0.985) |
+| Near-passthrough | `h06_12__offpeak` | compression_ratio ≈ 0.88 | AEMO offpeak 6–12h forecasts are well-calibrated |
+| Mild under-forecast | `h12_24__offpeak` | compression_ratio ≈ 1.04 | Slight upward correction for mid-range offpeak horizons |
+| Shoulder anomaly | `h06_12__shoulder`, `h12_24__shoulder` | compression_ratio ≈ 1.41–1.58 | AEMO under-forecasts shoulder (20:00–22:00) persistence; n=10, provisional |
 
-This is consistent with the academic literature — Sinclair et al. (2026) found AEMO pre-dispatch RRP contributes >60% of model importance at 2–16h horizons, and AEMO systematically over-forecasts peak prices due to conservatism bias. The flat-intercept pattern at `h24_48__peak` (a→0, b≈$90/MWh) is particularly striking: the raw AEMO 24–48h peak forecast contains essentially no predictive information and the calibration model correctly learns to ignore it.
+The flat `compression_ratio` at `h96plus__peak` (cr≈0.048) confirms the raw AEMO long-range peak forecast contains essentially no predictive information — isotonic calibration correctly flattens the output to a near-constant value.
 
 ### Warm-up period
 
@@ -365,7 +366,7 @@ With 3 fetches per day and MIN_OBS=20, expect:
 | File | Contents |
 |---|---|
 | `nem_pd7day.{region}.observation_log` | Calibration observations for the configured region |
-| `nem_pd7day.{region}.calibration_coefficients` | Fitted OLS and quantile models for the configured region |
+| `nem_pd7day.{region}.calibration_coefficients` | Fitted isotonic and quantile models for the configured region |
 | `nem_pd7day.{region}.forecast_history` | Forecast history for the configured region |
 
 e.g. for QLD1: `nem_pd7day.qld1.observation_log`
@@ -473,6 +474,11 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 2.3.12 | Chart improvements: per-cluster spike callouts, anti-crossover arrow placement, chart title updated to 7-Day Pre-Dispatch Spot Price Forecast, x-axis ticks at 06:00/18:00 only, MSL/LOR notice staggered labels and legend patches |
+| 2.3.x | Multiple fixes: matplotlib thread-safety (OO API), Grid Notices sensor device attachment, p10/p90 None crash, blocking event loop calls, sanity check log spam |
+| 2.3.0 | MSL/LOR grid stress notices: NEMWEB poller, HA .storage persistence, 7-day chart annotation bands (LOR1/2/3, MSL1/2/3), Grid Stress binary sensor, Grid Notices count sensor |
+| 2.2.11 | Sanity guard tuning: SANITY_RATIO_RAW_FLOOR=0.05 $/kWh floor + SANITY_ABS_DIFF_LIMIT=0.30 $/kWh absolute backstop to prevent false positives on near-zero raw forecasts |
+| 2.2.10 | Isotonic calibration: replaced weighted OLS with PAV monotone isotonic regression; per-bucket compression_ratio, iso_mae, iso_n_steps diagnostics; iso_chart camera; unconditional startup refit |
 | 2.2.4 | Critical fix: spike actual prices (actual_rrp >= $3.00/kWh) were not being excluded from OLS training buckets — only the forecast passthrough path applied SPIKE_THRESHOLD. The 05 May spike event ($8,000–$15,000/MWh actuals) collapsed all medium/long-horizon peak and shoulder slopes to near zero. Fix is retrospective — call nem_pd7day.force_refit after updating to immediately restore correct coefficients. |
 | 2.2.3 | Fix: adding a second NEM region failed with "This region is already configured" — config entry unique_id is now region-scoped (nem_pd7day_{region}) instead of hardcoded |
 | 2.2.2 | New 7-day forecast chart camera entity per region — shows raw vs calibrated forecast with p10/p90 confidence band, per-day min/max labels ($/kWh), dual $/kWh + $/MWh y-axes, dynamic clip at p99+15% headroom, passthrough_high spike annotations; fix circular import chain through `__init__.py` (`now_nem`/`to_nem_iso` removed from `calibration_engine` imports); fix CI workflow — `astral`, `numpy`, `matplotlib` now installed in test runner; fix spike forecast callout label in $/kWh not $/MWh |
