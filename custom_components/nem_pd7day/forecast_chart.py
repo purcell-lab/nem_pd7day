@@ -191,15 +191,24 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                 current = [idx]
         clusters.append(current)
 
-        # Alternate callout offsets so overlapping labels don't stack
-        offsets = [(30, 38), (-30, 38), (30, 62), (-30, 62)]
+        # Callout direction based on position in chart window:
+        # left-half clusters → label to the right; right-half → label to the left.
+        # This ensures arrows always point inward and never cross each other.
+        chart_start = times[0]
+        chart_end = times[-1]
+        chart_span = (chart_end - chart_start).total_seconds()
+        # Stagger vertical offset for adjacent clusters to avoid box collision
+        y_offsets = [45, 65, 45, 65]
         for cluster_num, cluster in enumerate(clusters):
             c_times = [times[i] for i in cluster]
             c_vals = [float(cals[i]) for i in cluster]
             max_val = max(c_vals)
             peak_idx = c_vals.index(max_val)
             peak_time = c_times[peak_idx]
-            xoff, yoff = offsets[cluster_num % len(offsets)]
+            # Fraction of chart width where this cluster peaks
+            frac = (peak_time - chart_start).total_seconds() / chart_span if chart_span > 0 else 0.5
+            xoff = 32 if frac < 0.5 else -32
+            yoff = y_offsets[cluster_num % len(y_offsets)]
             ha = 'left' if xoff > 0 else 'right'
             ax.annotate(
                 f'${max_val:.2f}/kWh',
