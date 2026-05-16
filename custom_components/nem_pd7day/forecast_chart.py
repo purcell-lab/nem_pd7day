@@ -169,23 +169,46 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                     fontsize=7.2, color='#1B5E20', ha='center', va='top',
                     fontweight='semibold', zorder=9)
 
-    # passthrough_high markers + consolidated callout
+    # passthrough_high markers + per-cluster callouts
+    # Group contiguous passthrough_high intervals into separate spike events
+    # (gap > 1 interval = 30 min means a new cluster)
     pt_indices = [i for i, s in enumerate(sources) if s == 'passthrough_high']
     if pt_indices:
         pt_times_list = [times[i] for i in pt_indices]
         pt_vals = [float(cals[i]) for i in pt_indices]
         ax.scatter(pt_times_list, [CLIP_Y * 0.96] * len(pt_times_list),
                    color='#C62828', marker='^', s=55, zorder=6, label='Passthrough high')
-        max_val = max(pt_vals)
-        mid_time = pt_times_list[len(pt_times_list) // 2]
-        ax.annotate(
-            f'AEMO spike forecast  max ${max_val:.3f}/kWh (clipped)',
-            xy=(mid_time, CLIP_Y),
-            xytext=(30, 38), textcoords='offset points',
-            fontsize=7.5, color='#C62828', ha='left', va='bottom',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
-                      edgecolor='#C62828', alpha=0.9),
-            arrowprops=dict(arrowstyle='->', color='#C62828', lw=1.2), zorder=10)
+
+        # Build clusters: new cluster when gap > 60 min
+        clusters: list[list[int]] = []
+        current: list[int] = [pt_indices[0]]
+        for prev_idx, idx in zip(pt_indices, pt_indices[1:]):
+            gap = (times[idx] - times[prev_idx]).total_seconds() / 60
+            if gap <= 60:
+                current.append(idx)
+            else:
+                clusters.append(current)
+                current = [idx]
+        clusters.append(current)
+
+        # Alternate callout offsets so overlapping labels don't stack
+        offsets = [(30, 38), (-30, 38), (30, 62), (-30, 62)]
+        for cluster_num, cluster in enumerate(clusters):
+            c_times = [times[i] for i in cluster]
+            c_vals = [float(cals[i]) for i in cluster]
+            max_val = max(c_vals)
+            peak_idx = c_vals.index(max_val)
+            peak_time = c_times[peak_idx]
+            xoff, yoff = offsets[cluster_num % len(offsets)]
+            ha = 'left' if xoff > 0 else 'right'
+            ax.annotate(
+                f'Spike  max ${max_val:.2f}/kWh',
+                xy=(peak_time, CLIP_Y),
+                xytext=(xoff, yoff), textcoords='offset points',
+                fontsize=7.5, color='#C62828', ha=ha, va='bottom',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                          edgecolor='#C62828', alpha=0.9),
+                arrowprops=dict(arrowstyle='->', color='#C62828', lw=1.2), zorder=10)
 
     # Grid
     ax.yaxis.grid(True, color='#DDDDDD', linewidth=0.5, alpha=0.7, zorder=1)
