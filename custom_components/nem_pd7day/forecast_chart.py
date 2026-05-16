@@ -256,7 +256,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x:.0f}'))
 
     # Title
-    ax.set_title(f'NEM PD7DAY {region} — 7-Day Price Forecast',
+    ax.set_title(f'NEM PD7DAY {region} — 7-Day Pre-Dispatch Spot Price Forecast',
                  fontsize=13, fontweight='bold', pad=11, color='#1A1A1A')
 
     # Legend
