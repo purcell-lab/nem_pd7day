@@ -202,7 +202,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
             xoff, yoff = offsets[cluster_num % len(offsets)]
             ha = 'left' if xoff > 0 else 'right'
             ax.annotate(
-                f'Spike  max ${max_val:.2f}/kWh',
+                f'${max_val:.2f}/kWh',
                 xy=(peak_time, CLIP_Y),
                 xytext=(xoff, yoff), textcoords='offset points',
                 fontsize=7.5, color='#C62828', ha=ha, va='bottom',
@@ -263,7 +263,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     if pt_indices:
         line_legend.append(plt.Line2D([0], [0], marker='^', color='w',
                                       markerfacecolor='#C62828', markersize=8,
-                                      label='Passthrough high'))
+                                      label='AEMO Spike Forecast'))
     ax.legend(handles=line_legend, loc='upper right', fontsize=8.5,
               framealpha=0.92, edgecolor='#CCCCCC', borderpad=0.7)
 
