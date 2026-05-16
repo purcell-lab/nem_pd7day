@@ -110,6 +110,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     ax.set_facecolor('white')
 
     # ── Grid stress annotations ──────────────────────────────────────────────
+    notice_types_present: set[tuple] = set()
     if annotations:
         NOTICE_COLORS = {
             ("LOR", 1): ("#F39C12", 0.15, "LOR1"),   # amber
@@ -119,20 +120,41 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
             ("MSL", 2): ("#7D3C98", 0.22, "MSL2"),
             ("MSL", 3): ("#6C3483", 0.30, "MSL3"),
         }
+        # Track label positions to stagger vertically when notices overlap in time
+        # key: notice_id or index, value: y offset tier (0, 1, 2...)
+        label_y_levels = [CLIP_Y * 1.28, CLIP_Y * 1.20, CLIP_Y * 1.12]
+        # Group placed labels by approximate x-position bucket (6h windows)
+        # to detect collisions and assign vertical tiers
+        placed: list[tuple] = []  # (mid_num, tier)
         for ann in annotations:
             if ann.is_cancelled:
                 continue
             color_info = NOTICE_COLORS.get((ann.notice_type, ann.level))
             if not color_info:
                 continue
-            color, alpha, label = color_info
+            color, alpha, label_text = color_info
+            notice_types_present.add((ann.notice_type, ann.level))
             ax.axvspan(
                 ann.period_from, ann.period_to,
                 alpha=alpha, color=color, zorder=1, linewidth=0
             )
             mid = ann.period_from + (ann.period_to - ann.period_from) / 2
+            mid_num = mdates.date2num(mid)
+            # Assign vertical tier: find lowest tier not already used within
+            # a 6-hour window of this label's mid-point
+            tier = 0
+            for _ in range(len(label_y_levels)):
+                collision = any(
+                    abs(mid_num - px) < 0.25 and pt == tier
+                    for px, pt in placed
+                )
+                if not collision:
+                    break
+                tier += 1
+            tier = min(tier, len(label_y_levels) - 1)
+            placed.append((mid_num, tier))
             ax.text(
-                mid, CLIP_Y * 1.28, label,
+                mid, label_y_levels[tier], label_text,
                 ha="center", va="top", fontsize=7, color=color,
                 fontweight="bold", zorder=5,
             )
@@ -224,9 +246,11 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     ax.xaxis.grid(True, color='#EEEEEE', linewidth=0.4, alpha=0.5, zorder=1)
     ax.set_axisbelow(True)
 
-    # X-axis: 6-hour ticks, date labels at midnight boundaries
-    ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18], tz=NEM_TZ))
+    # X-axis: minor ticks every 6h (grid only), labelled ticks at 06:00 and 18:00 only
+    ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[6, 18], tz=NEM_TZ))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=NEM_TZ))
+    ax.xaxis.set_minor_locator(mdates.HourLocator(byhour=[0, 12], tz=NEM_TZ))
+    ax.xaxis.grid(True, which='minor', color='#EEEEEE', linewidth=0.4, alpha=0.5, zorder=1)
     ax.tick_params(axis='x', labelsize=8.5, pad=2)
 
     y_min = min(float(np.min(p10s)), -0.04)
@@ -273,6 +297,19 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         line_legend.append(plt.Line2D([0], [0], marker='^', color='w',
                                       markerfacecolor='#C62828', markersize=8,
                                       label='AEMO Spike Forecast'))
+    # Add legend entries for any notice types actually present in this chart
+    NOTICE_LEGEND = {
+        ("LOR", 1): ("#F39C12", "LOR1 — Reserve notice"),
+        ("LOR", 2): ("#E67E22", "LOR2 — Reserve notice"),
+        ("LOR", 3): ("#C0392B", "LOR3 — Reserve notice"),
+        ("MSL", 1): ("#8E44AD", "MSL1 — Min load notice"),
+        ("MSL", 2): ("#7D3C98", "MSL2 — Min load notice"),
+        ("MSL", 3): ("#6C3483", "MSL3 — Min load notice"),
+    }
+    for key in sorted(notice_types_present):
+        if key in NOTICE_LEGEND:
+            col, lbl = NOTICE_LEGEND[key]
+            line_legend.append(mpatches.Patch(color=col, alpha=0.5, label=lbl))
     ax.legend(handles=line_legend, loc='upper right', fontsize=8.5,
               framealpha=0.92, edgecolor='#CCCCCC', borderpad=0.7)
 
