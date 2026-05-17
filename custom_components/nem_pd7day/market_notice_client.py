@@ -165,34 +165,32 @@ def _parse_notice_body(text: str, notice_id: int) -> Optional[GridNoticeAnnotati
     period_to = issued_at
 
     if not is_cancelled:
-        # Extract "From HHMM hrs to HHMM hrs DD/MM/YYYY"
-        period_match = re.search(
-            r'[Ff]rom\s+(\d{4})\s*hrs?\s+to\s+(\d{4})\s*hrs?\s+(\d{2}/\d{2}/\d{4})',
-            text
+        # AEMO format: "From HHMM hrs DD/MM/YYYY to HHMM hrs DD/MM/YYYY"
+        # Notices may have multiple numbered periods [1.] [2.] etc.
+        # We use the widest window: earliest period_from to latest period_to.
+        period_pattern = re.compile(
+            r'[Ff]rom\s+(\d{4})\s+hrs\s+(\d{2}/\d{2}/\d{4})\s+to\s+(\d{4})\s+hrs\s+(\d{2}/\d{2}/\d{4})'
         )
-        if period_match:
-            hfrom = period_match.group(1)
-            hto = period_match.group(2)
-            date_str = period_match.group(3)
+        all_periods = period_pattern.findall(text)
+        parsed_periods = []
+        for hfrom, date_from_str, hto, date_to_str in all_periods:
             try:
-                base_date = datetime.strptime(date_str, "%d/%m/%Y")
-                period_from = base_date.replace(
+                date_from = datetime.strptime(date_from_str, "%d/%m/%Y")
+                date_to = datetime.strptime(date_to_str, "%d/%m/%Y")
+                pf = date_from.replace(
                     hour=int(hfrom[:2]), minute=int(hfrom[2:]), tzinfo=NEM_TZ
                 )
-                to_h = int(hto[:2])
-                to_m = int(hto[2:])
+                to_h, to_m = int(hto[:2]), int(hto[2:])
                 if to_h == 0 and to_m == 0:
-                    # "0000 hrs" on same date means midnight = next day start
-                    period_to = (base_date + timedelta(days=1)).replace(tzinfo=NEM_TZ)
-                elif int(hto) < int(hfrom):
-                    # spans midnight
-                    period_to = (base_date + timedelta(days=1)).replace(
-                        hour=to_h, minute=to_m, tzinfo=NEM_TZ
-                    )
+                    pt = (date_to + timedelta(days=1)).replace(tzinfo=NEM_TZ)
                 else:
-                    period_to = base_date.replace(hour=to_h, minute=to_m, tzinfo=NEM_TZ)
+                    pt = date_to.replace(hour=to_h, minute=to_m, tzinfo=NEM_TZ)
+                parsed_periods.append((pf, pt))
             except (ValueError, IndexError):
-                pass
+                continue
+        if parsed_periods:
+            period_from = min(p[0] for p in parsed_periods)
+            period_to = max(p[1] for p in parsed_periods)
 
     # Extract LOR-specific fields
     reserve_req_mw = None

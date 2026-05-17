@@ -17,7 +17,7 @@ AEMO ELECTRICITY MARKET NOTICE 128465 RESERVE NOTICE 11/08/2025 03:25:07 PM
 STPASA - Forecast Lack Of Reserve Level 1 (LOR1) in the SA Region on 19/08/2025
 
 AEMO declares a Forecast LOR1 condition for the SA region for the following period:
-From 0000 hrs to 0300 hrs 19/08/2025.
+[1.] From 0000 hrs 19/08/2025 to 0300 hrs 19/08/2025.
 The forecast capacity reserve requirement is 411 MW.
 The minimum capacity reserve available is 407 MW.
 
@@ -32,9 +32,27 @@ AEMO ELECTRICITY MARKET NOTICE 124467 MINIMUM SYSTEM LOAD 11/02/2025 02:43:06 PM
 Forecast Minimum System Load (MSL1) condition in the VIC region on 16/02/2025
 
 The regional demand is forecast to be below the MSL1 threshold for the following period:
-From 1230 hrs to 1430 hrs 16/02/2025. Minimum regional demand is forecast to be 2012 MW at 1330 hrs.
+[1.] From 1230 hrs 16/02/2025 to 1430 hrs 16/02/2025. Minimum regional demand is forecast to be 2012 MW at 1330 hrs.
 
 AEMO Operations
+END OF REPORT
+"""
+
+LOR_MULTI_PERIOD_TEXT = """
+MARKET NOTICE
+AEMO ELECTRICITY MARKET NOTICE 144109 RESERVE NOTICE 17/05/2026 14:34:41
+
+ST PASA - Update of the Forecast Lack Of Reserve Level 1 (LOR1) in the QLD Region on 19/05/2026
+
+The Forecast LOR1 condition in the QLD region has been updated to the following:
+[1.] From 0600 hrs 19/05/2026 to 1930 hrs 19/05/2026.
+The forecast capacity reserve requirement is 1197 MW.
+The minimum capacity reserve available is 1012 MW.
+
+[2.] From 2130 hrs 19/05/2026 to 2200 hrs 19/05/2026.
+The forecast capacity reserve requirement is 1199 MW.
+
+Manager NEM Real Time Operations
 END OF REPORT
 """
 
@@ -98,6 +116,22 @@ def test_parse_cancellation_notice():
     assert notice is not None
     assert notice.is_cancelled
     assert notice.cancels_notice_id == 124467
+
+
+def test_parse_multi_period_lor_notice():
+    """Multi-period notice should use earliest period_from and latest period_to."""
+    notice = _parse_notice_body(LOR_MULTI_PERIOD_TEXT, 144109)
+    assert notice is not None
+    assert notice.notice_type == "LOR"
+    assert notice.level == 1
+    assert notice.region == "QLD1"
+    assert not notice.is_cancelled
+    # Period 1: 0600–1930 19/05/2026, Period 2: 2130–2200 19/05/2026
+    # Widest window: 0600–2200
+    assert notice.period_from.hour == 6
+    assert notice.period_from.minute == 0
+    assert notice.period_to.hour == 22
+    assert notice.period_to.minute == 0
 
 
 def test_non_lor_msl_returns_none():
