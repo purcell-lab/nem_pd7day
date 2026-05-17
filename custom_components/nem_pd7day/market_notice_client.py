@@ -85,12 +85,18 @@ class GridNoticeAnnotation:
 def _parse_directory_listing(html: str) -> list[tuple[int, str]]:
     """
     Parse NEMWEB directory listing HTML.
-    Returns list of (notice_id, filename) sorted ascending by notice_id.
+    Returns deduplicated list of (notice_id, filename) sorted ascending by notice_id.
     Only includes MKTNOTICE files.
     """
     pattern = re.compile(r'(NEMITWEB1_MKTNOTICE_\d{8}\.R(\d+))')
     matches = pattern.findall(html)
-    result = [(int(notice_id), filename) for filename, notice_id in matches]
+    seen: set[int] = set()
+    result = []
+    for filename, notice_id_str in matches:
+        notice_id = int(notice_id_str)
+        if notice_id not in seen:
+            seen.add(notice_id)
+            result.append((notice_id, filename))
     return sorted(result, key=lambda x: x[0])
 
 
@@ -259,17 +265,23 @@ class MarketNoticeClient:
         if not files:
             return []
 
-        # First-run bootstrap: initialise cursor to highest current notice ID
-        # without fetching any files. Only notices issued after this point matter.
+        # First-run bootstrap: fetch all notices from the last 7 days.
+        # The directory filename encodes the date (YYYYMMDD), so we filter by
+        # filename date rather than notice_id to avoid fetching thousands of old files.
         if self.last_seen_notice_id == 0:
-            self.last_seen_notice_id = files[-1][0]
+            cutoff = datetime.now(NEM_TZ) - timedelta(days=7)
+            cutoff_str = cutoff.strftime("%Y%m%d")  # e.g. "20260510"
+            new_files = [
+                (nid, fname) for nid, fname in files
+                if re.search(r'(\d{8})', fname) and
+                re.search(r'(\d{8})', fname).group(1) >= cutoff_str
+            ]
             _LOGGER.info(
-                "Market notice client initialised at notice_id=%d (no backfill)",
-                self.last_seen_notice_id,
+                "Market notice client first run: backfilling %d files since %s",
+                len(new_files), cutoff_str,
             )
-            return []
-
-        new_files = [(nid, fname) for nid, fname in files if nid > self.last_seen_notice_id]
+        else:
+            new_files = [(nid, fname) for nid, fname in files if nid > self.last_seen_notice_id]
 
         if not new_files:
             return []

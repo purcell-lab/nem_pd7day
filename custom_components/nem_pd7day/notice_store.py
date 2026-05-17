@@ -152,6 +152,17 @@ class GridNoticeStore:
     def last_seen_notice_id(self) -> int:
         return self._last_seen_notice_id
 
+    def reset_cursor_for_backfill(self) -> None:
+        """Reset last_seen to 0 so the next fetch triggers a 7-day backfill.
+        Call when the store has no notices but a cursor was already set
+        (e.g. after upgrading from a version that skipped first-run backfill).
+        """
+        _LOGGER.info(
+            "Resetting notice cursor from %d to 0 to trigger 7-day backfill",
+            self._last_seen_notice_id,
+        )
+        self._last_seen_notice_id = 0
+
     def _prune(self) -> None:
         """Remove notices older than NOTICE_RETENTION_DAYS past their period_to."""
         cutoff = datetime.now(timezone(timedelta(hours=10))) - timedelta(days=NOTICE_RETENTION_DAYS)

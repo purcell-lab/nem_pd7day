@@ -84,6 +84,22 @@ def test_parse_directory_listing():
     assert files[2][0] == 133910
 
 
+def test_parse_directory_listing_deduplicates():
+    """NEMWEB returns each file twice; _parse_directory_listing deduplicates."""
+    duplicated_html = """
+<pre>
+01/01/2026 12:00 PM  1234 NEMITWEB1_MKTNOTICE_20260101.R133900
+01/01/2026 12:00 PM  1234 NEMITWEB1_MKTNOTICE_20260101.R133900
+02/01/2026 12:00 PM  1234 NEMITWEB1_MKTNOTICE_20260102.R133910
+02/01/2026 12:00 PM  1234 NEMITWEB1_MKTNOTICE_20260102.R133910
+</pre>
+"""
+    files = _parse_directory_listing(duplicated_html)
+    assert len(files) == 2
+    assert files[0] == (133900, "NEMITWEB1_MKTNOTICE_20260101.R133900")
+    assert files[1] == (133910, "NEMITWEB1_MKTNOTICE_20260102.R133910")
+
+
 def test_parse_lor_notice():
     notice = _parse_notice_body(LOR_NOTICE_TEXT, 128465)
     assert notice is not None
@@ -213,14 +229,14 @@ def test_notice_store_cancellation():
 
 
 @pytest.mark.asyncio
-async def test_first_run_initialises_cursor_without_fetching():
-    """On first run (last_seen=0), cursor initialised to max notice_id, no files fetched."""
+async def test_first_run_backfills_but_no_recent_files():
+    """On first run with all files older than 7 days, backfill finds nothing."""
     from custom_components.nem_pd7day.market_notice_client import MarketNoticeClient
 
     mock_session = MagicMock()
     mock_resp = AsyncMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.text = AsyncMock(return_value=DIRECTORY_HTML)
+    mock_resp.text = AsyncMock(return_value=DIRECTORY_HTML)  # dates are 20260101/02
     mock_session.get = MagicMock(return_value=AsyncMock(
         __aenter__=AsyncMock(return_value=mock_resp),
         __aexit__=AsyncMock(return_value=False),
@@ -230,12 +246,57 @@ async def test_first_run_initialises_cursor_without_fetching():
     assert client.last_seen_notice_id == 0
 
     result = await client.fetch_new_notices()
+    # All files are dated 20260101/20260102, which is > 7 days ago.
+    # Backfill date filter excludes them, so no files fetched.
     assert result == []
-    assert client.last_seen_notice_id == 133910  # highest in DIRECTORY_HTML
+    assert client.last_seen_notice_id == 0  # no files processed, cursor unchanged
 
-    # Second call with no new files also returns []
-    result2 = await client.fetch_new_notices()
-    assert result2 == []
+
+@pytest.mark.asyncio
+async def test_first_run_backfills_recent_files():
+    """On first run with recent files, backfill fetches and parses them."""
+    from custom_components.nem_pd7day.market_notice_client import MarketNoticeClient
+
+    # Build a directory listing with files dated within the last 7 days
+    today = datetime.now(NEM_TZ)
+    recent_date = today.strftime("%Y%m%d")
+    recent_html = f"""
+<pre>
+{today.strftime('%d/%m/%Y')} 12:00 PM  1234 NEMITWEB1_MKTNOTICE_{recent_date}.R200100
+{today.strftime('%d/%m/%Y')} 01:00 PM  1234 NEMITWEB1_MKTNOTICE_{recent_date}.R200101
+</pre>
+"""
+
+    call_count = 0
+
+    def make_mock_get(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        resp = AsyncMock()
+        resp.raise_for_status = MagicMock()
+        if call_count == 1:
+            # First call: directory listing
+            resp.text = AsyncMock(return_value=recent_html)
+        else:
+            # Subsequent calls: individual notice files
+            resp.text = AsyncMock(return_value=LOR_NOTICE_TEXT)
+        return AsyncMock(
+            __aenter__=AsyncMock(return_value=resp),
+            __aexit__=AsyncMock(return_value=False),
+        )
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=make_mock_get)
+
+    client = MarketNoticeClient(mock_session)
+    assert client.last_seen_notice_id == 0
+
+    result = await client.fetch_new_notices()
+    # Both files are recent, so backfill fetches them.
+    # LOR_NOTICE_TEXT is a valid LOR notice, so both should parse successfully.
+    assert len(result) == 2
+    assert all(n.notice_type == "LOR" for n in result)
+    assert client.last_seen_notice_id == 200101  # highest notice_id
 
 
 @pytest.mark.asyncio

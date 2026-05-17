@@ -110,6 +110,13 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         """Fetch new market notices and persist."""
         if self._notice_client is None or self.notice_store is None:
             return
+        # Upgrade path: if store has a non-zero cursor but zero stored notices,
+        # the previous bootstrap skipped the 7-day backfill. Reset to trigger it.
+        total_notices = sum(
+            len(v) for v in self.notice_store._notices.values()
+        )
+        if self.notice_store.last_seen_notice_id > 0 and total_notices == 0:
+            self.notice_store.reset_cursor_for_backfill()
         self._notice_client.last_seen_notice_id = self.notice_store.last_seen_notice_id
         new_notices = await self._notice_client.fetch_new_notices()
         if new_notices:

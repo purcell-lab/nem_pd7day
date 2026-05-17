@@ -98,6 +98,17 @@ _const_mod = _load(
     "custom_components.nem_pd7day.const",
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
 )
+
+# Load notice modules before coordinator
+_notice_client_mod = _load(
+    "custom_components.nem_pd7day.market_notice_client",
+    os.path.join(_ROOT, "custom_components", "nem_pd7day", "market_notice_client.py"),
+)
+_notice_store_mod = _load(
+    "custom_components.nem_pd7day.notice_store",
+    os.path.join(_ROOT, "custom_components", "nem_pd7day", "notice_store.py"),
+)
+
 _coord_mod = _load(
     "custom_components.nem_pd7day.coordinator",
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
@@ -196,7 +207,7 @@ def make_store() -> CalibrationStore:
     return store
 
 
-def make_coordinator(store=None) -> PD7DayCoordinator:
+def make_coordinator(store=None, notice_store=None, notice_client=None) -> PD7DayCoordinator:
     hass = MagicMock()
     coord = PD7DayCoordinator.__new__(PD7DayCoordinator)
     coord.hass = hass
@@ -209,6 +220,9 @@ def make_coordinator(store=None) -> PD7DayCoordinator:
     coord._interconnector_ids = {"NSW1-QLD1"}
     coord._store = store
     coord._session = None
+    coord.notice_store = notice_store
+    coord._notice_client = notice_client
+    coord._first_refresh_done = False
     return coord
 
 
@@ -444,3 +458,74 @@ def test_forecast_price_stored_is_raw_not_calibrated():
         f"forecast_price in history must be raw AEMO value {raw_value}, "
         f"got {entry['forecast_price']}. If calibrated, OLS is circular."
     )
+
+
+# ── Tests: upgrade-path cursor reset ──────────────────────────────────────────
+
+def test_upgrade_path_resets_cursor_when_no_notices():
+    """
+    Upgrade path: if notice_store has last_seen > 0 but total_notices == 0,
+    async_fetch_notices must reset cursor to 0 to trigger 7-day backfill.
+    """
+    from custom_components.nem_pd7day.notice_store import GridNoticeStore
+    from custom_components.nem_pd7day.market_notice_client import MarketNoticeClient
+
+    # Build a notice_store with cursor set but no stored notices
+    notice_store = GridNoticeStore.__new__(GridNoticeStore)
+    notice_store._notices = {}
+    notice_store._last_seen_notice_id = 50000
+    notice_store.last_fetched_at = None
+    notice_store._store = MagicMock()
+    notice_store._store.async_save = AsyncMock()
+
+    # Build a notice client that returns no new notices
+    notice_client = MagicMock()
+    notice_client.last_seen_notice_id = 50000
+    notice_client.fetch_new_notices = AsyncMock(return_value=[])
+
+    coord = make_coordinator(notice_store=notice_store, notice_client=notice_client)
+
+    run_async(coord.async_fetch_notices())
+
+    # The store cursor should have been reset to 0
+    assert notice_store.last_seen_notice_id == 0
+    # And the client should have been called with cursor = 0
+    assert notice_client.last_seen_notice_id == 0
+
+
+def test_no_reset_when_notices_exist():
+    """
+    When notice_store has stored notices, cursor should NOT be reset.
+    """
+    from custom_components.nem_pd7day.notice_store import GridNoticeStore
+    from custom_components.nem_pd7day.market_notice_client import (
+        MarketNoticeClient, GridNoticeAnnotation,
+    )
+
+    now = datetime(2026, 5, 14, 12, 0, tzinfo=NEM_TZ)
+    notice_store = GridNoticeStore.__new__(GridNoticeStore)
+    notice_store._notices = {
+        "QLD1": [
+            GridNoticeAnnotation(
+                notice_id=50000, notice_type="LOR", level=1, region="QLD1",
+                period_from=now, period_to=now + timedelta(hours=2),
+                issued_at=now,
+            ),
+        ],
+    }
+    notice_store._last_seen_notice_id = 50000
+    notice_store.last_fetched_at = None
+    notice_store._store = MagicMock()
+    notice_store._store.async_save = AsyncMock()
+
+    notice_client = MagicMock()
+    notice_client.last_seen_notice_id = 50000
+    notice_client.fetch_new_notices = AsyncMock(return_value=[])
+
+    coord = make_coordinator(notice_store=notice_store, notice_client=notice_client)
+
+    run_async(coord.async_fetch_notices())
+
+    # Cursor should NOT have been reset — notices exist
+    assert notice_store.last_seen_notice_id == 50000
+    assert notice_client.last_seen_notice_id == 50000

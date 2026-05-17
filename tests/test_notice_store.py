@@ -73,3 +73,24 @@ def test_notice_store_last_fetched_at_set_on_add():
     ]
     store.add_notices(notices)
     assert store.last_fetched_at is not None
+
+
+def test_reset_cursor_for_backfill():
+    """reset_cursor_for_backfill sets last_seen_notice_id back to 0."""
+    hass = MagicMock()
+    store = GridNoticeStore(hass)
+
+    now = datetime(2026, 5, 14, 12, 0, tzinfo=NEM_TZ)
+    notices = [
+        GridNoticeAnnotation(
+            notice_id=5001, notice_type="LOR", level=1, region="SA1",
+            period_from=now + timedelta(hours=1),
+            period_to=now + timedelta(hours=3),
+            issued_at=now, is_cancelled=False,
+        ),
+    ]
+    store.add_notices(notices)
+    assert store.last_seen_notice_id == 5001
+
+    store.reset_cursor_for_backfill()
+    assert store.last_seen_notice_id == 0
