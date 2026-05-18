@@ -78,9 +78,11 @@ class GridNoticeStore:
 
     def add_notices(self, notices: list[GridNoticeAnnotation]) -> None:
         """
-        Add new notices. Apply cancellations: if a notice is_cancelled and
-        references a prior notice_id via cancels_notice_id, mark the referenced
-        notice as is_cancelled=True.
+        Add new notices. Apply cancellations in two ways:
+        1. By explicit cancels_notice_id (if present)
+        2. By matching (region, level, cancellation_date) against stored notices'
+           period_from date — handles AEMO cancellation notices that don't
+           reference a specific notice ID.
         """
         self.last_fetched_at = datetime.now(timezone(timedelta(hours=10)))
         for notice in notices:
@@ -88,14 +90,32 @@ class GridNoticeStore:
             if region not in self._notices:
                 self._notices[region] = []
 
-            if notice.is_cancelled and notice.cancels_notice_id:
-                for existing in self._notices.get(region, []):
-                    if existing.notice_id == notice.cancels_notice_id:
-                        existing.is_cancelled = True
-                        _LOGGER.debug(
-                            "Marked notice %d as cancelled (by %d)",
-                            notice.cancels_notice_id, notice.notice_id,
-                        )
+            if notice.is_cancelled:
+                # Path 1: cancel by explicit notice ID reference
+                if notice.cancels_notice_id:
+                    for existing in self._notices.get(region, []):
+                        if existing.notice_id == notice.cancels_notice_id:
+                            existing.is_cancelled = True
+                            _LOGGER.debug(
+                                "Marked notice %d as cancelled (by %d via ID ref)",
+                                notice.cancels_notice_id, notice.notice_id,
+                            )
+
+                # Path 2: cancel by (region, level, date) matching
+                if notice.cancellation_date:
+                    for existing in self._notices.get(region, []):
+                        if (
+                            not existing.is_cancelled
+                            and existing.notice_type == notice.notice_type
+                            and existing.level == notice.level
+                            and existing.period_from.date() == notice.cancellation_date
+                        ):
+                            existing.is_cancelled = True
+                            _LOGGER.debug(
+                                "Marked notice %d as cancelled (by %d via date match %s)",
+                                existing.notice_id, notice.notice_id,
+                                notice.cancellation_date,
+                            )
 
             # Deduplicate: replace if same notice_id already stored
             existing_ids = {n.notice_id for n in self._notices[region]}

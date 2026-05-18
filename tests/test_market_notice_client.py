@@ -68,6 +68,26 @@ AEMO Operations
 END OF REPORT
 """
 
+LOR_CANCELLATION_BY_DATE_TEXT = """
+MARKET NOTICE
+AEMO ELECTRICITY MARKET NOTICE 144114 RESERVE NOTICE 18/05/2026 16:16:00
+
+PDPASA - Cancellation of the Forecast Lack Of Reserve Level 1 (LOR1) in the QLD Region on 18/05/2026
+
+Manager NEM Real Time Operations
+END OF REPORT
+"""
+
+MSL_CANCELLATION_BY_DATE_TEXT = """
+MARKET NOTICE
+AEMO ELECTRICITY MARKET NOTICE 144200 MINIMUM SYSTEM LOAD 18/05/2026 10:00:00
+
+PDPASA - Cancellation of the Forecast Minimum System Load Level 2 (MSL2) in the SA Region on 20/05/2026
+
+AEMO Operations
+END OF REPORT
+"""
+
 DIRECTORY_HTML = """
 <pre>
 01/01/2026 12:00 PM  1234 NEMITWEB1_MKTNOTICE_20260101.R133900
@@ -321,3 +341,171 @@ async def test_incremental_fetch_skips_old_notices():
         result = await client.fetch_new_notices()
         assert mock_fetch.call_count == 1
         assert mock_fetch.call_args[0][0] == 133910
+
+
+def test_parse_lor_cancellation_by_date():
+    """AEMO cancellation notice without explicit notice ID reference parses correctly."""
+    from datetime import date
+    notice = _parse_notice_body(LOR_CANCELLATION_BY_DATE_TEXT, 144114)
+    assert notice is not None
+    assert notice.notice_type == "LOR"
+    assert notice.level == 1
+    assert notice.region == "QLD1"
+    assert notice.is_cancelled is True
+    assert notice.cancels_notice_id is None  # no "Refer to Market Notice" in text
+    assert notice.cancellation_date == date(2026, 5, 18)
+
+
+def test_parse_msl_cancellation_by_date():
+    """MSL cancellation notice with date parses correctly."""
+    from datetime import date
+    notice = _parse_notice_body(MSL_CANCELLATION_BY_DATE_TEXT, 144200)
+    assert notice is not None
+    assert notice.notice_type == "MSL"
+    assert notice.level == 2
+    assert notice.region == "SA1"
+    assert notice.is_cancelled is True
+    assert notice.cancellation_date == date(2026, 5, 20)
+
+
+def test_cancellation_with_refer_also_extracts_date():
+    """Cancellation with both 'Refer to Market Notice' and a date extracts both."""
+    from datetime import date
+    notice = _parse_notice_body(CANCELLATION_TEXT, 124560)
+    assert notice is not None
+    assert notice.is_cancelled is True
+    assert notice.cancels_notice_id == 124467
+    assert notice.cancellation_date == date(2025, 2, 13)
+
+
+def test_cancellation_marks_prior_notices_inactive():
+    """Cancellation by (region, level, date) marks matching stored notices cancelled."""
+    from datetime import date
+
+    target_date = date(2026, 5, 18)
+    now = datetime(2026, 5, 18, 6, 0, tzinfo=NEM_TZ)
+
+    lor1_a = GridNoticeAnnotation(
+        notice_id=144108, notice_type="LOR", level=1, region="QLD1",
+        period_from=datetime(2026, 5, 18, 6, 0, tzinfo=NEM_TZ),
+        period_to=datetime(2026, 5, 18, 19, 30, tzinfo=NEM_TZ),
+        issued_at=now,
+    )
+    lor1_b = GridNoticeAnnotation(
+        notice_id=144109, notice_type="LOR", level=1, region="QLD1",
+        period_from=datetime(2026, 5, 18, 6, 0, tzinfo=NEM_TZ),
+        period_to=datetime(2026, 5, 18, 22, 0, tzinfo=NEM_TZ),
+        issued_at=now,
+    )
+    cancellation = GridNoticeAnnotation(
+        notice_id=144114, notice_type="LOR", level=1, region="QLD1",
+        period_from=now, period_to=now, issued_at=now,
+        is_cancelled=True,
+        cancellation_date=target_date,
+    )
+
+    # Simulate store logic inline (same pattern as existing test_notice_store_cancellation)
+    notices: dict[str, list[GridNoticeAnnotation]] = {}
+
+    def add_notices(new_notices):
+        for notice in new_notices:
+            region = notice.region
+            if region not in notices:
+                notices[region] = []
+            if notice.is_cancelled:
+                if notice.cancels_notice_id:
+                    for existing in notices.get(region, []):
+                        if existing.notice_id == notice.cancels_notice_id:
+                            existing.is_cancelled = True
+                if notice.cancellation_date:
+                    for existing in notices.get(region, []):
+                        if (
+                            not existing.is_cancelled
+                            and existing.notice_type == notice.notice_type
+                            and existing.level == notice.level
+                            and existing.period_from.date() == notice.cancellation_date
+                        ):
+                            existing.is_cancelled = True
+            existing_ids = {n.notice_id for n in notices[region]}
+            if notice.notice_id in existing_ids:
+                notices[region] = [
+                    n if n.notice_id != notice.notice_id else notice
+                    for n in notices[region]
+                ]
+            else:
+                notices[region].append(notice)
+
+    add_notices([lor1_a, lor1_b])
+    assert not notices["QLD1"][0].is_cancelled
+    assert not notices["QLD1"][1].is_cancelled
+    active = [n for n in notices["QLD1"] if not n.is_cancelled]
+    assert len(active) == 2
+
+    add_notices([cancellation])
+    active = [n for n in notices["QLD1"] if not n.is_cancelled]
+    assert len(active) == 0  # both LOR1/QLD1/2026-05-18 notices cancelled
+
+
+def test_cancellation_does_not_affect_other_region():
+    """Cancellation for QLD1 does not cancel NSW1 notices."""
+    from datetime import date
+
+    target_date = date(2026, 5, 18)
+    now = datetime(2026, 5, 18, 6, 0, tzinfo=NEM_TZ)
+
+    qld_notice = GridNoticeAnnotation(
+        notice_id=144108, notice_type="LOR", level=1, region="QLD1",
+        period_from=datetime(2026, 5, 18, 6, 0, tzinfo=NEM_TZ),
+        period_to=datetime(2026, 5, 18, 19, 30, tzinfo=NEM_TZ),
+        issued_at=now,
+    )
+    nsw_notice = GridNoticeAnnotation(
+        notice_id=144110, notice_type="LOR", level=1, region="NSW1",
+        period_from=datetime(2026, 5, 18, 6, 0, tzinfo=NEM_TZ),
+        period_to=datetime(2026, 5, 18, 19, 30, tzinfo=NEM_TZ),
+        issued_at=now,
+    )
+    cancellation = GridNoticeAnnotation(
+        notice_id=144114, notice_type="LOR", level=1, region="QLD1",
+        period_from=now, period_to=now, issued_at=now,
+        is_cancelled=True,
+        cancellation_date=target_date,
+    )
+
+    notices: dict[str, list[GridNoticeAnnotation]] = {}
+
+    def add_notices(new_notices):
+        for notice in new_notices:
+            region = notice.region
+            if region not in notices:
+                notices[region] = []
+            if notice.is_cancelled:
+                if notice.cancels_notice_id:
+                    for existing in notices.get(region, []):
+                        if existing.notice_id == notice.cancels_notice_id:
+                            existing.is_cancelled = True
+                if notice.cancellation_date:
+                    for existing in notices.get(region, []):
+                        if (
+                            not existing.is_cancelled
+                            and existing.notice_type == notice.notice_type
+                            and existing.level == notice.level
+                            and existing.period_from.date() == notice.cancellation_date
+                        ):
+                            existing.is_cancelled = True
+            existing_ids = {n.notice_id for n in notices[region]}
+            if notice.notice_id in existing_ids:
+                notices[region] = [
+                    n if n.notice_id != notice.notice_id else notice
+                    for n in notices[region]
+                ]
+            else:
+                notices[region].append(notice)
+
+    add_notices([qld_notice, nsw_notice])
+    add_notices([cancellation])
+
+    # QLD1 notice should be cancelled
+    assert notices["QLD1"][0].is_cancelled
+    # NSW1 notice should NOT be cancelled
+    assert not notices["NSW1"][0].is_cancelled

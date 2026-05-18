@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 
 import aiohttp
@@ -44,6 +44,7 @@ class GridNoticeAnnotation:
     issued_at: datetime       # NEM time (tz-aware)
     is_cancelled: bool = False
     cancels_notice_id: Optional[int] = None   # notice ID this cancels
+    cancellation_date: Optional[date] = None  # date of LOR/MSL period being cancelled
     forecast_mw: Optional[float] = None       # MSL: forecast minimum demand
     reserve_req_mw: Optional[float] = None    # LOR: reserve requirement
     surplus_mw: Optional[float] = None        # LOR: min capacity available
@@ -59,6 +60,7 @@ class GridNoticeAnnotation:
             "issued_at": self.issued_at.isoformat(),
             "is_cancelled": self.is_cancelled,
             "cancels_notice_id": self.cancels_notice_id,
+            "cancellation_date": self.cancellation_date.isoformat() if self.cancellation_date else None,
             "forecast_mw": self.forecast_mw,
             "reserve_req_mw": self.reserve_req_mw,
             "surplus_mw": self.surplus_mw,
@@ -66,6 +68,8 @@ class GridNoticeAnnotation:
 
     @classmethod
     def from_dict(cls, d: dict) -> "GridNoticeAnnotation":
+        cancel_date_raw = d.get("cancellation_date")
+        cancellation_date = date.fromisoformat(cancel_date_raw) if cancel_date_raw else None
         return cls(
             notice_id=d["notice_id"],
             notice_type=d["notice_type"],
@@ -76,6 +80,7 @@ class GridNoticeAnnotation:
             issued_at=datetime.fromisoformat(d["issued_at"]),
             is_cancelled=d.get("is_cancelled", False),
             cancels_notice_id=d.get("cancels_notice_id"),
+            cancellation_date=cancellation_date,
             forecast_mw=d.get("forecast_mw"),
             reserve_req_mw=d.get("reserve_req_mw"),
             surplus_mw=d.get("surplus_mw"),
@@ -130,10 +135,18 @@ def _parse_notice_body(text: str, notice_id: int) -> Optional[GridNoticeAnnotati
     # Check for cancellation
     is_cancelled = bool(re.search(r'\bCancell?ation\b', text, re.IGNORECASE))
     cancels_notice_id = None
+    cancellation_date = None
     if is_cancelled:
         ref_match = re.search(r'[Rr]efer to Market Notice (\d+)', text)
         if ref_match:
             cancels_notice_id = int(ref_match.group(1))
+        # Extract cancellation effective date from "on DD/MM/YYYY" or "at HHMM hrs DD/MM/YYYY"
+        cdate_match = re.search(r'(?:on|at\s+\d{4}\s+hrs)\s+(\d{2}/\d{2}/\d{4})', text)
+        if cdate_match:
+            try:
+                cancellation_date = datetime.strptime(cdate_match.group(1), "%d/%m/%Y").date()
+            except ValueError:
+                pass
 
     # Extract level (LOR1/LOR2/LOR3 or MSL1/MSL2/MSL3)
     level = 1
@@ -226,6 +239,7 @@ def _parse_notice_body(text: str, notice_id: int) -> Optional[GridNoticeAnnotati
         issued_at=issued_at,
         is_cancelled=is_cancelled,
         cancels_notice_id=cancels_notice_id,
+        cancellation_date=cancellation_date,
         forecast_mw=forecast_mw,
         reserve_req_mw=reserve_req_mw,
         surplus_mw=surplus_mw,
