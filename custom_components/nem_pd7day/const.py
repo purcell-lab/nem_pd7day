@@ -117,6 +117,24 @@ MAX_TOTAL_OBS = 20_000
 MAX_FORECAST_AGE_DAYS = 14
 MAX_HORIZON_HOURS = 168
 
+# ── Spike covariate gating (Rec 2) ──────────────────────────────────────────
+# When raw forecast > SPIKE_COVARIATE_RAW_FLOOR and the gas+QNI joint gate
+# is NOT met (and horizon >= SPIKE_COVARIATE_BYPASS_HORIZON_H), cap the
+# displayed value at SPIKE_COVARIATE_CAP and mark as non-passthrough.
+SPIKE_GAS_THRESHOLD_TJ = 150.0       # gas_forecast_tj must exceed this
+SPIKE_QNI_THRESHOLD_MW = -300.0      # qni_mwflow must be below (more negative than) this
+SPIKE_COVARIATE_BYPASS_HORIZON_H = 12.0  # within 12h, trust raw forecast regardless
+SPIKE_COVARIATE_CAP = 0.50           # $/kWh — cap when gate not met
+SPIKE_COVARIATE_RAW_FLOOR = 1.00     # $/kWh — only apply gate above this raw value
+
+# ── Horizon-dependent spike callout thresholds (Rec 1) ──────────────────────
+# An interval is spike-callout eligible only if:
+#   horizon < 24h AND raw >= SPIKE_CALLOUT_THRESHOLD_24H, OR
+#   horizon < 48h AND raw >= SPIKE_CALLOUT_THRESHOLD_48H
+# Beyond 48h: no callout ever.
+SPIKE_CALLOUT_THRESHOLD_24H = 1.50   # $/kWh — moderate spikes within 24h
+SPIKE_CALLOUT_THRESHOLD_48H = 3.00   # $/kWh — only extreme spikes at 24-48h
+
 # Coordinator / store keys
 COORDINATOR_KEY = "coordinator"
 STORE_KEY = "store"

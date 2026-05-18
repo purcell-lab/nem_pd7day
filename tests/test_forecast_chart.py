@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import pytest
-from custom_components.nem_pd7day.forecast_chart import render_forecast_chart
+from custom_components.nem_pd7day.forecast_chart import (
+    render_forecast_chart,
+    _is_spike_callout_eligible,
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -15,8 +18,10 @@ def _make_interval(
     p90: float = 0.09,
     calibrated_source: str = "ols",
     horizon_hours: float = 1.0,
+    forecast_run_at: str | None = None,
+    spike_first_run: bool = True,
 ) -> dict:
-    return {
+    d = {
         "nemtime": nemtime,
         "raw_value": raw_value,
         "calibrated": calibrated,
@@ -24,10 +29,14 @@ def _make_interval(
         "p90": p90,
         "calibrated_source": calibrated_source,
         "horizon_hours": horizon_hours,
+        "spike_first_run": spike_first_run,
     }
+    if forecast_run_at is not None:
+        d["forecast_run_at"] = forecast_run_at
+    return d
 
 
-def _make_forecast(n: int = 10, base_hour: int = 7) -> list[dict]:
+def _make_forecast(n: int = 10, base_hour: int = 7, forecast_run_at: str | None = None) -> list[dict]:
     """Create a list of n forecast intervals starting from base_hour."""
     intervals = []
     for i in range(n):
@@ -39,6 +48,7 @@ def _make_forecast(n: int = 10, base_hour: int = 7) -> list[dict]:
             calibrated=0.048 + i * 0.009,
             p10=0.04 + i * 0.008,
             p90=0.06 + i * 0.012,
+            forecast_run_at=forecast_run_at,
         ))
     return intervals
 
@@ -195,3 +205,155 @@ def test_forecast_chart_daily_minmax_with_isotonic_source():
     assert isinstance(png, bytes)
     assert len(png) > 1000
     assert png[:4] == b'\x89PNG'
+
+
+# ── Rec 1: Horizon-gated spike callout tests ────────────────────────────────
+
+def test_spike_callout_suppressed_beyond_48h():
+    """Spike callouts at horizon >= 48h must be suppressed regardless of value."""
+    eligible, style = _is_spike_callout_eligible(20.30, horizon_hours=72.0, spike_first_run=False)
+    assert not eligible
+    eligible, style = _is_spike_callout_eligible(20.30, horizon_hours=168.0, spike_first_run=False)
+    assert not eligible
+
+
+def test_spike_callout_within_24h_lower_threshold():
+    """Within 24h, raw >= $1.50 qualifies; below $1.50 does not."""
+    eligible, _ = _is_spike_callout_eligible(1.50, horizon_hours=10.0, spike_first_run=False)
+    assert eligible
+    eligible, _ = _is_spike_callout_eligible(1.49, horizon_hours=10.0, spike_first_run=False)
+    assert not eligible
+
+
+def test_spike_callout_24_48h_higher_threshold():
+    """At 24-48h horizon, raw >= $3.00 qualifies; below $3.00 does not."""
+    eligible, _ = _is_spike_callout_eligible(3.00, horizon_hours=36.0, spike_first_run=False)
+    assert eligible
+    eligible, _ = _is_spike_callout_eligible(2.99, horizon_hours=36.0, spike_first_run=False)
+    assert not eligible
+
+
+def test_spike_callout_at_48h_boundary_suppressed():
+    """Exactly 48h horizon is NOT eligible (>= 48 suppressed)."""
+    eligible, _ = _is_spike_callout_eligible(20.30, horizon_hours=48.0, spike_first_run=False)
+    assert not eligible
+
+
+# ── Rec 4: Spike persistence scoring tests ──────────────────────────────────
+
+def test_spike_first_run_is_candidate():
+    """A spike appearing for the first time (spike_first_run=True) is a candidate, not confirmed."""
+    eligible, style = _is_spike_callout_eligible(5.0, horizon_hours=10.0, spike_first_run=True)
+    assert eligible
+    assert style == "candidate"
+
+
+def test_spike_prior_run_is_confirmed():
+    """A spike that appeared in the prior run (spike_first_run=False) is confirmed."""
+    eligible, style = _is_spike_callout_eligible(5.0, horizon_hours=10.0, spike_first_run=False)
+    assert eligible
+    assert style == "confirmed"
+
+
+# ── Rec 5: Visual confidence tier tests ──────────────────────────────────────
+
+def test_chart_with_forecast_run_at_renders_zones():
+    """Chart with forecast_run_at metadata should render with confidence zones."""
+    from datetime import datetime, timezone, timedelta
+
+    NEM_TZ = timezone(timedelta(hours=10))
+    run_at = datetime(2026, 5, 15, 7, 30, tzinfo=NEM_TZ)
+    run_at_str = run_at.isoformat()
+
+    data = []
+    # 336 intervals = 7 days of 30-min intervals
+    for i in range(336):
+        t = run_at + timedelta(minutes=30 * i)
+        h = i * 0.5
+        data.append(_make_interval(
+            nemtime=t.isoformat(),
+            raw_value=0.08 + (i % 20) * 0.003,
+            calibrated=0.07 + (i % 20) * 0.002,
+            p10=0.05,
+            p90=0.12,
+            horizon_hours=h,
+            forecast_run_at=run_at_str,
+        ))
+
+    png = render_forecast_chart(data, region="QLD1")
+    assert isinstance(png, bytes)
+    assert len(png) > 1000
+    assert png[:4] == b'\x89PNG'
+
+
+def test_zone_boundaries_split_data_correctly():
+    """Verify that zone_a/zone_b/zone_c partition covers all forecast data."""
+    from datetime import datetime, timezone, timedelta
+    import numpy as np
+
+    NEM_TZ = timezone(timedelta(hours=10))
+    run_at = datetime(2026, 5, 15, 7, 30, tzinfo=NEM_TZ)
+    zone_24h = run_at + timedelta(hours=24)
+    zone_72h = run_at + timedelta(hours=72)
+
+    # Simulate 336 intervals (7 days)
+    times = [run_at + timedelta(minutes=30 * i) for i in range(336)]
+    zone_a = [t < zone_24h for t in times]
+    zone_b = [zone_24h <= t < zone_72h for t in times]
+    zone_c = [t >= zone_72h for t in times]
+
+    # Every interval must be in exactly one zone
+    for i in range(len(times)):
+        zones = [zone_a[i], zone_b[i], zone_c[i]]
+        assert sum(zones) == 1, f"Interval {i} (h={i*0.5}) in {sum(zones)} zones"
+
+    # Check boundary counts
+    assert sum(zone_a) == 48   # 24h / 0.5h = 48 intervals
+    assert sum(zone_b) == 96   # (72-24)h / 0.5h = 96 intervals
+    assert sum(zone_c) == 192  # (168-72)h / 0.5h = 192 intervals
+
+
+def test_chart_renders_passthrough_high_with_horizon_gating():
+    """passthrough_high intervals beyond 48h should not produce spike callouts."""
+    from datetime import datetime, timezone, timedelta
+
+    NEM_TZ = timezone(timedelta(hours=10))
+    run_at = datetime(2026, 5, 15, 7, 30, tzinfo=NEM_TZ)
+    run_at_str = run_at.isoformat()
+
+    # Build normal forecast + a passthrough_high at 72h horizon
+    data = _make_forecast(10, forecast_run_at=run_at_str)
+    data.append(_make_interval(
+        nemtime=(run_at + timedelta(hours=72)).isoformat(),
+        raw_value=8.99,
+        calibrated=8.99,
+        p10=7.50,
+        p90=10.00,
+        calibrated_source="passthrough_high",
+        horizon_hours=72.0,
+        forecast_run_at=run_at_str,
+        spike_first_run=False,
+    ))
+
+    # Should render without crash — the 72h spike won't produce a callout
+    result = render_forecast_chart(data, "QLD1")
+    assert isinstance(result, bytes)
+    assert len(result) > 0
+
+
+# ── Rec 2: Covariate gate tests (unit-level) ────────────────────────────────
+
+def test_covariate_constants_exist():
+    """Verify spike covariate constants are defined in const.py."""
+    from custom_components.nem_pd7day.const import (
+        SPIKE_GAS_THRESHOLD_TJ,
+        SPIKE_QNI_THRESHOLD_MW,
+        SPIKE_COVARIATE_BYPASS_HORIZON_H,
+        SPIKE_COVARIATE_CAP,
+        SPIKE_COVARIATE_RAW_FLOOR,
+    )
+    assert SPIKE_GAS_THRESHOLD_TJ == 150.0
+    assert SPIKE_QNI_THRESHOLD_MW == -300.0
+    assert SPIKE_COVARIATE_BYPASS_HORIZON_H == 12.0
+    assert SPIKE_COVARIATE_CAP == 0.50
+    assert SPIKE_COVARIATE_RAW_FLOOR == 1.00

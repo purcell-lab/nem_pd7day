@@ -19,6 +19,11 @@ from .const import (
     ATTR_CAL_P90,
     ATTR_CAL_SOURCE,
     DOMAIN,
+    SPIKE_COVARIATE_BYPASS_HORIZON_H,
+    SPIKE_COVARIATE_CAP,
+    SPIKE_COVARIATE_RAW_FLOOR,
+    SPIKE_GAS_THRESHOLD_TJ,
+    SPIKE_QNI_THRESHOLD_MW,
 )
 from .coordinator import PD7DayCoordinator
 from .nem_time import parse_iso, to_nem_iso
@@ -333,7 +338,17 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
         self.async_write_ha_state()
 
     def _build_forecast_data(self) -> list[dict]:
-        """Build enriched forecast dicts from coordinator data + calibration store."""
+        """Build enriched forecast dicts from coordinator data + calibration store.
+
+        Applies the gas+QNI covariate gate (Rec 2): spike forecasts above
+        SPIKE_COVARIATE_RAW_FLOOR are only treated as passthrough_high when
+        gas>150TJ AND qni<-300MW (or horizon<12h).  Otherwise the displayed
+        value is capped at SPIKE_COVARIATE_CAP.
+
+        Also passes forecast_run_at and per-interval spike_first_run info
+        to enable horizon-gated callouts (Rec 1) and persistence scoring
+        (Rec 4) in the chart renderer.
+        """
         if not self.coordinator.data:
             return []
         price_data = self.coordinator.data.prices.get(self._region)
@@ -342,6 +357,23 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
 
         store = getattr(self.coordinator, "_store", None)
         run_at = price_data.forecast_generated_at
+
+        # Build per-interval covariate lookups from coordinator data
+        qni_data = self.coordinator.data.interconnectors.get("NSW1-QLD1")
+        qni_by_time: dict[str, float | None] = {}
+        if qni_data:
+            for p in qni_data.forecast:
+                qni_by_time[p.time] = p.mwflow
+
+        gas_by_date: dict[str, float | None] = {}
+        ms = self.coordinator.data.market_summary
+        if ms:
+            for g in ms.forecast:
+                gas_by_date[g.nemtime[:10]] = g.value_tj
+
+        # Rec 4 (simplified): build set of intervals that were spike in prior run
+        prior_spike_intervals = self._prior_spike_intervals()
+
         result = []
 
         for period in price_data.forecast:
@@ -351,15 +383,44 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
             except (ValueError, TypeError):
                 hour = 0
 
+            interval_key = period.time if isinstance(period.time, str) else to_nem_iso(parse_iso(period.time))
+
             entry = {
                 "nemtime": to_nem_iso(parse_iso(period.nemtime)),
-                "time": to_nem_iso(parse_iso(period.time)),
+                "time": interval_key,
                 "raw_value": period.value,
                 "horizon_hours": round(h, 1),
+                "forecast_run_at": run_at,
+                "spike_first_run": interval_key not in prior_spike_intervals,
             }
 
             if store:
                 cal = store.apply_to_price(period.value, h, hour)
+
+                # Rec 2: Gas+QNI covariate gate for spike passthrough
+                if (
+                    cal["calibrated_source"] == "passthrough_high"
+                    and period.value >= SPIKE_COVARIATE_RAW_FLOOR
+                    and h >= SPIKE_COVARIATE_BYPASS_HORIZON_H
+                ):
+                    gas_tj = gas_by_date.get(interval_key[:10])
+                    qni_mw = qni_by_time.get(interval_key)
+                    if gas_tj is not None and qni_mw is not None:
+                        gate_met = (
+                            gas_tj > SPIKE_GAS_THRESHOLD_TJ
+                            and qni_mw < SPIKE_QNI_THRESHOLD_MW
+                        )
+                        if not gate_met:
+                            capped = min(period.value, SPIKE_COVARIATE_CAP)
+                            cal = {
+                                **cal,
+                                "calibrated": round(capped, 6),
+                                "p10": round(capped, 6),
+                                "p50": round(capped, 6),
+                                "p90": round(capped, 6),
+                                "calibrated_source": "covariate_capped",
+                            }
+
                 entry.update({
                     ATTR_CAL_CALIBRATED: cal["calibrated"],
                     ATTR_CAL_P10: cal["p10"],
@@ -374,7 +435,22 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
 
             result.append(entry)
 
+        # Save current spike intervals for next-run persistence check (Rec 4)
+        self._save_spike_intervals(result)
+
         return result
+
+    def _prior_spike_intervals(self) -> set[str]:
+        """Return interval keys that were spike in the previous forecast run."""
+        return getattr(self, "_last_spike_intervals", set())
+
+    def _save_spike_intervals(self, forecast_data: list[dict]) -> None:
+        """Persist current spike interval set for next-run comparison (Rec 4)."""
+        self._last_spike_intervals: set[str] = {
+            entry["time"]
+            for entry in forecast_data
+            if entry.get("calibrated_source") == "passthrough_high"
+        }
 
     def _render(self) -> bytes:
         """Blocking render — called in executor thread."""
