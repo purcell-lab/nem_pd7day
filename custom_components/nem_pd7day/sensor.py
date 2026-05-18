@@ -210,6 +210,33 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         # Fallback: first period (covers startup before first interval boundary)
         return forecast[0] if forecast else None
 
+    def _covariates_for_interval(self, interval_key: str) -> dict:
+        """Extract gas_forecast_tj and qni_mwflow for an interval from coordinator data."""
+        gas_tj: float | None = None
+        qni_mw: float | None = None
+        data = self.coordinator.data
+        if data is None:
+            return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+
+        # QNI MW flow lookup
+        qni_data = data.interconnectors.get("NSW1-QLD1") if data.interconnectors else None
+        if qni_data:
+            for p in qni_data.forecast:
+                if p.time == interval_key:
+                    qni_mw = p.mwflow
+                    break
+
+        # Gas TJ lookup (daily resolution, keyed by date)
+        ms = getattr(data, "market_summary", None)
+        if ms:
+            interval_date = interval_key[:10]
+            for g in ms.forecast:
+                if g.nemtime[:10] == interval_date:
+                    gas_tj = g.value_tj
+                    break
+
+        return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+
     @property
     def native_value(self) -> float | None:
         d = self._price_data
@@ -224,7 +251,11 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 hour = parse_iso(period.time).hour
             except (ValueError, TypeError):
                 hour = now_nem().hour
-            cal = self._store.apply_to_price(period.value, h, hour)
+            interval_key = period.time if isinstance(period.time, str) else to_nem_iso(parse_iso(period.time))
+            covariates = self._covariates_for_interval(interval_key)
+            cal = self._store.apply_to_price(
+                period.value, h, hour, **covariates,
+            )
             return cal["calibrated"]
         return period.value
 
@@ -236,15 +267,20 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         except (ValueError, TypeError):
             hour = 0
 
+        interval_key = to_nem_iso(parse_iso(period.time))
+
         base = {
             "nemtime": to_nem_iso(parse_iso(period.nemtime)),
-            "time": to_nem_iso(parse_iso(period.time)),
+            "time": interval_key,
             "raw_value": period.value,
             "horizon_hours": round(h, 1),
         }
 
         if self._store:
-            cal = self._store.apply_to_price(period.value, h, hour)
+            covariates = self._covariates_for_interval(interval_key)
+            cal = self._store.apply_to_price(
+                period.value, h, hour, **covariates,
+            )
             base.update({
                 ATTR_CAL_CALIBRATED: cal["calibrated"],
                 ATTR_CAL_P10: cal["p10"],

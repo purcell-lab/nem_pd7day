@@ -925,3 +925,139 @@ def test_total_buckets_matches_tod_labels_times_horizon_labels():
     assert attrs["total_buckets"] == len(all_bucket_keys()), (
         f"total_buckets must equal len(all_bucket_keys())={len(all_bucket_keys())}"
     )
+
+
+# ── Tests: covariate gate in apply_to_price ─────────────────────────────────
+
+def _make_store_with_calibration():
+    """Create a CalibrationStore with a fitted calibration so apply_to_price uses the engine."""
+    import random
+    store = make_store()
+    rng = random.Random(42)
+    # Fit with enough normal observations so the calibration is active
+    obs = [
+        Observation(
+            interval_time="2026-04-14T21:00:00+10:00",
+            horizon_hours=rng.uniform(0, 96),
+            pd7day_forecast=rng.uniform(0.05, 0.25),
+            actual_rrp=rng.uniform(0.06, 0.28),
+            forecast_run_at="2026-04-14T18:00:00+10:00",
+            hour_of_day=rng.randint(0, 23),
+            day_of_week=1,
+            month=4,
+            gas_forecast_tj=None,
+            qni_mwflow=None,
+            qni_violation_degree=None,
+            is_intervention=False,
+        )
+        for _ in range(100)
+    ]
+    engine = CalibrationEngine()
+    store._calibration = engine.fit(obs)
+    return store
+
+
+def test_apply_to_price_covariate_gate_caps_when_gate_not_met():
+    """
+    High raw value (passthrough_high), low gas, long horizon → gate fires,
+    returns capped value.
+    """
+    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
+    store = _make_store_with_calibration()
+    # raw=5.0 $/kWh → passthrough_high from calibration engine (>= SPIKE_THRESHOLD 3.0)
+    # horizon=24h → above bypass threshold (12h)
+    # gas=100 TJ → below threshold (150 TJ) → gate NOT met → should cap
+    # qni=-200 MW → above threshold (-300 MW) → gate NOT met
+    result = store.apply_to_price(
+        5.0, 24.0, 14,
+        gas_forecast_tj=100.0,
+        qni_mwflow=-200.0,
+    )
+    assert result["calibrated_source"] == "covariate_capped", (
+        f"Expected covariate_capped, got {result['calibrated_source']}"
+    )
+    assert result["calibrated"] == round(SPIKE_COVARIATE_CAP, 6), (
+        f"Expected capped at {SPIKE_COVARIATE_CAP}, got {result['calibrated']}"
+    )
+
+
+def test_apply_to_price_covariate_gate_passes_when_gate_met():
+    """
+    High raw value, high gas + low QNI (gate conditions met) → passes uncapped.
+    """
+    store = _make_store_with_calibration()
+    # gas=200 TJ → above threshold (150 TJ) AND qni=-400 MW → below threshold (-300 MW)
+    # Gate IS met → should NOT cap
+    result = store.apply_to_price(
+        5.0, 24.0, 14,
+        gas_forecast_tj=200.0,
+        qni_mwflow=-400.0,
+    )
+    assert result["calibrated_source"] == "passthrough_high", (
+        f"Expected passthrough_high (gate met, no capping), got {result['calibrated_source']}"
+    )
+    assert result["calibrated"] == round(5.0, 6), (
+        f"Expected uncapped 5.0, got {result['calibrated']}"
+    )
+
+
+def test_apply_to_price_covariate_gate_skips_when_covariates_missing():
+    """
+    None covariates → gate not applied, passthrough_high unchanged.
+    """
+    store = _make_store_with_calibration()
+    # No covariates passed → gate cannot fire
+    result = store.apply_to_price(5.0, 24.0, 14)
+    assert result["calibrated_source"] == "passthrough_high", (
+        f"Expected passthrough_high (covariates missing, gate skipped), "
+        f"got {result['calibrated_source']}"
+    )
+
+    # One covariate None → also skip
+    result2 = store.apply_to_price(
+        5.0, 24.0, 14,
+        gas_forecast_tj=100.0,
+        qni_mwflow=None,
+    )
+    assert result2["calibrated_source"] == "passthrough_high"
+
+    result3 = store.apply_to_price(
+        5.0, 24.0, 14,
+        gas_forecast_tj=None,
+        qni_mwflow=-200.0,
+    )
+    assert result3["calibrated_source"] == "passthrough_high"
+
+
+def test_apply_to_price_covariate_gate_skips_short_horizon():
+    """
+    Horizon < 12h → gate not applied regardless of covariates.
+    """
+    store = _make_store_with_calibration()
+    # horizon=6h → below bypass threshold (12h) → gate should not fire
+    result = store.apply_to_price(
+        5.0, 6.0, 14,
+        gas_forecast_tj=100.0,
+        qni_mwflow=-200.0,
+    )
+    assert result["calibrated_source"] == "passthrough_high", (
+        f"Expected passthrough_high (short horizon, gate skipped), "
+        f"got {result['calibrated_source']}"
+    )
+
+
+def test_apply_to_price_covariate_gate_skips_low_raw():
+    """
+    Raw value below SPIKE_COVARIATE_RAW_FLOOR (1.00 $/kWh) → gate not applied.
+    At raw=0.50, calibration_source won't be passthrough_high anyway (< SPIKE_THRESHOLD 3.0),
+    so the gate naturally doesn't fire.
+    """
+    store = _make_store_with_calibration()
+    result = store.apply_to_price(
+        0.50, 24.0, 14,
+        gas_forecast_tj=100.0,
+        qni_mwflow=-200.0,
+    )
+    assert result["calibrated_source"] != "covariate_capped", (
+        f"Gate should not fire for low raw values, got {result['calibrated_source']}"
+    )

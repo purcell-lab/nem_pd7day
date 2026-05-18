@@ -662,3 +662,88 @@ def test_native_value_returns_raw_when_no_store():
     sensor.coordinator.data = MagicMock()
     sensor.coordinator.data.prices = {"QLD1": price_data}
     assert abs(sensor.native_value - 0.085) < 1e-9
+
+
+# ── Tests: sensor covariate gate integration ─────────────────────────────────
+
+def test_sensor_reads_capped_value():
+    """
+    Sensor native_value returns capped value when covariate gate fires.
+    The sensor must pass covariates through to apply_to_price().
+    """
+    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
+
+    mock_store = MagicMock()
+    mock_store.calibration = MagicMock()
+
+    # apply_to_price should be called WITH covariate kwargs — we verify this
+    # by making it return covariate_capped when called correctly
+    def _apply(raw, h, hour, *, gas_forecast_tj=None, qni_mwflow=None):
+        if gas_forecast_tj is not None and qni_mwflow is not None:
+            return {
+                "calibrated": SPIKE_COVARIATE_CAP,
+                "p10": SPIKE_COVARIATE_CAP,
+                "p50": SPIKE_COVARIATE_CAP,
+                "p90": SPIKE_COVARIATE_CAP,
+                "ols_mae": None,
+                "calibrated_source": "covariate_capped",
+                "n_obs": 0,
+            }
+        return {
+            "calibrated": raw,
+            "p10": raw,
+            "p50": raw,
+            "p90": raw,
+            "ols_mae": None,
+            "calibrated_source": "passthrough_high",
+            "n_obs": 0,
+        }
+
+    mock_store.apply_to_price = _apply
+
+    sensor = make_sensor(store=mock_store)
+
+    # Build period covering now
+    from datetime import datetime, timedelta, timezone
+    NEM_TZ_local = timezone(timedelta(hours=10))
+    now = datetime.now(NEM_TZ_local)
+    interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
+    interval_end = interval_start + timedelta(minutes=30)
+
+    def _iso(dt):
+        return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
+
+    period = MagicMock()
+    period.time = _iso(interval_start)
+    period.nemtime = _iso(interval_end)
+    period.value = 5.0  # high spike
+
+    price_data = MagicMock()
+    price_data.forecast = [period]
+    price_data.forecast_generated_at = _iso(now - timedelta(hours=24))
+    price_data.region = "QLD1"
+
+    # Set up coordinator data with QNI interconnector and market summary
+    qni_period = MagicMock()
+    qni_period.time = period.time
+    qni_period.mwflow = -200.0
+    qni_data = MagicMock()
+    qni_data.forecast = [qni_period]
+
+    gas_period = MagicMock()
+    gas_period.nemtime = _iso(interval_start)  # same date
+    gas_period.value_tj = 100.0
+    market_summary = MagicMock()
+    market_summary.forecast = [gas_period]
+
+    coordinator_data = MagicMock()
+    coordinator_data.prices = {"QLD1": price_data}
+    coordinator_data.interconnectors = {"NSW1-QLD1": qni_data}
+    coordinator_data.market_summary = market_summary
+    sensor.coordinator.data = coordinator_data
+
+    # Sensor should return capped value because covariates were passed through
+    assert sensor.native_value == SPIKE_COVARIATE_CAP, (
+        f"Sensor should return capped value {SPIKE_COVARIATE_CAP}, "
+        f"got {sensor.native_value}. Covariates may not be passed through."
+    )

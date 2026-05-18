@@ -42,6 +42,11 @@ from .const import (
     MAX_HORIZON_HOURS,
     MAX_TOTAL_OBS,
     NEM_TZ,
+    SPIKE_COVARIATE_BYPASS_HORIZON_H,
+    SPIKE_COVARIATE_CAP,
+    SPIKE_COVARIATE_RAW_FLOOR,
+    SPIKE_GAS_THRESHOLD_TJ,
+    SPIKE_QNI_THRESHOLD_MW,
     STORAGE_VERSION,
     storage_keys,
 )
@@ -434,6 +439,9 @@ class CalibrationStore:
         raw_price: float,
         horizon_hours: float,
         hour_of_day: int,
+        *,
+        gas_forecast_tj: float | None = None,
+        qni_mwflow: float | None = None,
     ) -> dict:
         if self._calibration is None:
             return {
@@ -445,7 +453,34 @@ class CalibrationStore:
                 "calibrated_source": "passthrough",
                 "n_obs": 0,
             }
-        return self._calibration.apply(raw_price, horizon_hours, hour_of_day)
+        cal = self._calibration.apply(raw_price, horizon_hours, hour_of_day)
+
+        # Covariate gate: suppress runaway spike forecasts when gas+QNI
+        # covariates don't support them.  Mirrors the camera.py Rec 2 logic
+        # so that sensor and chart return identical capped values.
+        if (
+            cal["calibrated_source"] == "passthrough_high"
+            and raw_price >= SPIKE_COVARIATE_RAW_FLOOR
+            and horizon_hours >= SPIKE_COVARIATE_BYPASS_HORIZON_H
+            and gas_forecast_tj is not None
+            and qni_mwflow is not None
+        ):
+            gate_met = (
+                gas_forecast_tj > SPIKE_GAS_THRESHOLD_TJ
+                and qni_mwflow < SPIKE_QNI_THRESHOLD_MW
+            )
+            if not gate_met:
+                capped = min(raw_price, SPIKE_COVARIATE_CAP)
+                cal = {
+                    **cal,
+                    "calibrated": round(capped, 6),
+                    "p10": round(capped, 6),
+                    "p50": round(capped, 6),
+                    "p90": round(capped, 6),
+                    "calibrated_source": "covariate_capped",
+                }
+
+        return cal
 
     def summary_attributes(self) -> dict:
         if not self._calibration:

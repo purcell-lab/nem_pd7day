@@ -19,11 +19,6 @@ from .const import (
     ATTR_CAL_P90,
     ATTR_CAL_SOURCE,
     DOMAIN,
-    SPIKE_COVARIATE_BYPASS_HORIZON_H,
-    SPIKE_COVARIATE_CAP,
-    SPIKE_COVARIATE_RAW_FLOOR,
-    SPIKE_GAS_THRESHOLD_TJ,
-    SPIKE_QNI_THRESHOLD_MW,
 )
 from .coordinator import PD7DayCoordinator
 from .nem_time import parse_iso, to_nem_iso
@@ -395,31 +390,13 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
             }
 
             if store:
-                cal = store.apply_to_price(period.value, h, hour)
-
-                # Rec 2: Gas+QNI covariate gate for spike passthrough
-                if (
-                    cal["calibrated_source"] == "passthrough_high"
-                    and period.value >= SPIKE_COVARIATE_RAW_FLOOR
-                    and h >= SPIKE_COVARIATE_BYPASS_HORIZON_H
-                ):
-                    gas_tj = gas_by_date.get(interval_key[:10])
-                    qni_mw = qni_by_time.get(interval_key)
-                    if gas_tj is not None and qni_mw is not None:
-                        gate_met = (
-                            gas_tj > SPIKE_GAS_THRESHOLD_TJ
-                            and qni_mw < SPIKE_QNI_THRESHOLD_MW
-                        )
-                        if not gate_met:
-                            capped = min(period.value, SPIKE_COVARIATE_CAP)
-                            cal = {
-                                **cal,
-                                "calibrated": round(capped, 6),
-                                "p10": round(capped, 6),
-                                "p50": round(capped, 6),
-                                "p90": round(capped, 6),
-                                "calibrated_source": "covariate_capped",
-                            }
+                gas_tj = gas_by_date.get(interval_key[:10])
+                qni_mw = qni_by_time.get(interval_key)
+                cal = store.apply_to_price(
+                    period.value, h, hour,
+                    gas_forecast_tj=gas_tj,
+                    qni_mwflow=qni_mw,
+                )
 
                 entry.update({
                     ATTR_CAL_CALIBRATED: cal["calibrated"],
