@@ -245,15 +245,29 @@ Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the
 
 ### Camera Entities
 
-Two camera entities are registered on the device and can be added to any HA dashboard using a **Picture** or **Camera** card.
+Three camera entities are registered on the device and can be added to any HA dashboard using a **Picture** or **Camera** card.
 
 | Entity | Description |
 |---|---|
+| `camera.nem_pd7day_{region}_forecast_chart` | 7-Day Pre-Dispatch Spot Price Forecast — raw vs calibrated with P10/P90 confidence band, per-day min/max labels, spike callouts, LOR/MSL notice bands |
 | `camera.nem_pd7day_{region}_price_tod_chart` | Actual price by time of day — mean, median, and P10–P90 spread across all observed intervals |
 | `camera.nem_pd7day_{region}_calibration_chart` | Isotonic calibration goodness dashboard: compression ratio heatmap, iso_mae bars, PAV complexity scatter, and compression ratio drift time-series |
-| `camera.nem_pd7day_{region}_forecast_chart` | 7-Day Pre-Dispatch Spot Price Forecast — raw vs calibrated with p10/p90 confidence band, per-day min/max labels, spike annotations |
 
-Both charts are re-rendered after each calibration refit (07:30, 13:00, 18:00 NEM). The calibration chart reads live isotonic diagnostics so the heatmap values, n counts and confidence indicators update as calibration matures.
+All charts are re-rendered after each calibration refit (07:30, 13:00, 18:00 NEM). The calibration chart reads live isotonic diagnostics so the heatmap values, n counts and confidence indicators update as calibration matures.
+
+### 7-Day Forecast Chart
+
+![7-Day Pre-Dispatch Spot Price Forecast](docs/forecast_chart.png)
+
+The forecast chart shows the full 7-day ahead price window for the configured NEM region:
+
+- **Calibrated line** (blue solid) — isotonic-calibrated price forecast with P10/P90 confidence band
+- **PD7DAY Raw** (grey dashed) — AEMO's raw pre-dispatch forecast before calibration
+- **Daily max/min labels** — peak and trough $/kWh values annotated per day
+- **AEMO Spike Forecast** (red triangle callouts) — `passthrough_high` intervals where the raw forecast exceeds $3.00/kWh; one callout per contiguous cluster pointing at the cluster peak, with the peak price labelled
+- **Clip line** (red dotted) — dynamic display ceiling at p99 + 15% headroom
+- **LOR/MSL notice bands** — shaded vertical regions for active NEMWEB reserve (LOR1/2/3) and minimum load (MSL1/2/3) notices, with staggered labels and a dynamic legend showing only notice types present in the window
+- **Dual y-axis** — $/kWh (left) and $/MWh (right)
 
 ---
 
@@ -474,6 +488,8 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 2.3.14 | Fix notice pipeline: NEMWEB directory deduplication; first-run bootstrap now backfills last 7 days instead of skipping all files; upgrade-path auto-reset in coordinator resets stuck cursor when last_seen > 0 but total_notices == 0 |
+| 2.3.13 | Fix AEMO market notice period regex: date follows each time token (`From HHMM hrs DD/MM/YYYY to HHMM hrs DD/MM/YYYY`); multi-period notice support; all periods merged to widest window |
 | 2.3.12 | Chart improvements: per-cluster spike callouts, anti-crossover arrow placement, chart title updated to 7-Day Pre-Dispatch Spot Price Forecast, x-axis ticks at 06:00/18:00 only, MSL/LOR notice staggered labels and legend patches |
 | 2.3.x | Multiple fixes: matplotlib thread-safety (OO API), Grid Notices sensor device attachment, p10/p90 None crash, blocking event loop calls, sanity check log spam |
 | 2.3.0 | MSL/LOR grid stress notices: NEMWEB poller, HA .storage persistence, 7-day chart annotation bands (LOR1/2/3, MSL1/2/3), Grid Stress binary sensor, Grid Notices count sensor |
