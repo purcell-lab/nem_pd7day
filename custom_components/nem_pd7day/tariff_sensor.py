@@ -235,7 +235,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             for period in d.forecast:
                 tariff_val = self._compute_tariff(period)
                 forecast_list.append({
-                    "time": period.time,
+                    "time": period.time,       # interval START (nemtime − 30 min)
+                    "nemtime": period.nemtime, # interval END (AEMO convention)
                     "value": tariff_val,
                 })
 
