@@ -291,7 +291,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             cal = self._store.apply_to_price(
                 period.value, h, hour, **covariates,
             )
-            base.update({
+            cal_update = {
                 ATTR_CAL_CALIBRATED: cal["calibrated"],
                 ATTR_CAL_P10: cal["p10"],
                 ATTR_CAL_P50: cal["p50"],
@@ -300,7 +300,10 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 ATTR_CAL_SOURCE: cal["calibrated_source"],
                 ATTR_CAL_N_OBS: cal["n_obs"],
                 "value": cal["calibrated"],
-            })
+            }
+            if cal.get("calibrated_isotonic") is not None:
+                cal_update["calibrated_isotonic"] = cal["calibrated_isotonic"]
+            base.update(cal_update)
         else:
             base["value"] = period.value
 

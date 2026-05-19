@@ -402,6 +402,7 @@ class BucketModel:
             )
             return {
                 "calibrated": round(x, 6),
+                "calibrated_isotonic": round(calibrated, 6),
                 "p10": None, "p50": None, "p90": None,
                 "ols_mae": None,
                 "calibrated_source": "passthrough_sanity",

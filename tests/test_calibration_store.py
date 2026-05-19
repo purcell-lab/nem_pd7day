@@ -474,6 +474,38 @@ def test_sanity_guard_abs_diff_fires():
     assert abs(out["calibrated"] - 0.10) < 1e-9, "Passthrough must return raw value unchanged"
 
 
+def test_sanity_guard_preserves_calibrated_isotonic():
+    """
+    When the sanity guard fires, the return dict must include
+    calibrated_isotonic with the isotonic regression output.
+    """
+    import random
+    rng = random.Random(7)
+    # High slope: actual ≈ 6 * forecast → at raw=0.10, calibrated ≈ 0.60, ratio=6x
+    obs = [
+        _make_obs(
+            forecast=rng.uniform(0.08, 0.12),
+            actual=6 * rng.uniform(0.08, 0.12) + rng.gauss(0, 0.005),
+            horizon=3.0, hour=21
+        )
+        for _ in range(40)
+    ]
+    engine = CalibrationEngine()
+    result = engine.fit(obs)
+    out = result.apply(0.10, horizon_hours=3.0, hour_of_day=21)
+    if out["calibrated_source"] == "passthrough_sanity":
+        assert "calibrated_isotonic" in out, (
+            "passthrough_sanity return must include calibrated_isotonic"
+        )
+        assert isinstance(out["calibrated_isotonic"], float), (
+            "calibrated_isotonic must be a float"
+        )
+        # The isotonic result should differ from raw (that's why sanity fired)
+        assert out["calibrated_isotonic"] != out["calibrated"], (
+            "calibrated_isotonic should differ from the passthrough raw value"
+        )
+
+
 def test_sanity_guard_passes_normal_values():
     """Normal OLS output within plausible range must NOT be caught by the guard."""
     import random
@@ -1065,7 +1097,9 @@ def test_apply_to_price_covariate_gate_skips_low_raw():
 
 # ── Tests: passthrough_sanity cap in apply_to_price ───────────────────────────
 
-def _make_store_with_mock_sanity_passthrough(raw_price: float):
+def _make_store_with_mock_sanity_passthrough(
+    raw_price: float, calibrated_isotonic: float | None = None,
+):
     """Create a CalibrationStore whose calibration returns passthrough_sanity."""
     store = _make_store_with_calibration()
     original_apply = store._calibration.apply
@@ -1073,7 +1107,7 @@ def _make_store_with_mock_sanity_passthrough(raw_price: float):
     def _mock_apply(raw, horizon, hour):
         # Force passthrough_sanity for the target raw price
         if raw == raw_price:
-            return {
+            result = {
                 "calibrated": round(raw, 6),
                 "p10": None,
                 "p50": None,
@@ -1082,16 +1116,50 @@ def _make_store_with_mock_sanity_passthrough(raw_price: float):
                 "calibrated_source": "passthrough_sanity",
                 "n_obs": 50,
             }
+            if calibrated_isotonic is not None:
+                result["calibrated_isotonic"] = round(calibrated_isotonic, 6)
+            return result
         return original_apply(raw, horizon, hour)
 
     store._calibration.apply = _mock_apply
     return store
 
 
-def test_passthrough_sanity_capped_at_long_horizon():
+def test_passthrough_sanity_isotonic_used_at_long_horizon():
     """
-    passthrough_sanity at horizon 40h with value 0.70 → capped to 0.50,
-    source becomes passthrough_sanity_capped.
+    passthrough_sanity with calibrated_isotonic=0.18 (lower than raw=0.99)
+    at horizon 40h → uses isotonic value, source becomes passthrough_sanity_isotonic.
+    """
+    store = _make_store_with_mock_sanity_passthrough(0.99, calibrated_isotonic=0.18)
+    result = store.apply_to_price(0.99, 40.0, 14)
+    assert result["calibrated_source"] == "passthrough_sanity_isotonic", (
+        f"Expected passthrough_sanity_isotonic, got {result['calibrated_source']}"
+    )
+    assert result["calibrated"] == round(0.18, 6), (
+        f"Expected isotonic value 0.18, got {result['calibrated']}"
+    )
+
+
+def test_passthrough_sanity_isotonic_higher_than_raw_falls_to_cap():
+    """
+    passthrough_sanity with calibrated_isotonic=1.20 (higher than raw=0.70)
+    at horizon 40h → isotonic not used, falls through to hard cap.
+    """
+    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
+    store = _make_store_with_mock_sanity_passthrough(0.70, calibrated_isotonic=1.20)
+    result = store.apply_to_price(0.70, 40.0, 14)
+    assert result["calibrated_source"] == "passthrough_sanity_capped", (
+        f"Expected passthrough_sanity_capped, got {result['calibrated_source']}"
+    )
+    assert result["calibrated"] == round(SPIKE_COVARIATE_CAP, 6), (
+        f"Expected capped at {SPIKE_COVARIATE_CAP}, got {result['calibrated']}"
+    )
+
+
+def test_passthrough_sanity_no_isotonic_falls_to_cap():
+    """
+    passthrough_sanity with no calibrated_isotonic key at horizon 40h
+    with value 0.70 → falls through to hard cap.
     """
     from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
     store = _make_store_with_mock_sanity_passthrough(0.70)
@@ -1121,8 +1189,8 @@ def test_passthrough_sanity_not_capped_short_horizon():
 
 def test_passthrough_sanity_not_capped_below_cap_value():
     """
-    passthrough_sanity at horizon 40h with value 0.30 → NOT capped
-    (already below SPIKE_COVARIATE_CAP).
+    passthrough_sanity at horizon 40h with value 0.30, no isotonic →
+    NOT capped (already below SPIKE_COVARIATE_CAP).
     """
     store = _make_store_with_mock_sanity_passthrough(0.30)
     result = store.apply_to_price(0.30, 40.0, 14)

@@ -480,25 +480,35 @@ class CalibrationStore:
                     "calibrated_source": "covariate_capped",
                 }
 
-        # Sanity-passthrough cap: when the calibration engine detected an
+        # Sanity-passthrough recovery: when the calibration engine detected an
         # anomalous calibration (ratio or abs-diff guard) and fell back to
-        # the raw value, that raw value is unreliable at long horizons.
-        # Cap at SPIKE_COVARIATE_CAP so stale/anomalous raws don't leak
-        # through the forecast as implausible prices.
+        # the raw value, prefer the isotonic result if it's lower and valid,
+        # otherwise hard-cap at SPIKE_COVARIATE_CAP.
         if (
             cal["calibrated_source"] == "passthrough_sanity"
             and horizon_hours >= SPIKE_COVARIATE_BYPASS_HORIZON_H
         ):
-            capped = min(cal["calibrated"], SPIKE_COVARIATE_CAP)
-            if capped < cal["calibrated"]:
+            isotonic = cal.get("calibrated_isotonic")
+            calibrated = cal["calibrated"]
+            if isotonic is not None and 0.0 <= isotonic < calibrated:
                 cal = {
                     **cal,
-                    "calibrated": round(capped, 6),
-                    "p10": round(capped, 6) if cal.get("p10") is not None else None,
-                    "p50": round(capped, 6) if cal.get("p50") is not None else None,
-                    "p90": round(capped, 6) if cal.get("p90") is not None else None,
+                    "calibrated": round(isotonic, 6),
+                    "p10": round(isotonic, 6) if cal.get("p10") is not None else None,
+                    "p50": round(isotonic, 6) if cal.get("p50") is not None else None,
+                    "p90": round(isotonic, 6) if cal.get("p90") is not None else None,
+                    "calibrated_source": "passthrough_sanity_isotonic",
+                }
+            elif calibrated > SPIKE_COVARIATE_CAP:
+                cal = {
+                    **cal,
+                    "calibrated": round(SPIKE_COVARIATE_CAP, 6),
+                    "p10": round(SPIKE_COVARIATE_CAP, 6) if cal.get("p10") is not None else None,
+                    "p50": round(SPIKE_COVARIATE_CAP, 6) if cal.get("p50") is not None else None,
+                    "p90": round(SPIKE_COVARIATE_CAP, 6) if cal.get("p90") is not None else None,
                     "calibrated_source": "passthrough_sanity_capped",
                 }
+            # else: value already below cap, pass through unchanged
 
         return cal
 
