@@ -22,10 +22,17 @@ from .nem_time import now_nem, parse_iso
 _LOGGER = logging.getLogger(__name__)
 
 try:
-    from aemo_to_tariff import spot_to_tariff
+    from aemo_to_tariff import get_daily_fee, get_periods, spot_to_tariff
 except ImportError:
     spot_to_tariff = None  # type: ignore[assignment]
+    get_periods = None  # type: ignore[assignment]
+    get_daily_fee = None  # type: ignore[assignment]
     _LOGGER.warning("aemo_to_tariff not installed — tariff sensors will be unavailable")
+
+# Default loss factors used by aemo_to_tariff library (Energex defaults)
+_DEFAULT_DLF = 1.05905
+_DEFAULT_MLF = 1.0154
+_DEFAULT_MARKET = 1.0154
 
 
 class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
@@ -125,11 +132,65 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             return None
         return self._compute_tariff(period)
 
+    def _get_tariff_periods(self) -> list[dict[str, Any]]:
+        """Return tariff period structure with rates converted to $/kWh."""
+        if get_periods is None:
+            return []
+        try:
+            periods = []
+            for name, start, end, rate_c in get_periods(self._distributor, self._tariff_code):
+                periods.append({
+                    "period": name,
+                    "start": start.strftime("%H:%M"),
+                    "end": end.strftime("%H:%M"),
+                    "network_rate_$/kwh": round(rate_c / 100, 6),
+                })
+            return periods
+        except Exception:
+            _LOGGER.debug(
+                "get_periods failed for %s/%s", self._distributor, self._tariff_code,
+                exc_info=True,
+            )
+            return []
+
+    def _get_daily_supply_charge(self) -> float | None:
+        """Return daily supply charge in $/day, or None."""
+        if get_daily_fee is None:
+            return None
+        try:
+            return get_daily_fee(self._distributor, self._tariff_code)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _build_forecast_description(
+        distributor_display: str, tariff_name: str,
+        dlf: float, mlf: float, combined: float,
+    ) -> str:
+        return (
+            f"This sensor shows a forecast all-in electricity tariff price in $/kWh, "
+            f"calculated by combining the calibrated AEMO PD7DAY 7-day pre-dispatch spot "
+            f"price forecast with the applicable network tariff time-of-use component for "
+            f"the {distributor_display} {tariff_name} tariff. "
+            f"The spot component is the isotonic-calibrated AEMO forecast adjusted for "
+            f"distribution loss factor (DLF={dlf}), metering loss factor (MLF={mlf}), "
+            f"and market factors (combined multiplier={combined}\u00d7), which increase the "
+            f"effective cost of spot energy at the meter relative to the wholesale price. "
+            f"The network component ($/kWh) varies by time of day per the tariff period "
+            f"structure above and is sourced from AER-approved distributor pricing. "
+            f"IMPORTANT: This is a forecast only and should not be relied upon as an "
+            f"accurate prediction of actual electricity costs. Spot prices are inherently "
+            f"volatile and can differ significantly from forecasts, particularly beyond "
+            f"24 hours. Actual tariff costs will also depend on your specific retail "
+            f"contract, metering configuration, and any applicable controlled load, "
+            f"demand, or feed-in components not captured here."
+        )
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Full 7-day tariff forecast."""
+        """Full 7-day tariff forecast with rich metadata."""
         d = self._price_data
-        forecast_list = []
+        forecast_list: list[dict[str, Any]] = []
         if d is not None:
             for period in d.forecast:
                 tariff_val = self._compute_tariff(period)
@@ -137,9 +198,38 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                     "interval_time": period.time,
                     "tariff_$/kwh": tariff_val,
                 })
+
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
+            self._distributor, self._distributor.title(),
+        )
+        tariff_name = TARIFF_NAMES.get(self._distributor, {}).get(
+            self._tariff_code, self._tariff_code,
+        )
+
+        combined = round(_DEFAULT_DLF * _DEFAULT_MLF * _DEFAULT_MARKET, 6)
+
         return {
-            "distributor": self._distributor,
+            # Tariff identity
             "tariff_code": self._tariff_code,
+            "tariff_name": tariff_name,
+            "distributor": distributor_display,
             "region": self._region,
+            "network": self._distributor,
+            # Tariff period structure
+            "tariff_periods": self._get_tariff_periods(),
+            # Standing charges
+            "daily_supply_charge_$": self._get_daily_supply_charge(),
+            "demand_charge": None,
+            # Loss factors
+            "distribution_loss_factor_dlf": _DEFAULT_DLF,
+            "metering_loss_factor_mlf": _DEFAULT_MLF,
+            "market_loss_factor": _DEFAULT_MARKET,
+            "combined_loss_multiplier": combined,
+            # Description
+            "forecast_description": self._build_forecast_description(
+                distributor_display, tariff_name,
+                _DEFAULT_DLF, _DEFAULT_MLF, combined,
+            ),
+            # Forecast time-series
             "forecast": forecast_list,
         }

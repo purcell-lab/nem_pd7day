@@ -216,7 +216,8 @@ def test_tariff_sensor_forecast_attribute():
 
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
         attrs = sensor.extra_state_attributes
-        assert attrs["distributor"] == "energex"
+        assert attrs["distributor"] == "Energex"
+        assert attrs["network"] == "energex"
         assert attrs["tariff_code"] == "8400"
         assert attrs["region"] == "QLD1"
         assert len(attrs["forecast"]) == 5
@@ -307,7 +308,8 @@ def test_forecast_attribute_with_none_coordinator_data():
     sensor = make_tariff_sensor(price_periods=None)
     attrs = sensor.extra_state_attributes
     assert attrs["forecast"] == []
-    assert attrs["distributor"] == "energex"
+    assert attrs["distributor"] == "Energex"
+    assert attrs["network"] == "energex"
     assert attrs["tariff_code"] == "8400"
     assert attrs["region"] == "QLD1"
 
@@ -350,3 +352,81 @@ def test_all_non_default_disabled():
         assert sensor.entity_registry_enabled_default is False, (
             f"{distributor}/{tariff_code} should be default-disabled"
         )
+
+
+def test_tariff_periods_in_attributes():
+    """Verify tariff_periods is a list with correct keys and rate conversion."""
+    import datetime as _dt
+
+    fake_periods = [
+        ("Peak", _dt.time(14, 0), _dt.time(20, 0), 25.0),
+        ("OffPeak", _dt.time(20, 0), _dt.time(14, 0), 5.0),
+    ]
+    now = datetime.now(tz=NEM_TZ)
+    base = now.replace(minute=0, second=0, microsecond=0)
+    periods = [make_price_period(base + timedelta(minutes=30), value=0.05)]
+    sensor = make_tariff_sensor(price_periods=periods)
+
+    with patch.object(_tariff_mod, "get_periods", return_value=fake_periods):
+        with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+            attrs = sensor.extra_state_attributes
+            tp = attrs["tariff_periods"]
+            assert isinstance(tp, list)
+            assert len(tp) == 2
+            for entry in tp:
+                assert "period" in entry
+                assert "start" in entry
+                assert "end" in entry
+                assert "network_rate_$/kwh" in entry
+            # Check rate conversion: 25.0 c/kWh → 0.25 $/kWh
+            assert abs(tp[0]["network_rate_$/kwh"] - 0.25) < 1e-6
+            assert abs(tp[1]["network_rate_$/kwh"] - 0.05) < 1e-6
+
+
+def test_loss_factors_in_attributes():
+    """Verify dlf/mlf/combined present and combined = dlf * mlf * market."""
+    sensor = make_tariff_sensor(price_periods=None)
+    with patch.object(_tariff_mod, "get_periods", return_value=[]):
+        with patch.object(_tariff_mod, "get_daily_fee", return_value=None):
+            attrs = sensor.extra_state_attributes
+            dlf = attrs["distribution_loss_factor_dlf"]
+            mlf = attrs["metering_loss_factor_mlf"]
+            market = attrs["market_loss_factor"]
+            combined = attrs["combined_loss_multiplier"]
+            assert isinstance(dlf, float)
+            assert isinstance(mlf, float)
+            assert isinstance(combined, float)
+            assert abs(combined - round(dlf * mlf * market, 6)) < 1e-9
+
+
+def test_forecast_description_in_attributes():
+    """Verify description mentions 'forecast' and 'DLF'."""
+    sensor = make_tariff_sensor(price_periods=None)
+    with patch.object(_tariff_mod, "get_periods", return_value=[]):
+        with patch.object(_tariff_mod, "get_daily_fee", return_value=None):
+            attrs = sensor.extra_state_attributes
+            desc = attrs["forecast_description"]
+            assert isinstance(desc, str)
+            assert "forecast" in desc.lower()
+            assert "DLF" in desc
+            assert "MLF" in desc
+            assert "Energex" in desc
+
+
+def test_daily_supply_charge_in_attributes():
+    """Verify daily_supply_charge_$ is a float or None."""
+    sensor = make_tariff_sensor(price_periods=None)
+
+    # With a valid daily fee
+    with patch.object(_tariff_mod, "get_periods", return_value=[]):
+        with patch.object(_tariff_mod, "get_daily_fee", return_value=0.556):
+            attrs = sensor.extra_state_attributes
+            charge = attrs["daily_supply_charge_$"]
+            assert isinstance(charge, float)
+            assert abs(charge - 0.556) < 1e-6
+
+    # With exception → None
+    with patch.object(_tariff_mod, "get_periods", return_value=[]):
+        with patch.object(_tariff_mod, "get_daily_fee", side_effect=ValueError("nope")):
+            attrs = sensor.extra_state_attributes
+            assert attrs["daily_supply_charge_$"] is None
