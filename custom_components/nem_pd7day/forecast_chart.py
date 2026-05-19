@@ -98,6 +98,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     times, raws, cals, p10s, p90s, sources = [], [], [], [], [], []
     horizons = []
     spike_first_runs = []
+    spike_credibles = []
     forecast_run_at = None
     for p in forecast_data:
         try:
@@ -111,6 +112,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
             sources.append(p.get('calibrated_source', 'ols'))
             horizons.append(float(p.get('horizon_hours', 0)))
             spike_first_runs.append(p.get('spike_first_run', True))
+            spike_credibles.append(p.get('spike_credible'))
             if forecast_run_at is None and p.get('forecast_run_at'):
                 try:
                     forecast_run_at = datetime.datetime.fromisoformat(p['forecast_run_at'])
@@ -129,17 +131,17 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     p90s  = np.array(p90s)
 
     # Dynamic clip: 99th percentile of calibrated values + 15% headroom, min 0.15
-    # Exclude spike passthrough values from CLIP_Y to avoid compressing the chart
-    non_spike_mask = np.array([s not in ('passthrough_high', 'covariate_capped') for s in sources])
+    # Exclude spike-raw intervals from CLIP_Y to avoid compressing the chart
+    non_spike_mask = np.array([r < _SPIKE_CALLOUT_THRESHOLD_48H for r in raws])
     non_spike_cals = cals[non_spike_mask] if non_spike_mask.any() else cals
     p99 = float(np.percentile(non_spike_cals, 99)) if len(non_spike_cals) > 0 else 0.20
     CLIP_Y = float(np.ceil(max(p99 * 1.15, 0.15) / 0.05) * 0.05)
 
-    # Per-day min/max on calibrated values (exclude spike passthroughs)
+    # Per-day min/max on calibrated values (all intervals — isotonic values
+    # are clean normal-market estimates even for spike-raw inputs)
     by_day = defaultdict(list)
-    for i, (t, s) in enumerate(zip(times, sources)):
-        if s not in ('passthrough_high', 'covariate_capped'):
-            by_day[t.strftime('%Y-%m-%d')].append((i, float(cals[i])))
+    for i, t in enumerate(times):
+        by_day[t.strftime('%Y-%m-%d')].append((i, float(cals[i])))
     day_extremes = {}
     for day, pts in by_day.items():
         day_extremes[day] = {
@@ -304,11 +306,13 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                     fontweight='semibold', zorder=9)
 
     # ── Rec 1 + 4: Horizon-gated spike callouts with persistence styling ─────
-    # Classify each passthrough_high interval using horizon + persistence rules.
+    # Classify spike intervals using raw value threshold + spike_credible + persistence.
     confirmed_indices = []
     candidate_indices = []
-    for i, s in enumerate(sources):
-        if s != 'passthrough_high':
+    for i in range(len(raws)):
+        if float(raws[i]) < _SPIKE_CALLOUT_THRESHOLD_48H:
+            continue
+        if spike_credibles[i] is not True:
             continue
         eligible, style = _is_spike_callout_eligible(
             float(raws[i]), horizons[i], spike_first_runs[i],

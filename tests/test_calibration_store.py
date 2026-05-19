@@ -959,7 +959,7 @@ def test_total_buckets_matches_tod_labels_times_horizon_labels():
     )
 
 
-# ── Tests: covariate gate in apply_to_price ─────────────────────────────────
+# ── Tests: spike_credible annotation in apply_to_price ──────────────────────
 
 def _make_store_with_calibration():
     """Create a CalibrationStore with a fitted calibration so apply_to_price uses the engine."""
@@ -989,100 +989,76 @@ def _make_store_with_calibration():
     return store
 
 
-def test_apply_to_price_covariate_gate_caps_when_gate_not_met():
+def test_spike_credible_true_when_covariates_met():
     """
-    High raw value (passthrough_high), low gas, long horizon → gate fires,
-    returns capped value.
-    """
-    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
-    store = _make_store_with_calibration()
-    # raw=5.0 $/kWh → passthrough_high from calibration engine (>= SPIKE_THRESHOLD 3.0)
-    # horizon=24h → above bypass threshold (12h)
-    # gas=100 TJ → below threshold (150 TJ) → gate NOT met → should cap
-    # qni=-200 MW → above threshold (-300 MW) → gate NOT met
-    result = store.apply_to_price(
-        5.0, 24.0, 14,
-        gas_forecast_tj=100.0,
-        qni_mwflow=-200.0,
-    )
-    assert result["calibrated_source"] == "covariate_capped", (
-        f"Expected covariate_capped, got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(SPIKE_COVARIATE_CAP, 6), (
-        f"Expected capped at {SPIKE_COVARIATE_CAP}, got {result['calibrated']}"
-    )
-
-
-def test_apply_to_price_covariate_gate_passes_when_gate_met():
-    """
-    High raw value, high gas + low QNI (gate conditions met) → passes uncapped.
+    raw >= SPIKE_THRESHOLD, gas > 150 TJ, qni < -300 MW →
+    spike_credible = True. Calibrated value uses isotonic (not capped).
     """
     store = _make_store_with_calibration()
-    # gas=200 TJ → above threshold (150 TJ) AND qni=-400 MW → below threshold (-300 MW)
-    # Gate IS met → should NOT cap
     result = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=200.0,
         qni_mwflow=-400.0,
     )
-    assert result["calibrated_source"] == "passthrough_high", (
-        f"Expected passthrough_high (gate met, no capping), got {result['calibrated_source']}"
+    assert result.get("spike_credible") is True, (
+        f"Expected spike_credible=True, got {result.get('spike_credible')}"
     )
-    assert result["calibrated"] == round(5.0, 6), (
-        f"Expected uncapped 5.0, got {result['calibrated']}"
+    # Calibrated value should be isotonic (not raw passthrough)
+    assert result["calibrated_source"] in ("isotonic", "passthrough_sanity", "passthrough"), (
+        f"Expected isotonic-based source, got {result['calibrated_source']}"
     )
 
 
-def test_apply_to_price_covariate_gate_skips_when_covariates_missing():
+def test_spike_credible_false_when_covariates_not_met():
     """
-    None covariates → gate not applied, passthrough_high unchanged.
+    raw >= SPIKE_THRESHOLD, low gas + high qni → spike_credible = False.
+    Calibrated value still uses isotonic (no capping).
     """
     store = _make_store_with_calibration()
-    # No covariates passed → gate cannot fire
-    result = store.apply_to_price(5.0, 24.0, 14)
-    assert result["calibrated_source"] == "passthrough_high", (
-        f"Expected passthrough_high (covariates missing, gate skipped), "
-        f"got {result['calibrated_source']}"
+    result = store.apply_to_price(
+        5.0, 24.0, 14,
+        gas_forecast_tj=100.0,
+        qni_mwflow=-200.0,
+    )
+    assert result.get("spike_credible") is False, (
+        f"Expected spike_credible=False, got {result.get('spike_credible')}"
+    )
+    # Calibrated value is still from isotonic — NOT covariate_capped
+    assert result["calibrated_source"] in ("isotonic", "passthrough_sanity", "passthrough"), (
+        f"Expected isotonic-based source (no capping), got {result['calibrated_source']}"
     )
 
-    # One covariate None → also skip
+
+def test_spike_credible_none_when_covariates_missing():
+    """
+    raw >= SPIKE_THRESHOLD, covariates None → spike_credible = None.
+    """
+    store = _make_store_with_calibration()
+    # No covariates passed
+    result = store.apply_to_price(5.0, 24.0, 14)
+    assert result.get("spike_credible") is None, (
+        f"Expected spike_credible=None (covariates missing), got {result.get('spike_credible')}"
+    )
+
+    # One covariate None
     result2 = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=100.0,
         qni_mwflow=None,
     )
-    assert result2["calibrated_source"] == "passthrough_high"
+    assert result2.get("spike_credible") is None
 
     result3 = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=None,
         qni_mwflow=-200.0,
     )
-    assert result3["calibrated_source"] == "passthrough_high"
+    assert result3.get("spike_credible") is None
 
 
-def test_apply_to_price_covariate_gate_skips_short_horizon():
+def test_spike_credible_absent_for_low_raw():
     """
-    Horizon < 12h → gate not applied regardless of covariates.
-    """
-    store = _make_store_with_calibration()
-    # horizon=6h → below bypass threshold (12h) → gate should not fire
-    result = store.apply_to_price(
-        5.0, 6.0, 14,
-        gas_forecast_tj=100.0,
-        qni_mwflow=-200.0,
-    )
-    assert result["calibrated_source"] == "passthrough_high", (
-        f"Expected passthrough_high (short horizon, gate skipped), "
-        f"got {result['calibrated_source']}"
-    )
-
-
-def test_apply_to_price_covariate_gate_skips_low_raw():
-    """
-    Raw value below SPIKE_COVARIATE_RAW_FLOOR (1.00 $/kWh) → gate not applied.
-    At raw=0.50, calibration_source won't be passthrough_high anyway (< SPIKE_THRESHOLD 3.0),
-    so the gate naturally doesn't fire.
+    raw < SPIKE_THRESHOLD → no spike_credible key at all.
     """
     store = _make_store_with_calibration()
     result = store.apply_to_price(
@@ -1090,98 +1066,57 @@ def test_apply_to_price_covariate_gate_skips_low_raw():
         gas_forecast_tj=100.0,
         qni_mwflow=-200.0,
     )
-    assert result["calibrated_source"] != "covariate_capped", (
-        f"Gate should not fire for low raw values, got {result['calibrated_source']}"
+    assert "spike_credible" not in result, (
+        f"spike_credible should not be set for low raw, got {result.get('spike_credible')}"
     )
 
 
-# ── Tests: passthrough_high isotonic in covariate gate ────────────────────────
-
-def _make_store_with_mock_passthrough_high(
-    raw_price: float, calibrated_isotonic: float | None = None,
-):
-    """Create a CalibrationStore whose calibration returns passthrough_high with optional isotonic."""
+def test_spike_input_uses_isotonic_not_passthrough_high():
+    """
+    Spike raw value (5.0 $/kWh) should return isotonic source,
+    NOT the old passthrough_high. The calibrated value is the
+    isotonic clipped training-range maximum.
+    """
     store = _make_store_with_calibration()
-    original_apply = store._calibration.apply
-
-    def _mock_apply(raw, horizon, hour):
-        if raw == raw_price:
-            result = {
-                "calibrated": round(raw, 6),
-                "p10": round(raw, 6),
-                "p50": round(raw, 6),
-                "p90": round(raw, 6),
-                "calibrated_source": "passthrough_high",
-                "n_obs": 50,
-            }
-            if calibrated_isotonic is not None:
-                result["calibrated_isotonic"] = round(calibrated_isotonic, 6)
-            return result
-        return original_apply(raw, horizon, hour)
-
-    store._calibration.apply = _mock_apply
-    return store
-
-
-def test_covariate_gate_passthrough_high_uses_isotonic():
-    """
-    passthrough_high with calibrated_isotonic=0.85 (lower than raw=8.999),
-    covariates NOT met, long horizon → uses isotonic, source covariate_capped_isotonic.
-    """
-    store = _make_store_with_mock_passthrough_high(8.999, calibrated_isotonic=0.85)
     result = store.apply_to_price(
-        8.999, 24.0, 14,
-        gas_forecast_tj=100.0,
-        qni_mwflow=-200.0,
-    )
-    assert result["calibrated_source"] == "covariate_capped_isotonic", (
-        f"Expected covariate_capped_isotonic, got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(0.85, 6), (
-        f"Expected isotonic value 0.85, got {result['calibrated']}"
-    )
-
-
-def test_covariate_gate_passthrough_high_no_isotonic_falls_to_cap():
-    """
-    passthrough_high without calibrated_isotonic, covariates NOT met,
-    long horizon → hard cap at SPIKE_COVARIATE_CAP, source covariate_capped.
-    """
-    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
-    store = _make_store_with_mock_passthrough_high(8.999)
-    result = store.apply_to_price(
-        8.999, 24.0, 14,
-        gas_forecast_tj=100.0,
-        qni_mwflow=-200.0,
-    )
-    assert result["calibrated_source"] == "covariate_capped", (
-        f"Expected covariate_capped, got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(SPIKE_COVARIATE_CAP, 6), (
-        f"Expected capped at {SPIKE_COVARIATE_CAP}, got {result['calibrated']}"
-    )
-
-
-def test_covariate_gate_passthrough_high_covariates_met_passes_through():
-    """
-    passthrough_high with calibrated_isotonic, covariates ARE met →
-    raw $8.999 passes through unchanged (legitimate APC signal).
-    """
-    store = _make_store_with_mock_passthrough_high(8.999, calibrated_isotonic=0.85)
-    result = store.apply_to_price(
-        8.999, 24.0, 14,
+        5.0, 24.0, 14,
         gas_forecast_tj=200.0,
         qni_mwflow=-400.0,
     )
-    assert result["calibrated_source"] == "passthrough_high", (
-        f"Expected passthrough_high (gate met), got {result['calibrated_source']}"
+    assert result["calibrated_source"] != "passthrough_high", (
+        f"passthrough_high should no longer exist, got {result['calibrated_source']}"
     )
-    assert result["calibrated"] == round(8.999, 6), (
-        f"Expected uncapped 8.999, got {result['calibrated']}"
+    assert result["calibrated_source"] != "covariate_capped", (
+        f"covariate_capped should no longer exist, got {result['calibrated_source']}"
     )
 
 
-# ── Tests: passthrough_sanity cap in apply_to_price ───────────────────────────
+def test_spike_calibrated_never_modified_by_gate():
+    """
+    The covariate gate is now purely informational — it should never modify
+    the calibrated value. Two calls with different covariates must return
+    the same calibrated value (only spike_credible differs).
+    """
+    store = _make_store_with_calibration()
+    result_credible = store.apply_to_price(
+        5.0, 24.0, 14,
+        gas_forecast_tj=200.0,
+        qni_mwflow=-400.0,
+    )
+    result_not_credible = store.apply_to_price(
+        5.0, 24.0, 14,
+        gas_forecast_tj=100.0,
+        qni_mwflow=-200.0,
+    )
+    assert result_credible["calibrated"] == result_not_credible["calibrated"], (
+        f"Calibrated value must be identical regardless of covariates: "
+        f"{result_credible['calibrated']} vs {result_not_credible['calibrated']}"
+    )
+    assert result_credible.get("spike_credible") is True
+    assert result_not_credible.get("spike_credible") is False
+
+
+# ── Tests: passthrough_sanity as last-resort guard ──────────────────────────
 
 def _make_store_with_mock_sanity_passthrough(
     raw_price: float, calibrated_isotonic: float | None = None,
@@ -1211,77 +1146,71 @@ def _make_store_with_mock_sanity_passthrough(
     return store
 
 
-def test_passthrough_sanity_isotonic_used_at_long_horizon():
+def test_passthrough_sanity_passes_through_at_long_horizon():
     """
-    passthrough_sanity with calibrated_isotonic=0.18 (lower than raw=0.99)
-    at horizon 40h → uses isotonic value, source becomes passthrough_sanity_isotonic.
+    passthrough_sanity at long horizon now passes through unchanged
+    (no more capping/isotonic recovery in the store layer).
     """
     store = _make_store_with_mock_sanity_passthrough(0.99, calibrated_isotonic=0.18)
     result = store.apply_to_price(0.99, 40.0, 14)
-    assert result["calibrated_source"] == "passthrough_sanity_isotonic", (
-        f"Expected passthrough_sanity_isotonic, got {result['calibrated_source']}"
+    assert result["calibrated_source"] == "passthrough_sanity", (
+        f"Expected passthrough_sanity (pass through unchanged), got {result['calibrated_source']}"
     )
-    assert result["calibrated"] == round(0.18, 6), (
-        f"Expected isotonic value 0.18, got {result['calibrated']}"
+    assert result["calibrated"] == round(0.99, 6), (
+        f"Expected raw value 0.99, got {result['calibrated']}"
     )
 
 
-def test_passthrough_sanity_isotonic_higher_than_raw_falls_to_cap():
+def test_passthrough_sanity_high_value_passes_through():
     """
-    passthrough_sanity with calibrated_isotonic=1.20 (higher than raw=0.70)
-    at horizon 40h → isotonic not used, falls through to hard cap.
+    passthrough_sanity with high value at long horizon → passes through unchanged.
     """
-    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
     store = _make_store_with_mock_sanity_passthrough(0.70, calibrated_isotonic=1.20)
     result = store.apply_to_price(0.70, 40.0, 14)
-    assert result["calibrated_source"] == "passthrough_sanity_capped", (
-        f"Expected passthrough_sanity_capped, got {result['calibrated_source']}"
+    assert result["calibrated_source"] == "passthrough_sanity", (
+        f"Expected passthrough_sanity, got {result['calibrated_source']}"
     )
-    assert result["calibrated"] == round(SPIKE_COVARIATE_CAP, 6), (
-        f"Expected capped at {SPIKE_COVARIATE_CAP}, got {result['calibrated']}"
+    assert result["calibrated"] == round(0.70, 6), (
+        f"Expected raw value 0.70, got {result['calibrated']}"
     )
 
 
-def test_passthrough_sanity_no_isotonic_falls_to_cap():
+def test_passthrough_sanity_no_isotonic_passes_through():
     """
-    passthrough_sanity with no calibrated_isotonic key at horizon 40h
-    with value 0.70 → falls through to hard cap.
+    passthrough_sanity with no calibrated_isotonic at long horizon → passes through.
     """
-    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
     store = _make_store_with_mock_sanity_passthrough(0.70)
     result = store.apply_to_price(0.70, 40.0, 14)
-    assert result["calibrated_source"] == "passthrough_sanity_capped", (
-        f"Expected passthrough_sanity_capped, got {result['calibrated_source']}"
+    assert result["calibrated_source"] == "passthrough_sanity", (
+        f"Expected passthrough_sanity, got {result['calibrated_source']}"
     )
-    assert result["calibrated"] == round(SPIKE_COVARIATE_CAP, 6), (
-        f"Expected capped at {SPIKE_COVARIATE_CAP}, got {result['calibrated']}"
+    assert result["calibrated"] == round(0.70, 6), (
+        f"Expected raw value 0.70, got {result['calibrated']}"
     )
 
 
-def test_passthrough_sanity_not_capped_short_horizon():
+def test_passthrough_sanity_short_horizon():
     """
-    passthrough_sanity at horizon 6h with value 0.70 → NOT capped
-    (below horizon threshold).
+    passthrough_sanity at horizon 6h → passes through unchanged.
     """
     store = _make_store_with_mock_sanity_passthrough(0.70)
     result = store.apply_to_price(0.70, 6.0, 14)
     assert result["calibrated_source"] == "passthrough_sanity", (
-        f"Expected passthrough_sanity (short horizon, no cap), got {result['calibrated_source']}"
+        f"Expected passthrough_sanity (short horizon), got {result['calibrated_source']}"
     )
     assert result["calibrated"] == round(0.70, 6), (
         f"Expected uncapped 0.70, got {result['calibrated']}"
     )
 
 
-def test_passthrough_sanity_not_capped_below_cap_value():
+def test_passthrough_sanity_below_cap_value():
     """
-    passthrough_sanity at horizon 40h with value 0.30, no isotonic →
-    NOT capped (already below SPIKE_COVARIATE_CAP).
+    passthrough_sanity at horizon 40h with value 0.30 → passes through unchanged.
     """
     store = _make_store_with_mock_sanity_passthrough(0.30)
     result = store.apply_to_price(0.30, 40.0, 14)
     assert result["calibrated_source"] == "passthrough_sanity", (
-        f"Expected passthrough_sanity (value below cap, no change), got {result['calibrated_source']}"
+        f"Expected passthrough_sanity, got {result['calibrated_source']}"
     )
     assert result["calibrated"] == round(0.30, 6), (
         f"Expected uncapped 0.30, got {result['calibrated']}"

@@ -45,10 +45,10 @@ Implementation of:
 IsotonicRegression clipping behaviour
 --------------------------------------
 out_of_bounds="clip" — forecasts outside the training x-range are clipped
-to the nearest training boundary rather than extrapolated.  This is
-conservative and appropriate: spike forecasts (≥ SPIKE_THRESHOLD) are
-handled by the independent passthrough path before reaching the isotonic
-model, so the clip boundary is never reached in normal operation.
+to the nearest training boundary rather than extrapolated.  Spike forecasts
+(≥ SPIKE_THRESHOLD) now proceed through the isotonic model; clip returns
+the training-range maximum — a clean normal-market estimate.  The raw
+spike value is preserved in the forecast attribute for display.
 
 Decay weights
 --------------
@@ -202,12 +202,13 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 # ── Spike regime threshold ────────────────────────────────────────────────────
-# SPIKE_THRESHOLD applies in two places:
-#   1. Forecast output: raw forecasts >= threshold are passed through unchanged (passthrough_high)
-#   2. Observation training: observations where EITHER actual_rrp OR pd7day_forecast
-#      >= threshold are excluded from isotonic/quantile fitting.  Spike actuals
-#      poison the y-side of the fit; spike forecasts (served as passthrough) are
-#      extreme x leverage points that collapse slopes at non-spike forecast levels.
+# SPIKE_THRESHOLD applies to observation training only:
+#   Observations where EITHER actual_rrp OR pd7day_forecast >= threshold are
+#   excluded from isotonic/quantile fitting.  Spike actuals poison the y-side
+#   of the fit; spike forecasts are extreme x leverage points that collapse
+#   slopes at non-spike forecast levels.
+# All inputs (including spikes) proceed through the isotonic model at calibration
+# time; out_of_bounds='clip' returns the training-range maximum for spike inputs.
 # $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
 SPIKE_THRESHOLD = 3.00  # $/kWh
 
@@ -325,14 +326,17 @@ class BucketModel:
 
         Calibration path (evaluated in order):
           1. Negative passthrough  — deeply negative forecasts bypass calibration.
-          2. Spike passthrough     — forecasts >= SPIKE_THRESHOLD served unchanged;
-                                     completely independent of the isotonic model.
-          3. Insufficient data     — raw forecast returned if iso_model is None
+          2. Insufficient data     — raw forecast returned if iso_model is None
                                      (bucket has < MIN_OBS training observations).
-          4. Isotonic calibration  — IsotonicRegression.predict([x]), clipped >= 0.
-          5. Sanity guard          — falls back to passthrough if ratio exceeds
+          3. Isotonic calibration  — IsotonicRegression.predict([x]), clipped >= 0.
+                                     Spike inputs (>= SPIKE_THRESHOLD) are handled by
+                                     out_of_bounds='clip', returning the training-range
+                                     maximum — a clean normal-market estimate.
+          4. Sanity guard          — falls back to passthrough if ratio exceeds
                                      MAX_CALIBRATED_RATIO (above raw floor) or
                                      absolute difference exceeds SANITY_ABS_DIFF_LIMIT.
+                                     Spike inputs (>= SPIKE_THRESHOLD) are exempt —
+                                     the large divergence from isotonic clip is intentional.
         """
         if x <= NEGATIVE_PASSTHROUGH_THRESHOLD:
             return {
@@ -343,28 +347,6 @@ class BucketModel:
                 "calibrated_source": "passthrough_negative",
                 "n_obs": self.ols.n,
             }
-
-        if x >= SPIKE_THRESHOLD:
-            # Attempt isotonic calibration even for spike values — iso uses
-            # out_of_bounds='clip' so the result is the clipped training-range
-            # maximum, which is a better display value than the raw APC price.
-            iso_val = None
-            if self.iso_model is not None:
-                try:
-                    iso_val = float(max(self.iso_model.predict([x])[0], 0.0))
-                except Exception:
-                    iso_val = None
-            result = {
-                "calibrated": round(x, 6),
-                "p10": round(x, 6),
-                "p50": round(x, 6),
-                "p90": round(x, 6),
-                "calibrated_source": "passthrough_high",
-                "n_obs": self.ols.n,
-            }
-            if iso_val is not None:
-                result["calibrated_isotonic"] = round(iso_val, 6)
-            return result
 
         if self.iso_model is None:
             # Isotonic model not available (< MIN_OBS or not persisted) —
@@ -393,7 +375,12 @@ class BucketModel:
         # ── Sanity guard ─────────────────────────────────────────────────
         # Guard against corrupt training data producing wildly implausible output.
         #
-        # Two independent checks:
+        # Spike inputs (x >= SPIKE_THRESHOLD) are EXEMPT: the large divergence
+        # between raw and isotonic-clipped output is intentional — isotonic's
+        # out_of_bounds='clip' maps spike forecasts down to the training-range
+        # maximum, which is the desired behaviour.
+        #
+        # Two independent checks (non-spike only):
         #   1. Ratio check — only when raw >= SANITY_RATIO_RAW_FLOOR (0.05 $/kWh).
         #      Below this floor the isotonic step-function minimum dominates and
         #      the ratio is meaningless (e.g. raw=0.010 → isotonic lifts to 0.054
@@ -406,7 +393,7 @@ class BucketModel:
             and abs(calibrated / x) > MAX_CALIBRATED_RATIO
         )
         abs_fail = abs(calibrated - x) > SANITY_ABS_DIFF_LIMIT
-        if ratio_fail or abs_fail:
+        if x < SPIKE_THRESHOLD and (ratio_fail or abs_fail):
             _LOGGER.debug(
                 "Bucket %s sanity check FAILED: ratio_fail=%s abs_fail=%s "
                 "(raw=%.4f calibrated=%.4f) — falling back to passthrough",

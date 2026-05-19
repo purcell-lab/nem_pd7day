@@ -455,73 +455,23 @@ class CalibrationStore:
             }
         cal = self._calibration.apply(raw_price, horizon_hours, hour_of_day)
 
-        # Covariate gate: suppress runaway spike forecasts when gas+QNI
-        # covariates don't support them.  Mirrors the camera.py Rec 2 logic
-        # so that sensor and chart return identical capped values.
-        if (
-            cal["calibrated_source"] == "passthrough_high"
-            and raw_price >= SPIKE_COVARIATE_RAW_FLOOR
-            and horizon_hours >= SPIKE_COVARIATE_BYPASS_HORIZON_H
-            and gas_forecast_tj is not None
-            and qni_mwflow is not None
-        ):
-            gate_met = (
-                gas_forecast_tj > SPIKE_GAS_THRESHOLD_TJ
-                and qni_mwflow < SPIKE_QNI_THRESHOLD_MW
-            )
-            if not gate_met:
-                # Prefer isotonic clip over hard cap when available
-                isotonic = cal.get("calibrated_isotonic")
-                calibrated = cal["calibrated"]
-                if isotonic is not None and 0.0 <= isotonic < calibrated:
-                    cal = {
-                        **cal,
-                        "calibrated": round(isotonic, 6),
-                        "p10": round(isotonic, 6),
-                        "p50": round(isotonic, 6),
-                        "p90": round(isotonic, 6),
-                        "calibrated_source": "covariate_capped_isotonic",
-                    }
-                else:
-                    capped = min(raw_price, SPIKE_COVARIATE_CAP)
-                    cal = {
-                        **cal,
-                        "calibrated": round(capped, 6),
-                        "p10": round(capped, 6),
-                        "p50": round(capped, 6),
-                        "p90": round(capped, 6),
-                        "calibrated_source": "covariate_capped",
-                    }
-
-        # Sanity-passthrough recovery: when the calibration engine detected an
-        # anomalous calibration (ratio or abs-diff guard) and fell back to
-        # the raw value, prefer the isotonic result if it's lower and valid,
-        # otherwise hard-cap at SPIKE_COVARIATE_CAP.
-        if (
-            cal["calibrated_source"] == "passthrough_sanity"
-            and horizon_hours >= SPIKE_COVARIATE_BYPASS_HORIZON_H
-        ):
-            isotonic = cal.get("calibrated_isotonic")
-            calibrated = cal["calibrated"]
-            if isotonic is not None and 0.0 <= isotonic < calibrated:
-                cal = {
-                    **cal,
-                    "calibrated": round(isotonic, 6),
-                    "p10": round(isotonic, 6) if cal.get("p10") is not None else None,
-                    "p50": round(isotonic, 6) if cal.get("p50") is not None else None,
-                    "p90": round(isotonic, 6) if cal.get("p90") is not None else None,
-                    "calibrated_source": "passthrough_sanity_isotonic",
-                }
-            elif calibrated > SPIKE_COVARIATE_CAP:
-                cal = {
-                    **cal,
-                    "calibrated": round(SPIKE_COVARIATE_CAP, 6),
-                    "p10": round(SPIKE_COVARIATE_CAP, 6) if cal.get("p10") is not None else None,
-                    "p50": round(SPIKE_COVARIATE_CAP, 6) if cal.get("p50") is not None else None,
-                    "p90": round(SPIKE_COVARIATE_CAP, 6) if cal.get("p90") is not None else None,
-                    "calibrated_source": "passthrough_sanity_capped",
-                }
-            # else: value already below cap, pass through unchanged
+        # Spike credibility annotation: when raw_price is in spike territory,
+        # annotate whether the gas+QNI covariates support the spike signal.
+        # The calibrated value is NEVER modified by this gate — it always uses
+        # the isotonic result.  The gate is purely informational.
+        from .calibration_engine import SPIKE_THRESHOLD
+        if raw_price >= SPIKE_THRESHOLD:
+            if (
+                gas_forecast_tj is not None
+                and qni_mwflow is not None
+            ):
+                cal["spike_credible"] = (
+                    gas_forecast_tj > SPIKE_GAS_THRESHOLD_TJ
+                    and qni_mwflow < SPIKE_QNI_THRESHOLD_MW
+                )
+            else:
+                cal["spike_credible"] = None
+        # else: raw below spike territory — no spike_credible key
 
         return cal
 

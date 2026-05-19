@@ -423,10 +423,12 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
 
     def _save_spike_intervals(self, forecast_data: list[dict]) -> None:
         """Persist current spike interval set for next-run comparison (Rec 4)."""
+        from .calibration_engine import SPIKE_THRESHOLD
         self._last_spike_intervals: set[str] = {
             entry["time"]
             for entry in forecast_data
-            if entry.get("calibrated_source") == "passthrough_high"
+            if entry.get("raw_value", 0) >= SPIKE_THRESHOLD
+            and entry.get("spike_credible") is True
         }
 
     def _render(self) -> bytes:

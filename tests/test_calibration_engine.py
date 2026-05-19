@@ -609,66 +609,11 @@ def test_threshold_boundary_exact():
 
 # ── Spike passthrough tests ──────────────────────────────────────────────────
 
-def test_spike_passthrough_above_threshold():
+def test_spike_input_no_iso_model_returns_passthrough():
     """
-    When raw forecast >= SPIKE_THRESHOLD (3.00 $/kWh), calibration must
-    return the raw value unchanged with calibrated_source="passthrough_high".
-    """
-    model = BucketModel(
-        bucket_key="h12_24__peak",
-        ols=LinearCoeff(a=1.5, b=0.02, n=100, mae=0.01, rmse=0.02),
-        q10=QuantileCoeff(quantile=0.1, a=1.2, b=0.01, n=100),
-        q50=QuantileCoeff(quantile=0.5, a=1.5, b=0.02, n=100),
-        q90=QuantileCoeff(quantile=0.9, a=1.8, b=0.03, n=100),
-    )
-
-    result = model.apply_all(3.50)
-    assert result["calibrated"] == round(3.50, 6), (
-        f"Spike raw should pass through unchanged, got {result['calibrated']}"
-    )
-    assert result["calibrated_source"] == "passthrough_high"
-    assert result["p10"] == round(3.50, 6)
-    assert result["p50"] == round(3.50, 6)
-    assert result["p90"] == round(3.50, 6)
-    print(f"  PASS: spike passthrough above threshold (raw=3.50, source={result['calibrated_source']})")
-
-
-def test_spike_passthrough_with_iso_model_includes_isotonic():
-    """
-    When raw >= SPIKE_THRESHOLD and iso_model is fitted, passthrough_high
-    must include calibrated_isotonic with the clipped training-range maximum.
-    """
-    # Build a fitted engine so iso_model exists
-    obs = _make_obs_batch(n=60, a=1.5, b=0.02, horizon_hours=18.0, hour_of_day=17)
-    engine = CalibrationEngine()
-    result_fitted = engine.fit(obs)
-
-    # Apply a spike value well above training range
-    result = result_fitted.apply(8.999, horizon_hours=18.0, hour_of_day=17)
-    assert result["calibrated_source"] == "passthrough_high", (
-        f"Expected passthrough_high, got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(8.999, 6), (
-        f"Raw value should pass through unchanged, got {result['calibrated']}"
-    )
-    assert "calibrated_isotonic" in result, (
-        "passthrough_high with iso_model must include calibrated_isotonic"
-    )
-    iso_val = result["calibrated_isotonic"]
-    assert isinstance(iso_val, float), "calibrated_isotonic must be a float"
-    assert iso_val >= 0.0, "calibrated_isotonic must be non-negative"
-    # Isotonic uses out_of_bounds='clip' — for x far above training range,
-    # the result is the clipped maximum, which should be well below 8.999
-    assert iso_val < 8.999, (
-        f"Isotonic clip should be below raw spike, got {iso_val}"
-    )
-    print(f"  PASS: spike passthrough with iso_model (raw=8.999, iso={iso_val})")
-
-
-def test_spike_passthrough_no_iso_model_excludes_isotonic():
-    """
-    When raw >= SPIKE_THRESHOLD and iso_model is None, passthrough_high
-    must NOT include calibrated_isotonic key.
+    When raw >= SPIKE_THRESHOLD and iso_model is None (< MIN_OBS),
+    calibration must return 'passthrough' (not passthrough_high — that
+    source no longer exists).  The raw value passes through unchanged.
     """
     model = BucketModel(
         bucket_key="h12_24__peak",
@@ -680,12 +625,61 @@ def test_spike_passthrough_no_iso_model_excludes_isotonic():
     # No iso_model set → None by default
     assert model.iso_model is None
 
-    result = model.apply_all(8.999)
-    assert result["calibrated_source"] == "passthrough_high"
-    assert "calibrated_isotonic" not in result, (
-        "passthrough_high without iso_model must not include calibrated_isotonic"
+    result = model.apply_all(3.50)
+    assert result["calibrated"] == round(3.50, 6), (
+        f"Spike raw with no iso_model should pass through unchanged, got {result['calibrated']}"
     )
-    print(f"  PASS: spike passthrough without iso_model (no calibrated_isotonic)")
+    assert result["calibrated_source"] == "passthrough"
+    print(f"  PASS: spike input no iso_model returns passthrough (raw=3.50)")
+
+
+def test_spike_input_with_iso_model_returns_isotonic():
+    """
+    When raw >= SPIKE_THRESHOLD and iso_model is fitted, the isotonic model
+    must return a clipped value (out_of_bounds='clip') with source 'isotonic'.
+    The clipped value is the training-range maximum — well below the raw spike.
+    """
+    # Build a fitted engine so iso_model exists
+    obs = _make_obs_batch(n=60, a=1.5, b=0.02, horizon_hours=18.0, hour_of_day=17)
+    engine = CalibrationEngine()
+    result_fitted = engine.fit(obs)
+
+    # Apply a spike value well above training range
+    result = result_fitted.apply(8.999, horizon_hours=18.0, hour_of_day=17)
+    assert result["calibrated_source"] == "isotonic", (
+        f"Expected isotonic for spike input with iso_model, got {result['calibrated_source']}"
+    )
+    cal_val = result["calibrated"]
+    assert isinstance(cal_val, float), "calibrated must be a float"
+    assert cal_val >= 0.0, "calibrated must be non-negative"
+    # Isotonic uses out_of_bounds='clip' — for x far above training range,
+    # the result is the clipped maximum, which should be well below 8.999
+    assert cal_val < 8.999, (
+        f"Isotonic clip should be below raw spike, got {cal_val}"
+    )
+    print(f"  PASS: spike input with iso_model returns isotonic (raw=8.999, cal={cal_val})")
+
+
+def test_spike_input_no_iso_model_passthrough():
+    """
+    When raw >= SPIKE_THRESHOLD and iso_model is None, passthrough
+    must NOT include calibrated_isotonic key (no iso_model to compute it).
+    """
+    model = BucketModel(
+        bucket_key="h12_24__peak",
+        ols=LinearCoeff(a=1.5, b=0.02, n=100, mae=0.01, rmse=0.02),
+        q10=QuantileCoeff(quantile=0.1, a=1.2, b=0.01, n=100),
+        q50=QuantileCoeff(quantile=0.5, a=1.5, b=0.02, n=100),
+        q90=QuantileCoeff(quantile=0.9, a=1.8, b=0.03, n=100),
+    )
+    assert model.iso_model is None
+
+    result = model.apply_all(8.999)
+    assert result["calibrated_source"] == "passthrough"
+    assert "calibrated_isotonic" not in result, (
+        "passthrough without iso_model must not include calibrated_isotonic"
+    )
+    print(f"  PASS: spike input without iso_model (passthrough, no calibrated_isotonic)")
 
 
 def test_below_spike_threshold_uses_ols():
@@ -1251,6 +1245,80 @@ def test_p10_p90_never_outside_calibrated():
     print(f"  PASS: P10 <= calibrated <= P90 for all buckets and test inputs")
 
 
+def test_spike_input_exempt_from_sanity_guard():
+    """
+    Spike inputs (>= SPIKE_THRESHOLD) must bypass the sanity guard.
+    The isotonic clip produces a large divergence from raw (intentional),
+    which would trigger the abs_fail check if not exempted.
+    """
+    obs = _make_obs_batch(n=60, a=1.5, b=0.02, horizon_hours=18.0, hour_of_day=17)
+    engine = CalibrationEngine()
+    result_fitted = engine.fit(obs)
+
+    result = result_fitted.apply(8.999, horizon_hours=18.0, hour_of_day=17)
+    assert result["calibrated_source"] == "isotonic", (
+        f"Spike input must bypass sanity guard, got {result['calibrated_source']}"
+    )
+    # The absolute diff is huge (8.999 - ~1.5 = ~7.5), exceeding SANITY_ABS_DIFF_LIMIT
+    # but the spike exemption prevents the sanity guard from firing
+    assert result["calibrated"] < 3.0, (
+        f"Isotonic clip should map spike to training-range max, got {result['calibrated']}"
+    )
+    print(f"  PASS: spike input exempt from sanity guard (raw=8.999, cal={result['calibrated']})")
+
+
+def test_non_spike_still_hits_sanity_guard():
+    """
+    Non-spike inputs that produce implausible isotonic output must still
+    trigger the sanity guard (only spikes are exempt).
+    """
+    from custom_components.nem_pd7day.calibration_engine import (
+        BucketModel,
+        LinearCoeff,
+        QuantileCoeff,
+        SANITY_ABS_DIFF_LIMIT,
+    )
+    from sklearn.isotonic import IsotonicRegression
+
+    # Craft a deliberately bad isotonic model: maps 0.5 → 2.0 (diff=1.5, abs_fail)
+    iso = IsotonicRegression(out_of_bounds="clip")
+    iso.fit([0.1, 0.5, 1.0], [0.2, 2.0, 2.5])
+
+    model = BucketModel(
+        bucket_key="h12_24__peak",
+        ols=LinearCoeff(a=1.0, b=0.0, n=100, mae=0.01, rmse=0.02),
+        q10=QuantileCoeff(quantile=0.1, a=1.0, b=0.0, n=100),
+        q50=QuantileCoeff(quantile=0.5, a=1.0, b=0.0, n=100),
+        q90=QuantileCoeff(quantile=0.9, a=1.0, b=0.0, n=100),
+        iso_model=iso,
+    )
+
+    result = model.apply_all(0.5)
+    assert result["calibrated_source"] == "passthrough_sanity", (
+        f"Non-spike with bad isotonic should hit sanity guard, got {result['calibrated_source']}"
+    )
+    print(f"  PASS: non-spike still triggers sanity guard")
+
+
+def test_spike_input_quantiles_none_when_isotonic():
+    """
+    When a spike input goes through isotonic clip, quantile coefficients
+    still apply. Verify the full result structure.
+    """
+    obs = _make_obs_batch(n=60, a=1.5, b=0.02, horizon_hours=18.0, hour_of_day=17)
+    engine = CalibrationEngine()
+    result_fitted = engine.fit(obs)
+
+    result = result_fitted.apply(8.999, horizon_hours=18.0, hour_of_day=17)
+    assert result["calibrated_source"] == "isotonic"
+    # p10/p50/p90 should be present (quantile regressions are fitted)
+    assert result["p10"] is not None, "p10 should be present for fitted bucket"
+    assert result["p90"] is not None, "p90 should be present for fitted bucket"
+    assert "n_obs" in result, "n_obs must be in result"
+    assert result["n_obs"] >= 60, f"n_obs should reflect training count, got {result['n_obs']}"
+    print(f"  PASS: spike input isotonic result has full structure")
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -1283,10 +1351,10 @@ TESTS = [
     test_mild_negative_raw_uses_ols,
     test_zero_raw_uses_ols,
     test_threshold_boundary_exact,
-    # Spike passthrough
-    test_spike_passthrough_above_threshold,
-    test_spike_passthrough_with_iso_model_includes_isotonic,
-    test_spike_passthrough_no_iso_model_excludes_isotonic,
+    # Spike input (isotonic, no more passthrough_high)
+    test_spike_input_no_iso_model_returns_passthrough,
+    test_spike_input_with_iso_model_returns_isotonic,
+    test_spike_input_no_iso_model_passthrough,
     test_below_spike_threshold_uses_ols,
     test_spike_actuals_excluded_from_ols_buckets,
     test_spike_forecasts_excluded_from_ols_buckets,
@@ -1314,6 +1382,10 @@ TESTS = [
     test_engine_weighted_fit_produces_result,
     # P10/P90 clamping
     test_p10_p90_never_outside_calibrated,
+    # Sanity guard spike exemption
+    test_spike_input_exempt_from_sanity_guard,
+    test_non_spike_still_hits_sanity_guard,
+    test_spike_input_quantiles_none_when_isotonic,
 ]
 
 
