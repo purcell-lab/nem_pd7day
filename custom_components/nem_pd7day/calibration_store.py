@@ -480,6 +480,26 @@ class CalibrationStore:
                     "calibrated_source": "covariate_capped",
                 }
 
+        # Sanity-passthrough cap: when the calibration engine detected an
+        # anomalous calibration (ratio or abs-diff guard) and fell back to
+        # the raw value, that raw value is unreliable at long horizons.
+        # Cap at SPIKE_COVARIATE_CAP so stale/anomalous raws don't leak
+        # through the forecast as implausible prices.
+        if (
+            cal["calibrated_source"] == "passthrough_sanity"
+            and horizon_hours >= SPIKE_COVARIATE_BYPASS_HORIZON_H
+        ):
+            capped = min(cal["calibrated"], SPIKE_COVARIATE_CAP)
+            if capped < cal["calibrated"]:
+                cal = {
+                    **cal,
+                    "calibrated": round(capped, 6),
+                    "p10": round(capped, 6) if cal.get("p10") is not None else None,
+                    "p50": round(capped, 6) if cal.get("p50") is not None else None,
+                    "p90": round(capped, 6) if cal.get("p90") is not None else None,
+                    "calibrated_source": "passthrough_sanity_capped",
+                }
+
         return cal
 
     def summary_attributes(self) -> dict:

@@ -1061,3 +1061,74 @@ def test_apply_to_price_covariate_gate_skips_low_raw():
     assert result["calibrated_source"] != "covariate_capped", (
         f"Gate should not fire for low raw values, got {result['calibrated_source']}"
     )
+
+
+# ── Tests: passthrough_sanity cap in apply_to_price ───────────────────────────
+
+def _make_store_with_mock_sanity_passthrough(raw_price: float):
+    """Create a CalibrationStore whose calibration returns passthrough_sanity."""
+    store = _make_store_with_calibration()
+    original_apply = store._calibration.apply
+
+    def _mock_apply(raw, horizon, hour):
+        # Force passthrough_sanity for the target raw price
+        if raw == raw_price:
+            return {
+                "calibrated": round(raw, 6),
+                "p10": None,
+                "p50": None,
+                "p90": None,
+                "ols_mae": None,
+                "calibrated_source": "passthrough_sanity",
+                "n_obs": 50,
+            }
+        return original_apply(raw, horizon, hour)
+
+    store._calibration.apply = _mock_apply
+    return store
+
+
+def test_passthrough_sanity_capped_at_long_horizon():
+    """
+    passthrough_sanity at horizon 40h with value 0.70 → capped to 0.50,
+    source becomes passthrough_sanity_capped.
+    """
+    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
+    store = _make_store_with_mock_sanity_passthrough(0.70)
+    result = store.apply_to_price(0.70, 40.0, 14)
+    assert result["calibrated_source"] == "passthrough_sanity_capped", (
+        f"Expected passthrough_sanity_capped, got {result['calibrated_source']}"
+    )
+    assert result["calibrated"] == round(SPIKE_COVARIATE_CAP, 6), (
+        f"Expected capped at {SPIKE_COVARIATE_CAP}, got {result['calibrated']}"
+    )
+
+
+def test_passthrough_sanity_not_capped_short_horizon():
+    """
+    passthrough_sanity at horizon 6h with value 0.70 → NOT capped
+    (below horizon threshold).
+    """
+    store = _make_store_with_mock_sanity_passthrough(0.70)
+    result = store.apply_to_price(0.70, 6.0, 14)
+    assert result["calibrated_source"] == "passthrough_sanity", (
+        f"Expected passthrough_sanity (short horizon, no cap), got {result['calibrated_source']}"
+    )
+    assert result["calibrated"] == round(0.70, 6), (
+        f"Expected uncapped 0.70, got {result['calibrated']}"
+    )
+
+
+def test_passthrough_sanity_not_capped_below_cap_value():
+    """
+    passthrough_sanity at horizon 40h with value 0.30 → NOT capped
+    (already below SPIKE_COVARIATE_CAP).
+    """
+    store = _make_store_with_mock_sanity_passthrough(0.30)
+    result = store.apply_to_price(0.30, 40.0, 14)
+    assert result["calibrated_source"] == "passthrough_sanity", (
+        f"Expected passthrough_sanity (value below cap, no change), got {result['calibrated_source']}"
+    )
+    assert result["calibrated"] == round(0.30, 6), (
+        f"Expected uncapped 0.30, got {result['calibrated']}"
+    )
