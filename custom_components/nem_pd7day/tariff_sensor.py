@@ -143,11 +143,17 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         return forecast[0] if forecast else None
 
     def _compute_tariff(self, period) -> float | None:
-        """Compute tariff price in $/kWh for a single forecast period."""
+        """Compute tariff price in $/kWh for a single forecast period.
+
+        The library expects AEMO nemtime (interval END) and subtracts 5 min
+        internally for period lookup. Passing interval START would place a
+        16:00-start interval at 15:55 → Day rate instead of Evening rate.
+        """
         if spot_to_tariff is None:
             return None
         try:
-            interval_dt = parse_iso(period.time)
+            # Pass nemtime (interval END) — library subtracts 5 min for ToU lookup
+            interval_dt = parse_iso(period.nemtime)
             rrp_mwh = period.value * 1000  # $/kWh → $/MWh
             result_c_kwh = spot_to_tariff(
                 interval_dt, self._distributor, self._tariff_code, rrp_mwh,
@@ -156,7 +162,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         except Exception:
             _LOGGER.debug(
                 "spot_to_tariff failed for %s/%s at %s",
-                self._distributor, self._tariff_code, period.time,
+                self._distributor, self._tariff_code, period.nemtime,
                 exc_info=True,
             )
             return None
@@ -235,9 +241,10 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             for period in d.forecast:
                 tariff_val = self._compute_tariff(period)
                 forecast_list.append({
-                    "time": period.time,       # interval START (nemtime − 30 min)
-                    "nemtime": period.nemtime, # interval END (AEMO convention)
-                    "value": tariff_val,
+                    "time": period.time,           # interval START (nemtime − 30 min)
+                    "nemtime": period.nemtime,     # interval END (AEMO convention)
+                    "spot": round(period.value, 6),  # calibrated spot price $/kWh
+                    "value": tariff_val,           # spot + network ToU component $/kWh
                 })
 
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
