@@ -662,8 +662,7 @@ def test_spike_input_with_iso_model_returns_isotonic():
 
 def test_spike_input_no_iso_model_passthrough():
     """
-    When raw >= SPIKE_THRESHOLD and iso_model is None, passthrough
-    must NOT include calibrated_isotonic key (no iso_model to compute it).
+    When raw >= SPIKE_THRESHOLD and iso_model is None, passthrough is returned.
     """
     model = BucketModel(
         bucket_key="h12_24__peak",
@@ -676,10 +675,7 @@ def test_spike_input_no_iso_model_passthrough():
 
     result = model.apply_all(8.999)
     assert result["calibrated_source"] == "passthrough"
-    assert "calibrated_isotonic" not in result, (
-        "passthrough without iso_model must not include calibrated_isotonic"
-    )
-    print(f"  PASS: spike input without iso_model (passthrough, no calibrated_isotonic)")
+    print(f"  PASS: spike input without iso_model (passthrough)")
 
 
 def test_below_spike_threshold_uses_ols():
@@ -1245,11 +1241,11 @@ def test_p10_p90_never_outside_calibrated():
     print(f"  PASS: P10 <= calibrated <= P90 for all buckets and test inputs")
 
 
-def test_spike_input_exempt_from_sanity_guard():
+def test_spike_input_uses_isotonic():
     """
-    Spike inputs (>= SPIKE_THRESHOLD) must bypass the sanity guard.
-    The isotonic clip produces a large divergence from raw (intentional),
-    which would trigger the abs_fail check if not exempted.
+    Spike inputs (>= SPIKE_THRESHOLD) proceed through isotonic calibration.
+    The isotonic clip produces a large divergence from raw (intentional) —
+    out_of_bounds='clip' maps spike forecasts to training-range max.
     """
     obs = _make_obs_batch(n=60, a=1.5, b=0.02, horizon_hours=18.0, hour_of_day=17)
     engine = CalibrationEngine()
@@ -1257,47 +1253,12 @@ def test_spike_input_exempt_from_sanity_guard():
 
     result = result_fitted.apply(8.999, horizon_hours=18.0, hour_of_day=17)
     assert result["calibrated_source"] == "isotonic", (
-        f"Spike input must bypass sanity guard, got {result['calibrated_source']}"
+        f"Spike input must use isotonic, got {result['calibrated_source']}"
     )
-    # The absolute diff is huge (8.999 - ~1.5 = ~7.5), exceeding SANITY_ABS_DIFF_LIMIT
-    # but the spike exemption prevents the sanity guard from firing
     assert result["calibrated"] < 3.0, (
         f"Isotonic clip should map spike to training-range max, got {result['calibrated']}"
     )
-    print(f"  PASS: spike input exempt from sanity guard (raw=8.999, cal={result['calibrated']})")
-
-
-def test_non_spike_still_hits_sanity_guard():
-    """
-    Non-spike inputs that produce implausible isotonic output must still
-    trigger the sanity guard (only spikes are exempt).
-    """
-    from custom_components.nem_pd7day.calibration_engine import (
-        BucketModel,
-        LinearCoeff,
-        QuantileCoeff,
-        SANITY_ABS_DIFF_LIMIT,
-    )
-    from sklearn.isotonic import IsotonicRegression
-
-    # Craft a deliberately bad isotonic model: maps 0.5 → 2.0 (diff=1.5, abs_fail)
-    iso = IsotonicRegression(out_of_bounds="clip")
-    iso.fit([0.1, 0.5, 1.0], [0.2, 2.0, 2.5])
-
-    model = BucketModel(
-        bucket_key="h12_24__peak",
-        ols=LinearCoeff(a=1.0, b=0.0, n=100, mae=0.01, rmse=0.02),
-        q10=QuantileCoeff(quantile=0.1, a=1.0, b=0.0, n=100),
-        q50=QuantileCoeff(quantile=0.5, a=1.0, b=0.0, n=100),
-        q90=QuantileCoeff(quantile=0.9, a=1.0, b=0.0, n=100),
-        iso_model=iso,
-    )
-
-    result = model.apply_all(0.5)
-    assert result["calibrated_source"] == "passthrough_sanity", (
-        f"Non-spike with bad isotonic should hit sanity guard, got {result['calibrated_source']}"
-    )
-    print(f"  PASS: non-spike still triggers sanity guard")
+    print(f"  PASS: spike input uses isotonic (raw=8.999, cal={result['calibrated']})")
 
 
 def test_spike_input_quantiles_none_when_isotonic():
@@ -1382,9 +1343,8 @@ TESTS = [
     test_engine_weighted_fit_produces_result,
     # P10/P90 clamping
     test_p10_p90_never_outside_calibrated,
-    # Sanity guard spike exemption
-    test_spike_input_exempt_from_sanity_guard,
-    test_non_spike_still_hits_sanity_guard,
+    # Spike isotonic behaviour
+    test_spike_input_uses_isotonic,
     test_spike_input_quantiles_none_when_isotonic,
 ]
 

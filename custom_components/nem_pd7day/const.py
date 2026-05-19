@@ -78,13 +78,6 @@ MAX_OBS = 5000
 IRLS_ITER = 15
 IRLS_EPS = 1e-8
 QUANTILES = (0.1, 0.5, 0.9)
-MAX_INTERCEPT_ABS = 1.0
-MAX_CALIBRATED_RATIO = 5.0
-# The ratio guard only applies when raw forecast is above a meaningful floor.
-# Below this floor, the isotonic step function minimum dominates and ratio is
-# meaningless. 0.05 $/kWh = 50 $/MWh is a reasonable minimum forecast level.
-SANITY_RATIO_RAW_FLOOR = 0.05       # $/kWh — ratio check skipped below this
-SANITY_ABS_DIFF_LIMIT  = 0.30       # $/kWh = 300 $/MWh — absolute backstop
 HORIZON_EDGES = [0, 6, 12, 24, 48, 96]
 HORIZON_LABELS = ["h00_06", "h06_12", "h12_24", "h24_48", "h48_96", "h96plus"]
 TOD_LABELS = ["shoulder", "morning_ramp", "solar", "peak"]

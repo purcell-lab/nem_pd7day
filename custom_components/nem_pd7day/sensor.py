@@ -330,8 +330,6 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 "value": cal["calibrated"],
                 "spike_credible": cal.get("spike_credible"),
             }
-            if cal.get("calibrated_isotonic") is not None:
-                cal_update["calibrated_isotonic"] = cal["calibrated_isotonic"]
             base.update(cal_update)
         else:
             base["value"] = period.value

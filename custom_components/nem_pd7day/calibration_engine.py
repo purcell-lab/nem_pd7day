@@ -189,10 +189,6 @@ from .const import (
     HORIZON_LABELS,
     IRLS_EPS,
     IRLS_ITER,
-    MAX_CALIBRATED_RATIO,
-    MAX_INTERCEPT_ABS,
-    SANITY_ABS_DIFF_LIMIT,
-    SANITY_RATIO_RAW_FLOOR,
     MAX_OBS,
     MIN_OBS,
     QUANTILES,
@@ -332,11 +328,6 @@ class BucketModel:
                                      Spike inputs (>= SPIKE_THRESHOLD) are handled by
                                      out_of_bounds='clip', returning the training-range
                                      maximum — a clean normal-market estimate.
-          4. Sanity guard          — falls back to passthrough if ratio exceeds
-                                     MAX_CALIBRATED_RATIO (above raw floor) or
-                                     absolute difference exceeds SANITY_ABS_DIFF_LIMIT.
-                                     Spike inputs (>= SPIKE_THRESHOLD) are exempt —
-                                     the large divergence from isotonic clip is intentional.
         """
         if x <= NEGATIVE_PASSTHROUGH_THRESHOLD:
             return {
@@ -370,44 +361,6 @@ class BucketModel:
         # Result floored at 0.0 — calibrated prices cannot be physically
         # negative (negative forecasts are caught by passthrough_negative).
         calibrated = float(max(self.iso_model.predict([x])[0], 0.0))
-
-
-        # ── Sanity guard ─────────────────────────────────────────────────
-        # Guard against corrupt training data producing wildly implausible output.
-        #
-        # Spike inputs (x >= SPIKE_THRESHOLD) are EXEMPT: the large divergence
-        # between raw and isotonic-clipped output is intentional — isotonic's
-        # out_of_bounds='clip' maps spike forecasts down to the training-range
-        # maximum, which is the desired behaviour.
-        #
-        # Two independent checks (non-spike only):
-        #   1. Ratio check — only when raw >= SANITY_RATIO_RAW_FLOOR (0.05 $/kWh).
-        #      Below this floor the isotonic step-function minimum dominates and
-        #      the ratio is meaningless (e.g. raw=0.010 → isotonic lifts to 0.054
-        #      floor = ratio 5.4, which is correct behaviour, not corruption).
-        #   2. Absolute difference check — always active.
-        #      |calibrated − raw| > SANITY_ABS_DIFF_LIMIT (0.30 $/kWh = 300 $/MWh)
-        #      is implausible regardless of ratio.
-        ratio_fail = (
-            abs(x) >= SANITY_RATIO_RAW_FLOOR
-            and abs(calibrated / x) > MAX_CALIBRATED_RATIO
-        )
-        abs_fail = abs(calibrated - x) > SANITY_ABS_DIFF_LIMIT
-        if x < SPIKE_THRESHOLD and (ratio_fail or abs_fail):
-            _LOGGER.debug(
-                "Bucket %s sanity check FAILED: ratio_fail=%s abs_fail=%s "
-                "(raw=%.4f calibrated=%.4f) — falling back to passthrough",
-                self.bucket_key, ratio_fail, abs_fail, x, calibrated,
-            )
-            return {
-                "calibrated": round(x, 6),
-                "calibrated_isotonic": round(calibrated, 6),
-                "p10": None, "p50": None, "p90": None,
-                "ols_mae": None,
-                "calibrated_source": "passthrough_sanity",
-                "n_obs": self.ols.n,
-            }
-        # ─────────────────────────────────────────────────────────────────────
 
         p10 = self.q10.apply(x) if not self.q10.is_default else None
         p50 = self.q50.apply(x) if not self.q50.is_default else None

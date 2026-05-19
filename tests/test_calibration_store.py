@@ -70,8 +70,7 @@ _store_mod = _load(
 
 from custom_components.nem_pd7day.nem_time import NEM_TZ, to_nem_iso, current_nem_interval
 from custom_components.nem_pd7day.calibration_engine import (
-    CalibrationEngine, Observation, MAX_INTERCEPT_ABS, MAX_CALIBRATED_RATIO,
-    SANITY_RATIO_RAW_FLOOR, SANITY_ABS_DIFF_LIMIT,
+    CalibrationEngine, Observation,
 )
 from custom_components.nem_pd7day.calibration_store import CalibrationStore
 
@@ -358,16 +357,14 @@ def _make_obs(forecast, actual, horizon=3.0, hour=21):
     )
 
 
-def test_sanity_guard_rejects_large_intercept():
+def test_isotonic_handles_large_negative_actuals():
     """
-    BUG: Duplicate observations caused OLS intercepts of -3.15 and +75.
-    The sanity guard must fall back to passthrough when |intercept| > MAX_INTERCEPT_ABS (1.0).
-    Simulate the real corrupt case: tiny near-identical forecasts, large negative actuals.
+    Isotonic regression handles corrupt training data (large negative actuals)
+    correctly: the step function maps low forecasts to ~0 (floored at 0.0).
     """
     import random
     rng = random.Random(42)
-    # Near-constant forecast (~0.003), actual = -3.15 → OLS gives b ≈ -3.15
-    # This replicates the h00_06__offpeak bucket that had b=-3.145
+    # Near-constant forecast (~0.003), actual = -3.15 → isotonic floors at 0.0
     obs = [
         _make_obs(forecast=rng.uniform(0.001, 0.005), actual=-3.15 + rng.gauss(0, 0.01))
         for _ in range(30)
@@ -377,10 +374,8 @@ def test_sanity_guard_rejects_large_intercept():
     out = result.apply(0.003, horizon_hours=3.0, hour_of_day=21)
 
     # Isotonic regression clips the large-negative actuals correctly:
-    # the step function maps low forecasts (~0.003) to ~0 (floored), so the
-    # output may be "isotonic" with calibrated=0.0 rather than passthrough_sanity.
-    # Either passthrough or isotonic with a non-negative calibrated value is acceptable.
-    assert out["calibrated_source"] in ("passthrough", "passthrough_sanity", "isotonic"), (
+    # the step function maps low forecasts (~0.003) to ~0 (floored).
+    assert out["calibrated_source"] in ("passthrough", "isotonic"), (
         f"Unexpected calibration source for corrupt bucket: {out['calibrated_source']} "
         f"with calibrated={out['calibrated']:.4f}"
     )
@@ -389,14 +384,14 @@ def test_sanity_guard_rejects_large_intercept():
     )
 
 
-def test_sanity_guard_ratio_fires_above_floor():
+def test_high_ratio_isotonic_flows_through():
     """
-    Ratio check fires when raw >= SANITY_RATIO_RAW_FLOOR and ratio exceeds limit.
-    raw=0.10, calibrated=0.60 → ratio=6.0 > MAX_CALIBRATED_RATIO=5.0 → passthrough.
+    With sanity guard removed, high-ratio isotonic output flows through as isotonic.
+    raw=0.10, actual ≈ 6x → isotonic calibrates to ~0.60 — a legitimate correction.
     """
     import random
     rng = random.Random(7)
-    # High slope: actual ≈ 6 * forecast → at raw=0.10, calibrated ≈ 0.60, ratio=6x
+    # High slope: actual ≈ 6 * forecast → at raw=0.10, calibrated ≈ 0.60
     obs = [
         _make_obs(
             forecast=rng.uniform(0.08, 0.12),
@@ -408,11 +403,14 @@ def test_sanity_guard_ratio_fires_above_floor():
     engine = CalibrationEngine()
     result = engine.fit(obs)
     out = result.apply(0.10, horizon_hours=3.0, hour_of_day=21)
-    assert out["calibrated_source"] in ("passthrough", "passthrough_sanity"), (
-        f"Expected passthrough_sanity for large ratio above floor, got {out['calibrated_source']} "
+    assert out["calibrated_source"] == "isotonic", (
+        f"Expected isotonic (no sanity guard), got {out['calibrated_source']} "
         f"calibrated={out['calibrated']:.4f} vs raw=0.10"
     )
-    assert abs(out["calibrated"] - 0.10) < 1e-9, "Passthrough must return raw value unchanged"
+    # Isotonic should produce a value close to 6x the raw
+    assert out["calibrated"] > 0.40, (
+        f"Isotonic should calibrate high, got {out['calibrated']:.4f}"
+    )
 
 
 def test_sanity_guard_ratio_skipped_below_floor():
@@ -447,15 +445,14 @@ def test_sanity_guard_ratio_skipped_below_floor():
     )
 
 
-def test_sanity_guard_abs_diff_fires():
+def test_large_abs_diff_isotonic_flows_through():
     """
-    Absolute difference check fires when |calibrated - raw| > SANITY_ABS_DIFF_LIMIT (0.30).
-    raw=0.10, calibrated=0.45 → abs diff=0.35 > 0.30 → passthrough.
+    With sanity guard removed, large absolute difference isotonic output flows
+    through as isotonic. raw=0.10, actual ≈ 4.5x → isotonic calibrates to ~0.45.
     """
     import random
     rng = random.Random(99)
-    # actual ≈ 4.5 * forecast → at raw=0.10, calibrated ≈ 0.45, abs_diff=0.35
-    # ratio = 4.5 < MAX_CALIBRATED_RATIO so ratio check passes, but abs check fails
+    # actual ≈ 4.5 * forecast → at raw=0.10, calibrated ≈ 0.45
     obs = [
         _make_obs(
             forecast=rng.uniform(0.08, 0.12),
@@ -467,43 +464,14 @@ def test_sanity_guard_abs_diff_fires():
     engine = CalibrationEngine()
     result = engine.fit(obs)
     out = result.apply(0.10, horizon_hours=3.0, hour_of_day=21)
-    assert out["calibrated_source"] in ("passthrough", "passthrough_sanity"), (
-        f"Expected passthrough_sanity for abs_diff > 0.30, got {out['calibrated_source']} "
+    assert out["calibrated_source"] == "isotonic", (
+        f"Expected isotonic (no sanity guard), got {out['calibrated_source']} "
         f"calibrated={out['calibrated']:.4f} vs raw=0.10"
     )
-    assert abs(out["calibrated"] - 0.10) < 1e-9, "Passthrough must return raw value unchanged"
-
-
-def test_sanity_guard_preserves_calibrated_isotonic():
-    """
-    When the sanity guard fires, the return dict must include
-    calibrated_isotonic with the isotonic regression output.
-    """
-    import random
-    rng = random.Random(7)
-    # High slope: actual ≈ 6 * forecast → at raw=0.10, calibrated ≈ 0.60, ratio=6x
-    obs = [
-        _make_obs(
-            forecast=rng.uniform(0.08, 0.12),
-            actual=6 * rng.uniform(0.08, 0.12) + rng.gauss(0, 0.005),
-            horizon=3.0, hour=21
-        )
-        for _ in range(40)
-    ]
-    engine = CalibrationEngine()
-    result = engine.fit(obs)
-    out = result.apply(0.10, horizon_hours=3.0, hour_of_day=21)
-    if out["calibrated_source"] == "passthrough_sanity":
-        assert "calibrated_isotonic" in out, (
-            "passthrough_sanity return must include calibrated_isotonic"
-        )
-        assert isinstance(out["calibrated_isotonic"], float), (
-            "calibrated_isotonic must be a float"
-        )
-        # The isotonic result should differ from raw (that's why sanity fired)
-        assert out["calibrated_isotonic"] != out["calibrated"], (
-            "calibrated_isotonic should differ from the passthrough raw value"
-        )
+    # Isotonic should produce a value close to 4.5x the raw
+    assert out["calibrated"] > 0.30, (
+        f"Isotonic should calibrate high, got {out['calibrated']:.4f}"
+    )
 
 
 def test_sanity_guard_passes_normal_values():
@@ -1004,7 +972,7 @@ def test_spike_credible_true_when_covariates_met():
         f"Expected spike_credible=True, got {result.get('spike_credible')}"
     )
     # Calibrated value should be isotonic (not raw passthrough)
-    assert result["calibrated_source"] in ("isotonic", "passthrough_sanity", "passthrough"), (
+    assert result["calibrated_source"] in ("isotonic", "passthrough"), (
         f"Expected isotonic-based source, got {result['calibrated_source']}"
     )
 
@@ -1024,7 +992,7 @@ def test_spike_credible_false_when_covariates_not_met():
         f"Expected spike_credible=False, got {result.get('spike_credible')}"
     )
     # Calibrated value is still from isotonic — NOT covariate_capped
-    assert result["calibrated_source"] in ("isotonic", "passthrough_sanity", "passthrough"), (
+    assert result["calibrated_source"] in ("isotonic", "passthrough"), (
         f"Expected isotonic-based source (no capping), got {result['calibrated_source']}"
     )
 
@@ -1114,104 +1082,3 @@ def test_spike_calibrated_never_modified_by_gate():
     )
     assert result_credible.get("spike_credible") is True
     assert result_not_credible.get("spike_credible") is False
-
-
-# ── Tests: passthrough_sanity as last-resort guard ──────────────────────────
-
-def _make_store_with_mock_sanity_passthrough(
-    raw_price: float, calibrated_isotonic: float | None = None,
-):
-    """Create a CalibrationStore whose calibration returns passthrough_sanity."""
-    store = _make_store_with_calibration()
-    original_apply = store._calibration.apply
-
-    def _mock_apply(raw, horizon, hour):
-        # Force passthrough_sanity for the target raw price
-        if raw == raw_price:
-            result = {
-                "calibrated": round(raw, 6),
-                "p10": None,
-                "p50": None,
-                "p90": None,
-                "ols_mae": None,
-                "calibrated_source": "passthrough_sanity",
-                "n_obs": 50,
-            }
-            if calibrated_isotonic is not None:
-                result["calibrated_isotonic"] = round(calibrated_isotonic, 6)
-            return result
-        return original_apply(raw, horizon, hour)
-
-    store._calibration.apply = _mock_apply
-    return store
-
-
-def test_passthrough_sanity_passes_through_at_long_horizon():
-    """
-    passthrough_sanity at long horizon now passes through unchanged
-    (no more capping/isotonic recovery in the store layer).
-    """
-    store = _make_store_with_mock_sanity_passthrough(0.99, calibrated_isotonic=0.18)
-    result = store.apply_to_price(0.99, 40.0, 14)
-    assert result["calibrated_source"] == "passthrough_sanity", (
-        f"Expected passthrough_sanity (pass through unchanged), got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(0.99, 6), (
-        f"Expected raw value 0.99, got {result['calibrated']}"
-    )
-
-
-def test_passthrough_sanity_high_value_passes_through():
-    """
-    passthrough_sanity with high value at long horizon → passes through unchanged.
-    """
-    store = _make_store_with_mock_sanity_passthrough(0.70, calibrated_isotonic=1.20)
-    result = store.apply_to_price(0.70, 40.0, 14)
-    assert result["calibrated_source"] == "passthrough_sanity", (
-        f"Expected passthrough_sanity, got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(0.70, 6), (
-        f"Expected raw value 0.70, got {result['calibrated']}"
-    )
-
-
-def test_passthrough_sanity_no_isotonic_passes_through():
-    """
-    passthrough_sanity with no calibrated_isotonic at long horizon → passes through.
-    """
-    store = _make_store_with_mock_sanity_passthrough(0.70)
-    result = store.apply_to_price(0.70, 40.0, 14)
-    assert result["calibrated_source"] == "passthrough_sanity", (
-        f"Expected passthrough_sanity, got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(0.70, 6), (
-        f"Expected raw value 0.70, got {result['calibrated']}"
-    )
-
-
-def test_passthrough_sanity_short_horizon():
-    """
-    passthrough_sanity at horizon 6h → passes through unchanged.
-    """
-    store = _make_store_with_mock_sanity_passthrough(0.70)
-    result = store.apply_to_price(0.70, 6.0, 14)
-    assert result["calibrated_source"] == "passthrough_sanity", (
-        f"Expected passthrough_sanity (short horizon), got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(0.70, 6), (
-        f"Expected uncapped 0.70, got {result['calibrated']}"
-    )
-
-
-def test_passthrough_sanity_below_cap_value():
-    """
-    passthrough_sanity at horizon 40h with value 0.30 → passes through unchanged.
-    """
-    store = _make_store_with_mock_sanity_passthrough(0.30)
-    result = store.apply_to_price(0.30, 40.0, 14)
-    assert result["calibrated_source"] == "passthrough_sanity", (
-        f"Expected passthrough_sanity, got {result['calibrated_source']}"
-    )
-    assert result["calibrated"] == round(0.30, 6), (
-        f"Expected uncapped 0.30, got {result['calibrated']}"
-    )
