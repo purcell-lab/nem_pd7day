@@ -222,9 +222,9 @@ def test_tariff_sensor_forecast_attribute():
         assert attrs["region"] == "QLD1"
         assert len(attrs["forecast"]) == 5
         for entry in attrs["forecast"]:
-            assert "interval_time" in entry
-            assert "tariff_$/kwh" in entry
-            assert abs(entry["tariff_$/kwh"] - 0.10) < 1e-6  # 10 c/kWh / 100
+            assert "time" in entry
+            assert "value" in entry
+            assert abs(entry["value"] - 0.10) < 1e-6  # 10 c/kWh / 100
 
 
 def test_tariff_sensor_device_info():
