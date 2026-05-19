@@ -235,8 +235,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             for period in d.forecast:
                 tariff_val = self._compute_tariff(period)
                 forecast_list.append({
-                    "interval_time": period.time,
-                    "tariff_$/kwh": tariff_val,
+                    "time": period.time,
+                    "value": tariff_val,
                 })
 
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
