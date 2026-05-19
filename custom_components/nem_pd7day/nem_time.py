@@ -119,6 +119,34 @@ def current_nem_interval() -> str:
     return to_nem_iso(interval_start)
 
 
+def _amber_express_cutoff(now: datetime | None = None) -> datetime:
+    """
+    Return the earliest datetime that PD7DAY should cover.
+
+    Amber Express provides forecasts through a window that shrinks between
+    3:30am and 12:30pm NEM time (it only reaches to 3:30am the next day).
+    Outside that window, it covers a full rolling 24h.
+
+    During the "short window" (3:30am–12:30pm NEM):
+        cutoff = tomorrow 3:30am NEM  (pinned boundary)
+    Outside (12:30pm–3:30am NEM):
+        cutoff = now + 24h            (rolling horizon)
+
+    NEM time is UTC+10, no DST.
+    """
+    from datetime import datetime, timezone, timedelta
+    NEM_TZ = timezone(timedelta(hours=10))
+    if now is None:
+        now = datetime.now(tz=NEM_TZ)
+    window_start = now.replace(hour=3, minute=30, second=0, microsecond=0)
+    window_end = now.replace(hour=12, minute=30, second=0, microsecond=0)
+    if window_start <= now < window_end:
+        tomorrow_330 = window_start + timedelta(days=1)
+        return tomorrow_330
+    else:
+        return now + timedelta(hours=24)
+
+
 def fetch_times_as_utc() -> list[str]:
     """
     Return the three daily PD7DAY fetch times converted to UTC HH:MM:SS

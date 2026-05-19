@@ -4,15 +4,27 @@
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-%3E%3D2024.1-blue.svg)](https://www.home-assistant.io/)
 [![Version](https://img.shields.io/github/v/release/purcell-lab/nem_pd7day)](https://github.com/purcell-lab/nem_pd7day/releases)
 
-A Home Assistant custom integration that fetches AEMO's **7-day ahead electricity price forecasts** (PD7DAY) for the National Electricity Market (NEM) and exposes them as HA sensors with machine-learning calibration.
+A Home Assistant custom integration that provides **days 2–7 electricity price and tariff forecasts** from AEMO's PD7DAY pre-dispatch data for the National Electricity Market (NEM). Designed to complement Amber Electric's 24-hour Express forecast, this integration covers the window beyond Amber's reach.
 
 AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integration fetches those updates on the same schedule and applies an on-device calibration layer — using your local history of forecast vs actual prices — to produce calibrated estimates with P10/P50/P90 confidence bands.
 
 ---
 
+### Designed to complement Amber Express
+
+This integration provides **days 2–7 spot price and tariff forecasts** — the window beyond Amber Electric's 24-hour Express forecast. The near-term window (next 24h) is intentionally excluded to avoid duplication.
+
+The forecast start is dynamic:
+- **12:30pm–3:30am NEM**: starts at now + 24h (rolling)
+- **3:30am–12:30pm NEM**: starts at tomorrow 3:30am NEM (pinned)
+
+Both the spot price sensor and tariff sensors apply this trim automatically.
+
+---
+
 ## Features
 
-- **7-day price forecast** — calibrated $/kWh with P10/P50/P90 confidence bands
+- **Days 2–7 price forecast** — calibrated $/kWh with P10/P50/P90 confidence bands, trimmed to the window beyond Amber Express
 - **Isotonic calibration** — monotone PAV regression bias correction fitted on actual TradingIS vs PD7DAY pairs, with per-bucket compression ratio, iso_mae, and P10/P90 confidence intervals
 - **Interconnector flows** — interconnector MW flow forecasts for the configured region
 - **Market intervention flag** — binary sensor from CASESOLUTION data
@@ -129,9 +141,9 @@ Forecast sensor states — price forecast and interconnector flow — advance au
 
 All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (e.g. `NEM PD7DAY QLD1`).
 
-### Price Forecast
+### Spot Price Days 2-7
 
-`sensor.nem_pd7day_{region}_price_forecast` — the primary calibrated price forecast sensor.
+`sensor.nem_pd7day_{region}_price_forecast` — the primary calibrated spot price forecast sensor (days 2–7 only, trimmed to exclude the Amber Express window).
 
 | Attribute | Description |
 |---|---|
@@ -243,6 +255,21 @@ Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the
 
 ---
 
+### Tariff Sensors
+
+One sensor per (distributor, tariff_code) for the configured region. Tariff sensors cover the same **days 2–7 window** as the spot price sensor — the near-term Amber Express window is trimmed from the forecast attribute. The `native_value` (current interval tariff) is unfiltered and always returns the current price.
+
+| Attribute | Description |
+|---|---|
+| `state` | Current interval tariff price ($/kWh) |
+| `forecast` | Days 2–7 tariff forecast list (time, nemtime, spot, value) |
+| `tariff_code` | Tariff code (e.g. 6900) |
+| `distributor` | Distribution network name |
+| `tariff_periods` | Time-of-use period structure with rates |
+| `daily_supply_charge_$` | Daily supply charge ($/day) |
+
+---
+
 ### Camera Entities
 
 Three camera entities are registered on the device and can be added to any HA dashboard using a **Picture** or **Camera** card.
@@ -259,12 +286,12 @@ All charts are re-rendered after each calibration refit (07:30, 13:00, 18:00 NEM
 
 ![7-Day Pre-Dispatch Spot Price Forecast](docs/forecast_chart.png)
 
-The forecast chart shows the full 7-day ahead price window for the configured NEM region:
+The forecast chart shows the full 7-day ahead price window for the configured NEM region (note: the chart displays the full window for visual context, while the sensor attributes are trimmed to days 2–7):
 
 - **Calibrated line** (blue solid) — isotonic-calibrated price forecast with P10/P90 confidence band
 - **PD7DAY Raw** (grey dashed) — AEMO's raw pre-dispatch forecast before calibration
 - **Daily max/min labels** — peak and trough $/kWh values annotated per day
-- **AEMO Spike Forecast** (red triangle callouts) — `passthrough_high` intervals where the raw forecast exceeds $3.00/kWh; one callout per contiguous cluster pointing at the cluster peak, with the peak price labelled
+- **AEMO Spike Forecast** (red triangle callouts) — intervals where `raw_value ≥ $3/kWh` and `spike_credible: True`; one callout per contiguous cluster pointing at the cluster peak, with the peak price labelled
 - **Clip line** (red dotted) — dynamic display ceiling at p99 + 15% headroom
 - **LOR/MSL notice bands** — shaded vertical regions for active NEMWEB reserve (LOR1/2/3) and minimum load (MSL1/2/3) notices, with staggered labels and a dynamic legend showing only notice types present in the window
 - **Dual y-axis** — $/kWh (left) and $/MWh (right)

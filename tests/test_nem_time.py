@@ -22,7 +22,7 @@ _nt = _load(
 from custom_components.nem_pd7day.nem_time import (
     NEM_TZ, now_nem, parse_nem_csv, to_nem_iso, parse_iso,
     current_nem_interval, fetch_times_as_utc, interval_start,
-    INTERVAL_DURATION,
+    INTERVAL_DURATION, _amber_express_cutoff,
 )
 
 UTC = timezone.utc
@@ -140,6 +140,17 @@ def test_interval_start():
     print(f"  PASS: interval_start: {nemtime_iso} -> {start_iso}")
 
 
+def test_amber_express_cutoff_importable_from_nem_time():
+    """_amber_express_cutoff must be importable from nem_time (shared helper)."""
+    assert callable(_amber_express_cutoff), "_amber_express_cutoff must be callable"
+    # Quick smoke test: returns a datetime
+    now = datetime(2026, 5, 19, 10, 0, 0, tzinfo=NEM_TZ)
+    result = _amber_express_cutoff(now=now)
+    assert isinstance(result, datetime), f"Expected datetime, got {type(result)}"
+    assert result.tzinfo is not None, "Result must be timezone-aware"
+    print("  PASS: _amber_express_cutoff importable from nem_time")
+
+
 TESTS = [
     test_nem_tz_offset,
     test_parse_nem_csv_attaches_tz,
@@ -152,6 +163,7 @@ TESTS = [
     test_current_nem_interval_format,
     test_fetch_times_as_utc,
     test_interval_start,
+    test_amber_express_cutoff_importable_from_nem_time,
 ]
 
 

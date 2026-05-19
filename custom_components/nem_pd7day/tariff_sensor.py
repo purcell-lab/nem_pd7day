@@ -21,7 +21,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DEFAULT_ENABLED_TARIFFS, DISTRIBUTOR_DISPLAY_NAMES, DOMAIN, TARIFF_NAMES
 from .coordinator import PD7DayCoordinator
-from .nem_time import now_nem, parse_iso
+from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -238,7 +238,10 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         d = self._price_data
         forecast_list: list[dict[str, Any]] = []
         if d is not None:
+            cutoff_dt = _amber_express_cutoff()
             for period in d.forecast:
+                if parse_iso(period.time) <= cutoff_dt:
+                    continue  # skip — covered by Amber Express
                 tariff_val = self._compute_tariff(period)
                 forecast_list.append({
                     "time": period.time,           # interval START (nemtime − 30 min)

@@ -209,22 +209,30 @@ def test_tariff_sensor_current_value():
 
 def test_tariff_sensor_forecast_attribute():
     """Verify forecast attribute has correct number of intervals and structure."""
+    from custom_components.nem_pd7day.nem_time import _amber_express_cutoff
+
     now = datetime.now(tz=NEM_TZ)
-    base = now.replace(minute=0, second=0, microsecond=0)
+    cutoff = _amber_express_cutoff(now=now)
+    # Place periods well past the cutoff so they survive trimming
+    # make_price_period takes nemtime (interval END), time = nemtime - 30min
+    # For time > cutoff, we need nemtime > cutoff + 30min
+    base = cutoff + timedelta(minutes=60)
+    base = base.replace(second=0, microsecond=0)
     periods = [make_price_period(base + timedelta(minutes=30 * i), value=0.05 + i * 0.01) for i in range(5)]
     sensor = make_tariff_sensor(price_periods=periods)
 
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
-        attrs = sensor.extra_state_attributes
-        assert attrs["distributor"] == "Energex"
-        assert attrs["network"] == "energex"
-        assert attrs["tariff_code"] == "8400"
-        assert attrs["region"] == "QLD1"
-        assert len(attrs["forecast"]) == 5
-        for entry in attrs["forecast"]:
-            assert "time" in entry
-            assert "value" in entry
-            assert abs(entry["value"] - 0.10) < 1e-6  # 10 c/kWh / 100
+        with patch.object(_tariff_mod, "_amber_express_cutoff", return_value=cutoff):
+            attrs = sensor.extra_state_attributes
+            assert attrs["distributor"] == "Energex"
+            assert attrs["network"] == "energex"
+            assert attrs["tariff_code"] == "8400"
+            assert attrs["region"] == "QLD1"
+            assert len(attrs["forecast"]) == 5
+            for entry in attrs["forecast"]:
+                assert "time" in entry
+                assert "value" in entry
+                assert abs(entry["value"] - 0.10) < 1e-6  # 10 c/kWh / 100
 
 
 def test_tariff_sensor_device_info():
@@ -430,3 +438,60 @@ def test_daily_supply_charge_in_attributes():
         with patch.object(_tariff_mod, "get_daily_fee", side_effect=ValueError("nope")):
             attrs = sensor.extra_state_attributes
             assert attrs["daily_supply_charge_$"] is None
+
+
+def test_tariff_forecast_trimmed_to_post_cutoff():
+    """Tariff forecast attribute must only contain intervals after the Amber Express cutoff."""
+    from custom_components.nem_pd7day.nem_time import _amber_express_cutoff, parse_iso
+
+    # Simulate 6:00am NEM — short window — cutoff = tomorrow 3:30am
+    fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    cutoff = _amber_express_cutoff(now=fake_now)  # 2026-05-20 03:30 NEM
+
+    # Build 367 periods spanning ~7.6 days from fake_now
+    base = fake_now.replace(minute=0, second=0, microsecond=0)
+    periods = []
+    for i in range(367):
+        nemtime_dt = base + timedelta(minutes=30 * (i + 1))
+        periods.append(make_price_period(nemtime_dt, value=0.05 + i * 0.0001))
+
+    sensor = make_tariff_sensor(price_periods=periods)
+
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+        with patch.object(_tariff_mod, "_amber_express_cutoff", return_value=cutoff):
+            attrs = sensor.extra_state_attributes
+    forecast = attrs["forecast"]
+
+    # Verify all intervals are after cutoff
+    for entry in forecast:
+        interval_start_dt = parse_iso(entry["time"])
+        assert interval_start_dt > cutoff, (
+            f"Tariff forecast contains interval at {entry['time']} which is <= cutoff {cutoff}"
+        )
+
+    # Should be trimmed — fewer than 367 intervals
+    assert len(forecast) < 367, f"Tariff forecast should be trimmed. Got {len(forecast)}"
+    assert len(forecast) > 0, "Tariff forecast should not be empty"
+
+    # Count how many were trimmed (intervals with start <= cutoff)
+    pre_cutoff_count = sum(
+        1 for p in periods if parse_iso(p.time) <= cutoff
+    )
+    assert len(forecast) == 367 - pre_cutoff_count, (
+        f"Expected {367 - pre_cutoff_count} post-cutoff intervals, got {len(forecast)}"
+    )
+
+
+def test_tariff_native_value_not_filtered_by_cutoff():
+    """native_value must return the current interval tariff regardless of cutoff."""
+    now = datetime.now(tz=NEM_TZ)
+    current_end = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0) + timedelta(minutes=30)
+    period = make_price_period(current_end, value=0.10)
+    sensor = make_tariff_sensor(price_periods=[period])
+
+    # The current interval is within the Amber Express cutoff window,
+    # but native_value should still return it (no filter on native_value)
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
+        val = sensor.native_value
+        assert val is not None, "native_value should not be None for current interval"
+        assert abs(val - 0.155) < 1e-6, f"Expected 0.155, got {val}"
