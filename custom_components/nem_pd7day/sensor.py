@@ -71,14 +71,17 @@ from .const import (
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
+    DISTRIBUTOR_TARIFFS,
     DOMAIN,
     get_region,
     interconnectors_for_regions,
     QLD1_INTERCONNECTORS,
+    REGION_DISTRIBUTORS,
     STORE_KEY,
     storage_keys,
 )
 from .coordinator import PD7DayCoordinator
+from .tariff_sensor import NemPd7dayTariffSensor
 
 if TYPE_CHECKING:
     from .notice_store import GridNoticeStore
@@ -131,6 +134,13 @@ async def async_setup_entry(
     entities.append(PD7DayTodSensor(coordinator, entry, region))
 
     entities.append(NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store))
+
+    # Tariff forecast sensors — one per (distributor, tariff_code) for this region
+    for distributor in REGION_DISTRIBUTORS.get(region, []):
+        for tariff_code in DISTRIBUTOR_TARIFFS.get(distributor, []):
+            entities.append(
+                NemPd7dayTariffSensor(coordinator, entry, region, distributor, tariff_code)
+            )
 
     async_add_entities(entities, update_before_add=True)
 
