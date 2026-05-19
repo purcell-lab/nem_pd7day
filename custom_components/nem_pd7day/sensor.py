@@ -104,7 +104,7 @@ def _amber_express_cutoff(now: datetime | None = None) -> datetime:
 
     NEM time is UTC+10, no DST.
     """
-    from datetime import timezone, timedelta
+    from datetime import datetime, timezone, timedelta
     NEM_TZ = timezone(timedelta(hours=10))
     if now is None:
         now = datetime.now(tz=NEM_TZ)
