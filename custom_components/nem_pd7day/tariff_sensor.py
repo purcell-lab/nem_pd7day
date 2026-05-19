@@ -15,7 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DEFAULT_ENABLED_TARIFFS, DOMAIN, TARIFF_NAMES
 from .coordinator import PD7DayCoordinator
 from .nem_time import now_nem, parse_iso
 
@@ -53,8 +53,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._attr_unique_id = (
             f"{entry.entry_id}_{region}_{distributor}_{tariff_code}_tariff"
         )
+        tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
         self._attr_name = (
-            f"{region} {distributor.title()} {tariff_code} Tariff"
+            f"{distributor.title()} {tariff_code} {tariff_name} Tariff"
         )
 
     @property
@@ -62,6 +63,10 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
         )
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
 
     @property
     def _price_data(self):

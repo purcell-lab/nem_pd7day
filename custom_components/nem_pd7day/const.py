@@ -160,6 +160,195 @@ DISTRIBUTOR_TARIFFS = {
     "tasnetworks": ["TAS93", "TAS87", "TAS97", "TAS94", "TAS88"],
 }
 
+# ── Human-readable tariff names ──────────────────────────────────────────────
+TARIFF_NAMES = {
+    # Energex
+    "energex": {
+        "8400": "Residential Flat",
+        "3900": "Residential Transitional Demand",
+        "3700": "Residential Demand",
+        "6900": "Residential Time of Use Energy",
+        "3600": "Small Business Demand",
+        "3800": "Small Business Transitional Demand",
+        "6000": "Small Business Wide IFT",
+        "8500": "Small Business Flat",
+        "8900": "Small 8900 TOU",
+        "8800": "Small 8800 TOU",
+        "6800": "Small Business ToU Energy",
+        "6600": "Large Residential Energy",
+        "6700": "Large Business Energy",
+        "7200": "LV Demand Time-of-Use",
+        "8100": "Demand Large",
+        "8300": "SAC Demand Small",
+        "94300": "Large TOU Energy",
+    },
+    # Ergon
+    "ergon": {
+        "ERTOUET1": "Residential Battery ToU",
+        "WRTOUET1": "Residential Wide ToU",
+        "MRTOUET4": "Residential Multi ToU",
+        "6900": "Residential Time of Use Energy",
+        "ERTDEMXT1": "Residential Demand Extended",
+        "ERTDEMCT1": "Residential Demand Controlled",
+        "3900": "Residential Transitional Demand",
+        "3600": "Small Business Demand",
+        "3800": "Small Business Transitional Demand",
+        "7200": "LV Demand Time-of-Use",
+    },
+    # Ausgrid
+    "ausgrid": {
+        "EA010": "Residential Flat",
+        "EA025": "Residential ToU",
+        "EA111": "Residential Demand Introductory",
+        "EA116": "Residential Demand",
+        "EA225": "Small Business ToU",
+        "EA305": "Small Business LV",
+    },
+    # Endeavour
+    "endeavour": {
+        "N70": "Residential Flat",
+        "N71": "Residential Seasonal TOU",
+        "N90": "General Supply Block",
+        "N91": "GS Seasonal TOU",
+        "N19": "LV Seasonal STOU Demand",
+        "N95": "Storage",
+        "N73": "Residential Demand Transitional",
+        "N61": "Residential Electrify",
+    },
+    # Essential Energy
+    "essential": {
+        "BLNREX2": "Residential Solar Export",
+        "BLNBEX1": "Business Solar Export",
+        "BLNN2AU": "Residential Anytime",
+        "BLNT3AU": "Residential TOU Basic Meter",
+        "BLNT3AL": "Residential TOU Interval Meter",
+        "BLNRSS2": "Residential Sun Soaker",
+        "BLND1AR": "Residential Demand",
+        "BLNC1AU": "Controlled Load 1",
+        "BLNC2AU": "Controlled Load 2",
+        "BLNN1AU": "Small Business Anytime",
+        "BLNT2AU": "Small Business TOU Basic Meter",
+        "BLNT2AL": "Small Business TOU Interval Meter",
+        "BLNT1AO": "Small Business TOU 100-160 MWh",
+        "BLNBSS1": "Small Business Sun Soaker",
+        "BLND1AB": "Small Business Demand",
+    },
+    # Evoenergy
+    "evoenergy": {
+        "015": "Residential TOU Network (Closed)",
+        "016": "Residential TOU Network (Closed) XMC",
+        "017": "New Residential TOU Network",
+        "018": "New Residential TOU Network XMC",
+        "026": "Residential Demand",
+        "090": "Component Charge",
+    },
+    # Jemena
+    "jemena": {
+        "D1": "Residential Single Rate",
+        "PRTOU": "Residential TOU",
+    },
+    # Powercor
+    "powercor": {
+        "D1": "Residential Single Rate",
+        "PRTOU": "Residential TOU",
+        "NDMO21": "NDMO21 TOU",
+        "NDTOU": "NDTOU TOU",
+        "PRDS": "Residential Daytime Saver",
+    },
+    # United Energy
+    "united": {
+        "D1": "Residential Single Rate",
+        "URTOU": "Residential TOU",
+        "FURTOU": "Residential Flexible TOU",
+        "FURDS": "Residential Flexible Demand Saver",
+        "URDS": "Residential Demand Saver",
+        "NDMO21": "NDMO21 TOU",
+        "NDTOU": "NDTOU TOU",
+        "PRDS": "Residential Daytime Saver",
+    },
+    # AusNet
+    "ausnet": {
+        "NAST11S": "Small Business Time of Use",
+        "NEE11S": "Residential Single Rate",
+    },
+    # SA Power Networks
+    "sapn": {
+        "RESELE": "Residential Electrify",
+        "RESELEX": "Residential Electrify Export",
+        "RELE2W": "Residential Electrify Two Way",
+        "SBELE": "Small Business Electrify",
+        "SBELEX": "Small Business Electrify Export",
+        "B2R": "Business Two Rate",
+        "RSR": "Residential Single Rate",
+        "RTOU": "Residential Time of Use",
+        "RTOUNE": "Residential TOU No Export",
+        "RPRO": "Residential Prosumer",
+        "RELE": "Residential Electrify",
+        "SBTOU": "Small Business Time of Use",
+        "SBTOUNE": "Small Business TOU No Export",
+    },
+    # TasNetworks
+    "tasnetworks": {
+        "TAS93": "Residential ToU Consumption",
+        "TAS87": "Residential ToU Demand",
+        "TAS97": "Residential ToU CER",
+        "TAS94": "Small Business ToU Consumption",
+        "TAS88": "Small Business ToU Demand",
+    },
+    # Victoria (generic)
+    "victoria": {
+        "VICR_SINGLE": "Residential Single Rate",
+        "VICR_TOU": "Residential Time of Use",
+        "VICS_SINGLE": "Small Business Single Rate",
+        "VICS_TOU": "Small Business Time of Use",
+        "VICR_DEMAND": "Residential Demand",
+        "VICS_DEMAND": "Small Business Demand",
+    },
+}
+
+# ── Default-enabled tariff sensors (residential ToU + trial per distributor) ──
+DEFAULT_ENABLED_TARIFFS = {
+    # Energex — Residential ToU + battery trial
+    ("energex", "6900"),   # Residential Time of Use Energy
+    ("energex", "8900"),   # Small 8900 TOU (trial)
+    # Ergon
+    ("ergon", "6900"),     # Residential Time of Use Energy
+    ("ergon", "ERTOUET1"), # Residential Battery ToU
+    # Ausgrid
+    ("ausgrid", "EA025"),  # Residential ToU
+    ("ausgrid", "EA111"),  # Residential Demand Introductory (trial)
+    # Endeavour
+    ("endeavour", "N71"),  # Residential Seasonal TOU
+    ("endeavour", "N61"),  # Residential Electrify (trial)
+    # Essential
+    ("essential", "BLNT3AL"), # Residential TOU Interval Meter
+    ("essential", "BLNRSS2"), # Residential Sun Soaker (trial)
+    # Evoenergy
+    ("evoenergy", "017"),  # New Residential TOU Network
+    ("evoenergy", "018"),  # New Residential TOU Network XMC (trial)
+    # Jemena — small set, enable both
+    ("jemena", "D1"),
+    ("jemena", "PRTOU"),
+    # Powercor
+    ("powercor", "PRTOU"), # Residential TOU
+    ("powercor", "PRDS"),  # Residential Daytime Saver (trial)
+    # United
+    ("united", "URTOU"),   # Residential TOU
+    ("united", "PRDS"),    # Residential Daytime Saver (trial)
+    # AusNet — small set, enable both
+    ("ausnet", "NAST11S"),
+    ("ausnet", "NEE11S"),
+    # SA Power Networks
+    ("sapn", "RTOU"),      # Residential Time of Use
+    ("sapn", "RPRO"),      # Residential Prosumer (trial)
+    # TasNetworks
+    ("tasnetworks", "TAS93"), # Residential ToU Consumption
+    ("tasnetworks", "TAS97"), # Residential ToU CER (trial)
+    # Victoria
+    ("victoria", "VICR_TOU"),    # Residential Time of Use
+    ("victoria", "VICR_DEMAND"), # Residential Demand (trial)
+}
+
 # Coordinator / store keys
 COORDINATOR_KEY = "coordinator"
 STORE_KEY = "store"

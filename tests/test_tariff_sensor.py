@@ -129,9 +129,11 @@ _tariff_mod = _load(
 
 from custom_components.nem_pd7day.tariff_sensor import NemPd7dayTariffSensor
 from custom_components.nem_pd7day.const import (
+    DEFAULT_ENABLED_TARIFFS,
+    DISTRIBUTOR_TARIFFS,
     DOMAIN,
     REGION_DISTRIBUTORS,
-    DISTRIBUTOR_TARIFFS,
+    TARIFF_NAMES,
 )
 
 NEM_TZ = timezone(timedelta(hours=10))
@@ -180,7 +182,8 @@ def make_tariff_sensor(
     sensor._tariff_code = tariff_code
     sensor._entry = entry
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
-    sensor._attr_name = f"{region} {distributor.title()} {tariff_code} Tariff"
+    tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
+    sensor._attr_name = f"{distributor.title()} {tariff_code} {tariff_name} Tariff"
     return sensor
 
 
@@ -307,3 +310,43 @@ def test_forecast_attribute_with_none_coordinator_data():
     assert attrs["distributor"] == "energex"
     assert attrs["tariff_code"] == "8400"
     assert attrs["region"] == "QLD1"
+
+
+def test_tariff_sensor_names():
+    """Verify name format includes human-readable tariff name from TARIFF_NAMES."""
+    sensor_6900 = make_tariff_sensor(distributor="energex", tariff_code="6900")
+    assert sensor_6900._attr_name == "Energex 6900 Residential Time of Use Energy Tariff"
+
+    sensor_rtou = make_tariff_sensor(distributor="sapn", tariff_code="RTOU")
+    assert sensor_rtou._attr_name == "Sapn RTOU Residential Time of Use Tariff"
+
+    # Unknown tariff code falls back to code itself
+    sensor_unknown = make_tariff_sensor(distributor="energex", tariff_code="ZZZZ")
+    assert sensor_unknown._attr_name == "Energex ZZZZ ZZZZ Tariff"
+
+
+def test_default_enabled_tariffs():
+    """Verify 6900/energex is default-enabled, 8400/energex is default-disabled."""
+    sensor_enabled = make_tariff_sensor(distributor="energex", tariff_code="6900")
+    assert sensor_enabled.entity_registry_enabled_default is True
+
+    sensor_disabled = make_tariff_sensor(distributor="energex", tariff_code="8400")
+    assert sensor_disabled.entity_registry_enabled_default is False
+
+
+def test_all_non_default_disabled():
+    """Spot-check several non-default tariffs return False for entity_registry_enabled_default."""
+    non_default_cases = [
+        ("energex", "8400"),     # Residential Flat
+        ("ergon", "3900"),       # Residential Transitional Demand
+        ("ausgrid", "EA010"),    # Residential Flat
+        ("endeavour", "N70"),    # Residential Flat
+        ("essential", "BLNN2AU"), # Residential Anytime
+        ("sapn", "RSR"),         # Residential Single Rate
+        ("tasnetworks", "TAS87"), # Residential ToU Demand
+    ]
+    for distributor, tariff_code in non_default_cases:
+        sensor = make_tariff_sensor(distributor=distributor, tariff_code=tariff_code)
+        assert sensor.entity_registry_enabled_default is False, (
+            f"{distributor}/{tariff_code} should be default-disabled"
+        )
