@@ -360,6 +360,16 @@ Each isotonic bucket fit uses exponential time decay weighting:
 
 4 ToD labels × 6 horizon bands = 24 active buckets per region. Minimum 20 observations required per bucket before it activates. New installs will see buckets activate progressively over the first few days.
 
+### Spike Forecasts
+
+PD7DAY raw values for days 2–7 that appear as very high prices (e.g. $8,999/MWh) are predominantly **pre-dispatch bids** placed by generators for future intervals — not genuine price spike forecasts. Generators routinely submit high bids for capacity they may or may not dispatch, especially at long horizons where the bids are speculative.
+
+These bid-based values are filtered out of the calibrated price. The isotonic model clips them to the training-range maximum — a normal-market estimate based on observed actual prices. The integration **does not pass through raw spike values** as calibrated prices. The `calibrated` / `value` fields always reflect a normal-market isotonic estimate. This is intentional design.
+
+The `spike_credible: True` annotation is applied to intervals where `raw_value ≥ $3/kWh` AND gas supply forecast and QNI interconnector flow conditions suggest a credible supply constraint. Even these are treated with caution at 2–7 day horizons — the annotation flags *possible* supply tightness, not a confirmed price event.
+
+Users who want to inspect the underlying raw bid-based values can read the `raw_value` field in each forecast interval entry.
+
 ### AEMO forecast bias — QLD empirical findings
 
 ![QLD Duck Curve and AEMO Bias Analysis](docs/qld_duck_curve_bias.png)
