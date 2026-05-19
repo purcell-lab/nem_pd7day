@@ -182,7 +182,7 @@ def make_sensor(store=None) -> PD7DayForecastSensor:
     sensor._region = "QLD1"
     sensor._store = store
     sensor._attr_unique_id = "nem_pd7day_qld1_forecast"
-    sensor._attr_name = "Price Forecast"
+    sensor._attr_name = "Spot Price Days 2-7"
     return sensor
 
 
@@ -747,3 +747,190 @@ def test_sensor_reads_capped_value():
         f"Sensor should return capped value {SPIKE_COVARIATE_CAP}, "
         f"got {sensor.native_value}. Covariates may not be passed through."
     )
+
+
+# ── Tests: forecast trim to post-Amber-Express horizon ─────────────────────
+
+def test_sensor_name_is_spot_price_days_2_7():
+    """Sensor name must be 'Spot Price Days 2-7' after rename."""
+    sensor = make_sensor(store=None)
+    assert sensor._attr_name == "Spot Price Days 2-7"
+
+
+def test_forecast_attribute_only_contains_post_24h_intervals():
+    """ATTR_FORECAST must only contain intervals with horizon_hours > 24."""
+    from custom_components.nem_pd7day.const import AMBER_EXPRESS_HORIZON_H
+
+    sensor = make_sensor(store=None)
+
+    run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    run_at_str = nem_iso(run_at_dt)
+
+    # Build 100 periods: 50 within 24h, 50 beyond 24h
+    periods = []
+    for i in range(100):
+        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
+        periods.append(make_price_period(interval_end_dt, value=0.05 + i * 0.001))
+
+    price_data = MagicMock()
+    price_data.forecast = periods
+    price_data.forecast_generated_at = run_at_str
+    price_data.region = "QLD1"
+    price_data.interval_minutes = 30
+    price_data.source_file = "test.xml"
+
+    sensor.coordinator.data = MagicMock()
+    sensor.coordinator.data.prices = {"QLD1": price_data}
+
+    attrs = sensor.extra_state_attributes
+    forecast = attrs["forecast"]
+
+    # Every interval in the forecast must have horizon > 24h
+    for p in forecast:
+        assert p["horizon_hours"] > AMBER_EXPRESS_HORIZON_H, (
+            f"Forecast contains interval with horizon_hours={p['horizon_hours']} "
+            f"which is <= {AMBER_EXPRESS_HORIZON_H}h"
+        )
+
+    # Should have fewer intervals than the full forecast
+    assert len(forecast) < 100, (
+        f"Trimmed forecast should be shorter than full (100). Got {len(forecast)}"
+    )
+    assert len(forecast) > 0, "Trimmed forecast should not be empty"
+
+
+def test_min_max_computed_over_trimmed_window():
+    """min_24h_value and max_24h_value must come from the trimmed forecast."""
+    sensor = make_sensor(store=None)
+
+    run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    run_at_str = nem_iso(run_at_dt)
+
+    # First 48 intervals (24h): values are 0.01 (low) and 9.99 (high)
+    # Post-24h intervals: values between 0.05 and 0.10
+    periods = []
+    for i in range(96):
+        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
+        if i < 48:
+            # Within 24h: extreme values that should NOT appear in min/max
+            val = 0.01 if i % 2 == 0 else 9.99
+        else:
+            # Beyond 24h: moderate values
+            val = 0.05 + i * 0.0005
+        periods.append(make_price_period(interval_end_dt, value=val))
+
+    price_data = MagicMock()
+    price_data.forecast = periods
+    price_data.forecast_generated_at = run_at_str
+    price_data.region = "QLD1"
+    price_data.interval_minutes = 30
+    price_data.source_file = "test.xml"
+
+    sensor.coordinator.data = MagicMock()
+    sensor.coordinator.data.prices = {"QLD1": price_data}
+
+    attrs = sensor.extra_state_attributes
+    # min/max should NOT include the extreme 0.01 / 9.99 from within-24h
+    assert attrs["min_24h_value"] >= 0.05, (
+        f"min_24h_value={attrs['min_24h_value']} should be from trimmed window (>= 0.05)"
+    )
+    assert attrs["max_24h_value"] < 1.0, (
+        f"max_24h_value={attrs['max_24h_value']} should be from trimmed window (< 1.0)"
+    )
+
+
+def test_cheapest_2h_window_computed_over_trimmed_forecast():
+    """cheapest_2h_window must be computed from post-24h intervals only."""
+    sensor = make_sensor(store=None)
+
+    run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    run_at_str = nem_iso(run_at_dt)
+
+    periods = []
+    for i in range(96):
+        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
+        if i < 48:
+            # Within 24h: very cheap — should NOT be selected
+            val = 0.001
+        else:
+            # Beyond 24h: moderate values
+            val = 0.10 + i * 0.001
+        periods.append(make_price_period(interval_end_dt, value=val))
+
+    price_data = MagicMock()
+    price_data.forecast = periods
+    price_data.forecast_generated_at = run_at_str
+    price_data.region = "QLD1"
+    price_data.interval_minutes = 30
+    price_data.source_file = "test.xml"
+
+    sensor.coordinator.data = MagicMock()
+    sensor.coordinator.data.prices = {"QLD1": price_data}
+
+    attrs = sensor.extra_state_attributes
+    cheapest = attrs["cheapest_2h_window"]
+    assert cheapest is not None, "cheapest_2h_window should not be None with enough intervals"
+    # The cheapest avg must be from the trimmed forecast (values >= 0.10), not 0.001
+    assert cheapest["avg_value"] >= 0.10, (
+        f"cheapest avg_value={cheapest['avg_value']} should be >= 0.10 "
+        f"(from trimmed window, not the 0.001 within-24h values)"
+    )
+
+
+def test_native_value_unaffected_by_trim():
+    """native_value returns the current-interval calibrated price regardless of trim."""
+    from unittest.mock import patch
+    sensor = make_sensor(store=None)
+
+    now = datetime.now(NEM_TZ)
+    interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
+    interval_end = interval_start + timedelta(minutes=30)
+
+    period = MagicMock()
+    period.time = nem_iso(interval_start)
+    period.nemtime = nem_iso(interval_end)
+    period.value = 0.042
+
+    price_data = MagicMock()
+    price_data.forecast = [period]
+    price_data.forecast_generated_at = nem_iso(now - timedelta(hours=1))
+    sensor.coordinator.data = MagicMock()
+    sensor.coordinator.data.prices = {"QLD1": price_data}
+
+    # native_value should still work even though this interval is within 24h
+    assert abs(sensor.native_value - 0.042) < 1e-9
+
+
+def test_next_value_from_trimmed_forecast():
+    """next_value must be the first interval from the trimmed (post-24h) forecast."""
+    sensor = make_sensor(store=None)
+
+    run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    run_at_str = nem_iso(run_at_dt)
+
+    periods = []
+    for i in range(60):
+        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
+        val = 0.05 + i * 0.001
+        periods.append(make_price_period(interval_end_dt, value=val))
+
+    price_data = MagicMock()
+    price_data.forecast = periods
+    price_data.forecast_generated_at = run_at_str
+    price_data.region = "QLD1"
+    price_data.interval_minutes = 30
+    price_data.source_file = "test.xml"
+
+    sensor.coordinator.data = MagicMock()
+    sensor.coordinator.data.prices = {"QLD1": price_data}
+
+    attrs = sensor.extra_state_attributes
+    forecast = attrs["forecast"]
+    next_val = attrs["next_value"]
+
+    # next_value should equal the value of the first trimmed forecast interval
+    if forecast:
+        expected = forecast[0].get("value")
+        assert next_val == expected, (
+            f"next_value={next_val} should equal first trimmed forecast value={expected}"
+        )

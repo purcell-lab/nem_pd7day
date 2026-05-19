@@ -31,6 +31,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import tod_stats as _tod_stats
 from .const import (
+    AMBER_EXPRESS_HORIZON_H,
     ATTR_ATTRIBUTION,
     ATTR_CAL_ACTIVE_BUCKETS,
     ATTR_CAL_CALIBRATED,
@@ -171,7 +172,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._store = store
         slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{slug}_forecast"
-        self._attr_name = "Price Forecast"
+        self._attr_name = "Spot Price Days 2-7"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",
@@ -321,30 +322,52 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             self._calibrate_period(p, run_at) for p in d.forecast
         ]
 
+        # Trim to post-Amber-Express horizon (> 24h)
+        trimmed_forecast = [
+            p for p in calibrated_forecast
+            if p.get("horizon_hours", 0) > AMBER_EXPRESS_HORIZON_H
+        ]
+
+        # Min/max over trimmed window (use calibrated 'value' field)
+        trimmed_values = [
+            p.get("value") for p in trimmed_forecast if p.get("value") is not None
+        ]
+        min_value = round(min(trimmed_values), 6) if trimmed_values else None
+        max_value = round(max(trimmed_values), 6) if trimmed_values else None
+
+        # Cheapest 2h window over trimmed forecast
+        # Find the 4 consecutive intervals (30-min each = 2h) with lowest average 'value'
+        n = 4
+        cheapest_window = None
+        if len(trimmed_forecast) >= n:
+            for i in range(len(trimmed_forecast) - n + 1):
+                window = trimmed_forecast[i : i + n]
+                vals = [p.get("value") for p in window if p.get("value") is not None]
+                if len(vals) == n:
+                    avg = round(sum(vals) / n, 6)
+                    if cheapest_window is None or avg < cheapest_window["avg_value"]:
+                        cheapest_window = {
+                            "nemtime_start": window[0].get("nemtime"),
+                            "nemtime_end": window[-1].get("nemtime"),
+                            "start": window[0].get("time"),
+                            "end": window[-1].get("time"),
+                            "avg_value": avg,
+                            "points": n,
+                        }
+
         return {
             ATTR_REGION: d.region,
             ATTR_FORECAST_GENERATED_AT: run_at,
             ATTR_INTERVAL_MINUTES: d.interval_minutes,
             ATTR_NEXT_VALUE: (
-                calibrated_forecast[1].get(ATTR_CAL_CALIBRATED, calibrated_forecast[1].get("value"))
-                if len(calibrated_forecast) > 1
+                trimmed_forecast[0].get(ATTR_CAL_CALIBRATED, trimmed_forecast[0].get("value"))
+                if trimmed_forecast
                 else None
             ),
-            ATTR_MIN_24H: d.min_24h_value,
-            ATTR_MAX_24H: d.max_24h_value,
-            ATTR_CHEAPEST_2H: (
-                {
-                    "nemtime_start": d.cheapest_2h_window.nemtime_start,
-                    "nemtime_end": d.cheapest_2h_window.nemtime_end,
-                    "start": d.cheapest_2h_window.start,
-                    "end": d.cheapest_2h_window.end,
-                    "avg_value": d.cheapest_2h_window.avg_value,
-                    "points": d.cheapest_2h_window.points,
-                }
-                if d.cheapest_2h_window
-                else None
-            ),
-            ATTR_FORECAST: calibrated_forecast,
+            ATTR_MIN_24H: min_value,
+            ATTR_MAX_24H: max_value,
+            ATTR_CHEAPEST_2H: cheapest_window,
+            ATTR_FORECAST: trimmed_forecast,
             ATTR_SOURCE_FILE: d.source_file,
             "calibration_active": (
                 self._store is not None

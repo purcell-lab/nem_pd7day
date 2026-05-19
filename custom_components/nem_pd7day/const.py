@@ -135,6 +135,10 @@ SPIKE_COVARIATE_RAW_FLOOR = 1.00     # $/kWh — only apply gate above this raw 
 SPIKE_CALLOUT_THRESHOLD_24H = 1.50   # $/kWh — moderate spikes within 24h
 SPIKE_CALLOUT_THRESHOLD_48H = 3.00   # $/kWh — only extreme spikes at 24-48h
 
+# Amber Express provides forecasts for the next 24h — PD7DAY forecast
+# attribute is trimmed to horizons beyond this to avoid duplication.
+AMBER_EXPRESS_HORIZON_H = 24.0
+
 # ── Region → distributor → tariff mapping (for tariff forecast sensors) ────────
 DISTRIBUTOR_DISPLAY_NAMES = {
     "energex":     "Energex",
