@@ -15,7 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DEFAULT_ENABLED_TARIFFS, DOMAIN, TARIFF_NAMES
+from .const import DEFAULT_ENABLED_TARIFFS, DISTRIBUTOR_DISPLAY_NAMES, DOMAIN, TARIFF_NAMES
 from .coordinator import PD7DayCoordinator
 from .nem_time import now_nem, parse_iso
 
@@ -55,7 +55,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         )
         tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
         self._attr_name = (
-            f"{distributor.title()} {tariff_code} {tariff_name} Tariff"
+            f"{DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())} {tariff_code} {tariff_name} Tariff"
         )
 
     @property

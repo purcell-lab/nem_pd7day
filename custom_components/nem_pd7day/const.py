@@ -136,6 +136,22 @@ SPIKE_CALLOUT_THRESHOLD_24H = 1.50   # $/kWh — moderate spikes within 24h
 SPIKE_CALLOUT_THRESHOLD_48H = 3.00   # $/kWh — only extreme spikes at 24-48h
 
 # ── Region → distributor → tariff mapping (for tariff forecast sensors) ────────
+DISTRIBUTOR_DISPLAY_NAMES = {
+    "energex":     "Energex",
+    "ergon":       "Ergon",
+    "ausgrid":     "Ausgrid",
+    "endeavour":   "Endeavour Energy",
+    "essential":   "Essential Energy",
+    "evoenergy":   "Evoenergy",
+    "jemena":      "Jemena",
+    "powercor":    "Powercor",
+    "united":      "United Energy",
+    "ausnet":      "AusNet",
+    "sapn":        "SA Power Networks",
+    "tasnetworks": "TasNetworks",
+    "victoria":    "Victoria",
+}
+
 REGION_DISTRIBUTORS = {
     "QLD1": ["energex", "ergon"],
     "NSW1": ["ausgrid", "endeavour", "essential"],
