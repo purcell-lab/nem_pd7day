@@ -15,8 +15,9 @@ import datetime
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DEFAULT_ENABLED_TARIFFS, DISTRIBUTOR_DISPLAY_NAMES, DOMAIN, TARIFF_NAMES
 from .coordinator import PD7DayCoordinator
@@ -47,8 +48,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    # Refresh every 30 minutes so state updates as the NEM interval advances
-    _INTERVAL_REFRESH = datetime.timedelta(minutes=30)
+    # Small delay after interval boundary to allow coordinator data to settle
+    _BOUNDARY_DELAY = datetime.timedelta(seconds=5)
 
     def __init__(
         self,
@@ -72,19 +73,37 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to coordinator updates and schedule 30-min interval refresh."""
+        """Subscribe to coordinator updates and schedule NEM boundary refresh."""
         await super().async_added_to_hass()
+        self._schedule_next_boundary()
+
+    def _next_nem_boundary(self) -> datetime.datetime:
+        """Return the next :00 or :30 boundary in NEM time (UTC+10), plus a small delay."""
+        now = dt_util.now()
+        # Truncate to current minute then find next :00 or :30
+        minute = now.minute
+        if minute < 30:
+            next_boundary = now.replace(minute=30, second=0, microsecond=0)
+        else:
+            next_boundary = (now + datetime.timedelta(hours=1)).replace(
+                minute=0, second=0, microsecond=0
+            )
+        return next_boundary + self._BOUNDARY_DELAY
+
+    def _schedule_next_boundary(self) -> None:
+        """Schedule a one-shot callback at the next NEM interval boundary."""
         self.async_on_remove(
-            async_track_time_interval(
+            async_track_point_in_time(
                 self.hass,
                 self._handle_interval_tick,
-                self._INTERVAL_REFRESH,
+                self._next_nem_boundary(),
             )
         )
 
     async def _handle_interval_tick(self, _now: datetime.datetime) -> None:
-        """Called every 30 min to push a state update as the NEM interval advances."""
+        """Called at each NEM interval boundary to update state and reschedule."""
         self.async_write_ha_state()
+        self._schedule_next_boundary()
 
     @property
     def device_info(self) -> DeviceInfo:
