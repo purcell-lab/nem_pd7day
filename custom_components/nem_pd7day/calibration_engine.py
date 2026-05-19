@@ -345,7 +345,16 @@ class BucketModel:
             }
 
         if x >= SPIKE_THRESHOLD:
-            return {
+            # Attempt isotonic calibration even for spike values — iso uses
+            # out_of_bounds='clip' so the result is the clipped training-range
+            # maximum, which is a better display value than the raw APC price.
+            iso_val = None
+            if self.iso_model is not None:
+                try:
+                    iso_val = float(max(self.iso_model.predict([x])[0], 0.0))
+                except Exception:
+                    iso_val = None
+            result = {
                 "calibrated": round(x, 6),
                 "p10": round(x, 6),
                 "p50": round(x, 6),
@@ -353,6 +362,9 @@ class BucketModel:
                 "calibrated_source": "passthrough_high",
                 "n_obs": self.ols.n,
             }
+            if iso_val is not None:
+                result["calibrated_isotonic"] = round(iso_val, 6)
+            return result
 
         if self.iso_model is None:
             # Isotonic model not available (< MIN_OBS or not persisted) —

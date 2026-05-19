@@ -470,15 +470,28 @@ class CalibrationStore:
                 and qni_mwflow < SPIKE_QNI_THRESHOLD_MW
             )
             if not gate_met:
-                capped = min(raw_price, SPIKE_COVARIATE_CAP)
-                cal = {
-                    **cal,
-                    "calibrated": round(capped, 6),
-                    "p10": round(capped, 6),
-                    "p50": round(capped, 6),
-                    "p90": round(capped, 6),
-                    "calibrated_source": "covariate_capped",
-                }
+                # Prefer isotonic clip over hard cap when available
+                isotonic = cal.get("calibrated_isotonic")
+                calibrated = cal["calibrated"]
+                if isotonic is not None and 0.0 <= isotonic < calibrated:
+                    cal = {
+                        **cal,
+                        "calibrated": round(isotonic, 6),
+                        "p10": round(isotonic, 6),
+                        "p50": round(isotonic, 6),
+                        "p90": round(isotonic, 6),
+                        "calibrated_source": "covariate_capped_isotonic",
+                    }
+                else:
+                    capped = min(raw_price, SPIKE_COVARIATE_CAP)
+                    cal = {
+                        **cal,
+                        "calibrated": round(capped, 6),
+                        "p10": round(capped, 6),
+                        "p50": round(capped, 6),
+                        "p90": round(capped, 6),
+                        "calibrated_source": "covariate_capped",
+                    }
 
         # Sanity-passthrough recovery: when the calibration engine detected an
         # anomalous calibration (ratio or abs-diff guard) and fell back to
