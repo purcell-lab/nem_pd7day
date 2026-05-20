@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -10,6 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, QLD1_INTERCONNECTORS, interconnectors_for_regions
+from .dispatch_client import DispatchPrice, fetch_dispatch_prices
 from .pd7day_client import PD7DayClient, PD7DayResult
 from . import tod_stats as _tod_stats
 from .tod_stats import TodStats
@@ -123,3 +125,28 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             self.notice_store.add_notices(new_notices)
             await self.notice_store.async_save()
             _LOGGER.info("Fetched %d new market notices", len(new_notices))
+
+
+class DispatchCoordinator(DataUpdateCoordinator):
+    """5-minute coordinator for AEMO dispatch prices."""
+
+    def __init__(self, hass: HomeAssistant, region: str) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"NEM Dispatch {region}",
+            update_interval=timedelta(minutes=5),
+        )
+        self.region = region
+        self.prices: dict[str, DispatchPrice] = {}
+        self.last_updated: datetime | None = None
+
+    async def _async_update_data(self):
+        try:
+            prices = await self.hass.async_add_executor_job(fetch_dispatch_prices)
+            self.prices = prices
+            self.last_updated = datetime.now(timezone.utc)
+            return prices
+        except Exception as exc:
+            _LOGGER.warning("DispatchIS fetch failed: %s", exc)
+            raise UpdateFailed(f"DispatchIS fetch failed: {exc}") from exc

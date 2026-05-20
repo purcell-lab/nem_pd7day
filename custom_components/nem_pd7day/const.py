@@ -44,6 +44,12 @@ REGIONS = ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]
 # Config entry keys
 CONF_REGION = "region"
 CONF_REGIONS = "regions"  # kept for migration from old list-based config
+CONF_FORECAST_MODE = "forecast_mode"
+CONF_ACTIVE_TARIFF = "active_tariff"
+
+# Forecast mode values
+FORECAST_MODE_FULL = "days_1_7"       # naive: days 1-7, all residential tariffs visible
+FORECAST_MODE_DAYS_2_7 = "days_2_7"   # sophisticated: days 2-7, one selected tariff
 # TradingIS (actual price source)
 TRADINGIS_BASE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/"
 TRADINGIS_FETCH_MINUTES = [2, 32]
@@ -365,6 +371,7 @@ DEFAULT_ENABLED_TARIFFS = {
 # Coordinator / store keys
 COORDINATOR_KEY = "coordinator"
 STORE_KEY = "store"
+DISPATCH_KEY = "dispatch"
 
 # ── PRICESOLUTION sensor attributes ──────────────────────────────────────────
 ATTR_REGION = "region"

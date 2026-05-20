@@ -7,6 +7,14 @@
         "data": {
           "region": "NEM Region"
         }
+      },
+      "forecast_mode": {
+        "title": "Forecast Mode",
+        "description": "Choose how the forecast is presented.",
+        "data": {
+          "forecast_mode": "Forecast mode",
+          "active_tariff": "Active tariff (days 2-7 mode)"
+        }
       }
     },
     "error": {
@@ -55,7 +63,9 @@
         "title": "NEM PD7DAY Options",
         "description": "Forecasts are fetched at {fetch_times} NEM time (AEST).",
         "data": {
-          "region": "NEM Region"
+          "region": "NEM Region",
+          "forecast_mode": "Forecast mode",
+          "active_tariff": "Active tariff (days 2-7 mode)"
         }
       }
     }

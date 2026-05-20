@@ -57,11 +57,12 @@ def _load_config_flow_under_test():
         def _abort_if_unique_id_configured(self):
             return None
 
-        def async_create_entry(self, *, title, data, description_placeholders=None):
+        def async_create_entry(self, *, title, data, options=None, description_placeholders=None):
             return {
                 "type": "create_entry",
                 "title": title,
                 "data": data,
+                "options": options,
                 "description_placeholders": description_placeholders,
             }
 
@@ -170,7 +171,7 @@ def _load_config_flow_under_test():
 
 
 def test_user_step_creates_entry_with_selected_region():
-    """Submitting a region should create entry directly in single step."""
+    """Submitting a region should advance to forecast_mode step, then create entry."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
     captured_fetch_args = []
 
@@ -189,14 +190,23 @@ def test_user_step_creates_entry_with_selected_region():
         flow = config_flow_mod.PD7DayConfigFlow()
         flow.hass = MagicMock()
 
+        # Step 1: select region → should advance to forecast_mode step
         result = run_async(
             flow.async_step_user({const_mod.CONF_REGION: "QLD1"})
         )
+        assert result["type"] == "form"
+        assert result["step_id"] == "forecast_mode"
 
-        assert result["type"] == "create_entry"
+        # Step 2: select forecast mode → should create entry
+        result2 = run_async(
+            flow.async_step_forecast_mode({
+                const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_FULL,
+            })
+        )
+        assert result2["type"] == "create_entry"
         assert flow._unique_id == "nem_pd7day_QLD1"
-        assert result["title"] == "NEM PD7DAY QLD1"
-        assert result["data"][const_mod.CONF_REGION] == "QLD1"
+        assert result2["title"] == "NEM PD7DAY QLD1"
+        assert result2["data"][const_mod.CONF_REGION] == "QLD1"
         # Connectivity check probes the selected region.
         assert captured_fetch_args == [["QLD1"]]
     finally:
@@ -204,7 +214,7 @@ def test_user_step_creates_entry_with_selected_region():
 
 
 def test_user_step_creates_entry_with_nsw1_region():
-    """Selecting NSW1 should create entry with correct title and data."""
+    """Selecting NSW1 should advance to forecast_mode step, then create entry."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
 
     class _ClientStub:
@@ -221,11 +231,20 @@ def test_user_step_creates_entry_with_nsw1_region():
         flow = config_flow_mod.PD7DayConfigFlow()
         flow.hass = MagicMock()
 
+        # Step 1: select region
         result = run_async(flow.async_step_user({const_mod.CONF_REGION: "NSW1"}))
+        assert result["type"] == "form"
+        assert result["step_id"] == "forecast_mode"
 
-        assert result["type"] == "create_entry"
-        assert result["title"] == "NEM PD7DAY NSW1"
-        assert result["data"][const_mod.CONF_REGION] == "NSW1"
+        # Step 2: select forecast mode → create entry
+        result2 = run_async(
+            flow.async_step_forecast_mode({
+                const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7,
+            })
+        )
+        assert result2["type"] == "create_entry"
+        assert result2["title"] == "NEM PD7DAY NSW1"
+        assert result2["data"][const_mod.CONF_REGION] == "NSW1"
     finally:
         restore()
 
@@ -282,5 +301,82 @@ def test_options_flow_migrates_old_list_based_regions():
         # Should default to first element of old list
         resolved = result["data_schema"]({})
         assert resolved[const_mod.CONF_REGION] == "NSW1"
+    finally:
+        restore()
+
+
+def test_options_flow_saves_forecast_mode():
+    """Options flow must save forecast_mode along with region."""
+    config_flow_mod, const_mod, restore = _load_config_flow_under_test()
+    entry = MagicMock()
+    entry.data = {const_mod.CONF_REGION: "QLD1"}
+    entry.options = {
+        const_mod.CONF_REGION: "QLD1",
+        const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7,
+    }
+
+    try:
+        flow = config_flow_mod.PD7DayOptionsFlow(entry)
+        result = run_async(flow.async_step_init({
+            const_mod.CONF_REGION: "QLD1",
+            const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_FULL,
+            const_mod.CONF_ACTIVE_TARIFF: "energex/6900",
+        }))
+
+        assert result["type"] == "create_entry"
+        assert result["data"][const_mod.CONF_FORECAST_MODE] == const_mod.FORECAST_MODE_FULL
+        assert result["data"][const_mod.CONF_ACTIVE_TARIFF] == "energex/6900"
+    finally:
+        restore()
+
+
+def test_options_flow_defaults_forecast_mode_for_existing_installs():
+    """Existing installs without forecast_mode should default to days_2_7."""
+    config_flow_mod, const_mod, restore = _load_config_flow_under_test()
+    entry = MagicMock()
+    entry.data = {const_mod.CONF_REGION: "QLD1"}
+    entry.options = {const_mod.CONF_REGION: "QLD1"}
+
+    try:
+        flow = config_flow_mod.PD7DayOptionsFlow(entry)
+        result = run_async(flow.async_step_init())
+
+        assert result["type"] == "form"
+        resolved = result["data_schema"]({})
+        assert resolved[const_mod.CONF_FORECAST_MODE] == const_mod.FORECAST_MODE_DAYS_2_7
+    finally:
+        restore()
+
+
+def test_forecast_mode_step_creates_entry_with_options():
+    """forecast_mode step must create entry with mode and active_tariff in options."""
+    config_flow_mod, const_mod, restore = _load_config_flow_under_test()
+
+    class _ClientStub:
+        def __init__(self, _session):
+            pass
+
+        async def fetch_all(self, _regions):
+            return MagicMock()
+
+    config_flow_mod.PD7DayClient = _ClientStub
+    config_flow_mod.async_get_clientsession = lambda _hass: MagicMock()
+
+    try:
+        flow = config_flow_mod.PD7DayConfigFlow()
+        flow.hass = MagicMock()
+
+        # Step 1: region
+        run_async(flow.async_step_user({const_mod.CONF_REGION: "QLD1"}))
+
+        # Step 2: forecast mode with active tariff
+        result = run_async(flow.async_step_forecast_mode({
+            const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7,
+            const_mod.CONF_ACTIVE_TARIFF: "energex/6900",
+        }))
+
+        assert result["type"] == "create_entry"
+        assert result["options"][const_mod.CONF_FORECAST_MODE] == const_mod.FORECAST_MODE_DAYS_2_7
+        assert result["options"][const_mod.CONF_ACTIVE_TARIFF] == "energex/6900"
     finally:
         restore()

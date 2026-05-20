@@ -19,7 +19,17 @@ from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DEFAULT_ENABLED_TARIFFS, DISTRIBUTOR_DISPLAY_NAMES, DOMAIN, TARIFF_NAMES
+from .const import (
+    CONF_ACTIVE_TARIFF,
+    CONF_FORECAST_MODE,
+    DEFAULT_ENABLED_TARIFFS,
+    DISPATCH_KEY,
+    DISTRIBUTOR_DISPLAY_NAMES,
+    DOMAIN,
+    FORECAST_MODE_DAYS_2_7,
+    FORECAST_MODE_FULL,
+    TARIFF_NAMES,
+)
 from .coordinator import PD7DayCoordinator
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
@@ -113,6 +123,13 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
     @property
     def entity_registry_enabled_default(self) -> bool:
+        mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
+        if mode == FORECAST_MODE_DAYS_2_7:
+            active = self._entry.options.get(CONF_ACTIVE_TARIFF, "")
+            if active:
+                return active == f"{self._distributor}/{self._tariff_code}"
+            return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
+        # FORECAST_MODE_FULL: use DEFAULT_ENABLED_TARIFFS
         return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
 
     @property
@@ -147,18 +164,18 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
         The library expects AEMO nemtime (interval END) and subtracts 5 min
         internally for period lookup. Passing interval START would place a
-        16:00-start interval at 15:55 → Day rate instead of Evening rate.
+        16:00-start interval at 15:55 -> Day rate instead of Evening rate.
         """
         if spot_to_tariff is None:
             return None
         try:
             # Pass nemtime (interval END) — library subtracts 5 min for ToU lookup
             interval_dt = parse_iso(period.nemtime)
-            rrp_mwh = period.value * 1000  # $/kWh → $/MWh
+            rrp_mwh = period.value * 1000  # $/kWh -> $/MWh
             result_c_kwh = spot_to_tariff(
                 interval_dt, self._distributor, self._tariff_code, rrp_mwh,
             )
-            return round(result_c_kwh / 100, 6)  # c/kWh → $/kWh
+            return round(result_c_kwh / 100, 6)  # c/kWh -> $/kWh
         except Exception:
             _LOGGER.debug(
                 "spot_to_tariff failed for %s/%s at %s",
@@ -167,9 +184,46 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             )
             return None
 
+    def _apply_tariff_to_spot(self, rrp_kwh: float, now_nem_dt: datetime.datetime) -> float | None:
+        """Apply tariff to a raw spot price for the current dispatch interval."""
+        if spot_to_tariff is None:
+            return None
+        try:
+            # Construct a nemtime (interval END) from current NEM time
+            # Round to nearest 5-min boundary + 5min for interval END
+            minute = now_nem_dt.minute
+            rounded_min = (minute // 5) * 5 + 5
+            if rounded_min >= 60:
+                nemtime_dt = (now_nem_dt + datetime.timedelta(hours=1)).replace(
+                    minute=rounded_min - 60, second=0, microsecond=0
+                )
+            else:
+                nemtime_dt = now_nem_dt.replace(minute=rounded_min, second=0, microsecond=0)
+            rrp_mwh = rrp_kwh * 1000
+            result_c_kwh = spot_to_tariff(
+                nemtime_dt, self._distributor, self._tariff_code, rrp_mwh,
+            )
+            return round(result_c_kwh / 100, 6)
+        except Exception:
+            _LOGGER.debug(
+                "spot_to_tariff (dispatch) failed for %s/%s",
+                self._distributor, self._tariff_code,
+                exc_info=True,
+            )
+            return None
+
     @property
     def native_value(self) -> float | None:
         """Current interval tariff price in $/kWh."""
+        # Try 5-minute dispatch price first
+        dispatch = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {}).get(DISPATCH_KEY)
+        if dispatch and dispatch.prices.get(self._region):
+            rrp_kwh = dispatch.prices[self._region].rrp
+            tariff_val = self._apply_tariff_to_spot(rrp_kwh, now_nem())
+            if tariff_val is not None:
+                return round(tariff_val, 6)
+
+        # Fallback: current interval from PD7DAY forecast
         d = self._price_data
         if d is None:
             return None
@@ -238,13 +292,19 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         d = self._price_data
         forecast_list: list[dict[str, Any]] = []
         if d is not None:
-            cutoff_dt = _amber_express_cutoff()
-            for period in d.forecast:
-                if parse_iso(period.time) <= cutoff_dt:
-                    continue  # skip — covered by Amber Express
+            # Mode-aware forecast trim
+            mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
+            if mode == FORECAST_MODE_FULL:
+                filtered_periods = d.forecast
+            else:
+                cutoff_dt = _amber_express_cutoff()
+                filtered_periods = [
+                    p for p in d.forecast if parse_iso(p.time) > cutoff_dt
+                ]
+            for period in filtered_periods:
                 tariff_val = self._compute_tariff(period)
                 forecast_list.append({
-                    "time": period.time,           # interval START (nemtime − 30 min)
+                    "time": period.time,           # interval START (nemtime - 30 min)
                     "nemtime": period.nemtime,     # interval END (AEMO convention)
                     "spot": round(period.value, 6),  # calibrated spot price $/kWh
                     "value": tariff_val,           # spot + network ToU component $/kWh

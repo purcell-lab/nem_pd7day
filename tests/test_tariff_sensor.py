@@ -174,6 +174,7 @@ def make_tariff_sensor(
 
     entry = MagicMock()
     entry.entry_id = "entry_1"
+    entry.options = {}
 
     sensor = NemPd7dayTariffSensor.__new__(NemPd7dayTariffSensor)
     sensor.coordinator = coordinator
@@ -184,6 +185,9 @@ def make_tariff_sensor(
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
     tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
     sensor._attr_name = f"{distributor.title()} {tariff_code} {tariff_name} Tariff"
+    # Mock hass.data so dispatch lookup doesn't crash
+    sensor.hass = MagicMock()
+    sensor.hass.data = {DOMAIN: {"entry_1": {}}}
     return sensor
 
 

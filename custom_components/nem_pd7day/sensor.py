@@ -67,12 +67,16 @@ from .const import (
     ATTR_RUN_DATETIME,
     ATTR_SOURCE_FILE,
     ATTR_VIOLATIONDEGREE,
+    CONF_FORECAST_MODE,
     COORDINATOR_KEY,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
+    DISPATCH_KEY,
     DISTRIBUTOR_TARIFFS,
     DOMAIN,
+    FORECAST_MODE_DAYS_2_7,
+    FORECAST_MODE_FULL,
     get_region,
     interconnectors_for_regions,
     QLD1_INTERCONNECTORS,
@@ -171,7 +175,10 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._store = store
         slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{slug}_forecast"
-        self._attr_name = "Spot Price Days 2-7"
+        mode = entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
+        self._attr_name = (
+            "NEM Spot Forecast" if mode == FORECAST_MODE_FULL else "Spot Price Days 2-7"
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",
@@ -249,6 +256,12 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> float | None:
+        # Try 5-minute dispatch price first
+        dispatch = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {}).get(DISPATCH_KEY)
+        if dispatch and dispatch.prices.get(self._region):
+            return dispatch.prices[self._region].rrp
+
+        # Fallback: current interval from PD7DAY
         d = self._price_data
         if d is None:
             return None
@@ -319,12 +332,16 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             self._calibrate_period(p, run_at) for p in d.forecast
         ]
 
-        # Trim to post-Amber-Express cutoff (dynamic, time-based)
-        cutoff_dt = _amber_express_cutoff()
-        trimmed_forecast = [
-            p for p in calibrated_forecast
-            if parse_iso(p["time"]) > cutoff_dt
-        ]
+        # Mode-aware forecast trim
+        mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
+        if mode == FORECAST_MODE_FULL:
+            trimmed_forecast = calibrated_forecast  # all intervals
+        else:
+            cutoff_dt = _amber_express_cutoff()
+            trimmed_forecast = [
+                p for p in calibrated_forecast
+                if parse_iso(p["time"]) > cutoff_dt
+            ]
 
         # Min/max over trimmed window (use calibrated 'value' field)
         trimmed_values = [

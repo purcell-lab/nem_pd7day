@@ -184,6 +184,14 @@ def make_sensor(store=None) -> PD7DayForecastSensor:
     sensor._store = store
     sensor._attr_unique_id = "nem_pd7day_qld1_forecast"
     sensor._attr_name = "Spot Price Days 2-7"
+    # Mock entry with options for forecast mode
+    entry = MagicMock()
+    entry.entry_id = "entry_test"
+    entry.options = {}
+    sensor._entry = entry
+    # Mock hass.data so dispatch lookup doesn't crash
+    sensor.hass = MagicMock()
+    sensor.hass.data = {DOMAIN: {"entry_test": {}}}
     return sensor
 
 
