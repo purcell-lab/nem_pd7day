@@ -422,3 +422,7 @@ ATTR_CAL_P90 = "p90"
 ATTR_CAL_MAE = "ols_mae"
 ATTR_CAL_SOURCE = "calibrated_source"
 ATTR_CAL_N_OBS = "n_obs"
+
+# ── Additional usage fee ─────────────────────────────────────────────────────
+CONF_ADDITIONAL_FEE_ENTITY = "input_number.nem_pd7day_additional_usage_fee"
+DEFAULT_ADDITIONAL_FEE = 0.0293

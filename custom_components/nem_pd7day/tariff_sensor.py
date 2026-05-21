@@ -21,7 +21,9 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ACTIVE_TARIFF,
+    CONF_ADDITIONAL_FEE_ENTITY,
     CONF_FORECAST_MODE,
+    DEFAULT_ADDITIONAL_FEE,
     DEFAULT_ENABLED_TARIFFS,
     DISPATCH_KEY,
     DISTRIBUTOR_DISPLAY_NAMES,
@@ -174,6 +176,16 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 continue
         return forecast[0] if forecast else None
 
+    def _get_additional_fee(self) -> float:
+        """Read additional usage fee from input_number helper, fallback to default."""
+        try:
+            state = self.hass.states.get(CONF_ADDITIONAL_FEE_ENTITY)
+            if state is not None and state.state not in ("unknown", "unavailable"):
+                return float(state.state)
+        except (ValueError, TypeError, AttributeError):
+            pass
+        return DEFAULT_ADDITIONAL_FEE
+
     def _compute_tariff(self, period) -> float | None:
         """Compute tariff price in $/kWh for a single forecast period.
 
@@ -190,7 +202,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             result_c_kwh = spot_to_tariff(
                 interval_dt, self._distributor, self._tariff_code, rrp_mwh,
             )
-            return round(result_c_kwh / 100, 6)  # c/kWh -> $/kWh
+            fee = self._get_additional_fee()
+            return round((result_c_kwh / 100 + fee) * 1.1, 6)
         except Exception:
             _LOGGER.debug(
                 "spot_to_tariff failed for %s/%s at %s",
@@ -218,7 +231,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             result_c_kwh = spot_to_tariff(
                 nemtime_dt, self._distributor, self._tariff_code, rrp_mwh,
             )
-            return round(result_c_kwh / 100, 6)
+            fee = self._get_additional_fee()
+            return round((result_c_kwh / 100 + fee) * 1.1, 6)
         except Exception:
             _LOGGER.debug(
                 "spot_to_tariff (dispatch) failed for %s/%s",
@@ -281,6 +295,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     def _build_forecast_description(
         distributor_display: str, tariff_name: str,
         dlf: float, mlf: float, combined: float,
+        fee: float = DEFAULT_ADDITIONAL_FEE,
     ) -> str:
         return (
             f"This sensor shows a forecast all-in electricity tariff price in $/kWh, "
@@ -293,6 +308,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             f"effective cost of spot energy at the meter relative to the wholesale price. "
             f"The network component ($/kWh) varies by time of day per the tariff period "
             f"structure above and is sourced from AER-approved distributor pricing. "
+            f"The final price includes a 10% GST component and an additional usage fee "
+            f"(currently {fee:.4f} $/kWh, configurable via the input_number helper "
+            f"'nem_pd7day_additional_usage_fee') added before GST. "
             f"IMPORTANT: This is a forecast only and should not be relied upon as an "
             f"accurate prediction of actual electricity costs. Spot prices are inherently "
             f"volatile and can differ significantly from forecasts, particularly beyond "
@@ -324,6 +342,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
         combined = round(_DEFAULT_DLF * _DEFAULT_MLF * _DEFAULT_MARKET, 6)
 
+        fee = self._get_additional_fee()
+
         return {
             # Tariff identity
             "tariff_code": self._tariff_code,
@@ -341,10 +361,13 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             "metering_loss_factor_mlf": _DEFAULT_MLF,
             "market_loss_factor": _DEFAULT_MARKET,
             "combined_loss_multiplier": combined,
+            # Additional usage fee & GST
+            "additional_usage_fee_$/kwh": fee,
+            "gst_multiplier": 1.1,
             # Description
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
-                _DEFAULT_DLF, _DEFAULT_MLF, combined,
+                _DEFAULT_DLF, _DEFAULT_MLF, combined, fee,
             ),
             # Forecast time-series
             "forecast": forecast_list,
@@ -402,6 +425,8 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
 
         combined = round(_DEFAULT_DLF * _DEFAULT_MLF * _DEFAULT_MARKET, 6)
 
+        fee = self._get_additional_fee()
+
         return {
             "tariff_code": self._tariff_code,
             "tariff_name": tariff_name,
@@ -415,9 +440,11 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
             "metering_loss_factor_mlf": _DEFAULT_MLF,
             "market_loss_factor": _DEFAULT_MARKET,
             "combined_loss_multiplier": combined,
+            "additional_usage_fee_$/kwh": fee,
+            "gst_multiplier": 1.1,
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
-                _DEFAULT_DLF, _DEFAULT_MLF, combined,
+                _DEFAULT_DLF, _DEFAULT_MLF, combined, fee,
             ),
             "forecast": forecast_list,
         }

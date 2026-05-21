@@ -190,24 +190,27 @@ def make_tariff_sensor(
     # Mock hass.data so dispatch lookup doesn't crash
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {"entry_1": {}}}
+    # Return None for the additional fee input_number so fallback is used
+    sensor.hass.states.get.return_value = None
     return sensor
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 def test_tariff_sensor_current_value():
-    """Verify sensor returns spot_to_tariff output / 100 as $/kWh."""
+    """Verify sensor returns (spot_to_tariff/100 + fee) * 1.1 as $/kWh."""
     now = datetime.now(tz=NEM_TZ)
     current_end = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0) + timedelta(minutes=30)
     period = make_price_period(current_end, value=0.10)  # 0.10 $/kWh
     sensor = make_tariff_sensor(price_periods=[period])
 
-    # spot_to_tariff(dt, distributor, tariff, rrp_mwh) returns c/kWh
-    # We mock it to return 15.5 c/kWh → 0.155 $/kWh
+    # spot_to_tariff returns 15.5 c/kWh
+    # New formula: (15.5/100 + 0.0293) * 1.1 = (0.155 + 0.0293) * 1.1 = 0.20273
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
         val = sensor.native_value
         assert val is not None
-        assert abs(val - 0.155) < 1e-6
+        expected = round((15.5 / 100 + 0.0293) * 1.1, 6)
+        assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
         # Verify RRP conversion: 0.10 $/kWh * 1000 = 100 $/MWh
         call_args = mock_stt.call_args
         assert abs(call_args[0][3] - 100.0) < 1e-6  # rrp_mwh
@@ -235,10 +238,11 @@ def test_tariff_sensor_forecast_attribute():
             assert attrs["tariff_code"] == "8400"
             assert attrs["region"] == "QLD1"
             assert len(attrs["forecast"]) == 5
+            expected_val = round((10.0 / 100 + 0.0293) * 1.1, 6)
             for entry in attrs["forecast"]:
                 assert "time" in entry
                 assert "value" in entry
-                assert abs(entry["value"] - 0.10) < 1e-6  # 10 c/kWh / 100
+                assert abs(entry["value"] - expected_val) < 1e-6  # (10c/kWh/100 + fee) * 1.1
 
 
 def test_tariff_sensor_device_info():
@@ -326,6 +330,8 @@ def test_forecast_attribute_with_none_coordinator_data():
     assert attrs["network"] == "energex"
     assert attrs["tariff_code"] == "8400"
     assert attrs["region"] == "QLD1"
+    assert abs(attrs["additional_usage_fee_$/kwh"] - 0.0293) < 1e-6
+    assert attrs["gst_multiplier"] == 1.1
 
 
 def test_tariff_sensor_names():
@@ -414,7 +420,7 @@ def test_loss_factors_in_attributes():
 
 
 def test_forecast_description_in_attributes():
-    """Verify description mentions 'forecast' and 'DLF'."""
+    """Verify description mentions 'forecast', 'DLF', GST, and additional usage fee."""
     sensor = make_tariff_sensor(price_periods=None)
     with patch.object(_tariff_mod, "get_periods", return_value=[]):
         with patch.object(_tariff_mod, "get_daily_fee", return_value=None):
@@ -425,6 +431,9 @@ def test_forecast_description_in_attributes():
             assert "DLF" in desc
             assert "MLF" in desc
             assert "Energex" in desc
+            assert "10% GST" in desc
+            assert "additional usage fee" in desc
+            assert "nem_pd7day_additional_usage_fee" in desc
 
 
 def test_daily_supply_charge_in_attributes():
@@ -481,4 +490,5 @@ def test_tariff_native_value_not_filtered_by_cutoff():
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
         val = sensor.native_value
         assert val is not None, "native_value should not be None for current interval"
-        assert abs(val - 0.155) < 1e-6, f"Expected 0.155, got {val}"
+        expected = round((15.5 / 100 + 0.0293) * 1.1, 6)
+        assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"

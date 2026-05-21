@@ -1,0 +1,9 @@
+nem_pd7day_additional_usage_fee:
+  name: "Additional Usage Fees ($/kWh)"
+  initial: 0.0293
+  min: 0.0
+  max: 1.0
+  step: 0.0001
+  mode: box
+  unit_of_measurement: "$/kWh"
+  icon: mdi:currency-usd

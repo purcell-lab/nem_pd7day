@@ -244,6 +244,7 @@ def make_tariff_sensor(
     sensor._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {"entry_1": {}}}
+    sensor.hass.states.get.return_value = None
     return sensor
 
 
@@ -589,10 +590,12 @@ def test_tariff_sensor_dispatch_native_value():
     sensor.hass.data = {DOMAIN: {"entry_1": {DISPATCH_KEY: dispatch}}}
 
     # Mock spot_to_tariff for the dispatch path
+    # New formula: (12.5/100 + 0.0293) * 1.1
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=12.5):
         val = sensor.native_value
         assert val is not None
-        assert abs(val - 0.125) < 1e-6  # 12.5 c/kWh → 0.125 $/kWh
+        expected = round((12.5 / 100 + 0.0293) * 1.1, 6)
+        assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
 
 
 def test_tariff_sensor_dispatch_fallback():
@@ -607,10 +610,12 @@ def test_tariff_sensor_dispatch_fallback():
     dispatch.prices = {}
     sensor.hass.data = {DOMAIN: {"entry_1": {DISPATCH_KEY: dispatch}}}
 
+    # Fallback uses PD7DAY forecast path: (15.5/100 + 0.0293) * 1.1
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
         val = sensor.native_value
         assert val is not None
-        assert abs(val - 0.155) < 1e-6
+        expected = round((15.5 / 100 + 0.0293) * 1.1, 6)
+        assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
 
 
 # ── 10. Additive sensor registration tests ──────────────────────────────────
