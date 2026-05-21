@@ -101,7 +101,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         )
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
         tariff_name = get_tariff_name(distributor, tariff_code)
-        self._attr_name = f"{distributor_display} {tariff_name} Tariff"
+        self._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to coordinator updates and schedule NEM boundary refresh."""
@@ -367,7 +367,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
         super().__init__(coordinator, entry, region, distributor, tariff_code)
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
         tariff_name = get_tariff_name(distributor, tariff_code)
-        self._attr_name = f"Day 2-7 {distributor_display} {tariff_name} Tariff"
+        self._attr_name = f"Day 2-7 {distributor_display} {tariff_name} Tariff ({tariff_code})"
         self._attr_unique_id = (
             f"nem_pd7day_{region}_{distributor}_{tariff_code}_days27"
         )

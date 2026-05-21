@@ -241,7 +241,7 @@ def make_tariff_sensor(
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
     distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
     tariff_name = get_tariff_name(distributor, tariff_code)
-    sensor._attr_name = f"{distributor_display} {tariff_name} Tariff"
+    sensor._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {"entry_1": {}}}
     return sensor

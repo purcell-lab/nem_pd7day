@@ -186,7 +186,7 @@ def make_tariff_sensor(
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
     distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
     tariff_name = get_tariff_name(distributor, tariff_code)
-    sensor._attr_name = f"{distributor_display} {tariff_name} Tariff"
+    sensor._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
     # Mock hass.data so dispatch lookup doesn't crash
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {"entry_1": {}}}
@@ -329,16 +329,16 @@ def test_forecast_attribute_with_none_coordinator_data():
 
 
 def test_tariff_sensor_names():
-    """Verify name format: '{distributor_display} {tariff_name} Tariff' (no code)."""
+    """Verify name format: '{distributor_display} {tariff_name} Tariff ({tariff_code})'."""
     sensor_6900 = make_tariff_sensor(distributor="energex", tariff_code="6900")
-    assert sensor_6900._attr_name == "Energex Residential Time of Use Energy Tariff"
+    assert sensor_6900._attr_name == "Energex Residential Time of Use Energy Tariff (6900)"
 
     sensor_rtou = make_tariff_sensor(distributor="sapn", tariff_code="RTOU")
-    assert sensor_rtou._attr_name == "SA Power Networks Residential Time of Use Tariff"
+    assert sensor_rtou._attr_name == "SA Power Networks Residential Time of Use Tariff (RTOU)"
 
     # Unknown tariff code falls back to code itself
     sensor_unknown = make_tariff_sensor(distributor="energex", tariff_code="ZZZZ")
-    assert sensor_unknown._attr_name == "Energex ZZZZ Tariff"
+    assert sensor_unknown._attr_name == "Energex ZZZZ Tariff (ZZZZ)"
 
 
 def test_default_enabled_tariffs():
