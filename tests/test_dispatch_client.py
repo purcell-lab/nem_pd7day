@@ -1,10 +1,10 @@
 """
-Tests for dispatch_client.py — AEMO DispatchIS real-time price parsing.
+Tests for dispatch_client.py — AEMO TradingIS real-time price parsing.
 
 Covers:
-  - Parsing DISPATCH,PRICE rows from DispatchIS CSV content
+  - Parsing TRADING,PRICE rows from TradingIS CSV content
   - Correct RRP conversion from $/MWh to $/kWh
-  - INTERVENTION filtering (only rows with INTERVENTION==0)
+  - PRICE_STATUS filtering (only FIRM/CALCULATED rows)
   - Network/parse failure raises
 
 Run with: python -m pytest tests/test_dispatch_client.py -v
@@ -41,16 +41,14 @@ from custom_components.nem_pd7day.dispatch_client import (
 )
 
 
-# Sample DispatchIS CSV content (simplified)
+# Sample TradingIS CSV content (simplified)
 SAMPLE_CSV = """\
-C,NEMP.WORLD,DISPATCH,ARCHIVE,DISPATCHIS,PRICE,PUBLIC
-I,DISPATCH,PRICE,5,SETTLEMENTDATE,RUNNO,REGIONID,DISPATCHINTERVAL,INTERVENTION,RRP,EEP,ROP,APCFLAG,MARKETSUSPENDEDFLAG,TOTALDEMAND,AVAILABLEGENERATION,AVAILABLELOAD
-D,DISPATCH,PRICE,5,"2026/05/21 09:30:00",1,QLD1,"2026/05/21 09:30:00",0,-1.5,0,0,0,0,5000,6000,500
-D,DISPATCH,PRICE,5,"2026/05/21 09:30:00",1,NSW1,"2026/05/21 09:30:00",0,85.2,0,0,0,0,8000,9000,700
-D,DISPATCH,PRICE,5,"2026/05/21 09:30:00",1,VIC1,"2026/05/21 09:30:00",0,72.0,0,0,0,0,6000,7000,600
-D,DISPATCH,PRICE,5,"2026/05/21 09:30:00",1,SA1,"2026/05/21 09:30:00",0,55.8,0,0,0,0,2000,3000,200
-D,DISPATCH,PRICE,5,"2026/05/21 09:30:00",1,TAS1,"2026/05/21 09:30:00",0,90.0,0,0,0,0,1500,2000,100
-D,DISPATCH,PRICE,5,"2026/05/21 09:30:00",1,QLD1,"2026/05/21 09:30:00",1,999.0,0,0,0,0,5000,6000,500
+C,NEMP.WORLD,TRADING,ARCHIVE,TRADINGIS,PRICE,PUBLIC
+I,TRADING,PRICE,3,SETTLEMENTDATE,RUNNO,REGIONID,PERIODID,RRP,EEP,INVALIDFLAG,LASTCHANGED,ROP,APCFLAG,MARKETSUSPENDEDFLAG,TOTALDEMAND,AVAILABLEGENERATION,AVAILABLELOAD,PRICE_STATUS
+D,TRADING,PRICE,3,"2026/05/21 09:30:00",1,QLD1,141,89.5,0,0,0,0,0,0,5000,6000,500,FIRM
+D,TRADING,PRICE,3,"2026/05/21 09:30:00",1,NSW1,141,75.2,0,0,0,0,0,0,8000,9000,700,FIRM
+D,TRADING,PRICE,3,"2026/05/21 09:30:00",1,SA1,141,-5.0,0,0,0,0,0,0,2000,3000,200,FIRM
+D,TRADING,PRICE,3,"2026/05/21 09:30:00",1,VIC1,141,120.0,0,0,0,0,0,0,6000,7000,600,INVALID
 C,END OF REPORT
 """
 
@@ -59,14 +57,14 @@ def _make_zip_bytes(csv_content: str) -> bytes:
     """Create a zip file in memory containing the CSV content."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("PUBLIC_DISPATCHIS_202605210930.CSV", csv_content)
+        zf.writestr("PUBLIC_TRADINGIS_202605210930.CSV", csv_content)
     return buf.getvalue()
 
 
 def test_fetch_dispatch_prices_parses_qld1():
-    """fetch_dispatch_prices returns correct RRP for QLD1 from mocked HTTP."""
+    """fetch_dispatch_prices returns correct RRP for QLD1 (FIRM) from mocked HTTP."""
     zip_bytes = _make_zip_bytes(SAMPLE_CSV)
-    index_html = '<a href="PUBLIC_DISPATCHIS_202605210930_0000000123456.zip">link</a>'
+    index_html = '<a href="PUBLIC_TRADINGIS_202605210930_0000000123456.zip">link</a>'
 
     call_count = [0]
 
@@ -87,14 +85,14 @@ def test_fetch_dispatch_prices_parses_qld1():
     assert isinstance(qld, DispatchPrice)
     assert qld.region == "QLD1"
     assert qld.interval_datetime == "2026/05/21 09:30:00"
-    # -1.5 $/MWh = -0.0015 $/kWh
-    assert abs(qld.rrp - (-0.0015)) < 1e-6
+    # 89.5 $/MWh = 0.0895 $/kWh
+    assert abs(qld.rrp - 0.0895) < 1e-6
 
 
 def test_fetch_dispatch_prices_nsw1_conversion():
     """Verify $/MWh → $/kWh conversion for NSW1."""
     zip_bytes = _make_zip_bytes(SAMPLE_CSV)
-    index_html = '<a href="PUBLIC_DISPATCHIS_202605210930_0000000123456.zip">link</a>'
+    index_html = '<a href="PUBLIC_TRADINGIS_202605210930_0000000123456.zip">link</a>'
 
     call_count = [0]
 
@@ -108,14 +106,14 @@ def test_fetch_dispatch_prices_nsw1_conversion():
         prices = fetch_dispatch_prices()
 
     assert "NSW1" in prices
-    # 85.2 $/MWh = 0.0852 $/kWh
-    assert abs(prices["NSW1"].rrp - 0.0852) < 1e-6
+    # 75.2 $/MWh = 0.0752 $/kWh
+    assert abs(prices["NSW1"].rrp - 0.0752) < 1e-6
 
 
-def test_fetch_dispatch_prices_all_regions():
-    """All five NEM regions must be parsed."""
+def test_fetch_dispatch_prices_sa1_negative():
+    """Negative prices are valid and should be included when FIRM."""
     zip_bytes = _make_zip_bytes(SAMPLE_CSV)
-    index_html = '<a href="PUBLIC_DISPATCHIS_202605210930_0000000123456.zip">link</a>'
+    index_html = '<a href="PUBLIC_TRADINGIS_202605210930_0000000123456.zip">link</a>'
 
     call_count = [0]
 
@@ -128,13 +126,15 @@ def test_fetch_dispatch_prices_all_regions():
     with patch.object(_dispatch_mod.urllib.request, "urlopen", side_effect=fake_urlopen):
         prices = fetch_dispatch_prices()
 
-    assert set(prices.keys()) == {"QLD1", "NSW1", "VIC1", "SA1", "TAS1"}
+    assert "SA1" in prices
+    # -5.0 $/MWh = -0.005 $/kWh
+    assert abs(prices["SA1"].rrp - (-0.005)) < 1e-6
 
 
-def test_intervention_rows_excluded():
-    """Rows with INTERVENTION==1 must be excluded."""
+def test_invalid_price_status_excluded():
+    """Rows with PRICE_STATUS==INVALID must be excluded."""
     zip_bytes = _make_zip_bytes(SAMPLE_CSV)
-    index_html = '<a href="PUBLIC_DISPATCHIS_202605210930_0000000123456.zip">link</a>'
+    index_html = '<a href="PUBLIC_TRADINGIS_202605210930_0000000123456.zip">link</a>'
 
     call_count = [0]
 
@@ -147,9 +147,10 @@ def test_intervention_rows_excluded():
     with patch.object(_dispatch_mod.urllib.request, "urlopen", side_effect=fake_urlopen):
         prices = fetch_dispatch_prices()
 
-    # QLD1 has two rows: INTERVENTION==0 (rrp=-1.5) and INTERVENTION==1 (rrp=999.0)
-    # Only the INTERVENTION==0 row should be used
-    assert abs(prices["QLD1"].rrp - (-0.0015)) < 1e-6
+    # VIC1 has PRICE_STATUS=INVALID, must be excluded
+    assert "VIC1" not in prices
+    # Only QLD1, NSW1, SA1 should be present (all FIRM)
+    assert set(prices.keys()) == {"QLD1", "NSW1", "SA1"}
 
 
 def test_no_files_raises():
@@ -164,7 +165,7 @@ def test_no_files_raises():
             fetch_dispatch_prices()
             assert False, "Should have raised ValueError"
         except ValueError as e:
-            assert "No DispatchIS files found" in str(e)
+            assert "No TradingIS files found" in str(e)
 
 
 def test_network_error_raises():

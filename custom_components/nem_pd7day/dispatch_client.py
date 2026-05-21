@@ -1,4 +1,4 @@
-"""AEMO DispatchIS real-time price client."""
+"""AEMO TradingIS real-time price client."""
 from __future__ import annotations
 
 import io
@@ -10,7 +10,8 @@ from dataclasses import dataclass
 
 _LOGGER = logging.getLogger(__name__)
 
-DISPATCH_BASE = "https://www.nemweb.com.au/Reports/Current/DispatchIS_Reports/"
+DISPATCH_BASE = "https://www.nemweb.com.au/Reports/Current/TradingIS_Reports/"
+FILE_PATTERN = r'PUBLIC_TRADINGIS_[^"\'<>\s]+\.zip'
 
 
 @dataclass
@@ -22,52 +23,44 @@ class DispatchPrice:
 
 def fetch_dispatch_prices() -> dict[str, DispatchPrice]:
     """
-    Fetch the latest DispatchIS zip and parse the DISPATCH,PRICE table.
-    Returns dict keyed by region (e.g. "QLD1") -> DispatchPrice.
-    Raises on network/parse failure.
+    Fetch the latest TradingIS zip (~0.7KB) and parse the TRADING,PRICE table.
+    Returns dict keyed by region → DispatchPrice.
+    Only includes FIRM prices (filters INVALID/preliminary).
     """
-    # List directory and find latest zip
     index = urllib.request.urlopen(DISPATCH_BASE, timeout=15).read().decode(
         "utf-8", errors="ignore"
     )
     files = sorted(
-        set(
-            re.findall(
-                r"PUBLIC_DISPATCHIS_[^\"'<>\s]+\.zip", index, re.IGNORECASE
-            )
-        )
+        set(re.findall(FILE_PATTERN, index, re.IGNORECASE))
     )
     if not files:
-        raise ValueError("No DispatchIS files found")
+        raise ValueError("No TradingIS files found")
     url = DISPATCH_BASE + files[-1]
     raw = urllib.request.urlopen(url, timeout=20).read()
     zf = zipfile.ZipFile(io.BytesIO(raw))
     content = zf.read(zf.namelist()[0]).decode("utf-8", errors="ignore")
 
-    # Parse DISPATCH,PRICE table
-    # Column indices (0-based from confirmed sample row):
-    # 0=I/D, 1=DISPATCH, 2=PRICE, 3=5, 4=SETTLEMENTDATE, 5=RUNNO,
-    # 6=REGIONID, 7=DISPATCHINTERVAL, 8=INTERVENTION, 9=RRP
     results: dict[str, DispatchPrice] = {}
-
     for line in content.splitlines():
         parts = [p.strip().strip('"') for p in line.split(",")]
-        if len(parts) < 10:
+        if len(parts) < 9:
             continue
-        if parts[0] == "D" and parts[1] == "DISPATCH" and parts[2] == "PRICE":
-            # Only use INTERVENTION==0 rows (non-intervention dispatch)
-            if parts[8] != "0":
-                continue
-            region = parts[6]
-            settlement = parts[4]
-            try:
-                rrp_mwh = float(parts[9])
-            except (ValueError, IndexError):
-                continue
-            rrp_kwh = round(rrp_mwh / 1000.0, 6)
-            results[region] = DispatchPrice(
-                region=region,
-                interval_datetime=settlement,
-                rrp=rrp_kwh,
-            )
+        if parts[0] != "D" or parts[1] != "TRADING" or parts[2] != "PRICE":
+            continue
+        # Filter: only FIRM prices
+        price_status = parts[-1] if parts else ""
+        if price_status not in ("FIRM", "CALCULATED"):
+            continue
+        region = parts[6]
+        settlement = parts[4]
+        try:
+            rrp_mwh = float(parts[8])
+        except (ValueError, IndexError):
+            continue
+        rrp_kwh = round(rrp_mwh / 1000.0, 6)
+        results[region] = DispatchPrice(
+            region=region,
+            interval_datetime=settlement,
+            rrp=rrp_kwh,
+        )
     return results
