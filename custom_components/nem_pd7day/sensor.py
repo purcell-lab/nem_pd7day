@@ -67,8 +67,10 @@ from .const import (
     ATTR_RUN_DATETIME,
     ATTR_SOURCE_FILE,
     ATTR_VIOLATIONDEGREE,
+    CONF_ACTIVE_TARIFF,
     CONF_FORECAST_MODE,
     COORDINATOR_KEY,
+    DEFAULT_ENABLED_TARIFFS,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -85,7 +87,7 @@ from .const import (
     storage_keys,
 )
 from .coordinator import PD7DayCoordinator
-from .tariff_sensor import NemPd7dayTariffSensor
+from .tariff_sensor import NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
     from .notice_store import GridNoticeStore
@@ -146,6 +148,28 @@ async def async_setup_entry(
                 NemPd7dayTariffSensor(coordinator, entry, region, distributor, tariff_code)
             )
 
+    # Day 2-7 additive sensors — only registered in days_2_7 mode
+    mode = entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
+    if mode == FORECAST_MODE_DAYS_2_7:
+        entities.append(SpotPriceForecastDays27Sensor(coordinator, store, entry, region))
+
+        # Day 2-7 tariff sensor — only for the active tariff
+        active_tariff = entry.options.get(CONF_ACTIVE_TARIFF, "")
+        if not active_tariff:
+            # Default: first enabled tariff for the region's first distributor
+            for dist in REGION_DISTRIBUTORS.get(region, []):
+                for code in DISTRIBUTOR_TARIFFS.get(dist, []):
+                    if (dist, code) in DEFAULT_ENABLED_TARIFFS:
+                        active_tariff = f"{dist}/{code}"
+                        break
+                if active_tariff:
+                    break
+        if active_tariff and "/" in active_tariff:
+            dist, code = active_tariff.split("/", 1)
+            entities.append(
+                TariffForecastDays27Sensor(coordinator, entry, region, dist, code)
+            )
+
     async_add_entities(entities, update_before_add=True)
 
 
@@ -175,10 +199,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._store = store
         slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{slug}_forecast"
-        mode = entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
-        self._attr_name = (
-            "NEM Spot Forecast" if mode == FORECAST_MODE_FULL else "Spot Price Days 2-7"
-        )
+        self._attr_name = "NEM Spot Price Forecast"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",
@@ -332,16 +353,8 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             self._calibrate_period(p, run_at) for p in d.forecast
         ]
 
-        # Mode-aware forecast trim
-        mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
-        if mode == FORECAST_MODE_FULL:
-            trimmed_forecast = calibrated_forecast  # all intervals
-        else:
-            cutoff_dt = _amber_express_cutoff()
-            trimmed_forecast = [
-                p for p in calibrated_forecast
-                if parse_iso(p["time"]) > cutoff_dt
-            ]
+        # Base sensor always provides full day 1-7 forecast
+        trimmed_forecast = calibrated_forecast
 
         # Min/max over trimmed window (use calibrated 'value' field)
         trimmed_values = [
@@ -391,6 +404,213 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             ),
         }
 
+
+
+class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """
+    Day 2-7 spot price forecast sensor.
+
+    Only registered when forecast_mode == FORECAST_MODE_DAYS_2_7.
+    State: same as base sensor (current dispatch/PD7DAY price).
+    Forecast attribute: trimmed to post-amber-express-cutoff intervals only.
+    """
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = None
+    _attr_native_unit_of_measurement = "$/kWh"
+    _attr_icon = "mdi:transmission-tower"
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_attribution = ATTR_ATTRIBUTION
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(self, coordinator, store, entry: ConfigEntry, region: str) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._region = region
+        self._store = store
+        slug = region.lower()
+        self._attr_unique_id = f"nem_pd7day_{slug}_forecast_days27"
+        self._attr_name = "NEM Spot Price Forecast Day 2-7"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
+
+    @property
+    def _price_data(self):
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.prices.get(self._region)
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success and self._price_data is not None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        async def _handle_tick(_now) -> None:
+            self.async_write_ha_state()
+
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                _handle_tick,
+                minute=[0, 30],
+                second=5,
+            )
+        )
+
+    def _current_period(self, forecast: list):
+        now = now_nem()
+        for period in forecast:
+            try:
+                interval_start = parse_iso(period.time)
+                interval_end = parse_iso(period.nemtime)
+                if interval_start <= now < interval_end:
+                    return period
+            except (ValueError, TypeError):
+                continue
+        return forecast[0] if forecast else None
+
+    def _covariates_for_interval(self, interval_key: str) -> dict:
+        gas_tj: float | None = None
+        qni_mw: float | None = None
+        data = self.coordinator.data
+        if data is None:
+            return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+        qni_data = data.interconnectors.get("NSW1-QLD1") if data.interconnectors else None
+        if qni_data:
+            for p in qni_data.forecast:
+                if p.time == interval_key:
+                    qni_mw = p.mwflow
+                    break
+        ms = getattr(data, "market_summary", None)
+        if ms:
+            interval_date = interval_key[:10]
+            for g in ms.forecast:
+                if g.nemtime[:10] == interval_date:
+                    gas_tj = g.value_tj
+                    break
+        return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+
+    @property
+    def native_value(self) -> float | None:
+        # Same as base sensor: try dispatch first, then PD7DAY
+        dispatch = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {}).get(DISPATCH_KEY)
+        if dispatch and dispatch.prices.get(self._region):
+            return dispatch.prices[self._region].rrp
+        d = self._price_data
+        if d is None:
+            return None
+        period = self._current_period(d.forecast)
+        if period is None:
+            return None
+        if self._store:
+            h = _horizon_hours(d.forecast_generated_at, period.time)
+            try:
+                hour = parse_iso(period.time).hour
+            except (ValueError, TypeError):
+                hour = now_nem().hour
+            interval_key = period.time if isinstance(period.time, str) else to_nem_iso(parse_iso(period.time))
+            covariates = self._covariates_for_interval(interval_key)
+            cal = self._store.apply_to_price(period.value, h, hour, **covariates)
+            return cal["calibrated"]
+        return period.value
+
+    def _calibrate_period(self, period, run_at_str: str | None) -> dict:
+        h = _horizon_hours(run_at_str, period.time)
+        try:
+            hour = parse_iso(period.time).hour
+        except (ValueError, TypeError):
+            hour = 0
+        interval_key = to_nem_iso(parse_iso(period.time))
+        base = {
+            "nemtime": to_nem_iso(parse_iso(period.nemtime)),
+            "time": interval_key,
+            "raw_value": period.value,
+            "horizon_hours": round(h, 1),
+        }
+        if self._store:
+            covariates = self._covariates_for_interval(interval_key)
+            cal = self._store.apply_to_price(period.value, h, hour, **covariates)
+            cal_update = {
+                ATTR_CAL_CALIBRATED: cal["calibrated"],
+                ATTR_CAL_P10: cal["p10"],
+                ATTR_CAL_P50: cal["p50"],
+                ATTR_CAL_P90: cal["p90"],
+                ATTR_CAL_MAE: cal.get("ols_mae"),
+                ATTR_CAL_SOURCE: cal["calibrated_source"],
+                ATTR_CAL_N_OBS: cal["n_obs"],
+                "value": cal["calibrated"],
+                "spike_credible": cal.get("spike_credible"),
+            }
+            base.update(cal_update)
+        else:
+            base["value"] = period.value
+        return base
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        d = self._price_data
+        if d is None:
+            return {}
+        run_at = d.forecast_generated_at
+        calibrated_forecast = [
+            self._calibrate_period(p, run_at) for p in d.forecast
+        ]
+        # Day 2-7: trim to post-amber-express-cutoff only
+        cutoff_dt = _amber_express_cutoff()
+        trimmed_forecast = [
+            p for p in calibrated_forecast
+            if parse_iso(p["time"]) > cutoff_dt
+        ]
+        trimmed_values = [
+            p.get("value") for p in trimmed_forecast if p.get("value") is not None
+        ]
+        min_value = round(min(trimmed_values), 6) if trimmed_values else None
+        max_value = round(max(trimmed_values), 6) if trimmed_values else None
+        n = 4
+        cheapest_window = None
+        if len(trimmed_forecast) >= n:
+            for i in range(len(trimmed_forecast) - n + 1):
+                window = trimmed_forecast[i : i + n]
+                vals = [p.get("value") for p in window if p.get("value") is not None]
+                if len(vals) == n:
+                    avg = round(sum(vals) / n, 6)
+                    if cheapest_window is None or avg < cheapest_window["avg_value"]:
+                        cheapest_window = {
+                            "nemtime_start": window[0].get("nemtime"),
+                            "nemtime_end": window[-1].get("nemtime"),
+                            "start": window[0].get("time"),
+                            "end": window[-1].get("time"),
+                            "avg_value": avg,
+                            "points": n,
+                        }
+        return {
+            ATTR_REGION: d.region,
+            ATTR_FORECAST_GENERATED_AT: run_at,
+            ATTR_INTERVAL_MINUTES: d.interval_minutes,
+            ATTR_NEXT_VALUE: (
+                trimmed_forecast[0].get(ATTR_CAL_CALIBRATED, trimmed_forecast[0].get("value"))
+                if trimmed_forecast
+                else None
+            ),
+            ATTR_MIN_24H: min_value,
+            ATTR_MAX_24H: max_value,
+            ATTR_CHEAPEST_2H: cheapest_window,
+            ATTR_FORECAST: trimmed_forecast,
+            ATTR_SOURCE_FILE: d.source_file,
+            "calibration_active": (
+                self._store is not None
+                and self._store.calibration is not None
+                and self._store.active_bucket_count > 0
+            ),
+        }
 
 
 class PD7DayRegionSourceFileDatetimeSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):

@@ -159,6 +159,7 @@ from custom_components.nem_pd7day.const import (
     COORDINATOR_KEY,
     DEFAULT_ENABLED_TARIFFS,
     DISPATCH_KEY,
+    DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
     FORECAST_MODE_DAYS_2_7,
     FORECAST_MODE_FULL,
@@ -166,8 +167,8 @@ from custom_components.nem_pd7day.const import (
 )
 from custom_components.nem_pd7day.dispatch_client import DispatchPrice
 from custom_components.nem_pd7day.coordinator import DispatchCoordinator
-from custom_components.nem_pd7day.sensor import PD7DayForecastSensor
-from custom_components.nem_pd7day.tariff_sensor import NemPd7dayTariffSensor
+from custom_components.nem_pd7day.sensor import PD7DayForecastSensor, SpotPriceForecastDays27Sensor
+from custom_components.nem_pd7day.tariff_sensor import NemPd7dayTariffSensor, get_tariff_name
 from custom_components.nem_pd7day.nem_time import _amber_express_cutoff
 
 NEM_TZ = timezone(timedelta(hours=10))
@@ -199,9 +200,7 @@ def make_sensor(store=None, mode=FORECAST_MODE_DAYS_2_7) -> PD7DayForecastSensor
     entry.entry_id = "entry_test"
     entry.options = {CONF_FORECAST_MODE: mode}
     sensor._entry = entry
-    sensor._attr_name = (
-        "NEM Spot Forecast" if mode == FORECAST_MODE_FULL else "Spot Price Days 2-7"
-    )
+    sensor._attr_name = "NEM Spot Price Forecast"
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {"entry_test": {}}}
     return sensor
@@ -233,8 +232,6 @@ def make_tariff_sensor(
         CONF_ACTIVE_TARIFF: active_tariff,
     }
 
-    from custom_components.nem_pd7day.const import TARIFF_NAMES
-
     sensor = NemPd7dayTariffSensor.__new__(NemPd7dayTariffSensor)
     sensor.coordinator = coordinator
     sensor._region = region
@@ -242,8 +239,9 @@ def make_tariff_sensor(
     sensor._tariff_code = tariff_code
     sensor._entry = entry
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
-    tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
-    sensor._attr_name = f"{distributor.title()} {tariff_code} {tariff_name} Tariff"
+    distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+    tariff_name = get_tariff_name(distributor, tariff_code)
+    sensor._attr_name = f"{distributor_display} {tariff_name} Tariff"
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {"entry_1": {}}}
     return sensor
@@ -389,15 +387,28 @@ def test_forecast_trim_full_mode_returns_all():
     )
 
 
-def test_forecast_trim_days_2_7_mode_trims():
-    """In days_2_7 mode, forecast should trim intervals within Amber cutoff."""
-    sensor = make_sensor(store=None, mode=FORECAST_MODE_DAYS_2_7)
+def test_forecast_trim_days_2_7_sensor_trims():
+    """SpotPriceForecastDays27Sensor should trim intervals within Amber cutoff."""
+    # Build SpotPriceForecastDays27Sensor
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = SpotPriceForecastDays27Sensor.__new__(SpotPriceForecastDays27Sensor)
+    sensor.coordinator = coordinator
+    sensor._region = "QLD1"
+    sensor._store = None
+    sensor._attr_unique_id = "nem_pd7day_qld1_forecast_days27"
+    sensor._attr_name = "NEM Spot Price Forecast Day 2-7"
+    entry = MagicMock()
+    entry.entry_id = "entry_test"
+    entry.options = {CONF_FORECAST_MODE: FORECAST_MODE_DAYS_2_7}
+    sensor._entry = entry
+    sensor.hass = MagicMock()
+    sensor.hass.data = {DOMAIN: {"entry_test": {}}}
 
     fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=fake_now)  # tomorrow 3:30am
+    cutoff = _amber_express_cutoff(now=fake_now)
     run_at_str = nem_iso(fake_now)
 
-    # Build 200 periods spanning ~100h
     periods = []
     for i in range(200):
         interval_end_dt = fake_now + timedelta(minutes=30 * (i + 1))
@@ -417,8 +428,7 @@ def test_forecast_trim_days_2_7_mode_trims():
         attrs = sensor.extra_state_attributes
     forecast = attrs["forecast"]
 
-    # Should be trimmed — fewer than 200
-    assert len(forecast) < 200, f"Days 2-7 mode should trim. Got {len(forecast)}"
+    assert len(forecast) < 200, f"Day 2-7 sensor should trim. Got {len(forecast)}"
     assert len(forecast) > 0, "Trimmed forecast should not be empty"
 
 
@@ -435,15 +445,16 @@ def test_tariff_visibility_days_2_7_active_tariff_enabled():
     assert sensor.entity_registry_enabled_default is True
 
 
-def test_tariff_visibility_days_2_7_other_tariff_disabled():
-    """In days_2_7 mode, non-active tariffs should be disabled."""
+def test_tariff_visibility_days_2_7_all_defaults_still_enabled():
+    """In days_2_7 mode, base tariff sensors use DEFAULT_ENABLED_TARIFFS (8900 is default-enabled)."""
     sensor = make_tariff_sensor(
         distributor="energex",
         tariff_code="8900",
         mode=FORECAST_MODE_DAYS_2_7,
         active_tariff="energex/6900",
     )
-    assert sensor.entity_registry_enabled_default is False
+    # Base tariff sensors always use DEFAULT_ENABLED_TARIFFS; 8900 is in that set
+    assert sensor.entity_registry_enabled_default is True
 
 
 def test_tariff_visibility_days_2_7_no_active_tariff_uses_defaults():
@@ -484,9 +495,11 @@ def test_migration_missing_forecast_mode():
     # Simulate missing forecast_mode by using empty options
     sensor._entry.options = {}
 
-    # Sensor name should default to "Spot Price Days 2-7" (days_2_7 mode)
+    # Mode defaults to days_2_7 for migration
     mode = sensor._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
     assert mode == FORECAST_MODE_DAYS_2_7
+    # But sensor name is always the same regardless
+    assert sensor._attr_name == "NEM Spot Price Forecast"
 
 
 def test_migration_tariff_visibility_no_mode():
@@ -504,16 +517,13 @@ def test_migration_tariff_visibility_no_mode():
 
 # ── 6. Sensor name is dynamic based on mode ──────────────────────────────────
 
-def test_sensor_name_full_mode():
-    """In days_1_7 mode, sensor name should be 'NEM Spot Forecast'."""
-    sensor = make_sensor(store=None, mode=FORECAST_MODE_FULL)
-    assert sensor._attr_name == "NEM Spot Forecast"
+def test_sensor_name_always_nem_spot_price_forecast():
+    """Base sensor name is always 'NEM Spot Price Forecast' regardless of mode."""
+    sensor_full = make_sensor(store=None, mode=FORECAST_MODE_FULL)
+    assert sensor_full._attr_name == "NEM Spot Price Forecast"
 
-
-def test_sensor_name_days_2_7_mode():
-    """In days_2_7 mode, sensor name should be 'Spot Price Days 2-7'."""
-    sensor = make_sensor(store=None, mode=FORECAST_MODE_DAYS_2_7)
-    assert sensor._attr_name == "Spot Price Days 2-7"
+    sensor_d27 = make_sensor(store=None, mode=FORECAST_MODE_DAYS_2_7)
+    assert sensor_d27._attr_name == "NEM Spot Price Forecast"
 
 
 # ── 7. Tariff forecast trim is also mode-aware ──────────────────────────────
@@ -534,10 +544,9 @@ def test_tariff_forecast_full_mode_no_trim():
     assert len(attrs["forecast"]) == 10
 
 
-def test_tariff_forecast_days_2_7_trims():
-    """In days_2_7 mode, tariff forecast should trim to post-cutoff only."""
+def test_tariff_forecast_base_always_full():
+    """Base tariff sensor always returns full day 1-7 forecast regardless of mode."""
     fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=fake_now)
 
     base = fake_now.replace(minute=0, second=0, microsecond=0)
     periods = []
@@ -551,10 +560,9 @@ def test_tariff_forecast_days_2_7_trims():
     )
 
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
-        with patch.object(_tariff_mod, "_amber_express_cutoff", return_value=cutoff):
-            attrs = sensor.extra_state_attributes
-    assert len(attrs["forecast"]) < 367
-    assert len(attrs["forecast"]) > 0
+        attrs = sensor.extra_state_attributes
+    # Base tariff sensor returns ALL intervals (day 1-7)
+    assert len(attrs["forecast"]) == 367
 
 
 # ── 8. Config flow forecast_mode step ────────────────────────────────────────
@@ -603,3 +611,164 @@ def test_tariff_sensor_dispatch_fallback():
         val = sensor.native_value
         assert val is not None
         assert abs(val - 0.155) < 1e-6
+
+
+# ── 10. Additive sensor registration tests ──────────────────────────────────
+
+def test_async_setup_entry_days_2_7_registers_day27_spot_sensor():
+    """In days_2_7 mode, async_setup_entry must register SpotPriceForecastDays27Sensor."""
+    from custom_components.nem_pd7day.sensor import async_setup_entry as sensor_async_setup_entry
+
+    coordinator = MagicMock()
+    coordinator.data = None
+
+    entry = MagicMock()
+    entry.entry_id = "entry_additive"
+    entry.data = {CONF_REGION: "QLD1"}
+    entry.options = {
+        CONF_FORECAST_MODE: FORECAST_MODE_DAYS_2_7,
+        CONF_ACTIVE_TARIFF: "energex/6900",
+    }
+
+    hass = MagicMock()
+    hass.data = {
+        DOMAIN: {
+            entry.entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: MagicMock(),
+            }
+        }
+    }
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    import asyncio
+    asyncio.new_event_loop().run_until_complete(
+        sensor_async_setup_entry(hass, entry, _add_entities)
+    )
+
+    # Both base and day 2-7 spot sensors should be registered
+    base_spot = [e for e in created if getattr(e, '_attr_name', '') == "NEM Spot Price Forecast"]
+    day27_spot = [e for e in created if getattr(e, '_attr_name', '') == "NEM Spot Price Forecast Day 2-7"]
+    assert len(base_spot) == 1, "Base spot sensor must always be registered"
+    assert len(day27_spot) == 1, "Day 2-7 spot sensor must be registered in days_2_7 mode"
+
+
+def test_async_setup_entry_days_1_7_no_day27_sensors():
+    """In days_1_7 mode, async_setup_entry must NOT register day 2-7 sensors."""
+    from custom_components.nem_pd7day.sensor import async_setup_entry as sensor_async_setup_entry
+
+    coordinator = MagicMock()
+    coordinator.data = None
+
+    entry = MagicMock()
+    entry.entry_id = "entry_full"
+    entry.data = {CONF_REGION: "QLD1"}
+    entry.options = {CONF_FORECAST_MODE: FORECAST_MODE_FULL}
+
+    hass = MagicMock()
+    hass.data = {
+        DOMAIN: {
+            entry.entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: MagicMock(),
+            }
+        }
+    }
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    import asyncio
+    asyncio.new_event_loop().run_until_complete(
+        sensor_async_setup_entry(hass, entry, _add_entities)
+    )
+
+    day27_spot = [e for e in created if getattr(e, '_attr_name', '') == "NEM Spot Price Forecast Day 2-7"]
+    assert len(day27_spot) == 0, "Day 2-7 spot sensor must NOT be registered in days_1_7 mode"
+
+
+def test_async_setup_entry_days_2_7_registers_day27_tariff_sensor():
+    """In days_2_7 mode, Day 2-7 tariff sensor is registered for active tariff only."""
+    from custom_components.nem_pd7day.sensor import async_setup_entry as sensor_async_setup_entry
+    from custom_components.nem_pd7day.tariff_sensor import TariffForecastDays27Sensor
+
+    coordinator = MagicMock()
+    coordinator.data = None
+
+    entry = MagicMock()
+    entry.entry_id = "entry_tariff27"
+    entry.data = {CONF_REGION: "QLD1"}
+    entry.options = {
+        CONF_FORECAST_MODE: FORECAST_MODE_DAYS_2_7,
+        CONF_ACTIVE_TARIFF: "energex/6900",
+    }
+
+    hass = MagicMock()
+    hass.data = {
+        DOMAIN: {
+            entry.entry_id: {
+                COORDINATOR_KEY: coordinator,
+                STORE_KEY: MagicMock(),
+            }
+        }
+    }
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    import asyncio
+    asyncio.new_event_loop().run_until_complete(
+        sensor_async_setup_entry(hass, entry, _add_entities)
+    )
+
+    day27_tariff = [e for e in created if "Day 2-7" in getattr(e, '_attr_name', '') and "Tariff" in getattr(e, '_attr_name', '')]
+    assert len(day27_tariff) == 1, "Only one Day 2-7 tariff sensor for the active tariff"
+    assert day27_tariff[0]._distributor == "energex"
+    assert day27_tariff[0]._tariff_code == "6900"
+    assert day27_tariff[0]._attr_unique_id == "nem_pd7day_QLD1_energex_6900_days27"
+
+
+def test_get_tariff_name_from_library():
+    """get_tariff_name() returns correct name from aemo_to_tariff library."""
+    name = get_tariff_name("energex", "6900")
+    assert name == "Residential Time of Use Energy"
+
+    name_ergon = get_tariff_name("ergon", "ERTOUET1")
+    assert name_ergon == "Residential Battery ToU"
+
+    # sapn maps to sapower in library
+    name_sapn = get_tariff_name("sapn", "RTOU")
+    assert name_sapn == "Residential Time of Use"
+
+    # Unknown code falls back
+    name_unknown = get_tariff_name("energex", "ZZZZZ")
+    assert name_unknown == "ZZZZZ"
+
+
+def test_base_tariff_visibility_always_uses_defaults():
+    """Base tariff sensors use DEFAULT_ENABLED_TARIFFS regardless of mode or active_tariff."""
+    # 8900 is in DEFAULT_ENABLED_TARIFFS
+    sensor_8900 = make_tariff_sensor(
+        distributor="energex",
+        tariff_code="8900",
+        mode=FORECAST_MODE_DAYS_2_7,
+        active_tariff="energex/6900",
+    )
+    assert sensor_8900.entity_registry_enabled_default is True
+
+    # 8400 is NOT in DEFAULT_ENABLED_TARIFFS
+    sensor_8400 = make_tariff_sensor(
+        distributor="energex",
+        tariff_code="8400",
+        mode=FORECAST_MODE_DAYS_2_7,
+        active_tariff="energex/6900",
+    )
+    assert sensor_8400.entity_registry_enabled_default is False

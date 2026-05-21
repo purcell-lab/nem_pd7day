@@ -37,16 +37,38 @@ _LOGGER = logging.getLogger(__name__)
 
 try:
     from aemo_to_tariff import get_daily_fee, get_periods, spot_to_tariff
+    import aemo_to_tariff as _att
 except ImportError:
     spot_to_tariff = None  # type: ignore[assignment]
     get_periods = None  # type: ignore[assignment]
     get_daily_fee = None  # type: ignore[assignment]
+    _att = None  # type: ignore[assignment]
     _LOGGER.warning("aemo_to_tariff not installed — tariff sensors will be unavailable")
 
 # Default loss factors used by aemo_to_tariff library (Energex defaults)
 _DEFAULT_DLF = 1.05905
 _DEFAULT_MLF = 1.0154
 _DEFAULT_MARKET = 1.0154
+
+# Map const.py distributor keys to aemo_to_tariff module names
+_DISTRIBUTOR_LIB_MAP = {
+    "sapn": "sapower",
+}
+
+
+def get_tariff_name(distributor_key: str, tariff_code: str) -> str:
+    """Look up human-readable tariff name from the aemo_to_tariff library."""
+    if _att is None:
+        return TARIFF_NAMES.get(distributor_key, {}).get(tariff_code, tariff_code)
+    lib_key = _DISTRIBUTOR_LIB_MAP.get(distributor_key, distributor_key)
+    module = getattr(_att, lib_key, None)
+    if module and hasattr(module, "tariffs"):
+        tariff_data = module.tariffs.get(tariff_code, {})
+        name = tariff_data.get("name", "")
+        if name:
+            return name
+    # Fallback to TARIFF_NAMES const then raw code
+    return TARIFF_NAMES.get(distributor_key, {}).get(tariff_code, tariff_code)
 
 
 class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
@@ -77,10 +99,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._attr_unique_id = (
             f"{entry.entry_id}_{region}_{distributor}_{tariff_code}_tariff"
         )
-        tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
-        self._attr_name = (
-            f"{DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())} {tariff_code} {tariff_name} Tariff"
-        )
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+        tariff_name = get_tariff_name(distributor, tariff_code)
+        self._attr_name = f"{distributor_display} {tariff_name} Tariff"
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to coordinator updates and schedule NEM boundary refresh."""
@@ -123,13 +144,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
     @property
     def entity_registry_enabled_default(self) -> bool:
-        mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
-        if mode == FORECAST_MODE_DAYS_2_7:
-            active = self._entry.options.get(CONF_ACTIVE_TARIFF, "")
-            if active:
-                return active == f"{self._distributor}/{self._tariff_code}"
-            return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
-        # FORECAST_MODE_FULL: use DEFAULT_ENABLED_TARIFFS
+        """Base tariff sensors always use DEFAULT_ENABLED_TARIFFS for visibility."""
         return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
 
     @property
@@ -292,16 +307,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         d = self._price_data
         forecast_list: list[dict[str, Any]] = []
         if d is not None:
-            # Mode-aware forecast trim
-            mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
-            if mode == FORECAST_MODE_FULL:
-                filtered_periods = d.forecast
-            else:
-                cutoff_dt = _amber_express_cutoff()
-                filtered_periods = [
-                    p for p in d.forecast if parse_iso(p.time) > cutoff_dt
-                ]
-            for period in filtered_periods:
+            # Base tariff sensor always provides full day 1-7 forecast
+            for period in d.forecast:
                 tariff_val = self._compute_tariff(period)
                 forecast_list.append({
                     "time": period.time,           # interval START (nemtime - 30 min)
@@ -313,9 +320,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
             self._distributor, self._distributor.title(),
         )
-        tariff_name = TARIFF_NAMES.get(self._distributor, {}).get(
-            self._tariff_code, self._tariff_code,
-        )
+        tariff_name = get_tariff_name(self._distributor, self._tariff_code)
 
         combined = round(_DEFAULT_DLF * _DEFAULT_MLF * _DEFAULT_MARKET, 6)
 
@@ -342,5 +347,77 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 _DEFAULT_DLF, _DEFAULT_MLF, combined,
             ),
             # Forecast time-series
+            "forecast": forecast_list,
+        }
+
+
+class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
+    """Day 2-7 tariff sensor — only registered for the active tariff in days_2_7 mode."""
+
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+        distributor: str,
+        tariff_code: str,
+    ) -> None:
+        super().__init__(coordinator, entry, region, distributor, tariff_code)
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+        tariff_name = get_tariff_name(distributor, tariff_code)
+        self._attr_name = f"Day 2-7 {distributor_display} {tariff_name} Tariff"
+        self._attr_unique_id = (
+            f"nem_pd7day_{region}_{distributor}_{tariff_code}_days27"
+        )
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        return True
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Day 2-7 tariff forecast with amber_express_cutoff trim."""
+        d = self._price_data
+        forecast_list: list[dict[str, Any]] = []
+        if d is not None:
+            cutoff_dt = _amber_express_cutoff()
+            filtered_periods = [
+                p for p in d.forecast if parse_iso(p.time) > cutoff_dt
+            ]
+            for period in filtered_periods:
+                tariff_val = self._compute_tariff(period)
+                forecast_list.append({
+                    "time": period.time,
+                    "nemtime": period.nemtime,
+                    "spot": round(period.value, 6),
+                    "value": tariff_val,
+                })
+
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
+            self._distributor, self._distributor.title(),
+        )
+        tariff_name = get_tariff_name(self._distributor, self._tariff_code)
+
+        combined = round(_DEFAULT_DLF * _DEFAULT_MLF * _DEFAULT_MARKET, 6)
+
+        return {
+            "tariff_code": self._tariff_code,
+            "tariff_name": tariff_name,
+            "distributor": distributor_display,
+            "region": self._region,
+            "network": self._distributor,
+            "tariff_periods": self._get_tariff_periods(),
+            "daily_supply_charge_$": self._get_daily_supply_charge(),
+            "demand_charge": None,
+            "distribution_loss_factor_dlf": _DEFAULT_DLF,
+            "metering_loss_factor_mlf": _DEFAULT_MLF,
+            "market_loss_factor": _DEFAULT_MARKET,
+            "combined_loss_multiplier": combined,
+            "forecast_description": self._build_forecast_description(
+                distributor_display, tariff_name,
+                _DEFAULT_DLF, _DEFAULT_MLF, combined,
+            ),
             "forecast": forecast_list,
         }

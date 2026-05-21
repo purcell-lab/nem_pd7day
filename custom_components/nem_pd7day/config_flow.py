@@ -48,7 +48,7 @@ def _tariff_options_for_region(region: str) -> list[dict[str, str]]:
                 continue
             display_name = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
             tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
-            label = f"{display_name} {tariff_code} {tariff_name}"
+            label = f"{display_name} {tariff_name}"
             options.append({"value": f"{distributor}/{tariff_code}", "label": label})
     return options
 
@@ -125,12 +125,11 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_forecast_mode(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Step 2: choose forecast mode and active tariff."""
+        """Step 2: choose forecast mode (active tariff set via Options after setup)."""
         region = self._region or DEFAULT_REGION
 
         if user_input is not None:
             mode = user_input.get(CONF_FORECAST_MODE, FORECAST_MODE_FULL)
-            active_tariff = user_input.get(CONF_ACTIVE_TARIFF, "")
 
             await self.async_set_unique_id(f"nem_pd7day_{region}")
             self._abort_if_unique_id_configured()
@@ -143,13 +142,10 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 options={
                     CONF_REGION: region,
                     CONF_FORECAST_MODE: mode,
-                    CONF_ACTIVE_TARIFF: active_tariff,
+                    CONF_ACTIVE_TARIFF: "",
                 },
                 description_placeholders={"fetch_times": fetch_times_str},
             )
-
-        tariff_options = _tariff_options_for_region(region)
-        default_tariff = _default_tariff_for_region(region) or ""
 
         schema = vol.Schema(
             {
@@ -159,17 +155,6 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     {
                         "select": {
                             "options": FORECAST_MODE_OPTIONS,
-                            "multiple": False,
-                            "mode": "dropdown",
-                        }
-                    }
-                ),
-                vol.Optional(
-                    CONF_ACTIVE_TARIFF, default=default_tariff
-                ): selector.selector(
-                    {
-                        "select": {
-                            "options": tariff_options,
                             "multiple": False,
                             "mode": "dropdown",
                         }

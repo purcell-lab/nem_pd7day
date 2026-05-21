@@ -127,9 +127,10 @@ _tariff_mod = _load(
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "tariff_sensor.py"),
 )
 
-from custom_components.nem_pd7day.tariff_sensor import NemPd7dayTariffSensor
+from custom_components.nem_pd7day.tariff_sensor import NemPd7dayTariffSensor, get_tariff_name
 from custom_components.nem_pd7day.const import (
     DEFAULT_ENABLED_TARIFFS,
+    DISTRIBUTOR_DISPLAY_NAMES,
     DISTRIBUTOR_TARIFFS,
     DOMAIN,
     REGION_DISTRIBUTORS,
@@ -183,8 +184,9 @@ def make_tariff_sensor(
     sensor._tariff_code = tariff_code
     sensor._entry = entry
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
-    tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
-    sensor._attr_name = f"{distributor.title()} {tariff_code} {tariff_name} Tariff"
+    distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+    tariff_name = get_tariff_name(distributor, tariff_code)
+    sensor._attr_name = f"{distributor_display} {tariff_name} Tariff"
     # Mock hass.data so dispatch lookup doesn't crash
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {"entry_1": {}}}
@@ -327,16 +329,16 @@ def test_forecast_attribute_with_none_coordinator_data():
 
 
 def test_tariff_sensor_names():
-    """Verify name format includes human-readable tariff name from TARIFF_NAMES."""
+    """Verify name format: '{distributor_display} {tariff_name} Tariff' (no code)."""
     sensor_6900 = make_tariff_sensor(distributor="energex", tariff_code="6900")
-    assert sensor_6900._attr_name == "Energex 6900 Residential Time of Use Energy Tariff"
+    assert sensor_6900._attr_name == "Energex Residential Time of Use Energy Tariff"
 
     sensor_rtou = make_tariff_sensor(distributor="sapn", tariff_code="RTOU")
-    assert sensor_rtou._attr_name == "Sapn RTOU Residential Time of Use Tariff"
+    assert sensor_rtou._attr_name == "SA Power Networks Residential Time of Use Tariff"
 
     # Unknown tariff code falls back to code itself
     sensor_unknown = make_tariff_sensor(distributor="energex", tariff_code="ZZZZ")
-    assert sensor_unknown._attr_name == "Energex ZZZZ ZZZZ Tariff"
+    assert sensor_unknown._attr_name == "Energex ZZZZ Tariff"
 
 
 def test_default_enabled_tariffs():
@@ -444,15 +446,11 @@ def test_daily_supply_charge_in_attributes():
             assert attrs["daily_supply_charge_$"] is None
 
 
-def test_tariff_forecast_trimmed_to_post_cutoff():
-    """Tariff forecast attribute must only contain intervals after the Amber Express cutoff."""
-    from custom_components.nem_pd7day.nem_time import _amber_express_cutoff, parse_iso
+def test_tariff_forecast_full_day_1_7():
+    """Base tariff sensor always provides full day 1-7 forecast (no trim)."""
 
-    # Simulate 6:00am NEM — short window — cutoff = tomorrow 3:30am
     fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=fake_now)  # 2026-05-20 03:30 NEM
 
-    # Build 367 periods spanning ~7.6 days from fake_now
     base = fake_now.replace(minute=0, second=0, microsecond=0)
     periods = []
     for i in range(367):
@@ -462,27 +460,12 @@ def test_tariff_forecast_trimmed_to_post_cutoff():
     sensor = make_tariff_sensor(price_periods=periods)
 
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
-        with patch.object(_tariff_mod, "_amber_express_cutoff", return_value=cutoff):
-            attrs = sensor.extra_state_attributes
+        attrs = sensor.extra_state_attributes
     forecast = attrs["forecast"]
 
-    # Verify all intervals are after cutoff
-    for entry in forecast:
-        interval_start_dt = parse_iso(entry["time"])
-        assert interval_start_dt > cutoff, (
-            f"Tariff forecast contains interval at {entry['time']} which is <= cutoff {cutoff}"
-        )
-
-    # Should be trimmed — fewer than 367 intervals
-    assert len(forecast) < 367, f"Tariff forecast should be trimmed. Got {len(forecast)}"
-    assert len(forecast) > 0, "Tariff forecast should not be empty"
-
-    # Count how many were trimmed (intervals with start <= cutoff)
-    pre_cutoff_count = sum(
-        1 for p in periods if parse_iso(p.time) <= cutoff
-    )
-    assert len(forecast) == 367 - pre_cutoff_count, (
-        f"Expected {367 - pre_cutoff_count} post-cutoff intervals, got {len(forecast)}"
+    # Base tariff sensor returns ALL intervals (day 1-7)
+    assert len(forecast) == 367, (
+        f"Base tariff sensor should return all 367 intervals. Got {len(forecast)}"
     )
 
 

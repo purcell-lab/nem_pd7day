@@ -349,7 +349,7 @@ def test_options_flow_defaults_forecast_mode_for_existing_installs():
 
 
 def test_forecast_mode_step_creates_entry_with_options():
-    """forecast_mode step must create entry with mode and active_tariff in options."""
+    """forecast_mode step must create entry with mode in options (no active_tariff in setup)."""
     config_flow_mod, const_mod, restore = _load_config_flow_under_test()
 
     class _ClientStub:
@@ -369,14 +369,14 @@ def test_forecast_mode_step_creates_entry_with_options():
         # Step 1: region
         run_async(flow.async_step_user({const_mod.CONF_REGION: "QLD1"}))
 
-        # Step 2: forecast mode with active tariff
+        # Step 2: forecast mode only (active_tariff not in setup flow)
         result = run_async(flow.async_step_forecast_mode({
             const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7,
-            const_mod.CONF_ACTIVE_TARIFF: "energex/6900",
         }))
 
         assert result["type"] == "create_entry"
         assert result["options"][const_mod.CONF_FORECAST_MODE] == const_mod.FORECAST_MODE_DAYS_2_7
-        assert result["options"][const_mod.CONF_ACTIVE_TARIFF] == "energex/6900"
+        # active_tariff defaults to empty in setup; set later via Options
+        assert result["options"][const_mod.CONF_ACTIVE_TARIFF] == ""
     finally:
         restore()

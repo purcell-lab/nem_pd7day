@@ -183,7 +183,7 @@ def make_sensor(store=None) -> PD7DayForecastSensor:
     sensor._region = "QLD1"
     sensor._store = store
     sensor._attr_unique_id = "nem_pd7day_qld1_forecast"
-    sensor._attr_name = "Spot Price Days 2-7"
+    sensor._attr_name = "NEM Spot Price Forecast"
     # Mock entry with options for forecast mode
     entry = MagicMock()
     entry.entry_id = "entry_test"
@@ -760,10 +760,10 @@ def test_sensor_reads_capped_value():
 
 # ── Tests: forecast trim to post-Amber-Express cutoff (dynamic, time-based) ──
 
-def test_sensor_name_is_spot_price_days_2_7():
-    """Sensor name must be 'Spot Price Days 2-7' after rename."""
+def test_sensor_name_is_nem_spot_price_forecast():
+    """Base sensor name is always 'NEM Spot Price Forecast' (day 1-7)."""
     sensor = make_sensor(store=None)
-    assert sensor._attr_name == "Spot Price Days 2-7"
+    assert sensor._attr_name == "NEM Spot Price Forecast"
 
 
 def test_amber_express_cutoff_short_window():
@@ -824,20 +824,69 @@ def test_amber_express_cutoff_boundary_1230pm():
     assert cutoff == expected, f"At 12:30pm NEM cutoff should be now+24h, got {cutoff}"
 
 
-def test_forecast_attribute_only_contains_post_cutoff_intervals():
-    """ATTR_FORECAST must only contain intervals after the dynamic cutoff."""
+def test_base_sensor_forecast_contains_all_intervals():
+    """Base sensor ATTR_FORECAST returns full day 1-7 forecast (no trim)."""
     from unittest.mock import patch
 
     sensor = make_sensor(store=None)
 
-    # Simulate 6:00am NEM — short window — cutoff = tomorrow 3:30am
     fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=fake_now)  # 2026-05-20 03:30 NEM
 
     run_at_dt = fake_now
     run_at_str = nem_iso(run_at_dt)
 
     # Build 200 periods spanning ~100h from run_at
+    periods = []
+    for i in range(200):
+        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
+        periods.append(make_price_period(interval_end_dt, value=0.05 + i * 0.001))
+
+    price_data = MagicMock()
+    price_data.forecast = periods
+    price_data.forecast_generated_at = run_at_str
+    price_data.region = "QLD1"
+    price_data.interval_minutes = 30
+    price_data.source_file = "test.xml"
+
+    sensor.coordinator.data = MagicMock()
+    sensor.coordinator.data.prices = {"QLD1": price_data}
+
+    attrs = sensor.extra_state_attributes
+    forecast = attrs["forecast"]
+
+    # Base sensor always returns ALL intervals (day 1-7)
+    assert len(forecast) == 200, (
+        f"Base sensor should return all 200 intervals (day 1-7). Got {len(forecast)}"
+    )
+
+
+def test_day27_sensor_forecast_only_contains_post_cutoff_intervals():
+    """SpotPriceForecastDays27Sensor ATTR_FORECAST must only contain post-cutoff intervals."""
+    from unittest.mock import patch
+    from custom_components.nem_pd7day.sensor import SpotPriceForecastDays27Sensor
+
+    # Build SpotPriceForecastDays27Sensor
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = SpotPriceForecastDays27Sensor.__new__(SpotPriceForecastDays27Sensor)
+    sensor.coordinator = coordinator
+    sensor._region = "QLD1"
+    sensor._store = None
+    sensor._attr_unique_id = "nem_pd7day_qld1_forecast_days27"
+    sensor._attr_name = "NEM Spot Price Forecast Day 2-7"
+    entry = MagicMock()
+    entry.entry_id = "entry_test"
+    entry.options = {}
+    sensor._entry = entry
+    sensor.hass = MagicMock()
+    sensor.hass.data = {DOMAIN: {"entry_test": {}}}
+
+    fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    cutoff = _amber_express_cutoff(now=fake_now)
+
+    run_at_dt = fake_now
+    run_at_str = nem_iso(run_at_dt)
+
     periods = []
     for i in range(200):
         interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
@@ -861,26 +910,20 @@ def test_forecast_attribute_only_contains_post_cutoff_intervals():
     for p in forecast:
         interval_start = parse_iso(p["time"])
         assert interval_start > cutoff, (
-            f"Forecast contains interval at {p['time']} which is <= cutoff {cutoff}"
+            f"Day 2-7 forecast contains interval at {p['time']} which is <= cutoff {cutoff}"
         )
 
-    assert len(forecast) < 200, f"Trimmed forecast should be shorter than full. Got {len(forecast)}"
-    assert len(forecast) > 0, "Trimmed forecast should not be empty"
+    assert len(forecast) < 200, f"Day 2-7 sensor should trim. Got {len(forecast)}"
+    assert len(forecast) > 0, "Day 2-7 sensor should not be empty"
 
 
-def test_min_max_computed_over_trimmed_window():
-    """min_24h_value and max_24h_value must come from the trimmed forecast."""
-    from unittest.mock import patch
-
+def test_min_max_computed_over_full_window():
+    """min_24h_value and max_24h_value come from full day 1-7 forecast."""
     sensor = make_sensor(store=None)
 
     run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
     run_at_str = nem_iso(run_at_dt)
-    # 2:00pm NEM — long window — cutoff = now + 24h = May 20 14:00
-    cutoff = _amber_express_cutoff(now=run_at_dt)
 
-    # First 48 intervals (24h): extreme values that should NOT appear
-    # Post-cutoff intervals: moderate values
     periods = []
     for i in range(96):
         interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
@@ -900,33 +943,24 @@ def test_min_max_computed_over_trimmed_window():
     sensor.coordinator.data = MagicMock()
     sensor.coordinator.data.prices = {"QLD1": price_data}
 
-    with patch("custom_components.nem_pd7day.sensor._amber_express_cutoff", return_value=cutoff):
-        attrs = sensor.extra_state_attributes
-    assert attrs["min_24h_value"] >= 0.05, (
-        f"min_24h_value={attrs['min_24h_value']} should be from trimmed window (>= 0.05)"
-    )
-    assert attrs["max_24h_value"] < 1.0, (
-        f"max_24h_value={attrs['max_24h_value']} should be from trimmed window (< 1.0)"
-    )
+    attrs = sensor.extra_state_attributes
+    # Base sensor includes ALL intervals, so min/max spans the full window
+    assert attrs["min_24h_value"] is not None
+    assert attrs["max_24h_value"] is not None
+    assert len(attrs["forecast"]) == 96
 
 
-def test_cheapest_2h_window_computed_over_trimmed_forecast():
-    """cheapest_2h_window must be computed from post-cutoff intervals only."""
-    from unittest.mock import patch
-
+def test_cheapest_2h_window_computed_over_full_forecast():
+    """cheapest_2h_window computed over full day 1-7 forecast."""
     sensor = make_sensor(store=None)
 
     run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
     run_at_str = nem_iso(run_at_dt)
-    cutoff = _amber_express_cutoff(now=run_at_dt)
 
     periods = []
     for i in range(96):
         interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
-        if i < 48:
-            val = 0.001
-        else:
-            val = 0.10 + i * 0.001
+        val = 0.10 + i * 0.001
         periods.append(make_price_period(interval_end_dt, value=val))
 
     price_data = MagicMock()
@@ -939,14 +973,11 @@ def test_cheapest_2h_window_computed_over_trimmed_forecast():
     sensor.coordinator.data = MagicMock()
     sensor.coordinator.data.prices = {"QLD1": price_data}
 
-    with patch("custom_components.nem_pd7day.sensor._amber_express_cutoff", return_value=cutoff):
-        attrs = sensor.extra_state_attributes
+    attrs = sensor.extra_state_attributes
     cheapest = attrs["cheapest_2h_window"]
     assert cheapest is not None, "cheapest_2h_window should not be None with enough intervals"
-    assert cheapest["avg_value"] >= 0.10, (
-        f"cheapest avg_value={cheapest['avg_value']} should be >= 0.10 "
-        f"(from trimmed window, not the 0.001 pre-cutoff values)"
-    )
+    # First 4 intervals should be cheapest (ascending values)
+    assert cheapest["avg_value"] < 0.102
 
 
 def test_native_value_unaffected_by_trim():
