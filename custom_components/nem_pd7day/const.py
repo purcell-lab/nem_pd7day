@@ -424,5 +424,9 @@ ATTR_CAL_SOURCE = "calibrated_source"
 ATTR_CAL_N_OBS = "n_obs"
 
 # ── Additional usage fee ─────────────────────────────────────────────────────
-CONF_ADDITIONAL_FEE_ENTITY = "input_number.nem_pd7day_additional_usage_fee"
 DEFAULT_ADDITIONAL_FEE = 0.0293
+
+
+def additional_fee_entity(region: str) -> str:
+    """Return the input_number entity_id for additional usage fees for a NEM region."""
+    return f"input_number.nem_pd7day_additional_usage_fee_{region.lower()}"

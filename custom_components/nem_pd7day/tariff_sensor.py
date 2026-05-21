@@ -21,7 +21,6 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ACTIVE_TARIFF,
-    CONF_ADDITIONAL_FEE_ENTITY,
     CONF_FORECAST_MODE,
     DEFAULT_ADDITIONAL_FEE,
     DEFAULT_ENABLED_TARIFFS,
@@ -31,6 +30,7 @@ from .const import (
     FORECAST_MODE_DAYS_2_7,
     FORECAST_MODE_FULL,
     TARIFF_NAMES,
+    additional_fee_entity,
 )
 from .coordinator import PD7DayCoordinator
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
@@ -177,12 +177,13 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         return forecast[0] if forecast else None
 
     def _get_additional_fee(self) -> float:
-        """Read additional usage fee from input_number helper, fallback to default."""
+        """Read additional usage fee from per-region input_number helper, fallback to default."""
         try:
-            state = self.hass.states.get(CONF_ADDITIONAL_FEE_ENTITY)
+            entity_id = additional_fee_entity(self._region)
+            state = self.hass.states.get(entity_id)
             if state is not None and state.state not in ("unknown", "unavailable"):
                 return float(state.state)
-        except (ValueError, TypeError, AttributeError):
+        except (ValueError, AttributeError):
             pass
         return DEFAULT_ADDITIONAL_FEE
 
