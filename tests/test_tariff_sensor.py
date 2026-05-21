@@ -433,7 +433,7 @@ def test_forecast_description_in_attributes():
             assert "Energex" in desc
             assert "10% GST" in desc
             assert "additional usage fee" in desc
-            assert "nem_pd7day_additional_usage_fee" in desc
+            assert "nem_pd7day_qld1_additional_usage_fee" in desc
 
 
 def test_daily_supply_charge_in_attributes():

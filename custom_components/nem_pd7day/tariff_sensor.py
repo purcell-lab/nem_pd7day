@@ -30,7 +30,7 @@ from .const import (
     FORECAST_MODE_DAYS_2_7,
     FORECAST_MODE_FULL,
     TARIFF_NAMES,
-    additional_fee_entity,
+    additional_fee_entity_id,
 )
 from .coordinator import PD7DayCoordinator
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
@@ -177,9 +177,10 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         return forecast[0] if forecast else None
 
     def _get_additional_fee(self) -> float:
-        """Read additional usage fee from per-region input_number helper, fallback to default."""
+        """Read additional usage fee from native number entity for this region."""
+        from .const import DEFAULT_ADDITIONAL_FEE, additional_fee_entity_id
         try:
-            entity_id = additional_fee_entity(self._region)
+            entity_id = additional_fee_entity_id(self._region)
             state = self.hass.states.get(entity_id)
             if state is not None and state.state not in ("unknown", "unavailable"):
                 return float(state.state)
@@ -297,6 +298,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         distributor_display: str, tariff_name: str,
         dlf: float, mlf: float, combined: float,
         fee: float = DEFAULT_ADDITIONAL_FEE,
+        region: str = "",
     ) -> str:
         return (
             f"This sensor shows a forecast all-in electricity tariff price in $/kWh, "
@@ -310,8 +312,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             f"The network component ($/kWh) varies by time of day per the tariff period "
             f"structure above and is sourced from AER-approved distributor pricing. "
             f"The final price includes a 10% GST component and an additional usage fee "
-            f"(currently {fee:.4f} $/kWh, configurable via the input_number helper "
-            f"'nem_pd7day_additional_usage_fee') added before GST. "
+            f"(currently {fee:.4f} $/kWh, configurable via the number entity "
+            f"'nem_pd7day_{region.lower()}_additional_usage_fee') added before GST. "
             f"IMPORTANT: This is a forecast only and should not be relied upon as an "
             f"accurate prediction of actual electricity costs. Spot prices are inherently "
             f"volatile and can differ significantly from forecasts, particularly beyond "
@@ -368,7 +370,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             # Description
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
-                _DEFAULT_DLF, _DEFAULT_MLF, combined, fee,
+                _DEFAULT_DLF, _DEFAULT_MLF, combined, fee, self._region,
             ),
             # Forecast time-series
             "forecast": forecast_list,
@@ -445,7 +447,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
             "gst_multiplier": 1.1,
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
-                _DEFAULT_DLF, _DEFAULT_MLF, combined, fee,
+                _DEFAULT_DLF, _DEFAULT_MLF, combined, fee, self._region,
             ),
             "forecast": forecast_list,
         }

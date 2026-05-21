@@ -427,6 +427,6 @@ ATTR_CAL_N_OBS = "n_obs"
 DEFAULT_ADDITIONAL_FEE = 0.0293
 
 
-def additional_fee_entity(region: str) -> str:
-    """Return the input_number entity_id for additional usage fees for a NEM region."""
-    return f"input_number.nem_pd7day_additional_usage_fee_{region.lower()}"
+def additional_fee_entity_id(region: str) -> str:
+    """Return the entity_id for the AdditionalFeeNumber for a given region."""
+    return f"number.nem_pd7day_{region.lower()}_additional_usage_fee"
