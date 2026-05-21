@@ -12,7 +12,7 @@ from typing import Any
 
 import datetime
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
@@ -76,8 +76,7 @@ def get_tariff_name(distributor_key: str, tariff_code: str) -> str:
 class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     """One sensor per (distributor, tariff_code) for the regional device."""
 
-    _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = None
     _attr_native_unit_of_measurement = "$/kWh"
     _attr_suggested_display_precision = 4
     _attr_icon = "mdi:currency-usd"
@@ -382,7 +381,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
     """Day 2-7 tariff sensor — only registered for the active tariff in days_2_7 mode."""
 
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = None
     _attr_suggested_display_precision = 4
     _attr_entity_registry_enabled_default = True
 
