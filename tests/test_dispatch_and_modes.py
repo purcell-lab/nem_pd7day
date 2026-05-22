@@ -260,6 +260,7 @@ def test_dispatch_coordinator_handles_fetch_failure():
     coord.region = "QLD1"
     coord.prices = {}
     coord.last_updated = None
+    coord.data = None
 
     try:
         run_async(coord._async_update_data())

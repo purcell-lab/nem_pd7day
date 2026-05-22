@@ -75,7 +75,22 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         client = self._get_client()
         try:
             result = await client.fetch_all(self._regions)
+        except aiohttp.ClientResponseError as exc:
+            if self.data is not None:
+                _LOGGER.warning(
+                    "PD7DAY fetch failed (%s %s) — serving stale data from last successful fetch",
+                    exc.status,
+                    exc.message,
+                )
+                return self.data
+            raise UpdateFailed(f"PD7DAY fetch failed: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
+            if self.data is not None:
+                _LOGGER.warning(
+                    "PD7DAY fetch failed (%s) — serving stale data from last successful fetch",
+                    exc,
+                )
+                return self.data
             raise UpdateFailed(f"PD7DAY fetch failed: {exc}") from exc
 
         _LOGGER.debug(
@@ -147,6 +162,12 @@ class DispatchCoordinator(DataUpdateCoordinator):
             self.prices = prices
             self.last_updated = datetime.now(timezone.utc)
             return prices
-        except Exception as exc:
-            _LOGGER.warning("DispatchIS fetch failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            if self.data is not None:
+                _LOGGER.warning(
+                    "Dispatch fetch failed (%s) — serving stale dispatch price",
+                    exc,
+                )
+                return self.data
+            _LOGGER.warning("Dispatch fetch failed (no stale data): %s", exc)
             raise UpdateFailed(f"DispatchIS fetch failed: {exc}") from exc
