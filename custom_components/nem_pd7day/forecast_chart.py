@@ -18,9 +18,26 @@ from __future__ import annotations
 
 import io
 import logging
+import struct
+import zlib
 from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
+
+def _placeholder_png(message: str = "") -> bytes:
+    """Return a minimal 1x1 white PNG when matplotlib is unavailable."""
+    _SIGNATURE = b'\x89PNG\r\n\x1a\n'
+
+    def _chunk(name: bytes, data: bytes) -> bytes:
+        c = struct.pack('>I', len(data)) + name + data
+        return c + struct.pack('>I', zlib.crc32(name + data) & 0xFFFFFFFF)
+
+    ihdr = _chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
+    # 1x1 white pixel: filter byte 0x00 + RGB 0xFF 0xFF 0xFF
+    idat = _chunk(b'IDAT', zlib.compress(b'\x00\xff\xff\xff'))
+    iend = _chunk(b'IEND', b'')
+    return _SIGNATURE + ihdr + idat + iend
+
 
 # ToD background colours (very light fills)
 _TOD_COLORS = {
@@ -80,15 +97,21 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     """Render the 7-day forecast chart. Returns PNG bytes."""
     import datetime
     from collections import defaultdict
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt  # needed for Line2D legend proxies only
-    import matplotlib.dates as mdates
-    import matplotlib.figure as mplfig
-    import matplotlib.patches as mpatches
-    import matplotlib.ticker as ticker
-    import numpy as np
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        import matplotlib.figure as mplfig
+        import matplotlib.patches as mpatches
+        import matplotlib.ticker as ticker
+        import numpy as np
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+    except ImportError:
+        return _placeholder_png(
+            "Forecast chart unavailable\n(matplotlib not installed)"
+        )
 
     NEM_TZ = datetime.timezone(datetime.timedelta(hours=10))
 

@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import patch
+
 from custom_components.nem_pd7day.forecast_chart import (
     render_forecast_chart,
     _is_spike_callout_eligible,
+    _placeholder_png,
 )
 
 
@@ -357,3 +360,27 @@ def test_covariate_constants_exist():
     assert SPIKE_COVARIATE_BYPASS_HORIZON_H == 12.0
     assert SPIKE_COVARIATE_CAP == 0.50
     assert SPIKE_COVARIATE_RAW_FLOOR == 1.00
+
+
+# ── Placeholder PNG / matplotlib-missing fallback ─────────────────────────────
+
+def test_placeholder_png_is_valid_png():
+    """_placeholder_png() returns bytes with a valid PNG signature."""
+    data = _placeholder_png()
+    assert isinstance(data, bytes)
+    assert data[:8] == b'\x89PNG\r\n\x1a\n'
+
+
+def test_render_forecast_chart_no_matplotlib():
+    """render_forecast_chart falls back to a placeholder PNG when matplotlib is missing."""
+    _real_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+
+    def _mock_import(name, *args, **kwargs):
+        if name == "matplotlib" or name.startswith("matplotlib."):
+            raise ImportError(f"No module named '{name}'")
+        return _real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_mock_import):
+        result = render_forecast_chart([], "QLD1")
+    assert isinstance(result, bytes)
+    assert result[:4] == b'\x89PNG'

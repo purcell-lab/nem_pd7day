@@ -462,6 +462,8 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
             result = await self.hass.async_add_executor_job(self._render)
             if result:
                 self._image_bytes = result
+        except ModuleNotFoundError as exc:
+            _LOGGER.warning("Forecast chart render skipped: %s", exc)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Forecast chart render failed")
 
