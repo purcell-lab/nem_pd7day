@@ -103,6 +103,17 @@ uc_mock.DataUpdateCoordinator = _FakeCoordinator
 uc_mock.UpdateFailed = Exception
 sys.modules["homeassistant.helpers.update_coordinator"] = uc_mock
 
+# Stub dispatch_client and tod_stats so coordinator.py loads without __init__.py side-effects
+_dispatch_client_stub = MagicMock()
+class _DispatchPrice:
+    def __init__(self, region, rrp, price_status="FIRM"): pass
+_dispatch_client_stub.DispatchPrice = _DispatchPrice
+_dispatch_client_stub.fetch_dispatch_prices = AsyncMock(return_value={})
+sys.modules["custom_components.nem_pd7day.dispatch_client"] = _dispatch_client_stub
+sys.modules.setdefault("custom_components.nem_pd7day.tod_stats", MagicMock())
+sys.modules.setdefault("custom_components.nem_pd7day.market_notice_client", MagicMock())
+sys.modules.setdefault("custom_components.nem_pd7day.notice_store", MagicMock())
+
 _client_mod = _load(
     "custom_components.nem_pd7day.pd7day_client",
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_client.py"),

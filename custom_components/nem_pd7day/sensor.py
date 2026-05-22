@@ -444,7 +444,7 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
         self._store = store
         slug = region.lower()
         self._attr_unique_id = f"nem_pd7day_{slug}_forecast_days27"
-        self._attr_name = "NEM Spot Price Forecast Day 2-7"
+        self._attr_name = "Day 2-7 NEM Spot Price Forecast"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
             name=f"NEM PD7DAY {self._region}",

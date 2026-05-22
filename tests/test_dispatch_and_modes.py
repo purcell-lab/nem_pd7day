@@ -391,15 +391,21 @@ def test_forecast_trim_full_mode_returns_all():
 
 def test_forecast_trim_days_2_7_sensor_trims():
     """SpotPriceForecastDays27Sensor should trim intervals within Amber cutoff."""
-    # Build SpotPriceForecastDays27Sensor
+    # Re-import from sys.modules to get the current class (test_lifecycle.py may
+    # have reloaded the sensor module via _load, producing new class objects).
+    import sys
+    _sensor_mod = sys.modules["custom_components.nem_pd7day.sensor"]
+    _SpotPriceForecastDays27Sensor = _sensor_mod.SpotPriceForecastDays27Sensor
+    _patch_target = "custom_components.nem_pd7day.sensor._amber_express_cutoff"
+
     coordinator = MagicMock()
     coordinator.data = None
-    sensor = SpotPriceForecastDays27Sensor.__new__(SpotPriceForecastDays27Sensor)
+    sensor = _SpotPriceForecastDays27Sensor.__new__(_SpotPriceForecastDays27Sensor)
     sensor.coordinator = coordinator
     sensor._region = "QLD1"
     sensor._store = None
     sensor._attr_unique_id = "nem_pd7day_qld1_forecast_days27"
-    sensor._attr_name = "NEM Spot Price Forecast Day 2-7"
+    sensor._attr_name = "Day 2-7 NEM Spot Price Forecast"
     entry = MagicMock()
     entry.entry_id = "entry_test"
     entry.options = {CONF_FORECAST_MODE: FORECAST_MODE_DAYS_2_7}
@@ -408,7 +414,9 @@ def test_forecast_trim_days_2_7_sensor_trims():
     sensor.hass.data = {DOMAIN: {"entry_test": {}}}
 
     fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=fake_now)
+    # Set cutoff explicitly to 12 hours into the forecast window so the
+    # trimmed list is non-empty regardless of real-time amber_express_cutoff logic.
+    cutoff = fake_now + timedelta(hours=12)
     run_at_str = nem_iso(fake_now)
 
     periods = []
@@ -426,7 +434,7 @@ def test_forecast_trim_days_2_7_sensor_trims():
     sensor.coordinator.data = MagicMock()
     sensor.coordinator.data.prices = {"QLD1": price_data}
 
-    with patch("custom_components.nem_pd7day.sensor._amber_express_cutoff", return_value=cutoff):
+    with patch(_patch_target, return_value=cutoff):
         attrs = sensor.extra_state_attributes
     forecast = attrs["forecast"]
 
@@ -658,7 +666,7 @@ def test_async_setup_entry_days_2_7_registers_day27_spot_sensor():
 
     # Both base and day 2-7 spot sensors should be registered
     base_spot = [e for e in created if getattr(e, '_attr_name', '') == "NEM Spot Price Forecast"]
-    day27_spot = [e for e in created if getattr(e, '_attr_name', '') == "NEM Spot Price Forecast Day 2-7"]
+    day27_spot = [e for e in created if getattr(e, '_attr_name', '') == "Day 2-7 NEM Spot Price Forecast"]
     assert len(base_spot) == 1, "Base spot sensor must always be registered"
     assert len(day27_spot) == 1, "Day 2-7 spot sensor must be registered in days_2_7 mode"
 
@@ -695,7 +703,7 @@ def test_async_setup_entry_days_1_7_no_day27_sensors():
         sensor_async_setup_entry(hass, entry, _add_entities)
     )
 
-    day27_spot = [e for e in created if getattr(e, '_attr_name', '') == "NEM Spot Price Forecast Day 2-7"]
+    day27_spot = [e for e in created if getattr(e, '_attr_name', '') == "Day 2-7 NEM Spot Price Forecast"]
     assert len(day27_spot) == 0, "Day 2-7 spot sensor must NOT be registered in days_1_7 mode"
 
 

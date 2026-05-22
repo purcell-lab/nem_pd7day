@@ -882,7 +882,8 @@ def test_day27_sensor_forecast_only_contains_post_cutoff_intervals():
     sensor.hass.data = {DOMAIN: {"entry_test": {}}}
 
     fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=fake_now)
+    # Use a fixed cutoff 12 hours into the window so the test is deterministic
+    cutoff = fake_now + timedelta(hours=12)
 
     run_at_dt = fake_now
     run_at_str = nem_iso(run_at_dt)
@@ -1012,7 +1013,8 @@ def test_next_value_from_trimmed_forecast():
 
     run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
     run_at_str = nem_iso(run_at_dt)
-    cutoff = _amber_express_cutoff(now=run_at_dt)
+    # Use a fixed cutoff 12 hours into the window so the test is deterministic
+    cutoff = run_at_dt + timedelta(hours=12)
 
     periods = []
     for i in range(60):
