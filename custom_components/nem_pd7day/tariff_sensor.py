@@ -107,9 +107,22 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to coordinator updates and schedule NEM boundary refresh."""
+        """Subscribe to PD7Day coordinator, DispatchCoordinator, and NEM boundary refresh."""
         await super().async_added_to_hass()
         self._schedule_next_boundary()
+
+        # Subscribe to DispatchCoordinator so state refreshes every 5 minutes
+        dispatch_coordinator = (
+            self.hass.data.get(DOMAIN, {})
+            .get(self._entry.entry_id, {})
+            .get(DISPATCH_KEY)
+        )
+        if dispatch_coordinator is not None:
+            self.async_on_remove(
+                dispatch_coordinator.async_add_listener(
+                    lambda: self.async_write_ha_state()
+                )
+            )
 
     def _next_nem_boundary(self) -> datetime.datetime:
         """Return the next :00 or :30 boundary in NEM time (UTC+10), plus a small delay."""

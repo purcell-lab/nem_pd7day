@@ -219,7 +219,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         return self.coordinator.last_update_success and self._price_data is not None
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to 30-min interval ticks so state updates without a new fetch."""
+        """Subscribe to 30-min interval ticks and DispatchCoordinator for 5-min updates."""
         await super().async_added_to_hass()
 
         async def _handle_tick(_now) -> None:
@@ -233,6 +233,19 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 second=5,
             )
         )
+
+        # Subscribe to DispatchCoordinator so state refreshes every 5 minutes
+        dispatch_coordinator = (
+            self.hass.data.get(DOMAIN, {})
+            .get(self._entry.entry_id, {})
+            .get(DISPATCH_KEY)
+        )
+        if dispatch_coordinator is not None:
+            self.async_on_remove(
+                dispatch_coordinator.async_add_listener(
+                    lambda: self.async_write_ha_state()
+                )
+            )
 
     def _current_period(self, forecast: list):
         """Return the forecast period whose interval covers the current NEM time."""
@@ -464,6 +477,19 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
                 second=5,
             )
         )
+
+        # Subscribe to DispatchCoordinator so state refreshes every 5 minutes
+        dispatch_coordinator = (
+            self.hass.data.get(DOMAIN, {})
+            .get(self._entry.entry_id, {})
+            .get(DISPATCH_KEY)
+        )
+        if dispatch_coordinator is not None:
+            self.async_on_remove(
+                dispatch_coordinator.async_add_listener(
+                    lambda: self.async_write_ha_state()
+                )
+            )
 
     def _current_period(self, forecast: list):
         now = now_nem()

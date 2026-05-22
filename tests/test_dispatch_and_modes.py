@@ -91,6 +91,7 @@ class _FakeCoordinatorEntity:
         return cls
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
+    async def async_added_to_hass(self): pass
 
 _uc_mock = MagicMock()
 _uc_mock.DataUpdateCoordinator = _FakeCoordinator
@@ -777,3 +778,47 @@ def test_base_tariff_visibility_always_uses_defaults():
         active_tariff="energex/6900",
     )
     assert sensor_8400.entity_registry_enabled_default is False
+
+
+# ── 12. Dispatch listener registration tests ──────────────────────────────
+
+
+def test_tariff_dispatch_listener_registered():
+    """When async_added_to_hass is called, a listener is added to the DispatchCoordinator."""
+    sensor = make_tariff_sensor(distributor="energex", tariff_code="6900")
+
+    # Set up a mock DispatchCoordinator with async_add_listener
+    mock_dispatch = MagicMock()
+    mock_dispatch.async_add_listener = MagicMock(return_value=lambda: None)
+    sensor.hass.data = {DOMAIN: {"entry_1": {DISPATCH_KEY: mock_dispatch}}}
+
+    # Provide async_on_remove and async_write_ha_state stubs
+    removals = []
+    sensor.async_on_remove = lambda cb: removals.append(cb)
+    sensor.async_write_ha_state = MagicMock()
+
+    # Stub _schedule_next_boundary to avoid dt_util mock issues in full-suite runs
+    sensor._schedule_next_boundary = lambda: None
+
+    run_async(sensor.async_added_to_hass())
+
+    mock_dispatch.async_add_listener.assert_called_once()
+
+
+def test_spot_dispatch_listener_registered():
+    """When async_added_to_hass is called on spot sensor, a listener is added to DispatchCoordinator."""
+    sensor = make_sensor(store=None)
+
+    # Set up a mock DispatchCoordinator with async_add_listener
+    mock_dispatch = MagicMock()
+    mock_dispatch.async_add_listener = MagicMock(return_value=lambda: None)
+    sensor.hass.data = {DOMAIN: {"entry_test": {DISPATCH_KEY: mock_dispatch}}}
+
+    # Provide async_on_remove and async_write_ha_state stubs
+    removals = []
+    sensor.async_on_remove = lambda cb: removals.append(cb)
+    sensor.async_write_ha_state = MagicMock()
+
+    run_async(sensor.async_added_to_hass())
+
+    mock_dispatch.async_add_listener.assert_called_once()
