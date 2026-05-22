@@ -13,21 +13,9 @@ from __future__ import annotations
 import sys
 import os
 import asyncio
-import importlib
 import importlib.util
 from datetime import timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
-
-# Get the REAL aiohttp module regardless of whether sys.modules was stubbed.
-# Other test files (test_coordinator.py) may have replaced sys.modules["aiohttp"]
-# with a MagicMock before this file is collected.
-_saved = sys.modules.pop("aiohttp", None)
-import aiohttp as _real_aiohttp  # noqa: E402
-if _saved is not None:
-    sys.modules["aiohttp"] = _saved
-else:
-    # Restore the freshly-imported real module
-    pass
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -40,12 +28,25 @@ def _load(name, path):
     return mod
 
 
-# ── Bootstrap stubs (same pattern as test_coordinator.py) ────────────────────
+# ── Fake aiohttp module (no real aiohttp dependency) ─────────────────────────
+# Coordinator.py does `except aiohttp.ClientResponseError as exc:` and reads
+# exc.status / exc.message, so our fake must be a real exception class with
+# those attributes.
 
-# Stub aiohttp — but keep the real ClientResponseError and ClientSession
+
+class _FakeClientResponseError(Exception):
+    """Minimal stand-in for aiohttp.ClientResponseError."""
+
+    def __init__(self, request_info=None, history=(), *, status=0, message=""):
+        self.request_info = request_info
+        self.history = history
+        self.status = status
+        self.message = message
+        super().__init__(f"{status}, message='{message}'")
+
+
 _aiohttp_stub = MagicMock()
-_aiohttp_stub.ClientResponseError = _real_aiohttp.ClientResponseError
-_aiohttp_stub.ClientSession = _real_aiohttp.ClientSession
+_aiohttp_stub.ClientResponseError = _FakeClientResponseError
 sys.modules["aiohttp"] = _aiohttp_stub
 
 for ha_mod in [
@@ -131,7 +132,7 @@ _load(
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "notice_store.py"),
 )
 
-# Force-reload coordinator so it picks up our aiohttp stub with real ClientResponseError
+# Force-reload coordinator so it picks up our aiohttp stub
 _load(
     "custom_components.nem_pd7day.coordinator",
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
@@ -190,8 +191,8 @@ def _make_dispatch_coordinator() -> DispatchCoordinator:
 
 
 def _make_client_response_error(status=403, message="Forbidden"):
-    """Create a ClientResponseError using the real aiohttp class."""
-    return _real_aiohttp.ClientResponseError(
+    """Create a ClientResponseError using the fake aiohttp class."""
+    return _FakeClientResponseError(
         request_info=MagicMock(),
         history=(),
         status=status,
