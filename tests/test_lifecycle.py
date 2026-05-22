@@ -351,17 +351,24 @@ def test_summary_attributes_observation_count_is_live():
 # ── Tests: manifest.json version format ───────────────────────────────────────
 
 def test_manifest_version_is_semver():
-    """manifest.json version must be a valid semver string (MAJOR.MINOR.PATCH)."""
+    """manifest.json version must be a valid HA version string.
+
+    Accepts stable semver (MAJOR.MINOR.PATCH) and PEP 440 pre-release
+    suffixes on the PATCH segment (e.g. 2.3.34b1, 2.3.34rc1).
+    """
     import json
+    import re
     manifest_path = os.path.join(
         _ROOT, "custom_components", "nem_pd7day", "manifest.json"
     )
     manifest = json.load(open(manifest_path))
     version = manifest.get("version", "")
-    parts = version.split(".")
-    assert len(parts) == 3, f"Version {version!r} is not semver (MAJOR.MINOR.PATCH)"
-    for p in parts:
-        assert p.isdigit(), f"Version part {p!r} is not numeric in {version!r}"
+    # Accepts: MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCHbN / rcN / aN
+    pattern = r'^\d+\.\d+\.\d+([ab]\d+|rc\d+)?$'
+    assert re.match(pattern, version), (
+        f"Version {version!r} is not a valid HA version string "
+        f"(expected MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCHbN/rcN/aN)"
+    )
 
 
 def test_manifest_required_fields():
