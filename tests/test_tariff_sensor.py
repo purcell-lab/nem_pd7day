@@ -492,3 +492,54 @@ def test_tariff_native_value_not_filtered_by_cutoff():
         assert val is not None, "native_value should not be None for current interval"
         expected = round((15.5 / 100 + 0.0293) * 1.1, 6)
         assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
+
+
+def test_stdout_suppressed_during_tariff_calculation():
+    """Verify that debug print() calls in aemo_to_tariff are suppressed (no stdout leak)."""
+    import io
+    import datetime as _dt
+
+    now = datetime.now(tz=NEM_TZ)
+    current_end = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0) + timedelta(minutes=30)
+    period = make_price_period(current_end, value=0.10)
+    sensor = make_tariff_sensor(price_periods=[period])
+
+    def noisy_spot_to_tariff(*args, **kwargs):
+        """Simulate aemo_to_tariff/sapower.py debug print() calls."""
+        print("DEBUG: sapower tariff lookup")
+        print("DEBUG: period=Peak, rate=25.0")
+        return 15.5
+
+    fake_periods = [
+        ("Peak", _dt.time(14, 0), _dt.time(20, 0), 25.0),
+    ]
+
+    def noisy_get_periods(*args, **kwargs):
+        print("DEBUG: sapower get_periods called")
+        return fake_periods
+
+    def noisy_get_daily_fee(*args, **kwargs):
+        print("DEBUG: sapower get_daily_fee called")
+        return 0.556
+
+    # Capture real stdout to verify nothing leaks
+    captured = io.StringIO()
+    real_stdout = sys.stdout
+    sys.stdout = captured
+    try:
+        with patch.object(_tariff_mod, "spot_to_tariff", side_effect=noisy_spot_to_tariff):
+            with patch.object(_tariff_mod, "get_periods", side_effect=noisy_get_periods):
+                with patch.object(_tariff_mod, "get_daily_fee", side_effect=noisy_get_daily_fee):
+                    # Exercise all code paths that call into aemo_to_tariff
+                    val = sensor.native_value
+                    assert val is not None
+                    attrs = sensor.extra_state_attributes
+                    assert len(attrs["tariff_periods"]) == 1
+                    assert attrs["daily_supply_charge_$"] is not None
+    finally:
+        sys.stdout = real_stdout
+
+    stdout_output = captured.getvalue()
+    assert stdout_output == "", (
+        f"Expected no stdout output but got: {stdout_output!r}"
+    )

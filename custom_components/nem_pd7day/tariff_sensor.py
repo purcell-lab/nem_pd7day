@@ -7,7 +7,10 @@ Attributes: full 7-day tariff forecast as a list of {interval_time, tariff_$/kwh
 """
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import sys
 from typing import Any
 
 import datetime
@@ -36,6 +39,19 @@ from .coordinator import PD7DayCoordinator
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _suppress_stdout():
+    """Suppress stdout to silence debug print() calls in aemo_to_tariff library."""
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+
 
 try:
     from aemo_to_tariff import get_daily_fee, get_periods, spot_to_tariff
@@ -215,9 +231,11 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             # Pass nemtime (interval END) — library subtracts 5 min for ToU lookup
             interval_dt = parse_iso(period.nemtime)
             rrp_mwh = period.value * 1000  # $/kWh -> $/MWh
-            result_c_kwh = spot_to_tariff(
-                interval_dt, self._distributor, self._tariff_code, rrp_mwh,
-            )
+            # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
+            with _suppress_stdout():
+                result_c_kwh = spot_to_tariff(
+                    interval_dt, self._distributor, self._tariff_code, rrp_mwh,
+                )
             fee = self._get_additional_fee()
             return round((result_c_kwh / 100 + fee) * 1.1, 6)
         except Exception:
@@ -244,9 +262,11 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             else:
                 nemtime_dt = now_nem_dt.replace(minute=rounded_min, second=0, microsecond=0)
             rrp_mwh = rrp_kwh * 1000
-            result_c_kwh = spot_to_tariff(
-                nemtime_dt, self._distributor, self._tariff_code, rrp_mwh,
-            )
+            # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
+            with _suppress_stdout():
+                result_c_kwh = spot_to_tariff(
+                    nemtime_dt, self._distributor, self._tariff_code, rrp_mwh,
+                )
             fee = self._get_additional_fee()
             return round((result_c_kwh / 100 + fee) * 1.1, 6)
         except Exception:
@@ -282,8 +302,11 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         if get_periods is None:
             return []
         try:
+            # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
+            with _suppress_stdout():
+                raw_periods = list(get_periods(self._distributor, self._tariff_code))
             periods = []
-            for name, start, end, rate_c in get_periods(self._distributor, self._tariff_code):
+            for name, start, end, rate_c in raw_periods:
                 periods.append({
                     "period": name,
                     "start": start.strftime("%H:%M"),
@@ -303,7 +326,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         if get_daily_fee is None:
             return None
         try:
-            return get_daily_fee(self._distributor, self._tariff_code)
+            # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
+            with _suppress_stdout():
+                return get_daily_fee(self._distributor, self._tariff_code)
         except Exception:
             return None
 
