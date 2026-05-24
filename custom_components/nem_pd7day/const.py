@@ -360,12 +360,31 @@ DEFAULT_ENABLED_TARIFFS = {
     # SA Power Networks
     ("sapn", "RTOU"),      # Residential Time of Use
     ("sapn", "RPRO"),      # Residential Prosumer (trial)
+    ("sapn", "RESELE"),    # Residential Electrify
     # TasNetworks
     ("tasnetworks", "TAS93"), # Residential ToU Consumption
     ("tasnetworks", "TAS97"), # Residential ToU CER (trial)
     # Victoria
     ("victoria", "VICR_TOU"),    # Residential Time of Use
     ("victoria", "VICR_DEMAND"), # Residential Demand (trial)
+}
+
+# ── Export tariff programs (import_code → export_code per distributor) ────────
+# Each entry maps (distributor, import_tariff_code) → export_tariff_code.
+# Export sensors use spot_to_feed_in_tariff() instead of spot_to_tariff().
+EXPORT_TARIFF_PROGRAMS = {
+    ("ausgrid", "EA025"): "EA029",
+    ("endeavour", "N71"): "N61",
+    ("essential", "BLNT3AL"): "BLNREX2",
+    ("sapn", "RESELE"): "RESELE",
+}
+
+# Human-readable export tariff names (export_code → name)
+EXPORT_TARIFF_NAMES = {
+    "EA029": "Residential Electrify",
+    "N61": "Residential Electrify",
+    "BLNREX2": "LV Residential Solar Export",
+    "RESELE": "Residential Electrify",
 }
 
 # Coordinator / store keys

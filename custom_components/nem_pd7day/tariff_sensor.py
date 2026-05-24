@@ -17,6 +17,7 @@ import datetime
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -30,6 +31,8 @@ from .const import (
     DISPATCH_KEY,
     DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
+    EXPORT_TARIFF_NAMES,
+    EXPORT_TARIFF_PROGRAMS,
     FORECAST_MODE_DAYS_2_7,
     FORECAST_MODE_FULL,
     TARIFF_NAMES,
@@ -54,10 +57,11 @@ def _suppress_stdout():
 
 
 try:
-    from aemo_to_tariff import get_daily_fee, get_periods, spot_to_tariff
+    from aemo_to_tariff import get_daily_fee, get_periods, spot_to_tariff, spot_to_feed_in_tariff
     import aemo_to_tariff as _att
 except ImportError:
     spot_to_tariff = None  # type: ignore[assignment]
+    spot_to_feed_in_tariff = None  # type: ignore[assignment]
     get_periods = None  # type: ignore[assignment]
     get_daily_fee = None  # type: ignore[assignment]
     _att = None  # type: ignore[assignment]
@@ -87,6 +91,19 @@ def get_tariff_name(distributor_key: str, tariff_code: str) -> str:
             return name
     # Fallback to TARIFF_NAMES const then raw code
     return TARIFF_NAMES.get(distributor_key, {}).get(tariff_code, tariff_code)
+
+
+def get_export_tariff_name(distributor_key: str, export_code: str) -> str:
+    """Look up human-readable export tariff name."""
+    if _att is not None:
+        lib_key = _DISTRIBUTOR_LIB_MAP.get(distributor_key, distributor_key)
+        module = getattr(_att, lib_key, None)
+        if module and hasattr(module, "tariffs"):
+            tariff_data = module.tariffs.get(export_code, {})
+            name = tariff_data.get("name", "")
+            if name:
+                return name
+    return EXPORT_TARIFF_NAMES.get(export_code, export_code)
 
 
 class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
@@ -422,6 +439,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
     _attr_state_class = None
     _attr_suggested_display_precision = 4
     _attr_entity_registry_enabled_default = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self,
@@ -490,5 +508,232 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
                 distributor_display, tariff_name,
                 _DEFAULT_DLF, _DEFAULT_MLF, combined, fee, self._region,
             ),
+            "forecast": forecast_list,
+        }
+
+
+class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """Export tariff sensor — uses spot_to_feed_in_tariff instead of spot_to_tariff."""
+
+    _attr_state_class = None
+    _attr_native_unit_of_measurement = "$/kWh"
+    _attr_suggested_display_precision = 4
+    _attr_icon = "mdi:currency-usd"
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    _BOUNDARY_DELAY = datetime.timedelta(seconds=5)
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+        distributor: str,
+        import_code: str,
+        export_code: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._region = region
+        self._distributor = distributor
+        self._import_code = import_code
+        self._export_code = export_code
+        self._entry = entry
+        self._attr_unique_id = (
+            f"{entry.entry_id}_{region}_{distributor}_{import_code}_export_tariff"
+        )
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+        export_name = get_export_tariff_name(distributor, export_code)
+        # Avoid "... Export Export Tariff" when name already contains "Export"
+        if "Export" in export_name:
+            self._attr_name = f"{distributor_display} {export_name} Tariff ({export_code})"
+        else:
+            self._attr_name = f"{distributor_display} {export_name} Export Tariff ({export_code})"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._schedule_next_boundary()
+
+        dispatch_coordinator = (
+            self.hass.data.get(DOMAIN, {})
+            .get(self._entry.entry_id, {})
+            .get(DISPATCH_KEY)
+        )
+        if dispatch_coordinator is not None:
+            self.async_on_remove(
+                dispatch_coordinator.async_add_listener(
+                    lambda: self.async_write_ha_state()
+                )
+            )
+
+    def _next_nem_boundary(self) -> datetime.datetime:
+        now = dt_util.now()
+        minute = now.minute
+        if minute < 30:
+            next_boundary = now.replace(minute=30, second=0, microsecond=0)
+        else:
+            next_boundary = (now + datetime.timedelta(hours=1)).replace(
+                minute=0, second=0, microsecond=0
+            )
+        return next_boundary + self._BOUNDARY_DELAY
+
+    def _schedule_next_boundary(self) -> None:
+        self.async_on_remove(
+            async_track_point_in_time(
+                self.hass,
+                self._handle_interval_tick,
+                self._next_nem_boundary(),
+            )
+        )
+
+    async def _handle_interval_tick(self, _now: datetime.datetime) -> None:
+        self.async_write_ha_state()
+        self._schedule_next_boundary()
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+        )
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        return (self._distributor, self._import_code) in DEFAULT_ENABLED_TARIFFS
+
+    @property
+    def _price_data(self):
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.prices.get(self._region)
+
+    @property
+    def available(self) -> bool:
+        return (
+            self.coordinator.last_update_success
+            and self._price_data is not None
+            and spot_to_feed_in_tariff is not None
+        )
+
+    def _current_period(self, forecast: list):
+        now = now_nem()
+        for period in forecast:
+            try:
+                interval_start = parse_iso(period.time)
+                interval_end = parse_iso(period.nemtime)
+                if interval_start <= now < interval_end:
+                    return period
+            except (ValueError, TypeError):
+                continue
+        return forecast[0] if forecast else None
+
+    def _get_additional_fee(self) -> float:
+        try:
+            entity_id = additional_fee_entity_id(self._region)
+            state = self.hass.states.get(entity_id)
+            if state is not None and state.state not in ("unknown", "unavailable"):
+                return float(state.state)
+        except (ValueError, AttributeError):
+            pass
+        return DEFAULT_ADDITIONAL_FEE
+
+    def _compute_export_tariff(self, period) -> float | None:
+        if spot_to_feed_in_tariff is None:
+            return None
+        try:
+            interval_dt = parse_iso(period.nemtime)
+            rrp_mwh = period.value * 1000
+            with _suppress_stdout():
+                result_c_kwh = spot_to_feed_in_tariff(
+                    interval_dt, self._distributor, self._export_code, rrp_mwh,
+                )
+            fee = self._get_additional_fee()
+            return round((result_c_kwh / 100 + fee) * 1.1, 6)
+        except Exception:
+            _LOGGER.debug(
+                "spot_to_feed_in_tariff failed for %s/%s at %s",
+                self._distributor, self._export_code, period.nemtime,
+                exc_info=True,
+            )
+            return None
+
+    def _apply_export_tariff_to_spot(self, rrp_kwh: float, now_nem_dt: datetime.datetime) -> float | None:
+        if spot_to_feed_in_tariff is None:
+            return None
+        try:
+            minute = now_nem_dt.minute
+            rounded_min = (minute // 5) * 5 + 5
+            if rounded_min >= 60:
+                nemtime_dt = (now_nem_dt + datetime.timedelta(hours=1)).replace(
+                    minute=rounded_min - 60, second=0, microsecond=0
+                )
+            else:
+                nemtime_dt = now_nem_dt.replace(minute=rounded_min, second=0, microsecond=0)
+            rrp_mwh = rrp_kwh * 1000
+            with _suppress_stdout():
+                result_c_kwh = spot_to_feed_in_tariff(
+                    nemtime_dt, self._distributor, self._export_code, rrp_mwh,
+                )
+            fee = self._get_additional_fee()
+            return round((result_c_kwh / 100 + fee) * 1.1, 6)
+        except Exception:
+            _LOGGER.debug(
+                "spot_to_feed_in_tariff (dispatch) failed for %s/%s",
+                self._distributor, self._export_code,
+                exc_info=True,
+            )
+            return None
+
+    @property
+    def native_value(self) -> float | None:
+        dispatch = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {}).get(DISPATCH_KEY)
+        if dispatch and dispatch.prices.get(self._region):
+            rrp_kwh = dispatch.prices[self._region].rrp
+            tariff_val = self._apply_export_tariff_to_spot(rrp_kwh, now_nem())
+            if tariff_val is not None:
+                return round(tariff_val, 6)
+
+        d = self._price_data
+        if d is None:
+            return None
+        period = self._current_period(d.forecast)
+        if period is None:
+            return None
+        return self._compute_export_tariff(period)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        d = self._price_data
+        forecast_list: list[dict[str, Any]] = []
+        if d is not None:
+            for period in d.forecast:
+                tariff_val = self._compute_export_tariff(period)
+                forecast_list.append({
+                    "time": period.time,
+                    "nemtime": period.nemtime,
+                    "spot": round(period.value, 6),
+                    "value": tariff_val,
+                })
+
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
+            self._distributor, self._distributor.title(),
+        )
+        export_name = get_export_tariff_name(self._distributor, self._export_code)
+
+        combined = round(_DEFAULT_DLF * _DEFAULT_MLF * _DEFAULT_MARKET, 6)
+        fee = self._get_additional_fee()
+
+        return {
+            "tariff_code": self._export_code,
+            "import_tariff_code": self._import_code,
+            "tariff_name": export_name,
+            "distributor": distributor_display,
+            "region": self._region,
+            "network": self._distributor,
+            "distribution_loss_factor_dlf": _DEFAULT_DLF,
+            "metering_loss_factor_mlf": _DEFAULT_MLF,
+            "market_loss_factor": _DEFAULT_MARKET,
+            "combined_loss_multiplier": combined,
+            "additional_usage_fee_$/kwh": fee,
+            "gst_multiplier": 1.1,
             "forecast": forecast_list,
         }

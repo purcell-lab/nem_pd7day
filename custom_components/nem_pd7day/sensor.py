@@ -77,6 +77,7 @@ from .const import (
     DISPATCH_KEY,
     DISTRIBUTOR_TARIFFS,
     DOMAIN,
+    EXPORT_TARIFF_PROGRAMS,
     FORECAST_MODE_DAYS_2_7,
     FORECAST_MODE_FULL,
     get_region,
@@ -87,7 +88,7 @@ from .const import (
     storage_keys,
 )
 from .coordinator import PD7DayCoordinator
-from .tariff_sensor import NemPd7dayTariffSensor, TariffForecastDays27Sensor
+from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
     from .notice_store import GridNoticeStore
@@ -146,6 +147,15 @@ async def async_setup_entry(
         for tariff_code in DISTRIBUTOR_TARIFFS.get(distributor, []):
             entities.append(
                 NemPd7dayTariffSensor(coordinator, entry, region, distributor, tariff_code)
+            )
+
+    # Export tariff sensors — one per export program for this region
+    for (dist, import_code), export_code in EXPORT_TARIFF_PROGRAMS.items():
+        if dist in REGION_DISTRIBUTORS.get(region, []):
+            entities.append(
+                NemPd7dayExportTariffSensor(
+                    coordinator, entry, region, dist, import_code, export_code,
+                )
             )
 
     # Day 2-7 additive sensors — only registered in days_2_7 mode
@@ -436,6 +446,7 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
     _attr_should_poll = False
     _attr_attribution = ATTR_ATTRIBUTION
     _attr_entity_registry_enabled_default = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, store, entry: ConfigEntry, region: str) -> None:
         super().__init__(coordinator)
