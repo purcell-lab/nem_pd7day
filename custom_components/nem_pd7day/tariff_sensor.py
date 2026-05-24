@@ -646,8 +646,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
                 result_c_kwh = spot_to_feed_in_tariff(
                     interval_dt, self._distributor, self._export_code, rrp_mwh,
                 )
-            fee = self._get_additional_fee()
-            return round((result_c_kwh / 100 + fee) * 1.1, 6)
+            return round(result_c_kwh / 100, 6)
         except Exception:
             _LOGGER.debug(
                 "spot_to_feed_in_tariff failed for %s/%s at %s",
@@ -673,8 +672,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
                 result_c_kwh = spot_to_feed_in_tariff(
                     nemtime_dt, self._distributor, self._export_code, rrp_mwh,
                 )
-            fee = self._get_additional_fee()
-            return round((result_c_kwh / 100 + fee) * 1.1, 6)
+            return round(result_c_kwh / 100, 6)
         except Exception:
             _LOGGER.debug(
                 "spot_to_feed_in_tariff (dispatch) failed for %s/%s",

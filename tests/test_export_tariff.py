@@ -293,7 +293,8 @@ def test_export_tariff_different_from_import_at_peak():
 
     # Values should differ
     import_expected = round((import_rate_c / 100 + 0.0293) * 1.1, 6)
-    export_expected = round((export_rate_c / 100 + 0.0293) * 1.1, 6)
+    # Export returns raw feed-in tariff: no additional fee, no GST
+    export_expected = round(export_rate_c / 100, 6)
     assert abs(import_val - import_expected) < 1e-6
     assert abs(export_val - export_expected) < 1e-6
 
@@ -301,7 +302,7 @@ def test_export_tariff_different_from_import_at_peak():
     assert export_val < import_val, (
         f"Export ({export_val}) should be less than import ({import_val}) at peak"
     )
-    # Difference should be roughly 2-4 c/kWh (≈0.02-0.04 $/kWh after fee+GST)
+    # Difference should be notable (import has fee+GST, export is raw)
     diff = import_val - export_val
     assert diff > 0.01, f"Difference {diff} $/kWh too small"
 
@@ -435,6 +436,30 @@ def test_export_tariff_uses_feed_in_function():
         # Verify RRP conversion: 0.10 $/kWh * 1000 = 100 $/MWh
         call_args = mock_fit.call_args
         assert abs(call_args[0][3] - 100.0) < 1e-6
+
+
+def test_export_tariff_no_fee_or_gst():
+    """Export sensor returns raw feed-in tariff without additional fee or GST."""
+    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
+    period = make_price_period(peak_nemtime, value=0.10)
+    sensor = make_export_sensor(price_periods=[period])
+
+    feed_in_rate_c = 14.77  # c/kWh returned by spot_to_feed_in_tariff
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=feed_in_rate_c):
+        val = sensor._compute_export_tariff(period)
+
+    # Should be exactly the raw conversion: c/kWh -> $/kWh, no fee, no GST
+    expected_raw = round(feed_in_rate_c / 100, 6)
+    assert val == expected_raw, (
+        f"Export tariff should be raw {expected_raw}, got {val}"
+    )
+
+    # Verify it does NOT match the old fee+GST formula
+    old_formula = round((feed_in_rate_c / 100 + 0.0293) * 1.1, 6)
+    assert val != old_formula, (
+        f"Export tariff should NOT include fee+GST ({old_formula})"
+    )
 
 
 def test_export_tariff_stdout_suppressed():
