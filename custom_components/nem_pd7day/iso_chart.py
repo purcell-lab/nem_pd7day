@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import io
 import logging
+import struct
+import zlib
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -22,6 +24,22 @@ if TYPE_CHECKING:
     from .calibration_engine import CalibrationResult
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _placeholder_png(message: str = "") -> bytes:
+    """Return a minimal 1x1 white PNG when matplotlib is unavailable."""
+    _SIGNATURE = b'\x89PNG\r\n\x1a\n'
+
+    def _chunk(name: bytes, data: bytes) -> bytes:
+        c = struct.pack('>I', len(data)) + name + data
+        return c + struct.pack('>I', zlib.crc32(name + data) & 0xFFFFFFFF)
+
+    ihdr = _chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
+    # 1x1 white pixel: filter byte 0x00 + RGB 0xFF 0xFF 0xFF
+    idat = _chunk(b'IDAT', zlib.compress(b'\x00\xff\xff\xff'))
+    iend = _chunk(b'IEND', b'')
+    return _SIGNATURE + ihdr + idat + iend
+
 
 # Chart-level constants
 MIN_OBS = 20  # Minimum observations for a bucket to be considered fitted in chart
@@ -62,12 +80,18 @@ def render_iso_chart(
     if calibration_result is None:
         return b""
 
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.figure as mplfig
-    import matplotlib.gridspec as gridspec
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.colors import TwoSlopeNorm
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.figure as mplfig
+        import matplotlib.gridspec as gridspec
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.colors import TwoSlopeNorm
+    except ImportError:
+        _LOGGER.warning("matplotlib not available — returning placeholder image for iso chart")
+        return _placeholder_png(
+            "Iso chart unavailable\n(matplotlib not installed)"
+        )
 
     summary = calibration_result.summary()
     buckets = summary["buckets"]
