@@ -239,6 +239,7 @@ def make_tariff_sensor(
     sensor._distributor = distributor
     sensor._tariff_code = tariff_code
     sensor._entry = entry
+    sensor._store = None
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
     distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
     tariff_name = get_tariff_name(distributor, tariff_code)

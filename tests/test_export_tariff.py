@@ -214,6 +214,7 @@ def make_export_sensor(
     sensor._import_code = import_code
     sensor._export_code = export_code
     sensor._entry = entry
+    sensor._store = None
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{import_code}_export_tariff"
     distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
     from custom_components.nem_pd7day.tariff_sensor import get_export_tariff_name
@@ -255,6 +256,7 @@ def make_import_sensor(
     sensor._distributor = distributor
     sensor._tariff_code = tariff_code
     sensor._entry = entry
+    sensor._store = None
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
     distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
     tariff_name = get_tariff_name(distributor, tariff_code)
@@ -487,3 +489,76 @@ def test_export_tariff_stdout_suppressed():
     assert captured.getvalue() == "", (
         f"Expected no stdout but got: {captured.getvalue()!r}"
     )
+
+
+# ── Export tariff calibration tests ──────────────────────────────────────────
+
+
+def test_export_tariff_uses_calibrated_price():
+    """Export tariff passes calibrated $/MWh (not raw) to spot_to_feed_in_tariff."""
+    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
+    period = make_price_period(peak_nemtime, value=0.01745)  # raw $/kWh
+    sensor = make_export_sensor(price_periods=[period])
+
+    # Attach calibration store
+    mock_store = MagicMock()
+    mock_store.apply_to_price.return_value = {
+        "calibrated": 0.01425,
+        "p10": None, "p50": None, "p90": None,
+        "ols_mae": None, "calibrated_source": "isotonic",
+        "n_obs": 100,
+    }
+    sensor._store = mock_store
+    sensor.coordinator.data.prices["NSW1"].forecast_generated_at = nem_iso(
+        peak_nemtime - timedelta(hours=6)
+    )
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
+        val = sensor.native_value
+        assert val is not None
+        # Verify calibrated price: 0.01425 * 1000 = 14.25 $/MWh
+        call_args = mock_fit.call_args
+        assert abs(call_args[0][3] - 14.25) < 1e-6, (
+            f"Expected calibrated RRP 14.25 $/MWh, got {call_args[0][3]}"
+        )
+
+
+def test_export_tariff_forecast_spot_shows_calibrated():
+    """Export forecast 'spot' attribute uses calibrated value."""
+    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
+    period = make_price_period(peak_nemtime, value=0.01745)
+    sensor = make_export_sensor(price_periods=[period])
+
+    mock_store = MagicMock()
+    mock_store.apply_to_price.return_value = {
+        "calibrated": 0.01425,
+        "p10": None, "p50": None, "p90": None,
+        "ols_mae": None, "calibrated_source": "isotonic",
+        "n_obs": 100,
+    }
+    sensor._store = mock_store
+    sensor.coordinator.data.prices["NSW1"].forecast_generated_at = nem_iso(
+        peak_nemtime - timedelta(hours=6)
+    )
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=10.0):
+        attrs = sensor.extra_state_attributes
+        for entry in attrs["forecast"]:
+            assert abs(entry["spot"] - 0.01425) < 1e-6, (
+                f"Export forecast spot should be calibrated 0.01425, got {entry['spot']}"
+            )
+
+
+def test_export_tariff_no_store_uses_raw():
+    """Without calibration store, export tariff falls back to raw value."""
+    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
+    period = make_price_period(peak_nemtime, value=0.10)
+    sensor = make_export_sensor(price_periods=[period])
+    assert sensor._store is None
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
+        val = sensor.native_value
+        assert val is not None
+        # Raw value: 0.10 * 1000 = 100 $/MWh
+        call_args = mock_fit.call_args
+        assert abs(call_args[0][3] - 100.0) < 1e-6

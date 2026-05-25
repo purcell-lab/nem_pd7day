@@ -44,6 +44,18 @@ from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 _LOGGER = logging.getLogger(__name__)
 
 
+def _horizon_hours(run_at_str: str | None, interval_time_str: str) -> float:
+    """Compute forecast horizon in hours between run_at and interval_time."""
+    if not run_at_str:
+        return 0.0
+    try:
+        run_at = parse_iso(run_at_str)
+        interval = parse_iso(interval_time_str)
+        return max(0.0, (interval - run_at).total_seconds() / 3600)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 @contextlib.contextmanager
 def _suppress_stdout():
     """Suppress stdout to silence debug print() calls in aemo_to_tariff library."""
@@ -126,12 +138,14 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         region: str,
         distributor: str,
         tariff_code: str,
+        store=None,
     ) -> None:
         super().__init__(coordinator)
         self._region = region
         self._distributor = distributor
         self._tariff_code = tariff_code
         self._entry = entry
+        self._store = store
         self._attr_unique_id = (
             f"{entry.entry_id}_{region}_{distributor}_{tariff_code}_tariff"
         )
@@ -235,6 +249,20 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             pass
         return DEFAULT_ADDITIONAL_FEE
 
+    def _calibrated_value(self, period) -> float:
+        """Return calibrated price $/kWh for a forecast period, raw if no store."""
+        if not self._store:
+            return period.value
+        d = self._price_data
+        run_at = d.forecast_generated_at if d else None
+        h = _horizon_hours(run_at, period.time)
+        try:
+            hour = parse_iso(period.time).hour
+        except (ValueError, TypeError):
+            hour = 0
+        cal = self._store.apply_to_price(period.value, h, hour)
+        return cal["calibrated"]
+
     def _compute_tariff(self, period) -> float | None:
         """Compute tariff price in $/kWh for a single forecast period.
 
@@ -247,7 +275,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         try:
             # Pass nemtime (interval END) — library subtracts 5 min for ToU lookup
             interval_dt = parse_iso(period.nemtime)
-            rrp_mwh = period.value * 1000  # $/kWh -> $/MWh
+            rrp_mwh = self._calibrated_value(period) * 1000  # calibrated spot $/kWh -> $/MWh
             # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
             with _suppress_stdout():
                 result_c_kwh = spot_to_tariff(
@@ -390,7 +418,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 forecast_list.append({
                     "time": period.time,           # interval START (nemtime - 30 min)
                     "nemtime": period.nemtime,     # interval END (AEMO convention)
-                    "spot": round(period.value, 6),  # calibrated spot price $/kWh
+                    "spot": round(self._calibrated_value(period), 6),  # calibrated spot price $/kWh
                     "value": tariff_val,           # spot + network ToU component $/kWh
                 })
 
@@ -448,8 +476,9 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
         region: str,
         distributor: str,
         tariff_code: str,
+        store=None,
     ) -> None:
-        super().__init__(coordinator, entry, region, distributor, tariff_code)
+        super().__init__(coordinator, entry, region, distributor, tariff_code, store=store)
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
         tariff_name = get_tariff_name(distributor, tariff_code)
         self._attr_name = f"Day 2-7 {distributor_display} {tariff_name} Tariff ({tariff_code})"
@@ -476,7 +505,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
                 forecast_list.append({
                     "time": period.time,
                     "nemtime": period.nemtime,
-                    "spot": round(period.value, 6),
+                    "spot": round(self._calibrated_value(period), 6),
                     "value": tariff_val,
                 })
 
@@ -532,6 +561,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         distributor: str,
         import_code: str,
         export_code: str,
+        store=None,
     ) -> None:
         super().__init__(coordinator)
         self._region = region
@@ -539,6 +569,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         self._import_code = import_code
         self._export_code = export_code
         self._entry = entry
+        self._store = store
         self._attr_unique_id = (
             f"{entry.entry_id}_{region}_{distributor}_{import_code}_export_tariff"
         )
@@ -636,12 +667,26 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
             pass
         return DEFAULT_ADDITIONAL_FEE
 
+    def _calibrated_value(self, period) -> float:
+        """Return calibrated price $/kWh for a forecast period, raw if no store."""
+        if not self._store:
+            return period.value
+        d = self._price_data
+        run_at = d.forecast_generated_at if d else None
+        h = _horizon_hours(run_at, period.time)
+        try:
+            hour = parse_iso(period.time).hour
+        except (ValueError, TypeError):
+            hour = 0
+        cal = self._store.apply_to_price(period.value, h, hour)
+        return cal["calibrated"]
+
     def _compute_export_tariff(self, period) -> float | None:
         if spot_to_feed_in_tariff is None:
             return None
         try:
             interval_dt = parse_iso(period.nemtime)
-            rrp_mwh = period.value * 1000
+            rrp_mwh = self._calibrated_value(period) * 1000  # calibrated spot $/kWh -> $/MWh
             with _suppress_stdout():
                 result_c_kwh = spot_to_feed_in_tariff(
                     interval_dt, self._distributor, self._export_code, rrp_mwh,
@@ -708,7 +753,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
                 forecast_list.append({
                     "time": period.time,
                     "nemtime": period.nemtime,
-                    "spot": round(period.value, 6),
+                    "spot": round(self._calibrated_value(period), 6),  # calibrated spot price $/kWh
                     "value": tariff_val,
                 })
 

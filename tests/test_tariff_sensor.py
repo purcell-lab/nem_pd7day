@@ -183,6 +183,7 @@ def make_tariff_sensor(
     sensor._distributor = distributor
     sensor._tariff_code = tariff_code
     sensor._entry = entry
+    sensor._store = None
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
     distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
     tariff_name = get_tariff_name(distributor, tariff_code)
@@ -543,3 +544,98 @@ def test_stdout_suppressed_during_tariff_calculation():
     assert stdout_output == "", (
         f"Expected no stdout output but got: {stdout_output!r}"
     )
+
+
+# ── Calibration tests ────────────────────────────────────────────────────────
+
+
+def _make_calibrated_tariff_sensor(
+    raw_value=0.10,
+    calibrated_value=0.08,
+    region="QLD1",
+    distributor="energex",
+    tariff_code="8400",
+):
+    """Build a tariff sensor with a mock calibration store."""
+    now = datetime.now(tz=NEM_TZ)
+    current_end = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0) + timedelta(minutes=30)
+    period = make_price_period(current_end, value=raw_value)
+
+    sensor = make_tariff_sensor(
+        region=region, distributor=distributor, tariff_code=tariff_code,
+        price_periods=[period],
+    )
+    # Attach a mock calibration store
+    mock_store = MagicMock()
+    mock_store.apply_to_price.return_value = {
+        "calibrated": calibrated_value,
+        "p10": None, "p50": None, "p90": None,
+        "ols_mae": None, "calibrated_source": "isotonic",
+        "n_obs": 100,
+    }
+    sensor._store = mock_store
+    # Provide forecast_generated_at for horizon calculation
+    sensor.coordinator.data.prices[region].forecast_generated_at = nem_iso(
+        now - timedelta(hours=1)
+    )
+    return sensor, period, mock_store
+
+
+def test_tariff_uses_calibrated_price_not_raw():
+    """_compute_tariff passes calibrated $/MWh (not raw) to spot_to_tariff."""
+    sensor, period, mock_store = _make_calibrated_tariff_sensor(
+        raw_value=0.01745, calibrated_value=0.01425,
+    )
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
+        val = sensor.native_value
+        assert val is not None
+        # Verify calibrated price was used: 0.01425 * 1000 = 14.25 $/MWh
+        call_args = mock_stt.call_args
+        assert abs(call_args[0][3] - 14.25) < 1e-6, (
+            f"Expected calibrated RRP 14.25 $/MWh, got {call_args[0][3]}"
+        )
+        # Should NOT be the raw value: 0.01745 * 1000 = 17.45
+        assert abs(call_args[0][3] - 17.45) > 0.1
+
+
+def test_tariff_forecast_spot_shows_calibrated():
+    """Forecast attribute 'spot' field uses calibrated value, not raw."""
+    sensor, period, mock_store = _make_calibrated_tariff_sensor(
+        raw_value=0.01745, calibrated_value=0.01425,
+    )
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+        attrs = sensor.extra_state_attributes
+        for entry in attrs["forecast"]:
+            assert abs(entry["spot"] - 0.01425) < 1e-6, (
+                f"Forecast spot should be calibrated 0.01425, got {entry['spot']}"
+            )
+
+
+def test_tariff_no_store_uses_raw():
+    """Without a calibration store, tariff sensor falls back to raw value."""
+    now = datetime.now(tz=NEM_TZ)
+    current_end = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0) + timedelta(minutes=30)
+    period = make_price_period(current_end, value=0.10)
+    sensor = make_tariff_sensor(price_periods=[period])
+    assert sensor._store is None
+
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
+        val = sensor.native_value
+        assert val is not None
+        # With no store, raw value is used: 0.10 * 1000 = 100 $/MWh
+        call_args = mock_stt.call_args
+        assert abs(call_args[0][3] - 100.0) < 1e-6
+
+
+def test_tariff_store_apply_called_with_correct_args():
+    """Calibration store is called with raw_price, horizon, hour."""
+    sensor, period, mock_store = _make_calibrated_tariff_sensor(
+        raw_value=0.05, calibrated_value=0.04,
+    )
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+        sensor.native_value
+        mock_store.apply_to_price.assert_called()
+        args = mock_store.apply_to_price.call_args
+        assert args[0][0] == 0.05  # raw_price
+        assert isinstance(args[0][1], float)  # horizon_hours
+        assert isinstance(args[0][2], int)  # hour_of_day

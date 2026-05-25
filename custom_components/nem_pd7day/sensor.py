@@ -146,7 +146,7 @@ async def async_setup_entry(
     for distributor in REGION_DISTRIBUTORS.get(region, []):
         for tariff_code in DISTRIBUTOR_TARIFFS.get(distributor, []):
             entities.append(
-                NemPd7dayTariffSensor(coordinator, entry, region, distributor, tariff_code)
+                NemPd7dayTariffSensor(coordinator, entry, region, distributor, tariff_code, store=store)
             )
 
     # Export tariff sensors — one per export program for this region
@@ -154,7 +154,7 @@ async def async_setup_entry(
         if dist in REGION_DISTRIBUTORS.get(region, []):
             entities.append(
                 NemPd7dayExportTariffSensor(
-                    coordinator, entry, region, dist, import_code, export_code,
+                    coordinator, entry, region, dist, import_code, export_code, store=store,
                 )
             )
 
@@ -177,7 +177,7 @@ async def async_setup_entry(
         if active_tariff and "/" in active_tariff:
             dist, code = active_tariff.split("/", 1)
             entities.append(
-                TariffForecastDays27Sensor(coordinator, entry, region, dist, code)
+                TariffForecastDays27Sensor(coordinator, entry, region, dist, code, store=store)
             )
 
     async_add_entities(entities, update_before_add=True)
