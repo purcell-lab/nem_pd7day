@@ -144,18 +144,23 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
 
 
 # Seconds after each 5-minute dispatch boundary to poll TradingIS.
-# NEMWEB typically publishes within ~5 s; 8 s gives a comfortable margin
-# while still delivering prices well before the next 30-min tariff tick.
-_DISPATCH_POLL_DELAY_S = 8
+# NEMWEB publishes TradingIS results at ~30 s into each 5-minute window;
+# 35 s gives a small margin above that while still arriving well before
+# the 30-minute tariff boundary tick.
+_DISPATCH_POLL_DELAY_S = 35
 
 
 class DispatchCoordinator(DataUpdateCoordinator):
     """5-minute coordinator for AEMO dispatch prices.
 
     Polling is boundary-aligned: each fetch fires at the next multiple of
-    5 minutes past midnight (NEM time / UTC+10) plus _DISPATCH_POLL_DELAY_S.
+    5 minutes past midnight (UTC) plus _DISPATCH_POLL_DELAY_S (35 s).
+    NEMWEB publishes TradingIS data ~30 s after each boundary, so the
+    +35 s delay ensures fresh data while staying well clear of the
+    30-minute tariff tick.
+
     This replaces the old rolling update_interval approach, which drifted by
-    whatever random offset existed at HA startup.
+    whatever random offset existed at HA startup (observed: up to ~4 min).
     """
 
     def __init__(self, hass: HomeAssistant, region: str) -> None:

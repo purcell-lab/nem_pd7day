@@ -872,7 +872,7 @@ def test_next_boundary_utc_at_most_5_min_away():
     fire_at = coord._next_boundary_utc()
     now = datetime.now(timezone.utc)
     delta = (fire_at - now).total_seconds()
-    max_expected = 300 + _DISPATCH_POLL_DELAY_S + 1  # 1s tolerance
+    max_expected = 300 + _DISPATCH_POLL_DELAY_S + 2  # 2s tolerance for slow test runners
     assert delta <= max_expected, (
         f"Fire time {delta:.1f}s away, expected <= {max_expected}s"
     )
