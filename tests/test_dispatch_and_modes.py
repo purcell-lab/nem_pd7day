@@ -832,3 +832,85 @@ def test_spot_dispatch_listener_registered():
     run_async(sensor.async_added_to_hass())
 
     mock_dispatch.async_add_listener.assert_called_once()
+
+
+# ── Boundary-aligned poll scheduling ─────────────────────────────────────────
+
+def test_next_boundary_utc_always_in_future():
+    """_next_boundary_utc() should always return a time strictly in the future."""
+    from datetime import datetime, timezone
+    from custom_components.nem_pd7day.coordinator import DispatchCoordinator, _DISPATCH_POLL_DELAY_S
+
+    coord = DispatchCoordinator.__new__(DispatchCoordinator)
+    fire_at = coord._next_boundary_utc()
+    now = datetime.now(timezone.utc)
+    assert fire_at > now, f"Expected future time, got {fire_at} (now={now})"
+
+
+def test_next_boundary_utc_aligns_to_5_min():
+    """_next_boundary_utc() target (minus delay) should be a 5-minute boundary."""
+    from datetime import datetime, timezone, timedelta
+    from custom_components.nem_pd7day.coordinator import DispatchCoordinator, _DISPATCH_POLL_DELAY_S
+
+    coord = DispatchCoordinator.__new__(DispatchCoordinator)
+    fire_at = coord._next_boundary_utc()
+    # Strip the delay to get the raw boundary
+    boundary = fire_at - timedelta(seconds=_DISPATCH_POLL_DELAY_S)
+    total_s = boundary.hour * 3600 + boundary.minute * 60 + boundary.second
+    assert total_s % 300 == 0, (
+        f"Expected 5-min boundary, got {boundary.strftime('%H:%M:%S')} "
+        f"(total_s={total_s}, remainder={total_s % 300})"
+    )
+
+
+def test_next_boundary_utc_at_most_5_min_away():
+    """Fire time should be at most 5 minutes + delay ahead."""
+    from datetime import datetime, timezone, timedelta
+    from custom_components.nem_pd7day.coordinator import DispatchCoordinator, _DISPATCH_POLL_DELAY_S
+
+    coord = DispatchCoordinator.__new__(DispatchCoordinator)
+    fire_at = coord._next_boundary_utc()
+    now = datetime.now(timezone.utc)
+    delta = (fire_at - now).total_seconds()
+    max_expected = 300 + _DISPATCH_POLL_DELAY_S + 1  # 1s tolerance
+    assert delta <= max_expected, (
+        f"Fire time {delta:.1f}s away, expected <= {max_expected}s"
+    )
+
+
+def test_schedule_next_poll_registers_cancel():
+    """schedule_next_poll() must append a cancel callable to entry_unsub_list."""
+    from unittest.mock import MagicMock, patch
+    from custom_components.nem_pd7day.coordinator import DispatchCoordinator
+
+    coord = DispatchCoordinator.__new__(DispatchCoordinator)
+    coord.hass = MagicMock()
+
+    cancel_fn = MagicMock()
+    unsub_list = []
+
+    with patch(
+        "custom_components.nem_pd7day.coordinator.async_track_point_in_utc_time",
+        return_value=cancel_fn,
+    ):
+        coord.schedule_next_poll(entry_unsub_list=unsub_list)
+
+    assert len(unsub_list) == 1
+    assert unsub_list[0] is cancel_fn
+
+
+def test_dispatch_coordinator_update_interval_is_none():
+    """DispatchCoordinator must not use a rolling update_interval."""
+    from custom_components.nem_pd7day.coordinator import DispatchCoordinator
+
+    hass = MagicMock()
+    hass.data = {}
+    # Can't call __init__ without full HA, so check class definition via __new__ + init
+    coord = DispatchCoordinator.__new__(DispatchCoordinator)
+    # Directly check what update_interval is set to after __init__ via introspection
+    import inspect
+    src = inspect.getsource(DispatchCoordinator.__init__)
+    assert "update_interval=None" in src, (
+        "DispatchCoordinator.__init__ must set update_interval=None "
+        "(boundary-aligned scheduling replaces rolling interval)"
+    )

@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import aiohttp
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, QLD1_INTERCONNECTORS, interconnectors_for_regions
@@ -142,19 +143,71 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             _LOGGER.info("Fetched %d new market notices", len(new_notices))
 
 
+# Seconds after each 5-minute dispatch boundary to poll TradingIS.
+# NEMWEB typically publishes within ~5 s; 8 s gives a comfortable margin
+# while still delivering prices well before the next 30-min tariff tick.
+_DISPATCH_POLL_DELAY_S = 8
+
+
 class DispatchCoordinator(DataUpdateCoordinator):
-    """5-minute coordinator for AEMO dispatch prices."""
+    """5-minute coordinator for AEMO dispatch prices.
+
+    Polling is boundary-aligned: each fetch fires at the next multiple of
+    5 minutes past midnight (NEM time / UTC+10) plus _DISPATCH_POLL_DELAY_S.
+    This replaces the old rolling update_interval approach, which drifted by
+    whatever random offset existed at HA startup.
+    """
 
     def __init__(self, hass: HomeAssistant, region: str) -> None:
         super().__init__(
             hass,
             _LOGGER,
             name=f"NEM Dispatch {region}",
-            update_interval=timedelta(minutes=5),
+            update_interval=None,   # driven by boundary-aligned schedule, not rolling interval
         )
         self.region = region
         self.prices: dict[str, DispatchPrice] = {}
         self.last_updated: datetime | None = None
+        self._unsub_poll: list = []
+
+    def _next_boundary_utc(self) -> datetime:
+        """Return the next 5-minute boundary (UTC) plus _DISPATCH_POLL_DELAY_S."""
+        now = datetime.now(timezone.utc)
+        # Seconds since midnight UTC
+        total_s = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
+        # How many seconds until the next 5-min boundary
+        remainder = total_s % 300          # seconds into current 5-min window
+        until_next = 300 - remainder       # seconds until next boundary
+        return now + timedelta(seconds=until_next + _DISPATCH_POLL_DELAY_S)
+
+    def schedule_next_poll(self, entry_unsub_list: list | None = None) -> None:
+        """Schedule a one-shot poll at the next 5-minute boundary.
+
+        Call once after async_config_entry_first_refresh().  Each poll
+        automatically reschedules the next one.
+
+        entry_unsub_list: optional list to append the cancel callback to, so
+        the ConfigEntry can unsubscribe on unload.  If None, uses self._unsub_poll.
+        """
+        fire_at = self._next_boundary_utc()
+
+        @callback
+        def _on_fire(_now=None) -> None:
+            self.hass.async_create_task(self._aligned_refresh())
+
+        cancel = async_track_point_in_utc_time(self.hass, _on_fire, fire_at)
+        target = entry_unsub_list if entry_unsub_list is not None else self._unsub_poll
+        target.append(cancel)
+        _LOGGER.debug(
+            "Dispatch next boundary poll at %s UTC (+%ds delay)",
+            fire_at.strftime("%H:%M:%S"),
+            _DISPATCH_POLL_DELAY_S,
+        )
+
+    async def _aligned_refresh(self) -> None:
+        """Fetch dispatch data then schedule the next boundary poll."""
+        await self.async_refresh()
+        self.schedule_next_poll()
 
     async def _async_update_data(self):
         try:

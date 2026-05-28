@@ -76,6 +76,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── Dispatch coordinator (5-minute polling) ──────────────────────────────
     dispatch = DispatchCoordinator(hass, region)
     await dispatch.async_config_entry_first_refresh()
+    # Start boundary-aligned polling (replaces rolling update_interval).
+    # Each fired callback reschedules itself; we register the first unsub
+    # with the entry so it is cancelled cleanly on unload.
+    _dispatch_unsubs: list = []
+    dispatch.schedule_next_poll(entry_unsub_list=_dispatch_unsubs)
+    for _unsub in _dispatch_unsubs:
+        entry.async_on_unload(_unsub)
 
     hass.data[DOMAIN][entry.entry_id] = {
         COORDINATOR_KEY: coordinator,
