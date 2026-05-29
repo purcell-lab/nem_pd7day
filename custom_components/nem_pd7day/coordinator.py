@@ -220,7 +220,9 @@ class DispatchCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         t0 = datetime.now(timezone.utc)
 
-        # Expected settlement = current 5-min boundary (NEM time) + 5 min
+        # Expected settlement = current 5-min boundary (NEM time).
+        # settlement == boundary means the just-closed interval — that's fresh.
+        # Only reject data older than boundary (genuinely stale).
         # Strip tzinfo so expected_settlement is tz-naive NEM time
         nem_now = t0.replace(tzinfo=None) + timedelta(hours=10)
         boundary_nem = nem_now.replace(
@@ -228,17 +230,18 @@ class DispatchCoordinator(DataUpdateCoordinator):
             second=0,
             microsecond=0,
         )
-        expected_settlement = boundary_nem + timedelta(minutes=5)
+        expected_settlement = boundary_nem
 
         try:
             try:
                 prices = await self.hass.async_add_executor_job(
                     fetch_dispatch_prices, expected_settlement
                 )
-            except StaleIntervalError:
+            except StaleIntervalError as stale_exc:
                 _LOGGER.debug(
-                    "Dispatch: ELEC_NEM_SUMMARY not yet updated for %s (NEMtime) — retrying in 15s",
+                    "ELEC_NEM_SUMMARY: got stale settlement, expected >= %s (NEMtime) — retrying in 15s (%s)",
                     expected_settlement.strftime("%Y-%m-%dT%H:%M"),
+                    stale_exc,
                 )
                 await asyncio.sleep(15)
                 prices = await self.hass.async_add_executor_job(
@@ -249,12 +252,12 @@ class DispatchCoordinator(DataUpdateCoordinator):
                 if sample:
                     actual_str = sample.interval_datetime
                     try:
-                        actual_dt = datetime.strptime(actual_str, "%Y-%m-%dT%H:%M:%S")
+                        actual_dt = datetime.fromisoformat(actual_str).replace(tzinfo=None)
                     except ValueError:
                         actual_dt = datetime.strptime(actual_str, "%Y/%m/%d %H:%M:%S")
                     if actual_dt < expected_settlement:
                         _LOGGER.warning(
-                            "Dispatch: settlement still behind after retry (got %s, expected %s) — serving anyway",
+                            "Dispatch: settlement=%s still behind boundary=%s (NEMtime) after retry — serving anyway",
                             actual_str,
                             expected_settlement.strftime("%Y-%m-%dT%H:%M"),
                         )
