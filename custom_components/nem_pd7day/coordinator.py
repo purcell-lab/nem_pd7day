@@ -147,11 +147,10 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             _LOGGER.info("Fetched %d new market notices", len(new_notices))
 
 
-# Seconds after each 5-minute dispatch boundary to poll TradingIS.
-# NEMWEB publishes TradingIS results at ~30 s into each 5-minute window;
-# 35 s gives a small margin above that while still arriving well before
-# the 30-minute tariff boundary tick.
-_DISPATCH_POLL_DELAY_S = 35
+# Seconds after each 5-minute dispatch boundary to poll ELEC_NEM_SUMMARY.
+# AEMO typically publishes within ~65–90s of each boundary;
+# 75s gives comfortable margin while staying well clear of the 30-minute tariff tick.
+_DISPATCH_POLL_DELAY_S = 75
 
 
 class DispatchCoordinator(DataUpdateCoordinator):
