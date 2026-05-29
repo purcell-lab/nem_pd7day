@@ -267,7 +267,9 @@ class MarketNoticeClient:
         """
         try:
             async with self._session.get(
-                NEMWEB_MARKET_NOTICE_URL, timeout=aiohttp.ClientTimeout(total=30)
+                NEMWEB_MARKET_NOTICE_URL,
+                timeout=aiohttp.ClientTimeout(total=30),
+                headers={"User-Agent": "nem_pd7day/2.3"},
             ) as resp:
                 resp.raise_for_status()
                 html = await resp.text()
@@ -317,7 +319,11 @@ class MarketNoticeClient:
     async def _fetch_and_parse(self, notice_id: int, filename: str) -> Optional[GridNoticeAnnotation]:
         url = NEMWEB_MARKET_NOTICE_URL + filename
         try:
-            async with self._session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            async with self._session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=15),
+                headers={"User-Agent": "nem_pd7day/2.3"},
+            ) as resp:
                 resp.raise_for_status()
                 text = await resp.text()
         except Exception as exc:
