@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import re
+import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ NEM_SUMMARY_URL = ELEC_NEM_SUMMARY_URL
 # Fallback: NEMWeb DispatchIS — canonical 5-minute MMS price files.
 DISPATCHIS_BASE = DISPATCHIS_BASE_URL
 _DISPATCHIS_FILE_RE = re.compile(
-    r"PUBLIC_DISPATCHIS_(\d{12})_\d+\.zip", re.IGNORECASE
+    r"(PUBLIC_DISPATCHIS_\d{12}_\d+\.zip)", re.IGNORECASE
 )
 
 # Price status values accepted from both sources.
@@ -115,10 +116,11 @@ def _settlement_age_seconds(settlement_str: str) -> float:
 
 # ── Fallback: DispatchIS_Reports zip ─────────────────────────────────────────
 
-def _fetch_dispatchis() -> dict[str, DispatchPrice]:
+def _fetch_dispatchis() -> dict[str, DispatchPrice] | None:
     """Fetch the latest DispatchIS zip from NEMWeb and parse D,DISPATCH,PRICE rows.
 
-    Returns a dict keyed by REGIONID.  Raises on any network or parse error.
+    Returns a dict keyed by REGIONID, or None if the zip is not yet published
+    (HTTP 404).  Raises on other network or parse errors.
     """
     index = urllib.request.urlopen(DISPATCHIS_BASE, timeout=15).read().decode(
         "utf-8", errors="ignore"
@@ -128,7 +130,14 @@ def _fetch_dispatchis() -> dict[str, DispatchPrice]:
         raise ValueError("No DispatchIS files found in directory listing")
 
     url = DISPATCHIS_BASE + files[-1]
-    raw = urllib.request.urlopen(url, timeout=20).read()
+    _LOGGER.debug("DispatchIS URL: %s", url)
+    try:
+        raw = urllib.request.urlopen(url, timeout=20).read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            _LOGGER.warning("DispatchIS 404 — zip not yet published: %s", url)
+            return None
+        raise
     zf = zipfile.ZipFile(io.BytesIO(raw))
     content = zf.read(zf.namelist()[0]).decode("utf-8", errors="ignore")
 
@@ -197,9 +206,11 @@ def fetch_dispatch_prices(
             if expected_settlement is not None:
                 actual_str = sample.interval_datetime
                 try:
-                    actual_dt = datetime.strptime(actual_str, "%Y-%m-%dT%H:%M:%S")
+                    actual_dt = datetime.fromisoformat(actual_str)
                 except ValueError:
                     actual_dt = datetime.strptime(actual_str, "%Y/%m/%d %H:%M:%S")
+                # Ensure both sides are tz-naive for safe comparison
+                actual_dt = actual_dt.replace(tzinfo=None)
                 if actual_dt < expected_settlement:
                     _LOGGER.debug(
                         "ELEC_NEM_SUMMARY: settlement=%s is behind expected %s — will retry",
@@ -224,6 +235,8 @@ def fetch_dispatch_prices(
 
     # Fallback: DispatchIS_Reports zip
     results = _fetch_dispatchis()
+    if results is None:
+        raise ValueError("DispatchIS fallback unavailable (zip not yet published)")
     sample = next(iter(results.values()), None)
     _LOGGER.debug(
         "Dispatch (DispatchIS fallback): %d regions fetched, settlement=%s (NEMtime)",

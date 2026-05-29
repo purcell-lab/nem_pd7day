@@ -221,7 +221,8 @@ class DispatchCoordinator(DataUpdateCoordinator):
         t0 = datetime.now(timezone.utc)
 
         # Expected settlement = current 5-min boundary (NEM time) + 5 min
-        nem_now = t0 + timedelta(hours=10)
+        # Strip tzinfo so expected_settlement is tz-naive NEM time
+        nem_now = t0.replace(tzinfo=None) + timedelta(hours=10)
         boundary_nem = nem_now.replace(
             minute=(nem_now.minute // 5) * 5,
             second=0,
