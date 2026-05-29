@@ -215,17 +215,42 @@ class DispatchCoordinator(DataUpdateCoordinator):
         self.schedule_next_poll()
 
     async def _async_update_data(self):
+        t0 = datetime.now(timezone.utc)
         try:
             prices = await self.hass.async_add_executor_job(fetch_dispatch_prices)
             self.prices = prices
             self.last_updated = datetime.now(timezone.utc)
+            elapsed = (self.last_updated - t0).total_seconds()
+            dp = prices.get(self.region)
+            if dp is not None:
+                _LOGGER.debug(
+                    "Finished fetching NEM Dispatch %s data in %.3f seconds — $%.4f/kWh @ %s (NEMtime)",
+                    self.region,
+                    elapsed,
+                    dp.rrp,
+                    dp.interval_datetime,
+                )
+            else:
+                _LOGGER.debug(
+                    "Finished fetching NEM Dispatch %s data in %.3f seconds (no price)",
+                    self.region,
+                    elapsed,
+                )
             return prices
         except Exception as exc:  # noqa: BLE001
+            elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
             if self.data is not None:
                 _LOGGER.warning(
-                    "Dispatch fetch failed (%s) — serving stale dispatch price",
+                    "Finished fetching NEM Dispatch %s data in %.3f seconds (failed: %s) — serving stale dispatch price",
+                    self.region,
+                    elapsed,
                     exc,
                 )
                 return self.data
-            _LOGGER.warning("Dispatch fetch failed (no stale data): %s", exc)
+            _LOGGER.warning(
+                "Finished fetching NEM Dispatch %s data in %.3f seconds (failed, no stale data): %s",
+                self.region,
+                elapsed,
+                exc,
+            )
             raise UpdateFailed(f"DispatchIS fetch failed: {exc}") from exc
