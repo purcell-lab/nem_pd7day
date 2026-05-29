@@ -230,10 +230,10 @@ class DispatchCoordinator(DataUpdateCoordinator):
             )
             for region_id, dp in sorted(prices.items()):
                 _LOGGER.debug(
-                    "  %s: $%.4f/kWh @ %s (NEMtime)",
+                    "  Dispatch: %s settlement=%s (NEMtime) — $%.4f/kWh",
                     region_id,
+                    dp.interval_datetime.replace("/", "-").replace(" ", "T")[:16],
                     dp.rrp,
-                    dp.interval_datetime,
                 )
             return prices
         except Exception as exc:  # noqa: BLE001

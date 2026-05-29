@@ -183,9 +183,9 @@ def fetch_dispatch_prices() -> dict[str, DispatchPrice]:
                 )
                 raise ValueError(f"Stale ELEC_NEM_SUMMARY data: age={age:.0f}s")
         _LOGGER.debug(
-            "Dispatch prices from ELEC_NEM_SUMMARY: %d regions, settlement=%s",
+            "Dispatch: %d regions fetched, settlement=%s (NEMtime)",
             len(results),
-            sample.interval_datetime if sample else "?",
+            sample.interval_datetime.replace("/", "-").replace(" ", "T")[:16] if sample else "?",
         )
         return results
     except Exception as exc:  # noqa: BLE001
@@ -195,8 +195,8 @@ def fetch_dispatch_prices() -> dict[str, DispatchPrice]:
     results = _fetch_dispatchis()
     sample = next(iter(results.values()), None)
     _LOGGER.debug(
-        "Dispatch prices from DispatchIS fallback: %d regions, settlement=%s",
+        "Dispatch (DispatchIS fallback): %d regions fetched, settlement=%s (NEMtime)",
         len(results),
-        sample.interval_datetime if sample else "?",
+        sample.interval_datetime.replace("/", "-").replace(" ", "T")[:16] if sample else "?",
     )
     return results

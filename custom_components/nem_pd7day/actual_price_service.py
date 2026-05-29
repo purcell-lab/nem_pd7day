@@ -81,6 +81,6 @@ class ActualPriceService:
                 )
             else:
                 _LOGGER.debug(
-                    "TradingIS fetch returned None for %s interval %s",
+                    "  TradingIS: %s no data for interval_end=%s (NEMtime)",
                     region, interval_iso,
                 )

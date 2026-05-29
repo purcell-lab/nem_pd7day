@@ -73,7 +73,7 @@ class TradingISClient:
         url = directory.get(interval_end)
         if url is None:
             _LOGGER.debug(
-                "TradingIS: no file for interval end %s (directory has %d entries)",
+                "TradingIS: no file for interval_end=%s (NEMtime) (directory has %d entries)",
                 interval_end.strftime("%Y-%m-%dT%H:%M"),
                 len(directory),
             )
@@ -82,7 +82,7 @@ class TradingISClient:
         price = await self._fetch_price_from_zip(url, region)
         if price is not None:
             _LOGGER.debug(
-                "TradingIS: %s interval_end=%s — $%.4f/kWh",
+                "  TradingIS: %s interval_end=%s (NEMtime) — $%.4f/kWh",
                 region,
                 interval_end.strftime("%Y-%m-%dT%H:%M"),
                 price,
