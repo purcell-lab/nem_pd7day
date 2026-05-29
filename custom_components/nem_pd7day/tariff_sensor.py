@@ -154,6 +154,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         # Per-instance single-entry caches: (cache_key_tuple, result_float)
         self._tariff_cache: tuple[tuple, float] | None = None
         self._period_tariff_cache: tuple[tuple, float] | None = None
+        # Static tariff structure — computed once at construction, never changes at runtime
+        self._cached_tariff_periods: list[dict[str, Any]] = self._get_tariff_periods()
+        self._cached_daily_supply_charge: float | None = self._get_daily_supply_charge()
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to PD7Day coordinator, DispatchCoordinator, and NEM boundary refresh."""
@@ -462,9 +465,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             "region": self._region,
             "network": self._distributor,
             # Tariff period structure
-            "tariff_periods": self._get_tariff_periods(),
+            "tariff_periods": getattr(self, "_cached_tariff_periods", None) or self._get_tariff_periods(),
             # Standing charges
-            "daily_supply_charge_$": self._get_daily_supply_charge(),
+            "daily_supply_charge_$": getattr(self, "_cached_daily_supply_charge", self._get_daily_supply_charge()),
             "demand_charge": None,
             # Loss factors
             "distribution_loss_factor_dlf": _DEFAULT_DLF,
@@ -547,8 +550,8 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
             "distributor": distributor_display,
             "region": self._region,
             "network": self._distributor,
-            "tariff_periods": self._get_tariff_periods(),
-            "daily_supply_charge_$": self._get_daily_supply_charge(),
+            "tariff_periods": getattr(self, "_cached_tariff_periods", None) or self._get_tariff_periods(),
+            "daily_supply_charge_$": getattr(self, "_cached_daily_supply_charge", self._get_daily_supply_charge()),
             "demand_charge": None,
             "distribution_loss_factor_dlf": _DEFAULT_DLF,
             "metering_loss_factor_mlf": _DEFAULT_MLF,
