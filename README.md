@@ -91,15 +91,20 @@ Those versions supported multi-region configuration. From v2.0.3 onwards exactly
 
 ### Recorder exclusion (recommended)
 
-The forecast sensors carry large attribute payloads (7 days × 48 intervals). Add the following to `configuration.yaml` to prevent recorder warnings and database bloat:
+The forecast and tariff sensors carry large attribute payloads (7 days × 48 intervals each). Without exclusions HA will log recorder warnings for every tariff sensor on every update. Add the following to `configuration.yaml`:
 
 ```yaml
 recorder:
   exclude:
     entity_globs:
+      - sensor.nem_pd7day_*_tariff
+      - sensor.nem_pd7day_*_export_tariff
+      - sensor.nem_pd7day_*_price_forecast
+      - sensor.nem_pd7day_*_forecast_day_2_7
       - sensor.pd7day_*_ic_*
-      - sensor.*_pd7day_forecast
 ```
+
+This covers all tariff sensors (import and export), spot price forecast sensors, and interconnector sensors. The `state` value of each sensor is still recorded — only the large `forecast` attribute list is excluded.
 
 ---
 

@@ -351,7 +351,16 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             with _suppress_stdout():
                 raw_periods = list(get_periods(self._distributor, self._tariff_code))
             periods = []
-            for name, start, end, rate_c in raw_periods:
+            for row in raw_periods:
+                # aemo_to_tariff returns 4-tuples for most networks but
+                # 5-tuples for SAPN: (name, start, end, condition, rate_c)
+                # Use positional unpacking: first 3 fixed, rate_c always last.
+                if len(row) < 4:
+                    continue
+                name, start, end = row[0], row[1], row[2]
+                rate_c = row[-1]
+                if rate_c is None:
+                    continue
                 periods.append({
                     "period": name,
                     "start": start.strftime("%H:%M"),
