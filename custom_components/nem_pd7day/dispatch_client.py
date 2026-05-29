@@ -60,14 +60,6 @@ def _fetch_nem_summary() -> dict[str, DispatchPrice]:
     )
     raw = urllib.request.urlopen(req, timeout=15).read()
     payload = json.loads(raw)
-    _LOGGER.debug(
-        "ELEC_NEM_SUMMARY: %s",
-        ", ".join(
-            f"{r['REGIONID']} settlement={r['SETTLEMENTDATE']} ${r['PRICE']/1000:.4f}/kWh"
-            for r in sorted(payload.get("ELEC_NEM_SUMMARY", []), key=lambda x: x["REGIONID"])
-        ),
-    )
-
     rows = payload.get("ELEC_NEM_SUMMARY", [])
     if not rows:
         raise ValueError("ELEC_NEM_SUMMARY key missing or empty in response")
@@ -208,6 +200,15 @@ def fetch_dispatch_prices(
                     age,
                 )
                 raise ValueError(f"Stale ELEC_NEM_SUMMARY data: age={age:.0f}s")
+
+            # Log settlement + price before gate check
+            _LOGGER.debug(
+                "ELEC_NEM_SUMMARY fetched: %s",
+                ", ".join(
+                    f"{r} settlement={results[r].interval_datetime} ${results[r].rrp:.4f}/kWh"
+                    for r in sorted(results)
+                ),
+            )
 
             # Gate: if caller expects a specific settlement, verify it
             if expected_settlement is not None:
