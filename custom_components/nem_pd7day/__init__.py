@@ -73,16 +73,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
 
-    # ── Dispatch coordinator (5-minute polling) ──────────────────────────────
-    dispatch = DispatchCoordinator(hass, region)
-    await dispatch.async_config_entry_first_refresh()
-    # Start boundary-aligned polling (replaces rolling update_interval).
-    # Each fired callback reschedules itself; we register the first unsub
-    # with the entry so it is cancelled cleanly on unload.
-    _dispatch_unsubs: list = []
-    dispatch.schedule_next_poll(entry_unsub_list=_dispatch_unsubs)
-    for _unsub in _dispatch_unsubs:
-        entry.async_on_unload(_unsub)
+    # ── Dispatch coordinator (5-minute polling, shared across all entries) ─────
+    _SHARED_DISPATCH = "_shared_dispatch"
+    dispatch: DispatchCoordinator = hass.data[DOMAIN].get(_SHARED_DISPATCH)  # type: ignore[assignment]
+    if dispatch is None:
+        dispatch = DispatchCoordinator(hass)
+        await dispatch.async_config_entry_first_refresh()
+        # Start boundary-aligned polling once — shared coordinator self-reschedules.
+        _dispatch_unsubs: list = []
+        dispatch.schedule_next_poll(entry_unsub_list=_dispatch_unsubs)
+        # Store cancel callbacks at domain level — cleaned up when last entry unloads.
+        hass.data[DOMAIN][_SHARED_DISPATCH] = dispatch
+        hass.data[DOMAIN]["_dispatch_unsubs"] = _dispatch_unsubs
 
     hass.data[DOMAIN][entry.entry_id] = {
         COORDINATOR_KEY: coordinator,
@@ -217,8 +219,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
-        if not hass.data[DOMAIN] and hass.services.has_service(DOMAIN, "force_refit"):
-            hass.services.async_remove(DOMAIN, "force_refit")
+        # Check if any config entries remain (ignoring shared keys)
+        remaining = [k for k in hass.data[DOMAIN] if not k.startswith("_")]
+        if not remaining:
+            # Last entry unloaded — cancel shared dispatch poll and clean up
+            for _unsub in hass.data[DOMAIN].pop("_dispatch_unsubs", []):
+                _unsub()
+            hass.data[DOMAIN].pop("_shared_dispatch", None)
+            if hass.services.has_service(DOMAIN, "force_refit"):
+                hass.services.async_remove(DOMAIN, "force_refit")
     return unload_ok
 
 

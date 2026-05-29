@@ -166,14 +166,13 @@ class DispatchCoordinator(DataUpdateCoordinator):
     whatever random offset existed at HA startup (observed: up to ~4 min).
     """
 
-    def __init__(self, hass: HomeAssistant, region: str) -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         super().__init__(
             hass,
             _LOGGER,
-            name=f"NEM Dispatch {region}",
+            name="NEM Dispatch",
             update_interval=None,   # driven by boundary-aligned schedule, not rolling interval
         )
-        self.region = region
         self.prices: dict[str, DispatchPrice] = {}
         self.last_updated: datetime | None = None
         self._unsub_poll: list = []
