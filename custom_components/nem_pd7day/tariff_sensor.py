@@ -8,8 +8,8 @@ Attributes: full 7-day tariff forecast as a list of {interval_time, tariff_$/kwh
 from __future__ import annotations
 
 import contextlib
+import io
 import logging
-import os
 import sys
 from typing import Any
 
@@ -59,13 +59,12 @@ def _horizon_hours(run_at_str: str | None, interval_time_str: str) -> float:
 @contextlib.contextmanager
 def _suppress_stdout():
     """Suppress stdout to silence debug print() calls in aemo_to_tariff library."""
-    with open(os.devnull, "w") as devnull:
-        old_stdout = sys.stdout
-        sys.stdout = devnull
-        try:
-            yield
-        finally:
-            sys.stdout = old_stdout
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        yield
+    finally:
+        sys.stdout = old_stdout
 
 
 try:
