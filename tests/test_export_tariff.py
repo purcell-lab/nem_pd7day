@@ -562,3 +562,39 @@ def test_export_tariff_no_store_uses_raw():
         # Raw value: 0.10 * 1000 = 100 $/MWh
         call_args = mock_fit.call_args
         assert abs(call_args[0][3] - 100.0) < 1e-6
+
+
+# ── Export tariff cache tests ──────────────────────────────────────────────
+
+
+def test_compute_export_tariff_cache_hit():
+    """Calling _compute_export_tariff twice with same period calls library only once."""
+    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
+    period = make_price_period(peak_nemtime, value=0.10)
+    sensor = make_export_sensor(price_periods=[period])
+    sensor._period_export_tariff_cache = None
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
+        result1 = sensor._compute_export_tariff(period)
+        result2 = sensor._compute_export_tariff(period)
+        assert result1 is not None
+        assert result1 == result2
+        assert mock_fit.call_count == 1, (
+            f"Expected spot_to_feed_in_tariff called once (cache hit), got {mock_fit.call_count}"
+        )
+
+
+def test_apply_export_tariff_to_spot_cache_hit():
+    """Calling _apply_export_tariff_to_spot twice with same inputs calls library only once."""
+    now = datetime(2026, 5, 24, 14, 12, 0, tzinfo=NEM_TZ)
+    sensor = make_export_sensor(price_periods=[])
+    sensor._export_tariff_cache = None
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
+        result1 = sensor._apply_export_tariff_to_spot(0.10, now)
+        result2 = sensor._apply_export_tariff_to_spot(0.10, now)
+        assert result1 is not None
+        assert result1 == result2
+        assert mock_fit.call_count == 1, (
+            f"Expected spot_to_feed_in_tariff called once (cache hit), got {mock_fit.call_count}"
+        )

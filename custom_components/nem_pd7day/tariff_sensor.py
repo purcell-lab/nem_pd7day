@@ -151,6 +151,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
         tariff_name = get_tariff_name(distributor, tariff_code)
         self._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
+        # Per-instance single-entry caches: (cache_key_tuple, result_float)
+        self._tariff_cache: tuple[tuple, float] | None = None
+        self._period_tariff_cache: tuple[tuple, float] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to PD7Day coordinator, DispatchCoordinator, and NEM boundary refresh."""
@@ -273,15 +276,21 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             return None
         try:
             # Pass nemtime (interval END) — library subtracts 5 min for ToU lookup
-            interval_dt = parse_iso(period.nemtime)
             rrp_mwh = self._calibrated_value(period) * 1000  # calibrated spot $/kWh -> $/MWh
+            cache_key = (period.nemtime, round(rrp_mwh, 4))
+            cache = getattr(self, "_period_tariff_cache", None)
+            if cache is not None and cache[0] == cache_key:
+                return cache[1]
+            interval_dt = parse_iso(period.nemtime)
             # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
             with _suppress_stdout():
                 result_c_kwh = spot_to_tariff(
                     interval_dt, self._distributor, self._tariff_code, rrp_mwh,
                 )
             fee = self._get_additional_fee()
-            return round((result_c_kwh / 100 + fee) * 1.1, 6)
+            result = round((result_c_kwh / 100 + fee) * 1.1, 6)
+            self._period_tariff_cache = (cache_key, result)
+            return result
         except Exception:
             _LOGGER.debug(
                 "spot_to_tariff failed for %s/%s at %s",
@@ -306,13 +315,19 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             else:
                 nemtime_dt = now_nem_dt.replace(minute=rounded_min, second=0, microsecond=0)
             rrp_mwh = rrp_kwh * 1000
+            cache_key = (nemtime_dt.isoformat(), round(rrp_mwh, 4))
+            cache = getattr(self, "_tariff_cache", None)
+            if cache is not None and cache[0] == cache_key:
+                return cache[1]
             # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
             with _suppress_stdout():
                 result_c_kwh = spot_to_tariff(
                     nemtime_dt, self._distributor, self._tariff_code, rrp_mwh,
                 )
             fee = self._get_additional_fee()
-            return round((result_c_kwh / 100 + fee) * 1.1, 6)
+            result = round((result_c_kwh / 100 + fee) * 1.1, 6)
+            self._tariff_cache = (cache_key, result)
+            return result
         except Exception:
             _LOGGER.debug(
                 "spot_to_tariff (dispatch) failed for %s/%s",
@@ -581,6 +596,9 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         self._attr_unique_id = (
             f"{entry.entry_id}_{region}_{distributor}_{import_code}_export_tariff"
         )
+        # Per-instance single-entry caches: (cache_key_tuple, result_float)
+        self._export_tariff_cache: tuple[tuple, float] | None = None
+        self._period_export_tariff_cache: tuple[tuple, float] | None = None
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
         export_name = get_export_tariff_name(distributor, export_code)
         # Avoid "... Export Export Tariff" when name already contains "Export"
@@ -693,13 +711,19 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         if spot_to_feed_in_tariff is None:
             return None
         try:
-            interval_dt = parse_iso(period.nemtime)
             rrp_mwh = self._calibrated_value(period) * 1000  # calibrated spot $/kWh -> $/MWh
+            cache_key = (period.nemtime, round(rrp_mwh, 4))
+            cache = getattr(self, "_period_export_tariff_cache", None)
+            if cache is not None and cache[0] == cache_key:
+                return cache[1]
+            interval_dt = parse_iso(period.nemtime)
             with _suppress_stdout():
                 result_c_kwh = spot_to_feed_in_tariff(
                     interval_dt, self._distributor, self._export_code, rrp_mwh,
                 )
-            return round(result_c_kwh / 100, 6)
+            result = round(result_c_kwh / 100, 6)
+            self._period_export_tariff_cache = (cache_key, result)
+            return result
         except Exception:
             _LOGGER.debug(
                 "spot_to_feed_in_tariff failed for %s/%s at %s",
@@ -721,11 +745,17 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
             else:
                 nemtime_dt = now_nem_dt.replace(minute=rounded_min, second=0, microsecond=0)
             rrp_mwh = rrp_kwh * 1000
+            cache_key = (nemtime_dt.isoformat(), round(rrp_mwh, 4))
+            cache = getattr(self, "_export_tariff_cache", None)
+            if cache is not None and cache[0] == cache_key:
+                return cache[1]
             with _suppress_stdout():
                 result_c_kwh = spot_to_feed_in_tariff(
                     nemtime_dt, self._distributor, self._export_code, rrp_mwh,
                 )
-            return round(result_c_kwh / 100, 6)
+            result = round(result_c_kwh / 100, 6)
+            self._export_tariff_cache = (cache_key, result)
+            return result
         except Exception:
             _LOGGER.debug(
                 "spot_to_feed_in_tariff (dispatch) failed for %s/%s",

@@ -639,3 +639,40 @@ def test_tariff_store_apply_called_with_correct_args():
         assert args[0][0] == 0.05  # raw_price
         assert isinstance(args[0][1], float)  # horizon_hours
         assert isinstance(args[0][2], int)  # hour_of_day
+
+
+# ── Cache tests ─────────────────────────────────────────────────────────────
+
+
+def test_compute_tariff_cache_hit():
+    """Calling _compute_tariff twice with same period calls spot_to_tariff only once."""
+    now = datetime.now(tz=NEM_TZ)
+    current_end = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0) + timedelta(minutes=30)
+    period = make_price_period(current_end, value=0.10)
+    sensor = make_tariff_sensor(price_periods=[period])
+    sensor._period_tariff_cache = None
+
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
+        result1 = sensor._compute_tariff(period)
+        result2 = sensor._compute_tariff(period)
+        assert result1 is not None
+        assert result1 == result2
+        assert mock_stt.call_count == 1, (
+            f"Expected spot_to_tariff called once (cache hit), got {mock_stt.call_count}"
+        )
+
+
+def test_apply_tariff_to_spot_cache_hit():
+    """Calling _apply_tariff_to_spot twice with same inputs calls spot_to_tariff only once."""
+    now = datetime(2026, 5, 24, 14, 12, 0, tzinfo=NEM_TZ)
+    sensor = make_tariff_sensor(price_periods=[])
+    sensor._tariff_cache = None
+
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
+        result1 = sensor._apply_tariff_to_spot(0.10, now)
+        result2 = sensor._apply_tariff_to_spot(0.10, now)
+        assert result1 is not None
+        assert result1 == result2
+        assert mock_stt.call_count == 1, (
+            f"Expected spot_to_tariff called once (cache hit), got {mock_stt.call_count}"
+        )
