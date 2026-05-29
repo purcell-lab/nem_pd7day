@@ -60,7 +60,13 @@ def _fetch_nem_summary() -> dict[str, DispatchPrice]:
     )
     raw = urllib.request.urlopen(req, timeout=15).read()
     payload = json.loads(raw)
-    _LOGGER.debug("ELEC_NEM_SUMMARY raw response: %s", payload)
+    _LOGGER.debug(
+        "ELEC_NEM_SUMMARY: %s",
+        ", ".join(
+            f"{r['REGIONID']} settlement={r['SETTLEMENTDATE']} ${r['PRICE']/1000:.4f}/kWh"
+            for r in sorted(payload.get("ELEC_NEM_SUMMARY", []), key=lambda x: x["REGIONID"])
+        ),
+    )
 
     rows = payload.get("ELEC_NEM_SUMMARY", [])
     if not rows:
