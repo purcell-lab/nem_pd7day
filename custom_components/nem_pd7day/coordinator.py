@@ -221,35 +221,30 @@ class DispatchCoordinator(DataUpdateCoordinator):
             self.prices = prices
             self.last_updated = datetime.now(timezone.utc)
             elapsed = (self.last_updated - t0).total_seconds()
-            dp = prices.get(self.region)
-            if dp is not None:
+            _LOGGER.debug(
+                "Finished fetching NEM Dispatch data in %.3f seconds — %d regions",
+                elapsed,
+                len(prices),
+            )
+            for region_id, dp in sorted(prices.items()):
                 _LOGGER.debug(
-                    "Finished fetching NEM Dispatch %s data in %.3f seconds — $%.4f/kWh @ %s (NEMtime)",
-                    self.region,
-                    elapsed,
+                    "  %s: $%.4f/kWh @ %s (NEMtime)",
+                    region_id,
                     dp.rrp,
                     dp.interval_datetime,
-                )
-            else:
-                _LOGGER.debug(
-                    "Finished fetching NEM Dispatch %s data in %.3f seconds (no price)",
-                    self.region,
-                    elapsed,
                 )
             return prices
         except Exception as exc:  # noqa: BLE001
             elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
             if self.data is not None:
                 _LOGGER.warning(
-                    "Finished fetching NEM Dispatch %s data in %.3f seconds (failed: %s) — serving stale dispatch price",
-                    self.region,
+                    "Finished fetching NEM Dispatch data in %.3f seconds (failed: %s) — serving stale prices",
                     elapsed,
                     exc,
                 )
                 return self.data
             _LOGGER.warning(
-                "Finished fetching NEM Dispatch %s data in %.3f seconds (failed, no stale data): %s",
-                self.region,
+                "Finished fetching NEM Dispatch data in %.3f seconds (failed, no stale data): %s",
                 elapsed,
                 exc,
             )
