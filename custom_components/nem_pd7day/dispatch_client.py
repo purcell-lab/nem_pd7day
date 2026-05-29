@@ -35,6 +35,10 @@ _DISPATCHIS_FILE_RE = re.compile(
 _FIRM_STATUSES = {"FIRM", "CALCULATED"}
 
 
+class StaleIntervalError(Exception):
+    """Raised when ELEC_NEM_SUMMARY returns an older-than-expected interval."""
+
+
 @dataclass
 class DispatchPrice:
     region: str
@@ -161,11 +165,17 @@ def _fetch_dispatchis() -> dict[str, DispatchPrice]:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def fetch_dispatch_prices() -> dict[str, DispatchPrice]:
+def fetch_dispatch_prices(
+    expected_settlement: datetime | None = None,
+) -> dict[str, DispatchPrice]:
     """Return the latest 5-minute dispatch RRP for all NEM regions.
 
     Tries ELEC_NEM_SUMMARY first (fast JSON, all regions); falls back to
     DispatchIS_Reports zip (canonical MMS CSV) on any failure.
+
+    If *expected_settlement* is provided and the ELEC_NEM_SUMMARY interval is
+    behind that timestamp, a StaleIntervalError is raised so the caller can
+    retry before falling back to DispatchIS.
 
     Called synchronously via hass.async_add_executor_job.
     """
@@ -182,12 +192,33 @@ def fetch_dispatch_prices() -> dict[str, DispatchPrice]:
                     age,
                 )
                 raise ValueError(f"Stale ELEC_NEM_SUMMARY data: age={age:.0f}s")
+
+            # Gate: if caller expects a specific settlement, verify it
+            if expected_settlement is not None:
+                actual_str = sample.interval_datetime
+                try:
+                    actual_dt = datetime.strptime(actual_str, "%Y-%m-%dT%H:%M:%S")
+                except ValueError:
+                    actual_dt = datetime.strptime(actual_str, "%Y/%m/%d %H:%M:%S")
+                if actual_dt < expected_settlement:
+                    _LOGGER.debug(
+                        "ELEC_NEM_SUMMARY: settlement=%s is behind expected %s — will retry",
+                        actual_str,
+                        expected_settlement.strftime("%Y-%m-%dT%H:%M"),
+                    )
+                    raise StaleIntervalError(
+                        f"ELEC_NEM_SUMMARY: settlement {actual_str} < expected "
+                        f"{expected_settlement.strftime('%Y-%m-%dT%H:%M')}"
+                    )
+
         _LOGGER.debug(
             "Dispatch: %d regions fetched, settlement=%s (NEMtime)",
             len(results),
             sample.interval_datetime.replace("/", "-").replace(" ", "T")[:16] if sample else "?",
         )
         return results
+    except StaleIntervalError:
+        raise  # let caller handle retry — don't fall through to DispatchIS
     except Exception as exc:  # noqa: BLE001
         _LOGGER.debug("ELEC_NEM_SUMMARY failed (%s) — falling back to DispatchIS", exc)
 

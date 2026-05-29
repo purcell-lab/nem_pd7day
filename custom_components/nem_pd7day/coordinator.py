@@ -1,6 +1,7 @@
 """DataUpdateCoordinator for NEM PD7DAY."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -12,7 +13,7 @@ from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, QLD1_INTERCONNECTORS, interconnectors_for_regions
-from .dispatch_client import DispatchPrice, fetch_dispatch_prices
+from .dispatch_client import DispatchPrice, StaleIntervalError, fetch_dispatch_prices
 from .pd7day_client import PD7DayClient, PD7DayResult
 from . import tod_stats as _tod_stats
 from .tod_stats import TodStats
@@ -218,8 +219,45 @@ class DispatchCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         t0 = datetime.now(timezone.utc)
+
+        # Expected settlement = current 5-min boundary (NEM time) + 5 min
+        nem_now = t0 + timedelta(hours=10)
+        boundary_nem = nem_now.replace(
+            minute=(nem_now.minute // 5) * 5,
+            second=0,
+            microsecond=0,
+        )
+        expected_settlement = boundary_nem + timedelta(minutes=5)
+
         try:
-            prices = await self.hass.async_add_executor_job(fetch_dispatch_prices)
+            try:
+                prices = await self.hass.async_add_executor_job(
+                    fetch_dispatch_prices, expected_settlement
+                )
+            except StaleIntervalError:
+                _LOGGER.debug(
+                    "Dispatch: ELEC_NEM_SUMMARY not yet updated for %s (NEMtime) — retrying in 15s",
+                    expected_settlement.strftime("%Y-%m-%dT%H:%M"),
+                )
+                await asyncio.sleep(15)
+                prices = await self.hass.async_add_executor_job(
+                    fetch_dispatch_prices, None
+                )
+                # Check if retry result is still behind expected settlement
+                sample = next(iter(prices.values()), None)
+                if sample:
+                    actual_str = sample.interval_datetime
+                    try:
+                        actual_dt = datetime.strptime(actual_str, "%Y-%m-%dT%H:%M:%S")
+                    except ValueError:
+                        actual_dt = datetime.strptime(actual_str, "%Y/%m/%d %H:%M:%S")
+                    if actual_dt < expected_settlement:
+                        _LOGGER.warning(
+                            "Dispatch: settlement still behind after retry (got %s, expected %s) — serving anyway",
+                            actual_str,
+                            expected_settlement.strftime("%Y-%m-%dT%H:%M"),
+                        )
+
             self.prices = prices
             self.last_updated = datetime.now(timezone.utc)
             elapsed = (self.last_updated - t0).total_seconds()
