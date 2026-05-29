@@ -74,6 +74,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
 
     async def _async_update_data(self) -> PD7DayResult:
         client = self._get_client()
+        t0 = datetime.now(timezone.utc)
         try:
             result = await client.fetch_all(self._regions)
         except aiohttp.ClientResponseError as exc:
@@ -94,8 +95,10 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                 return self.data
             raise UpdateFailed(f"PD7DAY fetch failed: {exc}") from exc
 
+        elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
         _LOGGER.debug(
-            "PD7DAY updated: source=%s intervention=%s regions=%s interconnectors=%s",
+            "PD7DAY fetch completed in %.3f seconds — source=%s intervention=%s regions=%s interconnectors=%s",
+            elapsed,
             result.source_file,
             result.case.intervention if result.case else "unknown",
             list(result.prices.keys()),

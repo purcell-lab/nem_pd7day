@@ -79,7 +79,15 @@ class TradingISClient:
             )
             return None
 
-        return await self._fetch_price_from_zip(url, region)
+        price = await self._fetch_price_from_zip(url, region)
+        if price is not None:
+            _LOGGER.debug(
+                "TradingIS: %s interval_end=%s — $%.4f/kWh",
+                region,
+                interval_end.strftime("%Y-%m-%dT%H:%M"),
+                price,
+            )
+        return price
 
     async def _fetch_directory(self) -> dict[datetime, str]:
         """Return {interval_end_datetime: full_url} for all TradingIS zip files.

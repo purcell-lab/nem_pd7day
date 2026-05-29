@@ -351,6 +351,12 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 return round(tariff_val, 6)
 
         # Fallback: current interval from PD7DAY forecast
+        _LOGGER.debug(
+            "%s/%s: no dispatch price for %s — falling back to PD7DAY forecast",
+            self._distributor,
+            self._tariff_code,
+            self._region,
+        )
         d = self._price_data
         if d is None:
             return None
@@ -776,6 +782,12 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
             if tariff_val is not None:
                 return round(tariff_val, 6)
 
+        _LOGGER.debug(
+            "%s/%s: no dispatch price for %s — falling back to PD7DAY forecast",
+            self._distributor,
+            self._export_code,
+            self._region,
+        )
         d = self._price_data
         if d is None:
             return None
