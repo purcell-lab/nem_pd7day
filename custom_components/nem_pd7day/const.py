@@ -51,7 +51,9 @@ CONF_ACTIVE_TARIFF = "active_tariff"
 FORECAST_MODE_FULL = "days_1_7"       # naive: days 1-7, all residential tariffs visible
 FORECAST_MODE_DAYS_2_7 = "days_2_7"   # sophisticated: days 2-7, one selected tariff
 # TradingIS (actual price source)
-TRADINGIS_BASE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/"
+TRADINGIS_BASE_URL = "https://www.nemweb.com.au/Reports/Current/TradingIS_Reports/"
+DISPATCHIS_BASE_URL = "https://www.nemweb.com.au/Reports/Current/DispatchIS_Reports/"
+ELEC_NEM_SUMMARY_URL = "https://visualisations.aemo.com.au/aemo/apps/api/report/ELEC_NEM_SUMMARY"
 TRADINGIS_FETCH_MINUTES = [2, 32]
 
 # Defaults
