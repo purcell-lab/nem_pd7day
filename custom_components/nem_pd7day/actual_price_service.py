@@ -74,10 +74,6 @@ class ActualPriceService:
             price = await self._client.fetch_interval_price(region, interval_start)
 
             if price is not None:
-                _LOGGER.debug(
-                    "TradingIS price for %s interval %s: %.6f $/kWh",
-                    region, interval_iso, price,
-                )
                 await self._store.async_record_actual(
                     interval_iso, price,
                     calibration_region=self._calibration_region,
