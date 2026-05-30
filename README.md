@@ -89,22 +89,18 @@ Each integration instance monitors one NEM region with full independent calibrat
 
 Those versions supported multi-region configuration. From v2.0.3 onwards exactly one region is configured per integration instance. On upgrade, only the first region from a previous multi-region list is preserved — the integration migrates automatically. To reinstate additional regions, add new integration instances as described above.
 
-### Recorder exclusion (recommended)
+### Recorder warnings (expected, harmless)
 
-The forecast and tariff sensors carry large attribute payloads (7 days × 48 intervals each). Without exclusions HA will log recorder warnings for every tariff sensor on every update. Add the following to `configuration.yaml`:
+The forecast and tariff sensors carry large attribute payloads (7 days × 48 intervals each). Home Assistant will log warnings like:
 
-```yaml
-recorder:
-  exclude:
-    entity_globs:
-      - sensor.nem_pd7day_*_tariff
-      - sensor.nem_pd7day_*_export_tariff
-      - sensor.nem_pd7day_*_price_forecast
-      - sensor.nem_pd7day_*_forecast_day_2_7
-      - sensor.pd7day_*_ic_*
+```
+State attributes for sensor.nem_pd7day_*_tariff exceed maximum size of 16384 bytes.
+Attributes will not be stored
 ```
 
-This covers all tariff sensors (import and export), spot price forecast sensors, and interconnector sensors. The `state` value of each sensor is still recorded — only the large `forecast` attribute list is excluded.
+These warnings are **expected and harmless**. The sensor `state` value (the current $/kWh price) is always recorded and available in history — only the large `forecast` attribute list is dropped by the recorder. No configuration changes are needed.
+
+> **Do not add `recorder: exclude: entity_globs`** for nem_pd7day sensors — doing so prevents the sensor state from being recorded, which breaks the history graph in the HA UI.
 
 ---
 
@@ -548,7 +544,7 @@ These buckets require observations from intervals 2–4 days ahead. They begin a
 
 ### Recorder warnings about attribute size
 
-Add the recorder exclusions shown in the [Configuration](#configuration) section.
+These are expected and harmless — see the [Recorder warnings](#recorder-warnings-expected-harmless) section above. No configuration changes are needed. Do not add `recorder: exclude: entity_globs` as this breaks sensor history.
 
 ### QLD1 (or any region) price forecast showing flat line / not updating
 
