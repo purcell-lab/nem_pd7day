@@ -412,12 +412,12 @@ def test_export_programs_registered_in_setup():
 
     # Find export sensors — they have _export_code attribute
     export_sensors = [e for e in created if hasattr(e, "_export_code")]
-    # NSW1 has 3 export programs: ausgrid/EA025→EA029, endeavour/N71→N61, essential/BLNT3AL→BLNREX2
-    assert len(export_sensors) == 3, (
-        f"Expected 3 export sensors for NSW1, got {len(export_sensors)}"
+    # NSW1 has 4 export programs: ausgrid/EA025→EA029, endeavour/N71→N61, essential/BLNT3AL→BLNREX2, evoenergy/026→026
+    assert len(export_sensors) == 4, (
+        f"Expected 4 export sensors for NSW1, got {len(export_sensors)}"
     )
     export_codes = {s._export_code for s in export_sensors}
-    assert export_codes == {"EA029", "N61", "BLNREX2"}
+    assert export_codes == {"EA029", "N61", "BLNREX2", "026"}
 
 
 def test_sapn_resele_import_sensor_default_enabled():

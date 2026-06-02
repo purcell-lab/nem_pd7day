@@ -159,7 +159,7 @@ DISTRIBUTOR_DISPLAY_NAMES = {
 
 REGION_DISTRIBUTORS = {
     "QLD1": ["energex", "ergon"],
-    "NSW1": ["ausgrid", "endeavour", "essential"],
+    "NSW1": ["ausgrid", "endeavour", "essential", "evoenergy"],
     "VIC1": ["jemena", "powercor", "united", "ausnet", "victoria"],
     "SA1":  ["sapn"],
     "TAS1": ["tasnetworks"],
@@ -347,6 +347,7 @@ DEFAULT_ENABLED_TARIFFS = {
     # Evoenergy
     ("evoenergy", "017"),  # New Residential TOU Network
     ("evoenergy", "018"),  # New Residential TOU Network XMC (trial)
+    ("evoenergy", "026"),  # Residential Demand (trial)
     # Jemena — small set, enable both
     ("jemena", "D1"),
     ("jemena", "PRTOU"),
@@ -379,6 +380,7 @@ EXPORT_TARIFF_PROGRAMS = {
     ("endeavour", "N71"): "N61",
     ("essential", "BLNT3AL"): "BLNREX2",
     ("sapn", "RESELE"): "RESELE",
+    ("evoenergy", "026"): "026",
 }
 
 # Human-readable export tariff names (export_code → name)
@@ -387,6 +389,8 @@ EXPORT_TARIFF_NAMES = {
     "N61": "Residential Electrify",
     "BLNREX2": "LV Residential Solar Export",
     "RESELE": "Residential Electrify",
+    # Evoenergy
+    "026": "Battery Feed-in Trial",
 }
 
 # Coordinator / store keys

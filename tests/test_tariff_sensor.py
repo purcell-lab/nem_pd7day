@@ -262,7 +262,8 @@ def test_region_distributor_mapping():
     assert "ausgrid" in REGION_DISTRIBUTORS["NSW1"]
     assert "endeavour" in REGION_DISTRIBUTORS["NSW1"]
     assert "essential" in REGION_DISTRIBUTORS["NSW1"]
-    assert len(REGION_DISTRIBUTORS["NSW1"]) == 3
+    assert "evoenergy" in REGION_DISTRIBUTORS["NSW1"]
+    assert len(REGION_DISTRIBUTORS["NSW1"]) == 4
 
     assert "jemena" in REGION_DISTRIBUTORS["VIC1"]
     assert "powercor" in REGION_DISTRIBUTORS["VIC1"]
