@@ -35,7 +35,7 @@ Both the spot price sensor and tariff sensors apply this trim automatically.
 - **Cloud polling** — two independent polling loops:
   - **PD7DAY** fetches at AEMO publish times: 07:30, 13:00, 18:00 AEST (3 requests/day)
   - **TradingIS** fetches actual 5-min dispatch prices every 30 minutes (48 requests/day)
-- **5-minute dispatch prices** — boundary-aligned `DispatchCoordinator` polls NEMWEB TradingIS at `:00:35`, `:05:35`, ..., `:55:35` (35 s after each dispatch boundary, after NEMWEB publishes). Used as the live `native_value` for tariff and spot sensors between 30-minute PD7DAY intervals.
+- **5-minute dispatch prices** — boundary-aligned `DispatchCoordinator` polls NEMWEB TradingIS at `:01:15`, `:06:15`, ..., `:56:15` (75 s after each dispatch boundary, after NEMWEB publishes). Used as the live `native_value` for tariff and spot sensors between 30-minute PD7DAY intervals.
 - **Live sensor state** — all forecast sensor states advance automatically every 30 minutes to reflect the current interval, with no fetch required
 - **No third-party accounts required** — actual prices sourced directly from AEMO TradingIS
 - **Dependencies** — `matplotlib`, `numpy` for chart rendering, `astral` for solar elevation (installed automatically by HACS/HA)
@@ -134,7 +134,7 @@ Actual NEM dispatch prices are fetched from AEMO's TradingIS reports and used to
 5-minute dispatch prices for the sensor `native_value` are fetched from AEMO TradingIS on a boundary-aligned schedule:
 
 - **URL**: `https://www.nemweb.com.au/Reports/Current/TradingIS_Reports/`
-- **Schedule**: 35 seconds after each 5-minute UTC boundary (`:00:35`, `:05:35`, ..., `:55:35`). NEMWEB publishes ~30 s after the boundary; 35 s gives a 5 s margin.
+- **Schedule**: 75 seconds after each 5-minute UTC boundary (`:01:15`, `:06:15`, ..., `:56:15`). AEMO typically publishes 65–90 s after the interval boundary; 75 s sits within that window with margin (`_DISPATCH_POLL_DELAY_S = 75`).
 - **Alignment**: uses `async_track_point_in_utc_time` with self-rescheduling one-shot callbacks — no drift from HA startup time.
 
 ### Sensor state updates (every 30 minutes)
@@ -269,6 +269,18 @@ Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the
 
 One sensor per (distributor, tariff_code) for the configured region. Tariff sensors cover the same **days 2–7 window** as the spot price sensor — the near-term Amber Express window is trimmed from the forecast attribute. The `native_value` (current interval tariff) is unfiltered and always returns the current price.
 
+Supported distributors per region:
+
+| Region | Distributors |
+|---|---|
+| QLD1 | Energex, Ergon |
+| NSW1 | Ausgrid, Endeavour, Essential, **EvoEnergy** (serves the ACT) |
+| VIC1 | Jemena, Powercor, United, AusNet, Victoria |
+| SA1 | SAPN |
+| TAS1 | TasNetworks |
+
+**EvoEnergy (ACT)** — available tariff codes: `015`, `016`, `017`, `018`, `026`, `090`. The default enabled tariff is `026` (Battery Feed-in Trial), which is the export tariff.
+
 The `native_value` is driven by the boundary-aligned `DispatchCoordinator` (5-minute live dispatch price → `spot_to_tariff()`), falling back to the current PD7DAY forecast interval if dispatch data is unavailable.
 
 The `spot` field in each forecast entry reflects the **calibrated** spot price (same isotonic correction applied by the spot price sensor), not the raw PD7DAY value. This ensures the tariff forecast is consistent with the spot price forecast at spike intervals where `spike_credible: false`.
@@ -280,11 +292,35 @@ The `spot` field in each forecast entry reflects the **calibrated** spot price (
 | Attribute | Description |
 |---|---|
 | `state` | Current interval tariff price ($/kWh), incl. additional usage fee + 10% GST |
-| `forecast` | Days 2–7 tariff forecast list (time, nemtime, spot, value) |
+| `forecast` | Days 2–7 tariff forecast list (see entry structure below) |
 | `tariff_code` | Tariff code (e.g. 6900) |
 | `distributor` | Distribution network name |
 | `tariff_periods` | Time-of-use period structure with rates |
 | `daily_supply_charge_$` | Daily supply charge ($/day) |
+
+Each entry in the `forecast` list contains:
+
+| Field | Description |
+|---|---|
+| `time` | Interval START timestamp (`nemtime − 30 minutes`) |
+| `nemtime` | Interval END timestamp (AEMO convention) |
+| `spot_raw` | Uncalibrated spot price $/kWh (before bias correction) |
+| `spot` | Calibrated spot price $/kWh |
+| `value` | Final tariff $/kWh (import) or feed-in rate $/kWh (export) |
+| `period` | Tariff period name for that interval (e.g. `peak`, `shoulder`, `off-peak`) |
+| `network_rate` | Network component $/kWh for that interval |
+
+```json
+{
+  "time": "2026-06-03T10:00",
+  "nemtime": "2026-06-03T10:30",
+  "spot_raw": 0.082341,
+  "spot": 0.079812,
+  "value": 0.142500,
+  "period": "peak",
+  "network_rate": 0.08210
+}
+```
 
 #### Export tariff sensors (battery tariffs)
 
@@ -299,6 +335,7 @@ Export tariff formula: `result_c_kwh / 100` (no additional usage fee, no GST —
 | Ausgrid (NSW1) | EA025 | EA029 | +3.85 c/kWh peak, −1.23 c/kWh solar sponge |
 | Endeavour (NSW1) | N71 | N61 | +12.43 c/kWh peak, −1.97 c/kWh solar sponge |
 | Essential (NSW1) | BLNT3AL | BLNREX2 | +11.57 c/kWh peak, −0.82 c/kWh solar sponge |
+| EvoEnergy (NSW1) | 026 | 026 | Battery Feed-in Trial |
 | SAPN (SA1) | RESELE | RESELE | +12.25 c/kWh peak, −1.00 c/kWh solar sponge |
 
 #### Additional usage fee
@@ -562,6 +599,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 2.3.47 | EvoEnergy tariffs for NSW1/ACT (codes 015, 016, 017, 018, 026, 090; default export tariff 026 Battery Feed-in Trial); forecast entries now include `spot_raw`, `period`, `network_rate`; freshness gate accepts `settlement >= boundary`; dispatch poll delay set to 75 s (AEMO publishes 65–90 s after boundary); clarified 16kB recorder warnings are harmless |
 | 2.3.40 | Fix: `DispatchCoordinator` now boundary-aligned — polls NEMWEB TradingIS at 35 s past each 5-minute UTC boundary (NEMWEB publishes ~30 s after boundary). Replaces rolling `update_interval` that drifted up to ~4 min from startup offset, causing tariff sensors to show stale dispatch prices each interval |
 | 2.3.39 | Fix: tariff sensors (import + export) were passing raw PD7DAY RRP into `spot_to_tariff()` / `spot_to_feed_in_tariff()` — `store` now wired into all tariff sensor constructors; `_calibrated_value()` applies isotonic calibration identical to spot sensor; `spot` attribute in forecast lists now reflects calibrated $/kWh |
 | 2.3.38 | Fix: `iso_chart.py` missing matplotlib graceful fallback — adds same `try/except ImportError` + `_placeholder_png()` pattern as `forecast_chart.py` |
