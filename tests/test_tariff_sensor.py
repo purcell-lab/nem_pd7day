@@ -240,10 +240,16 @@ def test_tariff_sensor_forecast_attribute():
             assert attrs["region"] == "QLD1"
             assert len(attrs["forecast"]) == 5
             expected_val = round((10.0 / 100 + 0.0293) * 1.1, 6)
-            for entry in attrs["forecast"]:
+            for i, entry in enumerate(attrs["forecast"]):
                 assert "time" in entry
                 assert "value" in entry
                 assert abs(entry["value"] - expected_val) < 1e-6  # (10c/kWh/100 + fee) * 1.1
+                # New per-interval fields
+                assert "spot_raw" in entry
+                assert "period" in entry
+                assert "network_rate" in entry
+                # spot_raw is the uncalibrated input value for that interval
+                assert abs(entry["spot_raw"] - round(0.05 + i * 0.01, 6)) < 1e-6
 
 
 def test_tariff_sensor_device_info():
@@ -403,6 +409,39 @@ def test_tariff_periods_in_attributes():
             # Check rate conversion: 25.0 c/kWh → 0.25 $/kWh
             assert abs(tp[0]["network_rate_$/kwh"] - 0.25) < 1e-6
             assert abs(tp[1]["network_rate_$/kwh"] - 0.05) < 1e-6
+
+
+def test_forecast_period_and_network_rate():
+    """Verify forecast entries resolve period name + network_rate from periods."""
+    import datetime as _dt
+
+    # Peak 14:00-20:00, OffPeak wraps 20:00-14:00
+    fake_periods = [
+        ("Peak", _dt.time(14, 0), _dt.time(20, 0), 25.0),
+        ("OffPeak", _dt.time(20, 0), _dt.time(14, 0), 5.0),
+    ]
+    # Build a period whose interval END (nemtime) is 16:00 NEM → lookup at 15:55 → Peak
+    base = datetime.now(tz=NEM_TZ).replace(hour=16, minute=0, second=0, microsecond=0)
+    period = make_price_period(base, value=0.07)
+    sensor = make_tariff_sensor(price_periods=[period])
+
+    with patch.object(_tariff_mod, "get_periods", return_value=fake_periods):
+        with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+            attrs = sensor.extra_state_attributes
+            entry = attrs["forecast"][0]
+            assert entry["spot_raw"] == round(0.07, 6)
+            assert entry["period"] == "Peak"
+            assert abs(entry["network_rate"] - 0.25) < 1e-6
+
+    # nemtime 22:00 → lookup at 21:55 → OffPeak (wraparound branch)
+    base2 = datetime.now(tz=NEM_TZ).replace(hour=22, minute=0, second=0, microsecond=0)
+    period2 = make_price_period(base2, value=0.03)
+    sensor2 = make_tariff_sensor(price_periods=[period2])
+    with patch.object(_tariff_mod, "get_periods", return_value=fake_periods):
+        with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+            entry2 = sensor2.extra_state_attributes["forecast"][0]
+            assert entry2["period"] == "OffPeak"
+            assert abs(entry2["network_rate"] - 0.05) < 1e-6
 
 
 def test_loss_factors_in_attributes():

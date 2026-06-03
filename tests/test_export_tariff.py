@@ -547,6 +547,12 @@ def test_export_tariff_forecast_spot_shows_calibrated():
             assert abs(entry["spot"] - 0.01425) < 1e-6, (
                 f"Export forecast spot should be calibrated 0.01425, got {entry['spot']}"
             )
+            # New per-interval fields
+            assert "spot_raw" in entry
+            assert "period" in entry
+            assert "network_rate" in entry
+            # spot_raw is the uncalibrated input value, not the calibrated one
+            assert abs(entry["spot_raw"] - round(0.01745, 6)) < 1e-6
 
 
 def test_export_tariff_no_store_uses_raw():
