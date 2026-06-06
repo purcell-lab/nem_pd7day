@@ -437,6 +437,34 @@ def test_unsupported_tariff_code_caches_empty_and_is_silent():
         assert mock_gp.call_count == calls_after_construction
 
 
+def test_sapn_none_window_period_skipped_silently():
+    """SAPN SBTOU/SBTOUNE 5-tuples include an Off-peak row with start/end None.
+
+    That row must be skipped silently (no AttributeError from start.strftime,
+    no 'get_periods failed' log) — the remaining timed rows are returned.
+    """
+    import datetime as _dt
+
+    # Mirrors aemo_to_tariff's sapn SBTOU output: 5-tuples (name, start, end,
+    # condition, rate_c) with a final no-window Off-peak fallback row.
+    fake_periods = [
+        ("Peak", _dt.time(17, 0), _dt.time(21, 0), [11, 12, 1, 2, 3], 27.5),
+        ("Shoulder", _dt.time(7, 0), _dt.time(17, 0), [11, 12, 1, 2, 3], 19.14),
+        ("Off-peak", None, None, None, 10.34),
+    ]
+    sensor = make_tariff_sensor(price_periods=None)
+
+    with patch.object(_tariff_mod, "get_periods", return_value=fake_periods):
+        with patch.object(_tariff_mod._LOGGER, "debug") as mock_log:
+            tp = sensor._get_tariff_periods()
+    # Off-peak (None window) skipped; two timed rows remain, no error logged.
+    assert len(tp) == 2
+    assert {e["period"] for e in tp} == {"Peak", "Shoulder"}
+    assert not any(
+        "get_periods failed" in str(c.args) for c in mock_log.call_args_list
+    )
+
+
 def test_forecast_period_and_network_rate():
     """Verify forecast entries resolve period name + network_rate from periods."""
     import datetime as _dt

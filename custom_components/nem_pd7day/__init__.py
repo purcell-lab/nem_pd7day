@@ -28,15 +28,23 @@ from .const import (
     NEMWEB_MAX_CONCURRENT_REQUESTS,
     NEMWEB_SEMAPHORE_KEY,
     REFIT_INTERVAL,
+    REGION_STARTUP_ORDER,
     STORE_KEY,
 )
 from .coordinator import DispatchCoordinator, PD7DayCoordinator
+from .forecast_store import ForecastStore
 from .market_notice_client import MarketNoticeClient
 from .notice_store import GridNoticeStore
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.CAMERA, Platform.NUMBER]
+
+
+async def _delayed_refresh(coordinator: PD7DayCoordinator, delay_s: float) -> None:
+    """Sleep delay_s then trigger a background coordinator refresh (phase 2)."""
+    await asyncio.sleep(delay_s)
+    await coordinator.async_refresh()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -68,11 +76,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = CalibrationStore(hass, region)
     await store.async_load()
 
-    # ── Market notice store + client ─────────────────────────────────────────
-    notice_store = GridNoticeStore(hass)
-    await notice_store.async_load()
+    # ── Forecast cache store (per region) ────────────────────────────────────
+    forecast_store = ForecastStore(hass, region)
+
+    # ── Shared market notice store + client ──────────────────────────────────
+    # All five region coordinators share ONE notice store + client so the
+    # NEMWEB Market_Notice directory is polled once per cycle, not five times.
     session = async_get_clientsession(hass)
-    notice_client = MarketNoticeClient(session)
+    if "notice_store" not in hass.data[DOMAIN]:
+        shared_notice_store = GridNoticeStore(hass)
+        await shared_notice_store.async_load()
+        hass.data[DOMAIN]["notice_store"] = shared_notice_store
+    if "notice_client" not in hass.data[DOMAIN]:
+        hass.data[DOMAIN]["notice_client"] = MarketNoticeClient(session)
+    notice_store = hass.data[DOMAIN]["notice_store"]
+    notice_client = hass.data[DOMAIN]["notice_client"]
 
     # ── Coordinator (no automatic polling) ───────────────────────────────────
     coordinator = PD7DayCoordinator(
@@ -82,8 +100,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         interconnector_ids=interconnector_ids,
         notice_store=notice_store,
         notice_client=notice_client,
+        forecast_store=forecast_store,
     )
-    await coordinator.async_config_entry_first_refresh()
+
+    # ── Two-phase startup ─────────────────────────────────────────────────────
+    cached = await forecast_store.load()
+    if cached is not None:
+        # Phase 1: restore cache instantly — sensors available immediately.
+        coordinator.async_set_updated_data(cached)
+        # Phase 2: schedule a non-blocking background refresh, staggered per
+        # region so the 5 coordinators don't all hit NEMWEB at once.
+        region_index = REGION_STARTUP_ORDER.get(region, 0)
+        delay = 30 + region_index * 5  # 30s, 35s, 40s, 45s, 50s
+        entry.async_create_background_task(
+            hass,
+            _delayed_refresh(coordinator, delay),
+            name=f"nem_pd7day_{region}_background_refresh",
+        )
+    else:
+        # No usable cache (first install or long outage): block on first refresh.
+        await coordinator.async_config_entry_first_refresh()
 
     # ── Dispatch coordinator (5-minute polling, shared across all entries) ─────
     _SHARED_DISPATCH = "_shared_dispatch"
@@ -232,12 +268,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
         # Check if any config entries remain (ignoring shared keys)
-        remaining = [k for k in hass.data[DOMAIN] if not k.startswith("_")]
+        _SHARED_KEYS = {NEMWEB_SEMAPHORE_KEY, "notice_store", "notice_client"}
+        remaining = [
+            k for k in hass.data[DOMAIN]
+            if not k.startswith("_") and k not in _SHARED_KEYS
+        ]
         if not remaining:
             # Last entry unloaded — cancel shared dispatch poll and clean up
             for _unsub in hass.data[DOMAIN].pop("_dispatch_unsubs", []):
                 _unsub()
             hass.data[DOMAIN].pop("_shared_dispatch", None)
+            hass.data[DOMAIN].pop("notice_store", None)
+            hass.data[DOMAIN].pop("notice_client", None)
             if hass.services.has_service(DOMAIN, "force_refit"):
                 hass.services.async_remove(DOMAIN, "force_refit")
     return unload_ok

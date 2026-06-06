@@ -222,6 +222,7 @@ def make_coordinator(store=None, notice_store=None, notice_client=None) -> PD7Da
     coord._session = None
     coord.notice_store = notice_store
     coord._notice_client = notice_client
+    coord._forecast_store = None
     coord._first_refresh_done = False
     return coord
 

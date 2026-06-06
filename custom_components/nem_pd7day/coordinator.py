@@ -26,6 +26,7 @@ from .tod_stats import TodStats
 
 if TYPE_CHECKING:
     from .calibration_store import CalibrationStore
+    from .forecast_store import ForecastStore
     from .market_notice_client import MarketNoticeClient
     from .notice_store import GridNoticeStore
 
@@ -53,6 +54,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         interconnector_ids: set[str] | None = None,
         notice_store: "GridNoticeStore | None" = None,
         notice_client: "MarketNoticeClient | None" = None,
+        forecast_store: "ForecastStore | None" = None,
     ) -> None:
         super().__init__(
             hass,
@@ -69,9 +71,10 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         self.tod_stats: TodStats = TodStats()
         self.notice_store: "GridNoticeStore | None" = notice_store
         self._notice_client: "MarketNoticeClient | None" = notice_client
+        self._forecast_store: "ForecastStore | None" = forecast_store
         self._first_refresh_done = False
-        # 0-based position in the fixed region order — used to stagger the
-        # first fetch so the 5 region coordinators don't all hit NEMWEB at once.
+        # 0-based position in the fixed region order — retained for callers that
+        # still query it; background refreshes are now staggered in __init__.py.
         self._region_index = region_startup_index(regions[0]) if regions else 0
 
     def _get_client(self) -> PD7DayClient:
@@ -88,13 +91,6 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         )
 
     async def _async_update_data(self) -> PD7DayResult:
-        # Per-region startup jitter: stagger each coordinator's first fetch by
-        # region_index * 2s so the 5 regions don't all hit NEMWEB at once.
-        # Only on the very first refresh — subsequent refreshes are unstaggered.
-        region_index = getattr(self, "_region_index", 0)
-        if not self._first_refresh_done and region_index > 0:
-            await asyncio.sleep(region_index * 2)
-
         client = self._get_client()
         t0 = datetime.now(timezone.utc)
         try:
@@ -139,6 +135,11 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                 )
             # Recompute time-of-day statistics from updated observations
             self.tod_stats = _tod_stats.compute(self._store.observations, calibration_result=self._store.calibration)
+
+        # Persist the fresh result so the next HA restart can restore sensors
+        # instantly (phase 1 of two-phase startup) without a blocking fetch.
+        if self._forecast_store is not None:
+            await self._forecast_store.save(result)
 
         # Skip notice fetch during bootstrap first refresh to avoid timeout.
         # The first fetch runs after HA setup completes (second coordinator update).

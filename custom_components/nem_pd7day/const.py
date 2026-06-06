@@ -41,17 +41,14 @@ def interconnectors_for_regions(regions: list[str]) -> set[str]:
 # Supported NEM regions
 REGIONS = ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]
 
-# Fixed region ordering used to stagger each coordinator's first fetch.
-# QLD1=0, NSW1=1, VIC1=2, SA1=3, TAS1=4 → startup jitter = index * 2 seconds.
-REGION_STARTUP_ORDER = ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]
+# Fixed region ordering used to stagger each coordinator's background refresh.
+# QLD1=0, NSW1=1, VIC1=2, SA1=3, TAS1=4 → background refresh delay = 30 + index * 5 s.
+REGION_STARTUP_ORDER = {"QLD1": 0, "NSW1": 1, "VIC1": 2, "SA1": 3, "TAS1": 4}
 
 
 def region_startup_index(region: str) -> int:
     """0-based position of a region in the fixed startup order (0 if unknown)."""
-    try:
-        return REGION_STARTUP_ORDER.index(region)
-    except ValueError:
-        return 0
+    return REGION_STARTUP_ORDER.get(region, 0)
 
 
 # Shared across all region coordinators on hass.data[DOMAIN]; caps the number

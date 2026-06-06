@@ -435,6 +435,12 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 rate_c = row[-1]
                 if rate_c is None:
                     continue
+                # Some tariffs (e.g. SAPN SBTOU/SBTOUNE) include an "Off-peak"
+                # fallback row with no time window (start/end None). It carries
+                # no displayable period, so skip it silently rather than letting
+                # start.strftime() raise AttributeError into the generic handler.
+                if start is None or end is None:
+                    continue
                 periods.append({
                     "period": name,
                     "start": start.strftime("%H:%M"),

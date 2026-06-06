@@ -171,6 +171,7 @@ def _make_pd7day_coordinator() -> PD7DayCoordinator:
     coord._session = None
     coord.notice_store = None
     coord._notice_client = None
+    coord._forecast_store = None
     coord._first_refresh_done = False
     return coord
 
