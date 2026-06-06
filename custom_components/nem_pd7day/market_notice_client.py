@@ -24,10 +24,10 @@ NEMWEB_MARKET_NOTICE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/Market_Not
 
 # On first run (cold start) backfill only this many hours of notices instead of
 # the full directory, to limit the startup request burst to NEMWEB.
-_NOTICE_BACKFILL_HOURS = 48
+_NOTICE_BACKFILL_HOURS = 24
 
 # Delay between individual notice file fetches to avoid bursting NEMWEB.
-_NOTICE_FETCH_DELAY_S = 0.3
+_NOTICE_FETCH_DELAY_S = 0.5
 
 # Relevant notice type codes in the file body
 NOTICE_TYPE_LOR = "RESERVE NOTICE"
@@ -303,13 +303,16 @@ class MarketNoticeClient:
         # The directory filename encodes the date (YYYYMMDD), so we filter by
         # filename date rather than notice_id to avoid fetching thousands of old files.
         if self.last_seen_notice_id == 0:
+            # The filename encodes only a date (YYYYMMDD), not a time, so the
+            # tightest cap we can apply from the listing alone is whole-day
+            # granularity: keep files whose date is >= the cutoff date.
             cutoff = datetime.now(NEM_TZ) - timedelta(hours=_NOTICE_BACKFILL_HOURS)
             cutoff_str = cutoff.strftime("%Y%m%d")  # e.g. "20260510"
-            new_files = [
-                (nid, fname) for nid, fname in files
-                if re.search(r'(\d{8})', fname) and
-                re.search(r'(\d{8})', fname).group(1) >= cutoff_str
-            ]
+            new_files = []
+            for nid, fname in files:
+                date_match = re.search(r'_(\d{8})\.', fname)
+                if date_match and date_match.group(1) >= cutoff_str:
+                    new_files.append((nid, fname))
             _LOGGER.info(
                 "Market notice client first run: backfilling %d files since %s",
                 len(new_files), cutoff_str,
@@ -321,10 +324,10 @@ class MarketNoticeClient:
             return []
 
         notices = []
-        for idx, (notice_id, filename) in enumerate(new_files):
-            if idx > 0:
-                # Throttle individual notice fetches to avoid bursting NEMWEB.
-                await asyncio.sleep(_NOTICE_FETCH_DELAY_S)
+        for notice_id, filename in new_files:
+            # Throttle BEFORE every individual notice file GET so there is a
+            # genuine _NOTICE_FETCH_DELAY_S gap between each HTTP request.
+            await asyncio.sleep(_NOTICE_FETCH_DELAY_S)
             notice = await self._fetch_and_parse(notice_id, filename)
             if notice is not None:
                 notices.append(notice)

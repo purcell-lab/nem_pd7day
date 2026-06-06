@@ -78,6 +78,10 @@ except ImportError:
     _att = None  # type: ignore[assignment]
     _LOGGER.warning("aemo_to_tariff not installed — tariff sensors will be unavailable")
 
+# Sentinel distinguishing "tariff period cache not yet populated" from an
+# empty list (unsupported tariff code). Only the former triggers a lazy lookup.
+_MISSING = object()
+
 # Default loss factors used by aemo_to_tariff library (Energex defaults)
 _DEFAULT_DLF = 1.05905
 _DEFAULT_MLF = 1.0154
@@ -277,10 +281,14 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         Returns (period_name, network_rate_$/kwh); either may be None on failure.
         """
         try:
-            tariff_periods = (
-                getattr(self, "_cached_tariff_periods", None)
-                or self._get_tariff_periods()
-            )
+            # Use the cached structure computed once at construction. The cache
+            # is always set in __init__; an empty list means the tariff code is
+            # unsupported by aemo_to_tariff (expected for many codes), so return
+            # silently without re-querying. _MISSING distinguishes "not yet
+            # cached" (compute lazily) from "cached empty" (return immediately).
+            tariff_periods = getattr(self, "_cached_tariff_periods", _MISSING)
+            if tariff_periods is _MISSING:
+                tariff_periods = self._get_tariff_periods()
             if not tariff_periods:
                 return None, None
             lookup_dt = parse_iso(period.nemtime) - datetime.timedelta(minutes=5)
@@ -397,6 +405,17 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             return None
         return self._compute_tariff(period)
 
+    def _tariff_periods_for_attrs(self) -> list[dict[str, Any]]:
+        """Tariff period structure for state attributes.
+
+        Uses the construction-time cache; computes lazily only if the cache
+        attribute is absent (e.g. when bypassing __init__ in tests).
+        """
+        cached = getattr(self, "_cached_tariff_periods", _MISSING)
+        if cached is _MISSING:
+            return self._get_tariff_periods()
+        return cached or []
+
     def _get_tariff_periods(self) -> list[dict[str, Any]]:
         """Return tariff period structure with rates converted to $/kWh."""
         if get_periods is None:
@@ -423,6 +442,12 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                     "network_rate_$/kwh": round(rate_c / 100, 6),
                 })
             return periods
+        except ValueError:
+            # "Unknown tariff code" — the aemo_to_tariff library simply does not
+            # support this code (e.g. Ergon 3600/3800/7200, SAPN SBELEX/RESELEX,
+            # Essential BLNBEX1, Endeavour N61). This will never succeed, so we
+            # cache the empty result at construction and stay silent.
+            return []
         except Exception:
             _LOGGER.debug(
                 "get_periods failed for %s/%s", self._distributor, self._tariff_code,
@@ -507,7 +532,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             "region": self._region,
             "network": self._distributor,
             # Tariff period structure
-            "tariff_periods": getattr(self, "_cached_tariff_periods", None) or self._get_tariff_periods(),
+            "tariff_periods": self._tariff_periods_for_attrs(),
             # Standing charges
             "daily_supply_charge_$": getattr(self, "_cached_daily_supply_charge", self._get_daily_supply_charge()),
             "demand_charge": None,
@@ -596,7 +621,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
             "distributor": distributor_display,
             "region": self._region,
             "network": self._distributor,
-            "tariff_periods": getattr(self, "_cached_tariff_periods", None) or self._get_tariff_periods(),
+            "tariff_periods": self._tariff_periods_for_attrs(),
             "daily_supply_charge_$": getattr(self, "_cached_daily_supply_charge", self._get_daily_supply_charge()),
             "demand_charge": None,
             "distribution_loss_factor_dlf": _DEFAULT_DLF,

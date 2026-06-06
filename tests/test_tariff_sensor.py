@@ -411,6 +411,32 @@ def test_tariff_periods_in_attributes():
             assert abs(tp[1]["network_rate_$/kwh"] - 0.05) < 1e-6
 
 
+def test_unsupported_tariff_code_caches_empty_and_is_silent():
+    """ValueError from get_periods → cache [] once, lookup returns (None, None).
+
+    aemo_to_tariff raises ValueError('Unknown tariff code') for codes it does
+    not support (e.g. essential/BLNREX2, endeavour/N61). The cache must hold []
+    so subsequent lookups return immediately without re-calling get_periods.
+    """
+    def raise_unknown(*args, **kwargs):
+        raise ValueError("Unknown tariff code")
+
+    with patch.object(_tariff_mod, "get_periods", side_effect=raise_unknown) as mock_gp:
+        # Construction-time call caches [] (one get_periods call, no exception leak)
+        sensor = make_tariff_sensor(price_periods=None)
+        sensor._cached_tariff_periods = sensor._get_tariff_periods()
+        assert sensor._cached_tariff_periods == []
+        calls_after_construction = mock_gp.call_count
+
+        # Lookup must use the cache and not call get_periods again
+        period = make_price_period(
+            datetime.now(tz=NEM_TZ).replace(hour=16, minute=0, second=0, microsecond=0),
+            value=0.07,
+        )
+        assert sensor._lookup_period_info(period) == (None, None)
+        assert mock_gp.call_count == calls_after_construction
+
+
 def test_forecast_period_and_network_rate():
     """Verify forecast entries resolve period name + network_rate from periods."""
     import datetime as _dt
