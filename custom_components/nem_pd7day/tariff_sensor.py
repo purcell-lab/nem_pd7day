@@ -648,6 +648,9 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         # Per-instance single-entry caches: (cache_key_tuple, result_float)
         self._export_tariff_cache: tuple[tuple, float] | None = None
         self._period_export_tariff_cache: tuple[tuple, float] | None = None
+        # Export tariffs have no TOU period structure in aemo_to_tariff —
+        # always empty, so period/network_rate resolve to None (by design).
+        self._cached_tariff_periods: list[dict[str, Any]] = []
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
         export_name = get_export_tariff_name(distributor, export_code)
         # Avoid "... Export Export Tariff" when name already contains "Export"
@@ -757,64 +760,23 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         return cal["calibrated"]
 
     def _get_tariff_periods(self) -> list[dict[str, Any]]:
-        """Return export tariff period structure with rates converted to $/kWh."""
-        if get_periods is None:
-            return []
-        try:
-            with _suppress_stdout():
-                raw_periods = list(get_periods(self._distributor, self._export_code))
-            periods = []
-            for row in raw_periods:
-                if len(row) < 4:
-                    continue
-                name, start, end = row[0], row[1], row[2]
-                rate_c = row[-1]
-                if rate_c is None:
-                    continue
-                periods.append({
-                    "period": name,
-                    "start": start.strftime("%H:%M"),
-                    "end": end.strftime("%H:%M"),
-                    "network_rate_$/kwh": round(rate_c / 100, 6),
-                })
-            return periods
-        except Exception:
-            _LOGGER.debug(
-                "get_periods failed for %s/%s", self._distributor, self._export_code,
-                exc_info=True,
-            )
-            return []
+        """Export tariffs have no TOU period structure in aemo_to_tariff.
+
+        ``get_periods()`` only understands import tariff codes; passing an
+        export code (e.g. Essential Energy ``BLNREX2``, Endeavour ``N61``)
+        raises ``ValueError: Unknown tariff code``. There is no feed-in
+        period/rate API, so we deliberately return an empty list — which
+        makes ``_lookup_period_info`` resolve to ``(None, None)``.
+        """
+        return []
 
     def _lookup_period_info(self, period) -> tuple[str | None, float | None]:
-        """Find the tariff period name and network $/kWh rate for a forecast interval.
+        """Always (None, None): export tariffs have no TOU period structure.
 
-        Mirrors the aemo_to_tariff period lookup: nemtime (interval END) minus
-        5 min, converted to NEM local time-of-day, matched against each period's
-        [start, end) window (with wraparound).
+        See _get_tariff_periods — aemo_to_tariff exposes no feed-in period/rate
+        data, so export forecast entries carry no period/network_rate.
         """
-        try:
-            tariff_periods = (
-                getattr(self, "_cached_tariff_periods", None)
-                or self._get_tariff_periods()
-            )
-            if not tariff_periods:
-                return None, None
-            lookup_dt = parse_iso(period.nemtime) - datetime.timedelta(minutes=5)
-            t = lookup_dt.time()
-            for entry in tariff_periods:
-                start = datetime.datetime.strptime(entry["start"], "%H:%M").time()
-                end = datetime.datetime.strptime(entry["end"], "%H:%M").time()
-                if start <= t < end or (start > end and (t >= start or t < end)):
-                    return entry.get("period"), entry.get("network_rate_$/kwh")
-            return None, None
-        except Exception:
-            _LOGGER.debug(
-                "period lookup failed for %s/%s at %s",
-                self._distributor, self._export_code,
-                getattr(period, "nemtime", None),
-                exc_info=True,
-            )
-            return None, None
+        return None, None
 
     def _compute_export_tariff(self, period) -> float | None:
         if spot_to_feed_in_tariff is None:
