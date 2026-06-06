@@ -41,6 +41,24 @@ def interconnectors_for_regions(regions: list[str]) -> set[str]:
 # Supported NEM regions
 REGIONS = ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]
 
+# Fixed region ordering used to stagger each coordinator's first fetch.
+# QLD1=0, NSW1=1, VIC1=2, SA1=3, TAS1=4 → startup jitter = index * 2 seconds.
+REGION_STARTUP_ORDER = ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]
+
+
+def region_startup_index(region: str) -> int:
+    """0-based position of a region in the fixed startup order (0 if unknown)."""
+    try:
+        return REGION_STARTUP_ORDER.index(region)
+    except ValueError:
+        return 0
+
+
+# Shared across all region coordinators on hass.data[DOMAIN]; caps the number
+# of simultaneous NEMWEB HTTP requests to avoid burst 403s on startup.
+NEMWEB_SEMAPHORE_KEY = "nemweb_semaphore"
+NEMWEB_MAX_CONCURRENT_REQUESTS = 2
+
 # Config entry keys
 CONF_REGION = "region"
 CONF_REGIONS = "regions"  # kept for migration from old list-based config

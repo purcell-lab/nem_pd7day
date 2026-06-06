@@ -20,6 +20,8 @@ See nem_time.py for the authoritative timezone helpers.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import csv
 import io
 import logging
@@ -390,17 +392,28 @@ class PD7DayClient:
         session: aiohttp.ClientSession,
         base_url: str = NEMWEB_BASE_URL,
         interconnector_ids: set[str] | None = None,
+        semaphore: "asyncio.Semaphore | None" = None,
     ) -> None:
         self._session = session
         self._base_url = base_url
         self._interconnector_ids = interconnector_ids or QLD1_INTERCONNECTORS
+        # Shared across all region coordinators to cap concurrent NEMWEB
+        # requests. nullcontext when absent (e.g. unit tests).
+        self._semaphore = semaphore
+
+    def _gate(self):
+        """Return the semaphore context manager (or a no-op if unset)."""
+        if self._semaphore is None:
+            return contextlib.nullcontext()
+        return self._semaphore
 
     async def _list_files(self) -> list[dict[str, str]]:
-        async with self._session.get(
-            self._base_url, timeout=aiohttp.ClientTimeout(total=30)
-        ) as resp:
-            resp.raise_for_status()
-            html = await resp.text(errors="ignore")
+        async with self._gate():
+            async with self._session.get(
+                self._base_url, timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                resp.raise_for_status()
+                html = await resp.text(errors="ignore")
 
         parser = _LinkExtractor()
         parser.feed(html)
@@ -419,11 +432,12 @@ class PD7DayClient:
         return sorted(files, key=lambda x: x["name"])[-1]
 
     async def _fetch_bytes(self, url: str) -> bytes:
-        async with self._session.get(
-            url, timeout=aiohttp.ClientTimeout(total=60)
-        ) as resp:
-            resp.raise_for_status()
-            return await resp.read()
+        async with self._gate():
+            async with self._session.get(
+                url, timeout=aiohttp.ClientTimeout(total=60)
+            ) as resp:
+                resp.raise_for_status()
+                return await resp.read()
 
     async def _get_csv_bytes(self, file_meta: dict[str, str]) -> tuple[str, bytes]:
         raw = await self._fetch_bytes(file_meta["url"])

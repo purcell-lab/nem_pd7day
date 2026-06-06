@@ -1,6 +1,7 @@
 """NEM PD7DAY Price Forecast — Home Assistant integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -24,6 +25,8 @@ from .const import (
     FORECAST_MODE_DAYS_2_7,
     get_region,
     interconnectors_for_regions,
+    NEMWEB_MAX_CONCURRENT_REQUESTS,
+    NEMWEB_SEMAPHORE_KEY,
     REFIT_INTERVAL,
     STORE_KEY,
 )
@@ -42,6 +45,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .nem_time import fetch_times_as_utc, now_nem
 
     hass.data.setdefault(DOMAIN, {})
+
+    # ── Shared NEMWEB request semaphore ──────────────────────────────────────
+    # One semaphore across all region coordinators caps simultaneous requests
+    # to www.nemweb.com.au, preventing burst 403s when HA starts the entries
+    # concurrently. Created once in an async context, then reused.
+    if NEMWEB_SEMAPHORE_KEY not in hass.data[DOMAIN]:
+        hass.data[DOMAIN][NEMWEB_SEMAPHORE_KEY] = asyncio.Semaphore(
+            NEMWEB_MAX_CONCURRENT_REQUESTS
+        )
 
     # ── Migration: inject default forecast_mode for existing installs ────────
     if CONF_FORECAST_MODE not in entry.options:

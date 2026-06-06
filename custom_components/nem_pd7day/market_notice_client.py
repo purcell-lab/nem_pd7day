@@ -8,6 +8,7 @@ Tracks last-seen notice ID to avoid re-fetching old files.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -20,6 +21,13 @@ _LOGGER = logging.getLogger(__name__)
 
 NEM_TZ = timezone(timedelta(hours=10))
 NEMWEB_MARKET_NOTICE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/Market_Notice/"
+
+# On first run (cold start) backfill only this many hours of notices instead of
+# the full directory, to limit the startup request burst to NEMWEB.
+_NOTICE_BACKFILL_HOURS = 48
+
+# Delay between individual notice file fetches to avoid bursting NEMWEB.
+_NOTICE_FETCH_DELAY_S = 0.3
 
 # Relevant notice type codes in the file body
 NOTICE_TYPE_LOR = "RESERVE NOTICE"
@@ -273,6 +281,16 @@ class MarketNoticeClient:
             ) as resp:
                 resp.raise_for_status()
                 html = await resp.text()
+        except aiohttp.ClientResponseError as exc:
+            if exc.status == 403:
+                # NEMWEB throttled the directory listing — skip this whole
+                # cycle rather than hammering it with per-file requests.
+                _LOGGER.debug(
+                    "[DEBUG] Market_Notice directory returned 403 — skipping cycle"
+                )
+                return []
+            _LOGGER.warning("Failed to fetch Market_Notice directory: %s", exc)
+            return []
         except Exception as exc:
             _LOGGER.warning("Failed to fetch Market_Notice directory: %s", exc)
             return []
@@ -281,11 +299,11 @@ class MarketNoticeClient:
         if not files:
             return []
 
-        # First-run bootstrap: fetch all notices from the last 7 days.
+        # First-run bootstrap: fetch notices from the last _NOTICE_BACKFILL_HOURS.
         # The directory filename encodes the date (YYYYMMDD), so we filter by
         # filename date rather than notice_id to avoid fetching thousands of old files.
         if self.last_seen_notice_id == 0:
-            cutoff = datetime.now(NEM_TZ) - timedelta(days=7)
+            cutoff = datetime.now(NEM_TZ) - timedelta(hours=_NOTICE_BACKFILL_HOURS)
             cutoff_str = cutoff.strftime("%Y%m%d")  # e.g. "20260510"
             new_files = [
                 (nid, fname) for nid, fname in files
@@ -303,7 +321,10 @@ class MarketNoticeClient:
             return []
 
         notices = []
-        for notice_id, filename in new_files:
+        for idx, (notice_id, filename) in enumerate(new_files):
+            if idx > 0:
+                # Throttle individual notice fetches to avoid bursting NEMWEB.
+                await asyncio.sleep(_NOTICE_FETCH_DELAY_S)
             notice = await self._fetch_and_parse(notice_id, filename)
             if notice is not None:
                 notices.append(notice)

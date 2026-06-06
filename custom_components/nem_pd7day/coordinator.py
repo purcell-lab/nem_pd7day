@@ -12,7 +12,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, QLD1_INTERCONNECTORS, interconnectors_for_regions
+from .const import (
+    DOMAIN,
+    NEMWEB_SEMAPHORE_KEY,
+    QLD1_INTERCONNECTORS,
+    interconnectors_for_regions,
+    region_startup_index,
+)
 from .dispatch_client import DispatchPrice, StaleIntervalError, fetch_dispatch_prices
 from .pd7day_client import PD7DayClient, PD7DayResult
 from . import tod_stats as _tod_stats
@@ -64,20 +70,35 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         self.notice_store: "GridNoticeStore | None" = notice_store
         self._notice_client: "MarketNoticeClient | None" = notice_client
         self._first_refresh_done = False
+        # 0-based position in the fixed region order — used to stagger the
+        # first fetch so the 5 region coordinators don't all hit NEMWEB at once.
+        self._region_index = region_startup_index(regions[0]) if regions else 0
 
     def _get_client(self) -> PD7DayClient:
         if self._session is None or self._session.closed:
             self._session = async_get_clientsession(self.hass)
+        semaphore = None
+        domain_data = getattr(self.hass, "data", None)
+        if isinstance(domain_data, dict):
+            semaphore = domain_data.get(DOMAIN, {}).get(NEMWEB_SEMAPHORE_KEY)
         return PD7DayClient(
             self._session,
             interconnector_ids=self._interconnector_ids,
+            semaphore=semaphore,
         )
 
     async def _async_update_data(self) -> PD7DayResult:
+        # Per-region startup jitter: stagger each coordinator's first fetch by
+        # region_index * 2s so the 5 regions don't all hit NEMWEB at once.
+        # Only on the very first refresh — subsequent refreshes are unstaggered.
+        region_index = getattr(self, "_region_index", 0)
+        if not self._first_refresh_done and region_index > 0:
+            await asyncio.sleep(region_index * 2)
+
         client = self._get_client()
         t0 = datetime.now(timezone.utc)
         try:
-            result = await client.fetch_all(self._regions)
+            result = await self._fetch_all_with_retry(client)
         except aiohttp.ClientResponseError as exc:
             if self.data is not None:
                 _LOGGER.warning(
@@ -127,6 +148,33 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             self._first_refresh_done = True
 
         return result
+
+    async def _fetch_all_with_retry(self, client: PD7DayClient) -> PD7DayResult:
+        """
+        Fetch PD7DAY data, retrying once after a 5s backoff on a 403 only.
+
+        NEMWEB throttles bursts with 403s. A single retry after a short wait
+        usually succeeds. Any other error (404, 500, timeout, etc.) is raised
+        immediately so the existing stale-data fallback handles it.
+        """
+        try:
+            return await client.fetch_all(self._regions)
+        except aiohttp.ClientResponseError as exc:
+            if exc.status != 403:
+                raise
+            _LOGGER.warning(
+                "[WARNING] PD7DAY fetch got 403 from NEMWEB — retrying once in 5s"
+            )
+            await asyncio.sleep(5)
+            try:
+                _LOGGER.debug("[DEBUG] PD7DAY 403 retry attempt")
+                return await client.fetch_all(self._regions)
+            except aiohttp.ClientResponseError as retry_exc:
+                if retry_exc.status == 403:
+                    _LOGGER.warning(
+                        "[WARNING] PD7DAY retry also got 403 from NEMWEB"
+                    )
+                raise
 
     async def async_fetch_notices(self) -> None:
         """Fetch new market notices and persist."""
