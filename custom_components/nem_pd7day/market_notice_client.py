@@ -157,11 +157,25 @@ def _parse_notice_body(text: str, notice_id: int) -> Optional[GridNoticeAnnotati
                 pass
 
     # Extract level (LOR1/LOR2/LOR3 or MSL1/MSL2/MSL3)
+    # The header line "Notice Type Description : LRC/LOR1/LOR2/LOR3" always
+    # contains LOR1 first, so a naive search picks up the header rather than
+    # the actual level. Use targeted patterns that skip the header line.
     level = 1
     prefix = "LOR" if notice_type == "LOR" else "MSL"
-    level_match = re.search(rf'{prefix}(\d)', text)
+    # 1. "Level N (LORN)" pattern (External Reference and body)
+    level_match = re.search(rf'Level\s+(\d)\s+\({prefix}(\d)\)', text)
     if level_match:
-        level = int(level_match.group(1))
+        level = int(level_match.group(2))
+    else:
+        # 2. "Forecast LORN condition" in the body
+        cond_match = re.search(rf'Forecast\s+{prefix}(\d)\s+condition', text)
+        if cond_match:
+            level = int(cond_match.group(1))
+        else:
+            # 3. "External Reference" line specifically
+            ext_match = re.search(rf'External Reference.*{prefix}(\d)', text)
+            if ext_match:
+                level = int(ext_match.group(1))
 
     # Extract region
     region = None

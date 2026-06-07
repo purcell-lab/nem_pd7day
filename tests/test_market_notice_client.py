@@ -56,6 +56,86 @@ Manager NEM Real Time Operations
 END OF REPORT
 """
 
+LOR2_NOTICE_TEXT = """
+-------------------------------------------------------------------
+                           MARKET NOTICE
+-------------------------------------------------------------------
+
+From :              AEMO
+To   :              NEMITWEB1
+Creation Date :     07/06/2026     10:50:08
+
+-------------------------------------------------------------------
+
+Notice ID               :         144205
+Notice Type ID          :         RESERVE NOTICE
+Notice Type Description :         LRC/LOR1/LOR2/LOR3
+Issue Date              :         07/06/2026
+External Reference      :         STPASA - Forecast Lack Of Reserve Level 2 (LOR2) in the SA Region on 10/06/2026
+
+-------------------------------------------------------------------
+
+Reason :
+
+AEMO ELECTRICITY MARKET NOTICE
+
+AEMO declares a Forecast LOR2 condition under clause 4.8.4(b) of the National Electricity Rules for the SA region for the following period:
+
+[1.] From 0800 hrs 10/06/2026 to 1000 hrs 10/06/2026.
+The forecast capacity reserve requirement is 744 MW.
+The minimum capacity reserve available is 542 MW.
+
+AEMO is seeking a market response.
+
+AEMO has not yet estimated the latest time at which it would need to intervene through an AEMO intervention event.
+
+Manager NEM Real Time Operations
+
+-------------------------------------------------------------------
+END OF REPORT
+-------------------------------------------------------------------
+"""
+
+LOR3_NOTICE_TEXT = """
+-------------------------------------------------------------------
+                           MARKET NOTICE
+-------------------------------------------------------------------
+
+From :              AEMO
+To   :              NEMITWEB1
+Creation Date :     07/06/2026     10:50:08
+
+-------------------------------------------------------------------
+
+Notice ID               :         144206
+Notice Type ID          :         RESERVE NOTICE
+Notice Type Description :         LRC/LOR1/LOR2/LOR3
+Issue Date              :         07/06/2026
+External Reference      :         STPASA - Forecast Lack Of Reserve Level 3 (LOR3) in the SA Region on 10/06/2026
+
+-------------------------------------------------------------------
+
+Reason :
+
+AEMO ELECTRICITY MARKET NOTICE
+
+AEMO declares a Forecast LOR3 condition under clause 4.8.4(b) of the National Electricity Rules for the SA region for the following period:
+
+[1.] From 0800 hrs 10/06/2026 to 1000 hrs 10/06/2026.
+The forecast capacity reserve requirement is 744 MW.
+The minimum capacity reserve available is 542 MW.
+
+AEMO is seeking a market response.
+
+AEMO has not yet estimated the latest time at which it would need to intervene through an AEMO intervention event.
+
+Manager NEM Real Time Operations
+
+-------------------------------------------------------------------
+END OF REPORT
+-------------------------------------------------------------------
+"""
+
 CANCELLATION_TEXT = """
 MARKET NOTICE
 AEMO ELECTRICITY MARKET NOTICE 124560 MINIMUM SYSTEM LOAD 12/02/2025 03:04:06 PM
@@ -168,6 +248,26 @@ def test_parse_multi_period_lor_notice():
     assert notice.period_from.minute == 0
     assert notice.period_to.hour == 22
     assert notice.period_to.minute == 0
+
+
+def test_parse_lor2_notice():
+    """LOR2 notice must parse as level=2, not level=1 from the header line."""
+    notice = _parse_notice_body(LOR2_NOTICE_TEXT, 144205)
+    assert notice is not None
+    assert notice.notice_type == "LOR"
+    assert notice.level == 2
+    assert notice.region == "SA1"
+    assert not notice.is_cancelled
+
+
+def test_parse_lor3_notice():
+    """LOR3 notice must parse as level=3, not level=1 from the header line."""
+    notice = _parse_notice_body(LOR3_NOTICE_TEXT, 144206)
+    assert notice is not None
+    assert notice.notice_type == "LOR"
+    assert notice.level == 3
+    assert notice.region == "SA1"
+    assert not notice.is_cancelled
 
 
 def test_non_lor_msl_returns_none():
