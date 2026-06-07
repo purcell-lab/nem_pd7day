@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 NOTICE_STORE_KEY = "nem_pd7day.notices"
-NOTICE_STORE_VERSION = 1
+NOTICE_STORE_VERSION = 2
 NOTICE_RETENTION_DAYS = 7
 
 
