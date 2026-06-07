@@ -22,7 +22,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 NOTICE_STORE_KEY = "nem_pd7day.notices"
-NOTICE_STORE_VERSION = 2
+NOTICE_STORE_VERSION = 1
+NOTICE_STORE_SCHEMA_VERSION = 2  # Increment to invalidate cached data
 NOTICE_RETENTION_DAYS = 7
 
 
@@ -49,6 +50,17 @@ class GridNoticeStore:
         data = await self._store.async_load()
         if not data:
             return
+        # Schema version check (independent of HA store version).
+        # Increment NOTICE_STORE_SCHEMA_VERSION to discard stale cached data.
+        # v1 data has no schema_version field; v2 fixes LOR level parsing.
+        if data.get("schema_version", 1) < NOTICE_STORE_SCHEMA_VERSION:
+            _LOGGER.info(
+                "Notice store schema v%d < v%d — discarding cache, will re-fetch",
+                data.get("schema_version", 1),
+                NOTICE_STORE_SCHEMA_VERSION,
+            )
+            await self._store.async_remove()
+            return
         self._last_seen_notice_id = data.get("last_seen_notice_id", 0)
         for region, notice_list in data.get("notices", {}).items():
             self._notices[region] = [
@@ -68,6 +80,7 @@ class GridNoticeStore:
         """Persist notices to .storage."""
         self._prune()
         data = {
+            "schema_version": NOTICE_STORE_SCHEMA_VERSION,
             "last_seen_notice_id": self._last_seen_notice_id,
             "notices": {
                 region: [n.to_dict() for n in notices]
