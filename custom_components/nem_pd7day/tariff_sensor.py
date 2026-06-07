@@ -130,6 +130,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     _attr_icon = "mdi:currency-usd"
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _unrecorded_attributes = frozenset({"forecast", "forecast_description"})
 
     # Small delay after interval boundary to allow coordinator data to settle
     _BOUNDARY_DELAY = datetime.timedelta(seconds=5)
@@ -653,6 +654,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
     _attr_icon = "mdi:currency-usd"
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _unrecorded_attributes = frozenset({"forecast", "forecast_description"})
 
     _BOUNDARY_DELAY = datetime.timedelta(seconds=5)
 

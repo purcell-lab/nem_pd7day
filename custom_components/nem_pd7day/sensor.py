@@ -201,6 +201,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_attribution = ATTR_ATTRIBUTION
+    _unrecorded_attributes = frozenset({"forecast", "forecast_description"})
 
     def __init__(self, coordinator, store, entry: ConfigEntry, region: str) -> None:
         super().__init__(coordinator)
@@ -447,6 +448,7 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
     _attr_attribution = ATTR_ATTRIBUTION
     _attr_entity_registry_enabled_default = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _unrecorded_attributes = frozenset({"forecast", "forecast_description"})
 
     def __init__(self, coordinator, store, entry: ConfigEntry, region: str) -> None:
         super().__init__(coordinator)
@@ -760,6 +762,7 @@ class PD7DayInterconnectorSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     _attr_icon = "mdi:transmission-tower-export"
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _unrecorded_attributes = frozenset({"forecast"})
 
     def __init__(
         self,
@@ -957,6 +960,7 @@ class PD7DayTodSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:clock-time-four-outline"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _unrecorded_attributes = frozenset({"slots"})
 
     def __init__(
         self,
@@ -1018,6 +1022,8 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     Sensor reporting count of active MSL/LOR market notices for the region.
 
     State: integer count of active (non-cancelled) notices within next 7 days.
+
+    The ``notices`` attribute is excluded from the recorder (unbounded list).
     Attributes: structured notice list + summary counts by type/level.
     """
 
@@ -1026,6 +1032,7 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     _attr_icon = "mdi:alert-circle-outline"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "notices"
+    _unrecorded_attributes = frozenset({"notices"})
 
     def __init__(
         self,

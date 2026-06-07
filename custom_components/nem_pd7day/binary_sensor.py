@@ -140,6 +140,7 @@ class NemPd7dayGridStressBinarySensor(CoordinatorEntity[PD7DayCoordinator], Bina
     region within the next 48 hours.
 
     Attributes expose details of the highest-level active notice.
+    The ``active_notices_7d`` attribute is excluded from the recorder (unbounded list).
     """
 
     _attr_has_entity_name = True
@@ -147,6 +148,7 @@ class NemPd7dayGridStressBinarySensor(CoordinatorEntity[PD7DayCoordinator], Bina
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:transmission-tower-off"
     _attr_should_poll = False
+    _unrecorded_attributes = frozenset({"active_notices_7d"})
 
     def __init__(
         self,
