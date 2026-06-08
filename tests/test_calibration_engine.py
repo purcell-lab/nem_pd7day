@@ -1241,6 +1241,62 @@ def test_p10_p90_never_outside_calibrated():
     print(f"  PASS: P10 <= calibrated <= P90 for all buckets and test inputs")
 
 
+def test_p50_within_confidence_band():
+    """
+    P50 must satisfy P10 <= P50 <= P90 after apply_all.
+
+    Quantile IRLS re-orders slopes (q10_a <= q50_a <= q90_a) but does not
+    re-order intercepts.  When intercepts cross, P50 can fall outside the
+    [P10, P90] band at the prediction point.  The post-fit clamp in apply_all
+    must enforce the full monotone ordering P10 <= P50 <= P90.
+
+    This test injects a BucketModel with deliberately crossed intercepts
+    (q10_b > q90_b) and verifies apply_all still returns a valid ordering.
+    """
+    from custom_components.nem_pd7day.calibration_engine import (
+        BucketModel, LinearCoeff, QuantileCoeff, IsotonicRegression,
+    )
+    import numpy as np
+
+    # Build a bucket with crossed intercepts: slopes ordered but b values inverted.
+    # At small x the P10 line (high intercept, low slope) will be ABOVE P90.
+    model = BucketModel(bucket_key="h00_06__solar")
+    n_fit = 30
+    model.ols = LinearCoeff(a=1.0, b=0.0, n=n_fit, mae=0.01, rmse=0.015)
+    # Slopes correctly ordered: q10_a < q50_a < q90_a
+    # Intercepts deliberately inverted: b10 > b50 > b90
+    model.q10 = QuantileCoeff(0.1, a=0.5, b=0.10, n=n_fit)
+    model.q50 = QuantileCoeff(0.5, a=0.8, b=0.06, n=n_fit)
+    model.q90 = QuantileCoeff(0.9, a=1.2, b=0.01, n=n_fit)
+
+    # Fit a trivial isotonic model so calibrated_source == "isotonic"
+    iso = IsotonicRegression()
+    xs = np.array([0.05, 0.10, 0.15, 0.20, 0.25])
+    ys = np.array([0.08, 0.12, 0.16, 0.20, 0.24])
+    iso.fit(xs, ys)
+    model.iso_model = iso
+
+    violations = []
+    # At small x (x=0.05): P10 = 0.5*0.05+0.10=0.125; P90 = 1.2*0.05+0.01=0.07
+    # Without clamping: P50=0.8*0.05+0.06=0.10 which is outside [0.07, 0.08_calibrated]
+    for x_test in [0.05, 0.08, 0.10, 0.15, 0.20, 0.25]:
+        out = model.apply_all(x_test)
+        if out["calibrated_source"] != "isotonic":
+            continue
+        p10 = out["p10"]
+        p50 = out["p50"]
+        p90 = out["p90"]
+        if p10 is not None and p50 is not None and p10 > p50 + 1e-9:
+            violations.append(f"x={x_test}: p10={p10} > p50={p50}")
+        if p50 is not None and p90 is not None and p50 > p90 + 1e-9:
+            violations.append(f"x={x_test}: p50={p50} > p90={p90}")
+
+    assert not violations, (
+        f"P10/P50/P90 ordering violated with crossed intercepts: {violations}"
+    )
+    print("  PASS: P50 clamped within [P10, P90] even with crossed intercepts")
+
+
 def test_spike_input_uses_isotonic():
     """
     Spike inputs (>= SPIKE_THRESHOLD) proceed through isotonic calibration.
@@ -1341,8 +1397,9 @@ TESTS = [
     test_weighted_ols_passthrough_insufficient_data,
     test_weighted_ols_decay_correctness,
     test_engine_weighted_fit_produces_result,
-    # P10/P90 clamping
+    # P10/P50/P90 clamping
     test_p10_p90_never_outside_calibrated,
+    test_p50_within_confidence_band,
     # Spike isotonic behaviour
     test_spike_input_uses_isotonic,
     test_spike_input_quantiles_none_when_isotonic,

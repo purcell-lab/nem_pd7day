@@ -366,11 +366,19 @@ class BucketModel:
         p50 = self.q50.apply(x) if not self.q50.is_default else None
         p90 = self.q90.apply(x) if not self.q90.is_default else None
 
-        # Clamp P10/P90 so the confidence band always contains calibrated
+        # Clamp P10/P90 so the confidence band always contains calibrated,
+        # then clamp P50 to [P10, P90] so all three are strictly ordered.
+        # Quantile IRLS sorts slopes but not intercepts, so crossing at the
+        # x-axis intercept can still occur — this post-fit enforcement ensures
+        # the published interval is always monotone: P10 ≤ P50 ≤ P90.
         if p10 is not None:
             p10 = max(0.0, min(p10, calibrated))
         if p90 is not None:
             p90 = max(calibrated, p90)
+        if p50 is not None:
+            p50_lo = p10 if p10 is not None else 0.0
+            p50_hi = p90 if p90 is not None else float("inf")
+            p50 = max(p50_lo, min(p50_hi, p50))
 
         return {
             "calibrated": round(calibrated, 6),
