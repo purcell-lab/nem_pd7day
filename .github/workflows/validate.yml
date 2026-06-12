@@ -23,6 +23,13 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v
 
+      - name: Install mypy
+        run: pip install mypy homeassistant-stubs
+
+      - name: Type check (mypy)
+        run: mypy custom_components/nem_pd7day/ --ignore-missing-imports
+        continue-on-error: true
+
   hacs:
     runs-on: ubuntu-latest
     steps:

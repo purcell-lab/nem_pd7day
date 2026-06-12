@@ -30,9 +30,11 @@ import io
 import logging
 import re
 import zipfile
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from typing import Any
 from urllib.parse import urljoin
 
 import aiohttp
@@ -290,14 +292,14 @@ class StpasaClient:
     def __init__(
         self,
         session: aiohttp.ClientSession,
-        semaphore: "object | None" = None,
+        semaphore: Any | None = None,
     ) -> None:
         self._session = session
         # Shared across all region coordinators to cap concurrent NEMWEB
         # requests. nullcontext when absent (e.g. unit tests).
         self._semaphore = semaphore
 
-    def _gate(self):
+    def _gate(self) -> AbstractAsyncContextManager[Any]:
         if self._semaphore is None:
             return contextlib.nullcontext()
         return self._semaphore
@@ -313,7 +315,7 @@ class StpasaClient:
         parser = _LinkExtractor()
         parser.feed(html)
 
-        files = []
+        files: list[dict[str, str]] = []
         for href in parser.links:
             name = href.split("/")[-1]
             if STPASA_FILE_PATTERN.search(name):

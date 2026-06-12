@@ -90,7 +90,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import NamedTuple, TYPE_CHECKING
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 import numpy as np
 
@@ -177,14 +177,15 @@ class IsotonicRegression:
         outside the training range are clipped to the boundary fitted values
         (``out_of_bounds='clip'`` semantics).
         """
-        if self._x_thresholds is None:
+        if self._x_thresholds is None or self._y_thresholds is None:
             raise RuntimeError("IsotonicRegression.fit() must be called before predict()")
+        y_thresholds = self._y_thresholds
         return np.interp(
             np.asarray(x, dtype=float),
             self._x_thresholds,
-            self._y_thresholds,
-            left=self._y_thresholds[0],
-            right=self._y_thresholds[-1],
+            y_thresholds,
+            left=y_thresholds[0],
+            right=y_thresholds[-1],
         )
 
 from .const import (
@@ -414,7 +415,7 @@ class BucketModel:
         # outside the training x-range are clipped to the nearest boundary.
         # Result floored at 0.0 — calibrated prices cannot be physically
         # negative (negative forecasts are caught by passthrough_negative).
-        calibrated = float(max(self.iso_model.predict([x])[0], 0.0))
+        calibrated = float(max(self.iso_model.predict(np.asarray([x], dtype=float))[0], 0.0))
 
         p10 = self.q10.apply(x) if not self.q10.is_default else None
         p50 = self.q50.apply(x) if not self.q50.is_default else None
@@ -509,7 +510,7 @@ class CalibrationResult:
         out["stpasa_run_at"] = stpasa.stpasa_run_at
         return out
 
-    def summary(self) -> dict:
+    def summary(self) -> dict[str, Any]:
         """Compact summary for diagnostic sensor attributes.
 
         Per-bucket fields emitted:
@@ -527,7 +528,7 @@ class CalibrationResult:
           q10_a          — quantile P10 slope (used for P10 interval)
           q90_a          — quantile P90 slope (used for P90 interval)
         """
-        out = {
+        out: dict[str, Any] = {
             "fitted_at": self.fitted_at,
             "total_observations": self.total_observations,
             "observation_window_days": OBSERVATION_WINDOW_DAYS,
@@ -535,7 +536,7 @@ class CalibrationResult:
             "buckets": {},
         }
         for key, model in self.models.items():
-            bucket = {
+            bucket: dict[str, Any] = {
                 "n": model.ols.n,
                 "ols_a": round(model.ols.a, 4),
                 "iso_n_steps": None,
@@ -549,7 +550,12 @@ class CalibrationResult:
                 "q90_a": round(model.q90.a, 4),
             }
             iso = model.iso_model
-            if iso is not None and iso._x_thresholds is not None and len(iso._x_thresholds) > 0:
+            if (
+                iso is not None
+                and iso._x_thresholds is not None
+                and iso._y_thresholds is not None
+                and len(iso._x_thresholds) > 0
+            ):
                 xt = iso._x_thresholds
                 yt = iso._y_thresholds
                 x_min = float(xt[0])
@@ -574,7 +580,7 @@ class CalibrationResult:
             out["buckets"][key] = bucket
         return out
 
-    def get_iso_diagnostics(self, bucket_key: str) -> dict | None:
+    def get_iso_diagnostics(self, bucket_key: str) -> dict[str, Any] | None:
         """Return the isotonic diagnostics dict for a single bucket, or None."""
         s = self.summary()
         return s["buckets"].get(bucket_key)

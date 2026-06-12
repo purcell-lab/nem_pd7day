@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
@@ -239,9 +239,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
 
     # ── Scheduled fetches at AEMO publish times ──────────────────────────────
 
-    def _next_utc_fire(hour: int, minute: int) -> "datetime":
+    def _next_utc_fire(hour: int, minute: int) -> datetime:
         """Return the next UTC datetime for the given UTC hour:minute."""
-        from datetime import datetime, timezone as _tz
+        from datetime import timezone as _tz
         now_utc = datetime.now(_tz.utc)
         candidate = now_utc.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if candidate <= now_utc:
@@ -276,6 +276,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     utc_times = fetch_times_as_utc()  # ["21:30:00", "03:00:00", "08:00:00"]
     for utc_time_str in utc_times:
         t = dt_util.parse_time(utc_time_str)
+        if t is None:
+            continue
         _schedule_fetch(t.hour, t.minute)
 
     _LOGGER.info(
