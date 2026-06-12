@@ -54,6 +54,12 @@
       },
       "nem_pd7day_forecast_history": {
         "name": "Forecast History"
+      },
+      "nem_pd7day_pd7day_data": {
+        "name": "PD7DAY Data"
+      },
+      "nem_pd7day_stpasa_data": {
+        "name": "STPASA Data"
       }
     }
   },

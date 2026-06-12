@@ -262,7 +262,6 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = None
     _attr_native_unit_of_measurement = "$/kWh"
-    _attr_icon = "mdi:transmission-tower"
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_attribution = ATTR_ATTRIBUTION
@@ -742,7 +741,6 @@ class PD7DayRegionSourceFileDatetimeSensor(CoordinatorEntity[PD7DayCoordinator],
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:file-clock-outline"
     _attr_has_entity_name = True
     _attr_should_poll = False
 
@@ -794,7 +792,6 @@ class PD7DayRegionDataUpdatedDatetimeSensor(CoordinatorEntity[PD7DayCoordinator]
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:update"
     _attr_has_entity_name = True
     _attr_should_poll = False
 
@@ -844,7 +841,6 @@ class PD7DayInterconnectorSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "MW"
     _attr_device_class = None
-    _attr_icon = "mdi:transmission-tower-export"
     _attr_has_entity_name = True
     _attr_should_poll = False
     _unrecorded_attributes = frozenset({"forecast"})
@@ -961,7 +957,6 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     """Calibration pipeline status sensor."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_icon = "mdi:chart-bell-curve-cumulative"
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1199,7 +1194,6 @@ class PD7DayDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     """
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:database-export"
     _attr_has_entity_name = True
     _attr_should_poll = False
     _unrecorded_attributes = frozenset({"forecast"})
@@ -1284,7 +1278,6 @@ class StpasaDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     """
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:database-export"
     _attr_has_entity_name = True
     _attr_should_poll = False
     _unrecorded_attributes = frozenset({"intervals"})

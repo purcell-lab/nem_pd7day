@@ -1,0 +1,35 @@
+{
+  "entity": {
+    "sensor": {
+      "nem_pd7day_forecast": {
+        "default": "mdi:transmission-tower"
+      },
+      "nem_pd7day_calibration": {
+        "default": "mdi:chart-bell-curve-cumulative"
+      },
+      "nem_pd7day_pd7day_data": {
+        "default": "mdi:database-export"
+      },
+      "nem_pd7day_stpasa_data": {
+        "default": "mdi:database-export"
+      },
+      "nem_pd7day_source_file_datetime": {
+        "default": "mdi:file-clock-outline"
+      },
+      "nem_pd7day_data_updated_datetime": {
+        "default": "mdi:update"
+      },
+      "nem_pd7day_interconnector": {
+        "default": "mdi:transmission-tower-export"
+      }
+    },
+    "binary_sensor": {
+      "nem_pd7day_intervention": {
+        "default": "mdi:alert-circle-outline",
+        "state": {
+          "on": "mdi:alert-circle"
+        }
+      }
+    }
+  }
+}
