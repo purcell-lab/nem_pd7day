@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 0
+
 
 def _safe_slug(value: str) -> str:
     """Return a robust slug even when HA helpers are stubbed in tests."""
