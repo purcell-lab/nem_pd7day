@@ -49,7 +49,7 @@ from custom_components.nem_pd7day.stpasa_client import (  # noqa: E402
 
 
 def run_async(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 # ── Synthetic STPASA CSV builders ─────────────────────────────────────────────
