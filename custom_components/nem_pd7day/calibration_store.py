@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -83,12 +83,12 @@ class CalibrationStore:
         self._hass = hass
         self._region = region
         obs_key, coeff_key, fh_key = storage_keys(region)
-        self._obs_store = Store(hass, STORAGE_VERSION, obs_key)
-        self._coeff_store = Store(hass, STORAGE_VERSION, coeff_key)
-        self._fh_store = Store(hass, STORAGE_VERSION, fh_key)
+        self._obs_store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, obs_key)
+        self._coeff_store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, coeff_key)
+        self._fh_store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, fh_key)
         self._engine = CalibrationEngine()
 
-        self._observations: list[dict] = []
+        self._observations: list[dict[str, Any]] = []
         self._calibration: CalibrationResult | None = None
 
         # Forecast history: interval_time_iso → list of forecast entries
@@ -117,7 +117,9 @@ class CalibrationStore:
         obs_data = await self._obs_store.async_load()
 
         if obs_data is None:
-            legacy_obs_store = Store(self._hass, STORAGE_VERSION, _LEGACY_OBS_KEY)
+            legacy_obs_store: Store[dict[str, Any]] = Store(
+                self._hass, STORAGE_VERSION, _LEGACY_OBS_KEY
+            )
             legacy_data = await legacy_obs_store.async_load()
             if legacy_data:
                 _LOGGER.info(
@@ -133,7 +135,9 @@ class CalibrationStore:
         coeff_data = await self._coeff_store.async_load()
 
         if coeff_data is None:
-            legacy_coeff_store = Store(self._hass, STORAGE_VERSION, _LEGACY_COEFF_KEY)
+            legacy_coeff_store: Store[dict[str, Any]] = Store(
+                self._hass, STORAGE_VERSION, _LEGACY_COEFF_KEY
+            )
             legacy_data = await legacy_coeff_store.async_load()
             if legacy_data:
                 _LOGGER.info(
@@ -160,7 +164,9 @@ class CalibrationStore:
         fh_data = await self._fh_store.async_load()
 
         if fh_data is None:
-            legacy_fh_store = Store(self._hass, STORAGE_VERSION, _LEGACY_FH_KEY)
+            legacy_fh_store: Store[dict[str, Any]] = Store(
+                self._hass, STORAGE_VERSION, _LEGACY_FH_KEY
+            )
             legacy_data = await legacy_fh_store.async_load()
             if legacy_data:
                 _LOGGER.info(
@@ -262,7 +268,7 @@ class CalibrationStore:
             interval_date = key[:10]  # "YYYY-MM-DD" prefix of ISO string
             gas_tj = gas_by_date.get(interval_date)  # None if no gas data for this date
 
-            entry = {
+            entry: dict[str, Any] = {
                 "run_at": run_at_str,
                 "forecast_price": period.value,
                 "gas_tj": gas_tj,

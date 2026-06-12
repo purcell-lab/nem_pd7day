@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -44,7 +45,7 @@ def _is_fresh(fetched_at: str) -> bool:
     return (datetime.now(timezone.utc) - dt) <= STPASA_CACHE_TTL
 
 
-def _result_from_dict(data: dict) -> StpasaResult:
+def _result_from_dict(data: dict[str, Any]) -> StpasaResult:
     intervals = [
         StpasaInterval(
             interval_datetime=si.get("interval_datetime", ""),
@@ -72,7 +73,9 @@ class StpasaStore:
     def __init__(self, hass: HomeAssistant, region: str) -> None:
         self._hass = hass
         self._region = region
-        self._store = Store(hass, STORAGE_VERSION, _stpasa_storage_key(region))
+        self._store: Store[dict[str, Any]] = Store(
+            hass, STORAGE_VERSION, _stpasa_storage_key(region)
+        )
         self._latest: StpasaResult | None = None
 
     async def load(self) -> StpasaResult | None:

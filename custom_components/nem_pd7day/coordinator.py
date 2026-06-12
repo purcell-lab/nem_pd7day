@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 import aiohttp
 from homeassistant.core import HomeAssistant, callback
@@ -266,7 +266,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
 _DISPATCH_POLL_DELAY_S = 75
 
 
-class DispatchCoordinator(DataUpdateCoordinator):
+class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
     """5-minute coordinator for AEMO dispatch prices.
 
     Polling is boundary-aligned: each fetch fires at the next multiple of
@@ -288,7 +288,7 @@ class DispatchCoordinator(DataUpdateCoordinator):
         )
         self.prices: dict[str, DispatchPrice] = {}
         self.last_updated: datetime | None = None
-        self._unsub_poll: list = []
+        self._unsub_poll: list[Callable[[], None]] = []
 
     def _next_boundary_utc(self) -> datetime:
         """Return the next 5-minute boundary (UTC) plus _DISPATCH_POLL_DELAY_S."""
@@ -300,7 +300,9 @@ class DispatchCoordinator(DataUpdateCoordinator):
         until_next = 300 - remainder       # seconds until next boundary
         return now + timedelta(seconds=until_next + _DISPATCH_POLL_DELAY_S)
 
-    def schedule_next_poll(self, entry_unsub_list: list | None = None) -> None:
+    def schedule_next_poll(
+        self, entry_unsub_list: list[Callable[[], None]] | None = None
+    ) -> None:
         """Schedule a one-shot poll at the next 5-minute boundary.
 
         Call once after async_config_entry_first_refresh().  Each poll
@@ -329,7 +331,7 @@ class DispatchCoordinator(DataUpdateCoordinator):
         await self.async_refresh()
         self.schedule_next_poll()
 
-    async def _async_update_data(self):
+    async def _async_update_data(self) -> dict[str, DispatchPrice]:
         t0 = datetime.now(timezone.utc)
 
         # Expected settlement = current 5-min boundary (NEM time).
