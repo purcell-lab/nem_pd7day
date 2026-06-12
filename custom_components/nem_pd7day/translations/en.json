@@ -15,6 +15,13 @@
           "forecast_mode": "Forecast mode",
           "active_tariff": "Active tariff (days 2-7 mode)"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure NEM PD7DAY",
+        "description": "Update the NEM region or forecast settings.",
+        "data": {
+          "region": "NEM Region"
+        }
       }
     },
     "error": {
