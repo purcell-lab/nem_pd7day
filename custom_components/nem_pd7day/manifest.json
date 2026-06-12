@@ -16,7 +16,7 @@
     "numpy>=1.24.0",
     "astral>=2.2",
     "aemo-to-tariff",
-    "matplotlib>=3.10.5"
+    "matplotlib>=3.7.0"
   ],
   "version": "3.0.0"
 }
