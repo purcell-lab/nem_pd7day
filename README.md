@@ -25,6 +25,17 @@ The integration uses a two-stage forecasting pipeline:
 
 ---
 
+## Use Cases
+
+- **Battery dispatch optimisation** — use the 7-day calibrated forecast and P10/P90 bands to schedule battery charge/discharge cycles beyond the Amber 24-hour window, minimising import cost and maximising export revenue at peak periods.
+- **EV charging scheduling** — identify the cheapest 2-hour window over the next 7 days (`cheapest_2h_window` attribute) and trigger overnight EV charging at the lowest forecast price.
+- **Hot water pre-heating** — use the `min_24h_value` attribute to trigger resistive hot water heating during forecast low-price windows (solar sponge periods).
+- **Grid stress awareness** — the `grid_stress` binary sensor and grid notices count sensor provide advance warning of LOR/MSL events, allowing pre-emptive load shifting.
+- **Linear programming dispatch** — feed the full `forecast` attribute list into an LP optimiser (e.g. EMHASS) as the price signal for multi-day horizon planning.
+- **Tariff arbitrage** — use the network-aware tariff sensors (Energex, Ausgrid, etc.) for accurate import/export tariff forecasting that accounts for time-of-use network charges.
+
+---
+
 ## Features
 
 - **Days 2–7 price forecast** — calibrated $/kWh with P10/P50/P90 confidence bands, trimmed to the window beyond Amber Express
@@ -69,6 +80,25 @@ The integration uses a two-stage forecasting pipeline:
 2. Extract `custom_components/nem_pd7day/` into your HA config directory
 3. Restart Home Assistant
 4. Go to **Settings → Devices & Services → Add Integration** and search for **NEM PD7DAY**
+
+---
+
+## Removal
+
+1. Go to **Settings → Devices & Services**
+2. Find **NEM PD7DAY** and click **⋮ → Delete**
+3. Confirm deletion
+
+This removes the integration and all its entities. Calibration storage files are not automatically deleted. To fully clean up, remove the following files from your HA config `.storage/` directory:
+
+```bash
+rm /config/.storage/nem_pd7day.{region}.observation_log
+rm /config/.storage/nem_pd7day.{region}.calibration_coefficients
+rm /config/.storage/nem_pd7day.{region}.forecast_history
+rm /config/.storage/nem_pd7day.{region}.stpasa
+```
+
+Replace `{region}` with the lowercase region code (e.g. `qld1`, `nsw1`).
 
 ---
 
@@ -436,6 +466,17 @@ template:
 All timestamps in this integration use **AEST (UTC+10:00)** with no daylight saving adjustment, matching AEMO's published data. Timestamps are always ISO-8601 with explicit `+10:00` suffix, e.g. `2026-04-14T07:30:00+10:00`.
 
 The `nemtime` field in forecast periods is the **interval end** timestamp (AEMO convention). The `time` field is the **interval start** (`nemtime − 30 minutes`).
+
+---
+
+## Known Limitations
+
+- **Days 2–7 only** — the near-term window (next 24 hours) is intentionally excluded to avoid duplication with Amber Electric's Express forecast. If you need the full 7-day window including day 1, the raw `pd7day_data` diagnostic sensor exposes all 330 intervals.
+- **Calibration warm-up** — the two-stage pipeline requires historical data to activate. Isotonic calibration starts at ~5–7 days; STPASA OLS correction (h22–h120) activates after the first nightly refit once STPASA feature data has been joined to observations. Expect isotonic-only output for the first 24 hours after install.
+- **STPASA OLS limited to h22–h120** — beyond h120, STPASA supply/demand signals degrade and the model falls back to isotonic calibration only.
+- **Spike forecasts are capped** — raw PD7DAY values ≥ $3/kWh are treated as bid-based pre-dispatch placeholders and are capped at the isotonic model maximum. Genuine scarcity spikes are flagged via `spike_credible` but are not passed through at face value.
+- **Python 3.12+ required** — the integration uses `asyncio.run()` and other Python 3.12 patterns.
+- **matplotlib build dependency** — on some HA OS versions (notably Python 3.14 environments), matplotlib may fail to build from source. If this occurs, the chart camera entities will be unavailable but all price forecast and tariff sensors continue to function normally.
 
 ---
 
