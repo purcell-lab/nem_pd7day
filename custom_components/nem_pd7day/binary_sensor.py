@@ -25,7 +25,6 @@ from .const import (
     ATTR_LAST_CHANGED,
     ATTR_RUN_DATETIME,
     ATTR_SOURCE_FILE,
-    COORDINATOR_KEY,
     DOMAIN,
     get_region,
 )
@@ -56,7 +55,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR_KEY]
+    coordinator: PD7DayCoordinator = entry.runtime_data.coordinator
     region: str = get_region(entry)
     entities = [PD7DayInterventionSensor(coordinator, entry, region)]
     entities.append(

@@ -15,6 +15,7 @@ import sys
 import os
 import asyncio
 import importlib.util
+import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -406,20 +407,11 @@ def test_force_refit_service_calls_refit_and_refresh():
     coordinator = MagicMock()
     coordinator.async_refresh = AsyncMock()
 
-    # Simulate hass.data structure
+    # Simulate config entry carrying per-entry runtime data.
     entry_id = "test_entry_123"
-    hass_data = {
-        DOMAIN: {
-            entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: store,
-            }
-        }
-    }
-
-    # Simulate config entries
     entry = MagicMock()
     entry.entry_id = entry_id
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator, store=store)
 
     async def _handle_force_refit(call_data):
         """Replicate the handler logic from __init__.py."""
@@ -428,11 +420,11 @@ def test_force_refit_service_calls_refit_and_refresh():
         for cfg_entry in entries:
             if target_entry_id and cfg_entry.entry_id != target_entry_id:
                 continue
-            entry_data = hass_data[DOMAIN].get(cfg_entry.entry_id)
+            entry_data = getattr(cfg_entry, "runtime_data", None)
             if not entry_data:
                 continue
-            coord = entry_data[COORDINATOR_KEY]
-            st = entry_data[STORE_KEY]
+            coord = entry_data.coordinator
+            st = entry_data.store
             await st.async_refit()
             await coord.async_refresh()
 
@@ -456,17 +448,12 @@ def test_force_refit_service_filters_by_entry_id():
     coord2 = MagicMock()
     coord2.async_refresh = AsyncMock()
 
-    hass_data = {
-        DOMAIN: {
-            "entry_1": {COORDINATOR_KEY: coord1, STORE_KEY: store1},
-            "entry_2": {COORDINATOR_KEY: coord2, STORE_KEY: store2},
-        }
-    }
-
     entry1 = MagicMock()
     entry1.entry_id = "entry_1"
+    entry1.runtime_data = types.SimpleNamespace(coordinator=coord1, store=store1)
     entry2 = MagicMock()
     entry2.entry_id = "entry_2"
+    entry2.runtime_data = types.SimpleNamespace(coordinator=coord2, store=store2)
 
     async def _handle_force_refit(call_data):
         target_entry_id = call_data.get("entry_id")
@@ -474,11 +461,11 @@ def test_force_refit_service_filters_by_entry_id():
         for cfg_entry in entries:
             if target_entry_id and cfg_entry.entry_id != target_entry_id:
                 continue
-            entry_data = hass_data[DOMAIN].get(cfg_entry.entry_id)
+            entry_data = getattr(cfg_entry, "runtime_data", None)
             if not entry_data:
                 continue
-            coord = entry_data[COORDINATOR_KEY]
-            st = entry_data[STORE_KEY]
+            coord = entry_data.coordinator
+            st = entry_data.store
             await st.async_refit()
             await coord.async_refresh()
 

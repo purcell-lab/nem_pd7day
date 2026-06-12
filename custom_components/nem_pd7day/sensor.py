@@ -69,12 +69,10 @@ from .const import (
     ATTR_VIOLATIONDEGREE,
     CONF_ACTIVE_TARIFF,
     CONF_FORECAST_MODE,
-    COORDINATOR_KEY,
     DEFAULT_ENABLED_TARIFFS,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
-    DISPATCH_KEY,
     DISTRIBUTOR_TARIFFS,
     DOMAIN,
     EXPORT_TARIFF_PROGRAMS,
@@ -84,7 +82,6 @@ from .const import (
     interconnectors_for_regions,
     QLD1_INTERCONNECTORS,
     REGION_DISTRIBUTORS,
-    STORE_KEY,
     storage_keys,
 )
 from .coordinator import PD7DayCoordinator
@@ -179,8 +176,8 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR_KEY]
-    store = hass.data[DOMAIN][entry.entry_id].get(STORE_KEY)
+    coordinator: PD7DayCoordinator = entry.runtime_data.coordinator
+    store = entry.runtime_data.store
     region: str = get_region(entry)
 
     entities: list[SensorEntity] = []
@@ -313,11 +310,8 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         )
 
         # Subscribe to DispatchCoordinator so state refreshes every 5 minutes
-        dispatch_coordinator = (
-            self.hass.data.get(DOMAIN, {})
-            .get(self._entry.entry_id, {})
-            .get(DISPATCH_KEY)
-        )
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch_coordinator = runtime_data.dispatch if runtime_data else None
         if dispatch_coordinator is not None:
             self.async_on_remove(
                 dispatch_coordinator.async_add_listener(
@@ -369,7 +363,8 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     @property
     def native_value(self) -> float | None:
         # Try 5-minute dispatch price first
-        dispatch = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {}).get(DISPATCH_KEY)
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch = runtime_data.dispatch if runtime_data else None
         if dispatch and dispatch.prices.get(self._region):
             return dispatch.prices[self._region].rrp
 
@@ -568,11 +563,8 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
         )
 
         # Subscribe to DispatchCoordinator so state refreshes every 5 minutes
-        dispatch_coordinator = (
-            self.hass.data.get(DOMAIN, {})
-            .get(self._entry.entry_id, {})
-            .get(DISPATCH_KEY)
-        )
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch_coordinator = runtime_data.dispatch if runtime_data else None
         if dispatch_coordinator is not None:
             self.async_on_remove(
                 dispatch_coordinator.async_add_listener(
@@ -616,7 +608,8 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
     @property
     def native_value(self) -> float | None:
         # Same as base sensor: try dispatch first, then PD7DAY
-        dispatch = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {}).get(DISPATCH_KEY)
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch = runtime_data.dispatch if runtime_data else None
         if dispatch and dispatch.prices.get(self._region):
             return dispatch.prices[self._region].rrp
         d = self._price_data

@@ -101,14 +101,14 @@ def test_async_setup_entry_creates_one_binary_sensor_for_configured_region():
         entry.data = {const_mod.CONF_REGION: "QLD1"}
         entry.options = {}
 
+        entry.runtime_data = types.SimpleNamespace(
+            coordinator=coordinator,
+            store=MagicMock(),
+            dispatch=None,
+        )
+
         hass = MagicMock()
-        hass.data = {
-            const_mod.DOMAIN: {
-                entry.entry_id: {
-                    const_mod.COORDINATOR_KEY: coordinator,
-                }
-            }
-        }
+        hass.data = {const_mod.DOMAIN: {}}
 
         created = []
 
