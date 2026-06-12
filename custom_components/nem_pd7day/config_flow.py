@@ -168,6 +168,81 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Allow changing the region for an existing entry (reconfigure flow)."""
+        reconfigure_entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            region = user_input[CONF_REGION]
+            new_unique_id = f"nem_pd7day_{region}"
+
+            # Reject the region only if a *different* entry already owns it.
+            for entry in self._async_current_entries(include_ignore=False):
+                if (
+                    entry.entry_id != reconfigure_entry.entry_id
+                    and entry.unique_id == new_unique_id
+                ):
+                    return self.async_abort(reason="already_configured")
+
+            try:
+                session = async_get_clientsession(self.hass)
+                client = PD7DayClient(session)
+                await client.fetch_all([region])
+            except aiohttp.ClientError as exc:
+                _LOGGER.warning("PD7DAY connectivity check failed: %s", exc)
+                errors["base"] = "cannot_connect"
+            except ValueError as exc:
+                _LOGGER.warning("PD7DAY data error: %s", exc)
+                errors["base"] = "invalid_data"
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during PD7DAY reconfigure: %s", exc)
+                errors["base"] = "unknown"
+            else:
+                await self.async_set_unique_id(new_unique_id)
+                new_options = {
+                    **reconfigure_entry.options,
+                    CONF_REGION: region,
+                }
+                return self.async_update_reload_and_abort(
+                    reconfigure_entry,
+                    title=f"NEM PD7DAY {region}",
+                    data={CONF_REGION: region},
+                    options=new_options,
+                    unique_id=new_unique_id,
+                )
+
+        current_region = reconfigure_entry.options.get(
+            CONF_REGION, reconfigure_entry.data.get(CONF_REGION, DEFAULT_REGION)
+        )
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_REGION, default=current_region): selector.selector(
+                    {
+                        "select": {
+                            "options": REGIONS,
+                            "multiple": False,
+                            "mode": "dropdown",
+                        }
+                    }
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={
+                "fetch_times": ", ".join(
+                    f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM
+                )
+            },
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):

@@ -48,6 +48,10 @@ def _load_config_flow_under_test():
     snapshot = {name: sys.modules.get(name) for name in module_names}
 
     class _FakeConfigFlow:
+        # Populated by tests exercising the reconfigure flow.
+        _reconfigure_entry = None
+        _current_entries: list = []
+
         def __init_subclass__(cls, **kwargs):
             super().__init_subclass__()
 
@@ -56,6 +60,27 @@ def _load_config_flow_under_test():
 
         def _abort_if_unique_id_configured(self):
             return None
+
+        def _get_reconfigure_entry(self):
+            return self._reconfigure_entry
+
+        def _async_current_entries(self, include_ignore=True):
+            return list(self._current_entries)
+
+        def async_abort(self, *, reason):
+            return {"type": "abort", "reason": reason}
+
+        def async_update_reload_and_abort(
+            self, entry, *, title=None, data=None, options=None, unique_id=None, **kwargs
+        ):
+            return {
+                "type": "update_reload_and_abort",
+                "entry": entry,
+                "title": title,
+                "data": data,
+                "options": options,
+                "unique_id": unique_id,
+            }
 
         def async_create_entry(self, *, title, data, options=None, description_placeholders=None):
             return {
@@ -378,5 +403,102 @@ def test_forecast_mode_step_creates_entry_with_options():
         assert result["options"][const_mod.CONF_FORECAST_MODE] == const_mod.FORECAST_MODE_DAYS_2_7
         # active_tariff defaults to empty in setup; set later via Options
         assert result["options"][const_mod.CONF_ACTIVE_TARIFF] == ""
+    finally:
+        restore()
+
+
+def test_reconfigure_flow_success():
+    """Reconfiguring to a different region should update and reload the entry."""
+    config_flow_mod, const_mod, restore = _load_config_flow_under_test()
+    captured_fetch_args = []
+
+    class _ClientStub:
+        def __init__(self, _session):
+            pass
+
+        async def fetch_all(self, regions):
+            captured_fetch_args.append(list(regions))
+            return MagicMock()
+
+    config_flow_mod.PD7DayClient = _ClientStub
+    config_flow_mod.async_get_clientsession = lambda _hass: MagicMock()
+
+    entry = MagicMock()
+    entry.entry_id = "entry-1"
+    entry.unique_id = "nem_pd7day_QLD1"
+    entry.data = {const_mod.CONF_REGION: "QLD1"}
+    entry.options = {
+        const_mod.CONF_REGION: "QLD1",
+        const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_FULL,
+        const_mod.CONF_ACTIVE_TARIFF: "",
+    }
+
+    try:
+        flow = config_flow_mod.PD7DayConfigFlow()
+        flow.hass = MagicMock()
+        flow._reconfigure_entry = entry
+        flow._current_entries = [entry]
+
+        # Show form first (no input).
+        form = run_async(flow.async_step_reconfigure())
+        assert form["type"] == "form"
+        assert form["step_id"] == "reconfigure"
+        # Default should reflect the current region.
+        resolved = form["data_schema"]({})
+        assert resolved[const_mod.CONF_REGION] == "QLD1"
+
+        # Submit a new region.
+        result = run_async(
+            flow.async_step_reconfigure({const_mod.CONF_REGION: "NSW1"})
+        )
+        assert result["type"] == "update_reload_and_abort"
+        assert result["entry"] is entry
+        assert result["title"] == "NEM PD7DAY NSW1"
+        assert result["data"][const_mod.CONF_REGION] == "NSW1"
+        assert result["options"][const_mod.CONF_REGION] == "NSW1"
+        # Existing forecast option must be preserved.
+        assert result["options"][const_mod.CONF_FORECAST_MODE] == const_mod.FORECAST_MODE_FULL
+        assert result["unique_id"] == "nem_pd7day_NSW1"
+        # Connectivity check probes the new region.
+        assert captured_fetch_args == [["NSW1"]]
+    finally:
+        restore()
+
+
+def test_reconfigure_flow_same_region():
+    """Reconfiguring to the same region should update and reload without error."""
+    config_flow_mod, const_mod, restore = _load_config_flow_under_test()
+
+    class _ClientStub:
+        def __init__(self, _session):
+            pass
+
+        async def fetch_all(self, _regions):
+            return MagicMock()
+
+    config_flow_mod.PD7DayClient = _ClientStub
+    config_flow_mod.async_get_clientsession = lambda _hass: MagicMock()
+
+    entry = MagicMock()
+    entry.entry_id = "entry-1"
+    entry.unique_id = "nem_pd7day_QLD1"
+    entry.data = {const_mod.CONF_REGION: "QLD1"}
+    entry.options = {const_mod.CONF_REGION: "QLD1"}
+
+    try:
+        flow = config_flow_mod.PD7DayConfigFlow()
+        flow.hass = MagicMock()
+        flow._reconfigure_entry = entry
+        flow._current_entries = [entry]
+
+        result = run_async(
+            flow.async_step_reconfigure({const_mod.CONF_REGION: "QLD1"})
+        )
+
+        # Same region is the current entry, so it must NOT abort as already_configured.
+        assert result["type"] == "update_reload_and_abort"
+        assert result["entry"] is entry
+        assert result["data"][const_mod.CONF_REGION] == "QLD1"
+        assert result["unique_id"] == "nem_pd7day_QLD1"
     finally:
         restore()
