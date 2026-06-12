@@ -1082,3 +1082,96 @@ def test_spike_calibrated_never_modified_by_gate():
     )
     assert result_credible.get("spike_credible") is True
     assert result_not_credible.get("spike_credible") is False
+
+
+# ── Tests: STPASA ingest + feature map ──────────────────────────────────────
+
+def _make_stpasa_interval(interval_end_dt, run_dt,
+                          d10=5500.0, d50=6000.0, d90=6500.0,
+                          surplus=1200.0, solar=800.0, wind=400.0):
+    """Build a minimal StpasaInterval-like object (interval_datetime = END)."""
+    return MagicMock(
+        interval_datetime=nem_iso(interval_end_dt),
+        run_datetime=nem_iso(run_dt),
+        demand10=d10,
+        demand50=d50,
+        demand90=d90,
+        surpluscapacity=surplus,
+        ss_solar_uigf=solar,
+        ss_wind_uigf=wind,
+    )
+
+
+def test_ingest_with_stpasa():
+    """
+    ingest_forecast with a StpasaResult must annotate the matching
+    forecast_history entry with stpasa_* fields. The STPASA interval is keyed
+    by interval END (AEMO convention); the join uses interval START.
+    """
+    import math
+    store = make_store()
+    run_dt = BASE_DT
+    interval_end_dt = BASE_DT + timedelta(hours=24)        # nemtime / STPASA END
+    period = make_price_period(interval_end_dt, value=0.108)
+
+    stpasa_run_dt = datetime(2026, 4, 14, 7, 25, 7, tzinfo=NEM_TZ)
+    stpasa = MagicMock(intervals=[
+        _make_stpasa_interval(interval_end_dt, stpasa_run_dt,
+                              d50=6000.0, surplus=1200.0, solar=800.0),
+    ])
+
+    run_async(store.ingest_forecast(
+        region="QLD1",
+        price_data=make_price_data(run_dt, [period]),
+        interconnectors={},
+        case=None,
+        stpasa=stpasa,
+    ))
+
+    key = nem_iso(interval_end_dt - timedelta(minutes=30))  # interval START
+    entry = store._forecast_history[key][0]
+    assert entry["stpasa_demand50"] == 6000.0
+    assert entry["stpasa_surplus"] == 1200.0
+    assert entry["stpasa_solar"] == 800.0
+    assert entry["stpasa_run_at"] == nem_iso(stpasa_run_dt)
+
+
+def test_build_stpasa_feature_map():
+    """
+    After ingest_forecast(stpasa=...) + async_record_actual, the recorded
+    observation must carry derived stpasa_log_* fields and
+    build_stpasa_feature_map() must expose them keyed by interval|run_at.
+    """
+    import math
+    store = make_store()
+    run_dt = BASE_DT
+    interval_end_dt = BASE_DT + timedelta(hours=24)
+    interval_start_str = nem_iso(interval_end_dt - timedelta(minutes=30))
+    period = make_price_period(interval_end_dt, value=0.108)
+
+    stpasa_run_dt = datetime(2026, 4, 14, 7, 25, 7, tzinfo=NEM_TZ)
+    stpasa = MagicMock(intervals=[
+        _make_stpasa_interval(interval_end_dt, stpasa_run_dt,
+                              d10=5500.0, d50=6000.0, d90=6500.0,
+                              surplus=1200.0, solar=800.0, wind=400.0),
+    ])
+
+    run_async(store.ingest_forecast(
+        region="QLD1",
+        price_data=make_price_data(run_dt, [period]),
+        interconnectors={},
+        case=None,
+        stpasa=stpasa,
+    ))
+    run_async(store.async_record_actual(interval_start_str, 0.095))
+
+    fmap = store.build_stpasa_feature_map()
+    map_key = f"{interval_start_str}|{nem_iso(run_dt)}"
+    assert map_key in fmap, f"feature map missing key {map_key!r}: {list(fmap)}"
+    feat = fmap[map_key]
+    assert abs(feat.log_solar - math.log1p(800.0)) < 1e-9
+    assert abs(feat.log_demand - math.log(6000.0)) < 1e-9
+    assert abs(feat.log_surplus - math.log1p(1200.0)) < 1e-9
+    # poe_spread_n = (d10 - d90) / d50 = (5500 - 6500) / 6000
+    assert abs(feat.poe_spread_n - ((5500.0 - 6500.0) / 6000.0)) < 1e-9
+    assert feat.stpasa_run_at == nem_iso(stpasa_run_dt)

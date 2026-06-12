@@ -21,14 +21,17 @@ from .const import (
 )
 from .dispatch_client import DispatchPrice, StaleIntervalError, fetch_dispatch_prices
 from .pd7day_client import PD7DayClient, PD7DayResult
+from .stpasa_client import StpasaClient
 from . import tod_stats as _tod_stats
 from .tod_stats import TodStats
 
 if TYPE_CHECKING:
+    from .calibration_engine import RunFeatures
     from .calibration_store import CalibrationStore
     from .forecast_store import ForecastStore
     from .market_notice_client import MarketNoticeClient
     from .notice_store import GridNoticeStore
+    from .stpasa_store import StpasaStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +58,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         notice_store: "GridNoticeStore | None" = None,
         notice_client: "MarketNoticeClient | None" = None,
         forecast_store: "ForecastStore | None" = None,
+        stpasa_store: "StpasaStore | None" = None,
     ) -> None:
         super().__init__(
             hass,
@@ -72,6 +76,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         self.notice_store: "GridNoticeStore | None" = notice_store
         self._notice_client: "MarketNoticeClient | None" = notice_client
         self._forecast_store: "ForecastStore | None" = forecast_store
+        self._stpasa_store: "StpasaStore | None" = stpasa_store
         self._first_refresh_done = False
         # 0-based position in the fixed region order — retained for callers that
         # still query it; background refreshes are now staggered in __init__.py.
@@ -89,6 +94,15 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             interconnector_ids=self._interconnector_ids,
             semaphore=semaphore,
         )
+
+    def _get_stpasa_client(self) -> StpasaClient:
+        if self._session is None or self._session.closed:
+            self._session = async_get_clientsession(self.hass)
+        semaphore = None
+        domain_data = getattr(self.hass, "data", None)
+        if isinstance(domain_data, dict):
+            semaphore = domain_data.get(DOMAIN, {}).get(NEMWEB_SEMAPHORE_KEY)
+        return StpasaClient(self._session, semaphore=semaphore)
 
     async def _async_update_data(self) -> PD7DayResult:
         client = self._get_client()
@@ -123,8 +137,23 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             list(result.interconnectors.keys()),
         )
 
+        # Fetch STPASA (best-effort — failure must never fail the coordinator).
+        # On any error we leave the store's previous (possibly stale) latest()
+        # in place; the calibration path falls through to isotonic-only.
+        if self._stpasa_store is not None:
+            try:
+                stpasa_client = self._get_stpasa_client()
+                stpasa_result = await stpasa_client.fetch(self._regions[0])
+                if stpasa_result is not None:
+                    await self._stpasa_store.save(stpasa_result)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("STPASA fetch failed (non-fatal): %s", exc)
+
         # Feed forecast history into calibration store
         if self._store is not None:
+            stpasa_latest = (
+                self._stpasa_store.latest() if self._stpasa_store is not None else None
+            )
             for region, price_data in result.prices.items():
                 await self._store.ingest_forecast(
                     region=region,
@@ -132,6 +161,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                     interconnectors=result.interconnectors,
                     case=result.case,
                     market_summary=result.market_summary,
+                    stpasa=stpasa_latest,
                 )
             # Recompute time-of-day statistics from updated observations
             self.tod_stats = _tod_stats.compute(self._store.observations, calibration_result=self._store.calibration)
@@ -194,6 +224,57 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             self.notice_store.add_notices(new_notices)
             await self.notice_store.async_save()
             _LOGGER.info("Fetched %d new market notices", len(new_notices))
+
+    @property
+    def current_run_features(self) -> "RunFeatures | None":
+        """
+        Compute RunFeatures from the latest PD7DAY result in coordinator.data.
+
+        Mirrors calibration_engine._compute_run_features so the values fed to
+        OLS apply() at runtime match those used during fitting:
+          run_max_h6_rrp : max raw forecast for horizon < 6h
+          run_mean_rrp   : mean raw forecast for horizon < 24h
+          run_spread     : p90 − p10 of raw forecast for horizon < 24h
+        Horizon is interval START (period.time) minus the run datetime
+        (forecast_generated_at).  Returns None if no usable data.
+        """
+        from .calibration_engine import RunFeatures, _p90_minus_p10
+        from .nem_time import parse_iso
+
+        result = self.data
+        if result is None or not result.prices:
+            return None
+        region = self._regions[0]
+        price_data = result.prices.get(region)
+        if price_data is None or not price_data.forecast:
+            return None
+        if not price_data.forecast_generated_at:
+            return None
+        try:
+            run_dt = parse_iso(price_data.forecast_generated_at)
+        except Exception:  # noqa: BLE001
+            return None
+
+        near: list[float] = []
+        day: list[float] = []
+        for period in price_data.forecast:
+            try:
+                start_dt = parse_iso(period.time)
+            except Exception:  # noqa: BLE001
+                continue
+            horizon_hours = (start_dt - run_dt).total_seconds() / 3600.0
+            if horizon_hours < 6:
+                near.append(period.value)
+            if horizon_hours < 24:
+                day.append(period.value)
+
+        if not near and not day:
+            return None
+        return RunFeatures(
+            run_max_h6_rrp=max(near) if near else 0.0,
+            run_mean_rrp=(sum(day) / len(day)) if day else 0.0,
+            run_spread=_p90_minus_p10(day),
+        )
 
 
 # Seconds after each 5-minute dispatch boundary to poll ELEC_NEM_SUMMARY.

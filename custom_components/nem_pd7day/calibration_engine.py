@@ -90,9 +90,12 @@ import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .stpasa_client import StpasaInterval
 
 from astral import LocationInfo
 from astral.sun import elevation as solar_elevation
@@ -261,6 +264,57 @@ class Observation(NamedTuple):
     is_intervention: bool
 
 
+# ── STPASA OLS stage2 horizon gate ───────────────────────────────────────────
+# OLS residual correction is applied only inside this horizon band.  Below
+# OLS_MIN_HORIZON_H, Amber/CSIRO short-term forecasts dominate; above
+# OLS_MAX_HORIZON_H STPASA is empirically counterproductive (backtest).
+OLS_MIN_HORIZON_H = 22.0
+OLS_MAX_HORIZON_H = 120.0
+
+
+@dataclass
+class StpasaFeatures:
+    """Derived STPASA features for a single forecast interval."""
+    log_surplus: float       # log1p(surpluscapacity)
+    log_solar: float         # log1p(ss_solar_uigf)
+    log_demand: float        # log(max(demand50, 1))
+    poe_spread_n: float      # (demand10 - demand90) / max(demand50, 1)
+    stpasa_run_at: str       # ISO-8601, for attribute tagging
+
+    @classmethod
+    def from_interval(cls, interval: "StpasaInterval") -> "StpasaFeatures":
+        return cls(
+            log_surplus=math.log1p(max(interval.surpluscapacity, 0.0)),
+            log_solar=math.log1p(max(interval.ss_solar_uigf, 0.0)),
+            log_demand=math.log(max(interval.demand50, 1.0)),
+            poe_spread_n=(interval.demand10 - interval.demand90) / max(interval.demand50, 1.0),
+            stpasa_run_at=interval.run_datetime,
+        )
+
+
+@dataclass
+class RunFeatures:
+    """PD7DAY run-level features shared by all intervals in one run."""
+    run_max_h6_rrp: float    # max raw RRP for h < 6 intervals ($/kWh)
+    run_mean_rrp: float      # mean raw RRP for h < 24 intervals ($/kWh)
+    run_spread: float        # p90 − p10 of raw RRP for h < 24 intervals ($/kWh)
+
+
+@dataclass
+class OlsModel:
+    """Fitted OLS coefficients for one (horizon_band, tod_bucket) cell."""
+    bucket_key: str
+    coef: list[float] = field(default_factory=list)  # intercept first, then 8 features
+    n_train: int = 0
+    r2: float = 0.0
+
+    def predict(self, features: list[float]) -> float:
+        """Apply: intercept + dot(coef[1:], features)."""
+        if len(self.coef) < 2:
+            return 0.0
+        return self.coef[0] + sum(c * x for c, x in zip(self.coef[1:], features))
+
+
 @dataclass
 class LinearCoeff:
     """Diagnostic coefficients from the weighted OLS fit.
@@ -390,13 +444,62 @@ class CalibrationResult:
     total_observations: int
     observations_in_window: int = 0
     models: dict[str, BucketModel] = field(default_factory=dict)
+    ols_models: dict[str, OlsModel] = field(default_factory=dict)
 
     def get_bucket(self, horizon_hours: float, hour_of_day: int) -> BucketModel:
         key = _bucket_key(horizon_hours, hour_of_day)
         return self.models.get(key, BucketModel(bucket_key=key))
 
-    def apply(self, forecast: float, horizon_hours: float, hour_of_day: int) -> dict:
-        return self.get_bucket(horizon_hours, hour_of_day).apply_all(forecast)
+    def apply(
+        self,
+        forecast: float,
+        horizon_hours: float,
+        hour_of_day: int,
+        stpasa: "StpasaFeatures | None" = None,
+        run_features: "RunFeatures | None" = None,
+    ) -> dict:
+        # 1. Isotonic (existing) result.
+        result = self.get_bucket(horizon_hours, hour_of_day).apply_all(forecast)
+
+        # 2. Gate: STPASA correction only inside the OLS horizon band, and only
+        #    when both feature groups are present.
+        if (
+            stpasa is None
+            or run_features is None
+            or horizon_hours < OLS_MIN_HORIZON_H
+            or horizon_hours > OLS_MAX_HORIZON_H
+        ):
+            return result
+
+        # 3. Look up the OLS model for this bucket.
+        key = _bucket_key(horizon_hours, hour_of_day)
+        ols = self.ols_models.get(key)
+        if ols is None or len(ols.coef) < 2:
+            return result
+
+        # 4. Build the 8-feature vector (intercept handled inside predict()).
+        iso_cal = result.get("calibrated", forecast)
+        feature_vec = [
+            float(iso_cal),
+            run_features.run_max_h6_rrp,
+            run_features.run_mean_rrp,
+            run_features.run_spread,
+            horizon_hours / 168.0,
+            stpasa.log_surplus,
+            stpasa.log_solar,
+            stpasa.log_demand,
+            stpasa.poe_spread_n,
+        ]
+
+        # 5–6. Predict, clamp >= 0.
+        prediction = max(ols.predict(feature_vec), 0.0)
+
+        # 7. Replace the point estimate only; keep quantile band as-is.
+        out = dict(result)
+        out["calibrated"] = round(prediction, 6)
+        out["calibrated_source"] = "isotonic+stpasa"
+        out["stpasa_run_at"] = stpasa.stpasa_run_at
+        return out
 
     def summary(self) -> dict:
         """Compact summary for diagnostic sensor attributes.
@@ -663,6 +766,62 @@ def _quantile_regression(
     return round(a, 6), round(b, 6), round(pinball, 6)
 
 
+# ── Run-level feature computation (for OLS stage2) ────────────────────────────
+
+def _p90_minus_p10(values: list[float]) -> float:
+    """Return p90 − p10 of *values* via sort + linear index (pure stdlib)."""
+    n = len(values)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return 0.0
+    s = sorted(values)
+
+    def _pct(p: float) -> float:
+        # Linear interpolation between closest ranks (numpy 'linear' method).
+        idx = p * (n - 1)
+        lo = int(math.floor(idx))
+        hi = int(math.ceil(idx))
+        if lo == hi:
+            return s[lo]
+        frac = idx - lo
+        return s[lo] * (1.0 - frac) + s[hi] * frac
+
+    return _pct(0.9) - _pct(0.1)
+
+
+def _compute_run_features(
+    observations: list[Observation],
+) -> dict[str, RunFeatures]:
+    """
+    Build dict[forecast_run_at → RunFeatures] from the observation set.
+
+    Per run_at:
+      run_max_h6_rrp : max raw forecast for horizon_hours < 6
+      run_mean_rrp   : mean raw forecast for horizon_hours < 24
+      run_spread     : p90 − p10 of raw forecast for horizon_hours < 24
+    """
+    h6: dict[str, list[float]] = {}
+    h24: dict[str, list[float]] = {}
+    for obs in observations:
+        if obs.horizon_hours < 6:
+            h6.setdefault(obs.forecast_run_at, []).append(obs.pd7day_forecast)
+        if obs.horizon_hours < 24:
+            h24.setdefault(obs.forecast_run_at, []).append(obs.pd7day_forecast)
+
+    run_ats = set(h6) | set(h24)
+    out: dict[str, RunFeatures] = {}
+    for run_at in run_ats:
+        near = h6.get(run_at, [])
+        day = h24.get(run_at, [])
+        out[run_at] = RunFeatures(
+            run_max_h6_rrp=max(near) if near else 0.0,
+            run_mean_rrp=(sum(day) / len(day)) if day else 0.0,
+            run_spread=_p90_minus_p10(day),
+        )
+    return out
+
+
 # ── Engine ────────────────────────────────────────────────────────────────────
 
 class CalibrationEngine:
@@ -827,6 +986,103 @@ class CalibrationEngine:
             models=models,
         )
 
+    def fit_ols_stage2(
+        self,
+        observations: list[Observation],
+        stpasa_by_key: dict[str, "StpasaFeatures"],
+        region: str = "QLD1",
+    ) -> dict[str, OlsModel]:
+        """
+        Fit per-bucket 9-feature OLS using combined PD7DAY + STPASA features.
+
+        observations : the same observations used for the isotonic fit().
+        stpasa_by_key: mapping str(interval_time + "|" + run_at) → StpasaFeatures.
+
+        Returns dict[bucket_key, OlsModel].  Only buckets whose horizon falls in
+        [OLS_MIN_HORIZON_H, OLS_MAX_HORIZON_H] are fitted; each requires at least
+        MIN_OBS observations carrying valid STPASA data.  Under-populated buckets
+        get an empty OlsModel (coef=[]).
+
+        Feature order (after a leading 1.0 intercept term):
+          [iso_calibrated, run_max_h6_rrp, run_mean_rrp, run_spread,
+           horizon_hours/168, log_surplus, log_solar, log_demand, poe_spread_n]
+        """
+        run_features = _compute_run_features(observations)
+
+        # We need an isotonic model to produce iso_calibrated for the feature
+        # vector.  Refit on the same observations so OLS trains against the
+        # exact isotonic output it will see at apply() time.
+        iso_result = self.fit(observations, region=region)
+
+        # Group rows by bucket.
+        bucket_rows: dict[str, list[tuple[list[float], float]]] = {}
+        for obs in observations:
+            if obs.is_intervention:
+                continue
+            if obs.horizon_hours < OLS_MIN_HORIZON_H or obs.horizon_hours > OLS_MAX_HORIZON_H:
+                continue
+            if obs.actual_rrp >= SPIKE_THRESHOLD or obs.pd7day_forecast >= SPIKE_THRESHOLD:
+                continue
+
+            feat_key = f"{obs.interval_time}|{obs.forecast_run_at}"
+            sf = stpasa_by_key.get(feat_key)
+            if sf is None:
+                continue
+            rf = run_features.get(obs.forecast_run_at)
+            if rf is None:
+                continue
+
+            bucket_key = _bucket_key(obs.horizon_hours, obs.hour_of_day)
+            bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
+            iso_cal = bucket.apply_all(obs.pd7day_forecast).get(
+                "calibrated", obs.pd7day_forecast
+            )
+
+            feature_vec = [
+                float(iso_cal),
+                rf.run_max_h6_rrp,
+                rf.run_mean_rrp,
+                rf.run_spread,
+                obs.horizon_hours / 168.0,
+                sf.log_surplus,
+                sf.log_solar,
+                sf.log_demand,
+                sf.poe_spread_n,
+            ]
+            bucket_rows.setdefault(bucket_key, []).append((feature_vec, obs.actual_rrp))
+
+        ols_models: dict[str, OlsModel] = {}
+        for bucket_key, rows in bucket_rows.items():
+            if len(rows) < MIN_OBS:
+                ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
+                continue
+            # Design matrix with leading intercept column of ones.
+            X = np.array([[1.0] + r[0] for r in rows], dtype=float)
+            y = np.array([r[1] for r in rows], dtype=float)
+            try:
+                coef, _resid, _rank, _sv = np.linalg.lstsq(X, y, rcond=None)
+            except np.linalg.LinAlgError:
+                ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
+                continue
+            # R² for diagnostics.
+            y_hat = X @ coef
+            ss_res = float(np.sum((y - y_hat) ** 2))
+            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+            r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
+            ols_models[bucket_key] = OlsModel(
+                bucket_key=bucket_key,
+                coef=[round(float(c), 8) for c in coef],
+                n_train=len(rows),
+                r2=round(r2, 6),
+            )
+
+        _LOGGER.info(
+            "OLS stage2 fit: %d buckets evaluated (%d with sufficient STPASA obs)",
+            len(ols_models),
+            sum(1 for m in ols_models.values() if len(m.coef) >= 2),
+        )
+        return ols_models
+
     def to_storage(self, result: CalibrationResult) -> dict:
         """Serialise CalibrationResult to a JSON-safe dict for .storage."""
         out: dict = {
@@ -848,6 +1104,10 @@ class CalibrationEngine:
                 "q50": {"a": model.q50.a, "b": model.q50.b, "n": model.q50.n, "pl": model.q50.pinball_loss},
                 "q90": {"a": model.q90.a, "b": model.q90.b, "n": model.q90.n, "pl": model.q90.pinball_loss},
             }
+        out["ols_models"] = {
+            key: {"coef": m.coef, "n_train": m.n_train, "r2": m.r2}
+            for key, m in result.ols_models.items()
+        }
         return out
 
     def from_storage(self, data: dict) -> CalibrationResult:
@@ -866,9 +1126,21 @@ class CalibrationEngine:
                 q90=QuantileCoeff(0.9, a=md["q90"]["a"], b=md["q90"]["b"], n=md["q90"]["n"], pinball_loss=md["q90"].get("pl")),
             )
             models[key] = model
+
+        # OLS stage2 models — absent on pre-STPASA installs (graceful default).
+        ols_models: dict[str, OlsModel] = {}
+        for key, md in data.get("ols_models", {}).items():
+            ols_models[key] = OlsModel(
+                bucket_key=key,
+                coef=md.get("coef", []),
+                n_train=md.get("n_train", 0),
+                r2=md.get("r2", 0.0),
+            )
+
         return CalibrationResult(
             fitted_at=data.get("fitted_at", ""),
             total_observations=data.get("total_observations", 0),
             observations_in_window=data.get("observations_in_window", 0),
             models=models,
+            ols_models=ols_models,
         )

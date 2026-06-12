@@ -1,0 +1,223 @@
+"""
+Tests for stpasa_client — REGIONSOLUTION CSV parsing, region filtering,
+nested-ZIP extraction, and best-effort fetch() error handling.
+
+Run with:  python -m pytest tests/test_stpasa_client.py -v
+"""
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import io
+import os
+import sys
+import zipfile
+from unittest.mock import MagicMock
+
+# ── Module loader ─────────────────────────────────────────────────────────────
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# stpasa_client imports aiohttp at top level — stub it before loading.
+sys.modules.setdefault("aiohttp", MagicMock())
+
+_load(
+    "custom_components.nem_pd7day.nem_time",
+    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
+)
+_client_mod = _load(
+    "custom_components.nem_pd7day.stpasa_client",
+    os.path.join(_ROOT, "custom_components", "nem_pd7day", "stpasa_client.py"),
+)
+
+from custom_components.nem_pd7day.stpasa_client import (  # noqa: E402
+    StpasaClient,
+    StpasaResult,
+    _extract_csv_bytes,
+    _parse_regionsolution,
+)
+
+
+def run_async(coro):
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+
+# ── Synthetic STPASA CSV builders ─────────────────────────────────────────────
+
+# REGIONSOLUTION column order used by the synthetic CSV. The parser builds a
+# name→index map from the "I" header row, so the exact order is arbitrary as
+# long as header and data rows agree.
+_COLS = [
+    "I", "STPASA", "REGIONSOLUTION", "1",
+    "RUN_DATETIME", "INTERVAL_DATETIME", "REGIONID",
+    "DEMAND10", "DEMAND50", "DEMAND90",
+    "SURPLUSCAPACITY", "SS_SOLAR_UIGF", "SS_WIND_UIGF",
+]
+
+
+def _header_row() -> str:
+    return ",".join(_COLS)
+
+
+def _data_row(
+    region="QLD1",
+    interval="2026/04/16 08:00:00",
+    run="2026/04/15 07:25:07",
+    d10="5500", d50="6000", d90="6500",
+    surplus="1200", solar="800", wind="400",
+) -> str:
+    return ",".join([
+        "D", "STPASA", "REGIONSOLUTION", "1",
+        run, interval, region,
+        d10, d50, d90, surplus, solar, wind,
+    ])
+
+
+def _csv(*rows: str) -> bytes:
+    return "\n".join(rows).encode("utf-8")
+
+
+# ── Parsing tests ─────────────────────────────────────────────────────────────
+
+def test_parse_stpasa_csv_qld1():
+    """Parse a minimal REGIONSOLUTION CSV — all fields and ISO timestamps."""
+    raw = _csv(
+        _header_row(),
+        _data_row(interval="2026/04/16 08:00:00", d10="5500", d50="6000",
+                  d90="6500", surplus="1200", solar="800", wind="400"),
+        _data_row(interval="2026/04/16 08:30:00", d10="5400", d50="5900",
+                  d90="6400", surplus="1300", solar="900", wind="450"),
+    )
+    result = _parse_regionsolution(raw, "QLD1")
+    assert result is not None
+    assert result.region == "QLD1"
+    assert len(result.intervals) == 2
+    first = result.intervals[0]
+    assert first.interval_datetime == "2026-04-16T08:00:00+10:00", first.interval_datetime
+    assert first.run_datetime == "2026-04-15T07:25:07+10:00", first.run_datetime
+    assert first.demand10 == 5500.0
+    assert first.demand50 == 6000.0
+    assert first.demand90 == 6500.0
+    assert first.surpluscapacity == 1200.0
+    assert first.ss_solar_uigf == 800.0
+    assert first.ss_wind_uigf == 400.0
+    # fetched_at is a UTC ISO string
+    assert result.fetched_at
+    print("  PASS: parse stpasa csv qld1")
+
+
+def test_region_filter():
+    """A CSV with QLD1 and NSW1 rows must yield only the requested region."""
+    raw = _csv(
+        _header_row(),
+        _data_row(region="QLD1", interval="2026/04/16 08:00:00", d50="6000"),
+        _data_row(region="NSW1", interval="2026/04/16 08:00:00", d50="8000"),
+        _data_row(region="QLD1", interval="2026/04/16 08:30:00", d50="6100"),
+    )
+    result = _parse_regionsolution(raw, "QLD1")
+    assert result is not None
+    assert len(result.intervals) == 2, "only QLD1 rows expected"
+    assert all(i.demand50 in (6000.0, 6100.0) for i in result.intervals)
+
+    nsw = _parse_regionsolution(raw, "NSW1")
+    assert nsw is not None
+    assert len(nsw.intervals) == 1
+    assert nsw.intervals[0].demand50 == 8000.0
+    print("  PASS: region filter")
+
+
+def test_extract_nested_zip():
+    """_extract_csv_bytes walks outer→inner ZIP layers to the CSV."""
+    csv_bytes = _csv(_header_row(), _data_row())
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as zf:
+        zf.writestr("PUBLIC_STPASA_20260415_072507_1.CSV", csv_bytes)
+    inner_bytes = inner.getvalue()
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w") as zf:
+        zf.writestr("PUBLIC_STPASA_20260415_072507_1.ZIP", inner_bytes)
+    extracted = _extract_csv_bytes(outer.getvalue())
+    assert b"REGIONSOLUTION" in extracted
+    result = _parse_regionsolution(extracted, "QLD1")
+    assert result is not None and len(result.intervals) == 1
+    print("  PASS: extract nested zip")
+
+
+# ── fetch() best-effort error handling ────────────────────────────────────────
+
+class _RaisingSession:
+    """Async session stub whose .get(...) context manager raises on enter."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def get(self, *args, **kwargs):
+        exc = self._exc
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                raise exc
+
+            async def __aexit__(self_inner, *a):
+                return False
+
+        return _Ctx()
+
+
+def test_fetch_returns_none_on_404():
+    """A 404 (or any HTTP error) during listing must yield None, not raise."""
+    session = _RaisingSession(RuntimeError("404 Not Found"))
+    client = StpasaClient(session)
+    result = run_async(client.fetch("QLD1"))
+    assert result is None
+    print("  PASS: fetch returns none on 404")
+
+
+def test_fetch_returns_none_on_timeout():
+    """A timeout during listing must yield None, not raise."""
+    session = _RaisingSession(asyncio.TimeoutError())
+    client = StpasaClient(session)
+    result = run_async(client.fetch("QLD1"))
+    assert result is None
+    print("  PASS: fetch returns none on timeout")
+
+
+# ── Runner ────────────────────────────────────────────────────────────────────
+
+TESTS = [
+    test_parse_stpasa_csv_qld1,
+    test_region_filter,
+    test_extract_nested_zip,
+    test_fetch_returns_none_on_404,
+    test_fetch_returns_none_on_timeout,
+]
+
+
+def run_all():
+    passed = failed = 0
+    print(f"\nRunning {len(TESTS)} stpasa_client tests\n{'=' * 50}")
+    for test in TESTS:
+        try:
+            test()
+            passed += 1
+        except AssertionError as exc:
+            print(f"  FAIL: {test.__name__}\n        {exc}")
+            failed += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ERROR: {test.__name__}\n        {type(exc).__name__}: {exc}")
+            failed += 1
+    print(f"\n{'=' * 50}\nResults: {passed} passed, {failed} failed")
+    return failed == 0
+
+
+if __name__ == "__main__":
+    sys.exit(0 if run_all() else 1)

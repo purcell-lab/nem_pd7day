@@ -35,6 +35,7 @@ from .coordinator import DispatchCoordinator, PD7DayCoordinator
 from .forecast_store import ForecastStore
 from .market_notice_client import MarketNoticeClient
 from .notice_store import GridNoticeStore
+from .stpasa_store import StpasaStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,6 +80,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── Forecast cache store (per region) ────────────────────────────────────
     forecast_store = ForecastStore(hass, region)
 
+    # ── STPASA store (per region) ─────────────────────────────────────────────
+    stpasa_store = StpasaStore(hass, region)
+    await stpasa_store.load()
+
     # ── Shared market notice store + client ──────────────────────────────────
     # All five region coordinators share ONE notice store + client so the
     # NEMWEB Market_Notice directory is polled once per cycle, not five times.
@@ -101,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         notice_store=notice_store,
         notice_client=notice_client,
         forecast_store=forecast_store,
+        stpasa_store=stpasa_store,
     )
 
     # ── Two-phase startup ─────────────────────────────────────────────────────
@@ -139,6 +145,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         STORE_KEY: store,
         DISPATCH_KEY: dispatch,
         "notice_store": notice_store,
+        "stpasa_store": stpasa_store,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

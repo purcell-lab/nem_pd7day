@@ -494,6 +494,53 @@ def test_upgrade_path_resets_cursor_when_no_notices():
     assert notice_client.last_seen_notice_id == 0
 
 
+def test_stpasa_fetch_failure_non_fatal():
+    """
+    A STPASA fetch that raises must NOT fail the coordinator update.
+    _async_update_data must complete, ingest the PD7DAY forecast (with
+    stpasa=None falling through), and return the PD7DayResult.
+    """
+    store = make_store()
+    coord = make_coordinator(store=store)
+    coord._first_refresh_done = True   # skip notice fetch path
+    coord.tod_stats = None
+
+    run_at_dt = datetime(2026, 4, 15, 7, 30, tzinfo=NEM_TZ)
+    period_end_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
+    periods = [make_price_period(period_end_dt, value=0.085)]
+    result = make_result(run_at_dt, periods)
+
+    # STPASA store present, but the client.fetch raises.
+    stpasa_store = MagicMock()
+    stpasa_store.latest = MagicMock(return_value=None)
+    stpasa_store.save = AsyncMock()
+    coord._stpasa_store = stpasa_store
+
+    failing_client = MagicMock()
+    failing_client.fetch = AsyncMock(side_effect=RuntimeError("404 Not Found"))
+
+    # Patch the network-touching helpers: PD7DAY fetch returns our result,
+    # STPASA client raises on fetch.
+    with patch.object(coord, "_get_client", return_value=MagicMock()), \
+         patch.object(coord, "_fetch_all_with_retry",
+                      AsyncMock(return_value=result)), \
+         patch.object(coord, "_get_stpasa_client", return_value=failing_client):
+        out = run_async(coord._async_update_data())
+
+    # Coordinator update succeeded despite the STPASA failure.
+    assert out is result
+    failing_client.fetch.assert_awaited_once()
+    # save() must NOT have been called (fetch raised before it).
+    stpasa_store.save.assert_not_called()
+    # Forecast still ingested into the calibration store.
+    key = nem_iso(period_end_dt - timedelta(minutes=30))
+    assert key in store._forecast_history
+    entry = store._forecast_history[key][0]
+    assert "stpasa_demand50" not in entry, (
+        "STPASA fetch failed → no stpasa_* annotation expected"
+    )
+
+
 def test_no_reset_when_notices_exist():
     """
     When notice_store has stored notices, cursor should NOT be reset.

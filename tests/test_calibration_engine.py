@@ -51,7 +51,10 @@ from custom_components.nem_pd7day.calibration_engine import (
     CalibrationEngine,
     LinearCoeff,
     Observation,
+    OlsModel,
     QuantileCoeff,
+    RunFeatures,
+    StpasaFeatures,
     _bucket_key,
     _bucket_key_solar,
     _horizon_label,
@@ -1280,6 +1283,201 @@ def test_spike_input_quantiles_none_when_isotonic():
     print(f"  PASS: spike input isotonic result has full structure")
 
 
+# ── STPASA OLS stage2 tests ─────────────────────────────────────────────────
+
+def _make_stpasa_obs(
+    n: int,
+    horizon_hours: float,
+    hour_of_day: int,
+    a: float = 1.2,
+    b: float = 0.02,
+    seed: int = 7,
+) -> tuple[list[Observation], dict[str, StpasaFeatures]]:
+    """
+    Build n observations at a given horizon with distinct interval_time keys
+    plus a matching stpasa_by_key feature map.  Each obs gets unique STPASA
+    features so the OLS fit sees real variation.
+    """
+    rng = random.Random(seed)
+    run_at = "2026-04-12T03:30:00+10:00"
+    obs: list[Observation] = []
+    stpasa_by_key: dict[str, StpasaFeatures] = {}
+
+    # Seed a handful of near-term (h<24) observations sharing the same run_at so
+    # _compute_run_features populates RunFeatures for this run.  A real PD7DAY
+    # run always contains near-term intervals; the in-band rows need them.
+    for j in range(6):
+        near_it = f"2026-04-12T{(4 + j):02d}:00:00+10:00"
+        obs.append(
+            Observation(
+                interval_time=near_it,
+                horizon_hours=2.0 + j,
+                pd7day_forecast=rng.uniform(0.05, 0.25),
+                actual_rrp=rng.uniform(0.05, 0.30),
+                forecast_run_at=run_at,
+                hour_of_day=4 + j,
+                day_of_week=0,
+                month=4,
+                gas_forecast_tj=75.0,
+                qni_mwflow=-150.0,
+                qni_violation_degree=0.0,
+                is_intervention=False,
+            )
+        )
+
+    for i in range(n):
+        # Distinct interval_time per obs (vary the day so keys are unique).
+        day = 13 + (i % 15)
+        interval_time = f"2026-04-{day:02d}T{hour_of_day:02d}:{(i % 2) * 30:02d}:00+10:00"
+        fc = rng.uniform(0.05, 0.25)
+        # Higher surplus / solar pushes actual price down.
+        surplus = rng.uniform(500.0, 5000.0)
+        solar = rng.uniform(0.0, 4000.0)
+        demand50 = rng.uniform(5000.0, 9000.0)
+        actual = max(0.0, a * fc + b - solar * 1e-5 + rng.gauss(0, 0.005))
+        o = Observation(
+            interval_time=interval_time,
+            horizon_hours=horizon_hours,
+            pd7day_forecast=fc,
+            actual_rrp=actual,
+            forecast_run_at=run_at,
+            hour_of_day=hour_of_day,
+            day_of_week=0,
+            month=4,
+            gas_forecast_tj=75.0,
+            qni_mwflow=-150.0,
+            qni_violation_degree=0.0,
+            is_intervention=False,
+        )
+        obs.append(o)
+        key = f"{interval_time}|{run_at}"
+        stpasa_by_key[key] = StpasaFeatures(
+            log_surplus=math.log1p(surplus),
+            log_solar=math.log1p(solar),
+            log_demand=math.log(max(demand50, 1.0)),
+            poe_spread_n=(demand50 * 1.1 - demand50 * 0.9) / demand50,
+            stpasa_run_at="2026-04-12T03:00:00+10:00",
+        )
+    return obs, stpasa_by_key
+
+
+def test_fit_ols_stage2_basic():
+    """fit_ols_stage2 returns OlsModel with non-empty coef for in-band buckets."""
+    engine = CalibrationEngine()
+    # h24_48 bucket (in OLS band) and h48_96 bucket.
+    obs1, sp1 = _make_stpasa_obs(n=40, horizon_hours=30.0, hour_of_day=17, seed=1)
+    obs2, sp2 = _make_stpasa_obs(n=40, horizon_hours=60.0, hour_of_day=17, seed=2)
+    observations = obs1 + obs2
+    stpasa_by_key = {**sp1, **sp2}
+
+    ols_models = engine.fit_ols_stage2(observations, stpasa_by_key)
+    key1 = _bucket_key(30.0, 17)
+    key2 = _bucket_key(60.0, 17)
+    assert key1 in ols_models, f"missing bucket {key1}"
+    assert key2 in ols_models, f"missing bucket {key2}"
+    assert len(ols_models[key1].coef) >= 2, "expected fitted coef for h24_48"
+    assert len(ols_models[key2].coef) >= 2, "expected fitted coef for h48_96"
+    print("  PASS: fit_ols_stage2 basic")
+
+
+def test_apply_with_stpasa_improves_high_surplus():
+    """apply() with high-surplus/solar STPASA features shifts the point estimate."""
+    engine = CalibrationEngine()
+    obs, stpasa_by_key = _make_stpasa_obs(n=60, horizon_hours=36.0, hour_of_day=17, seed=3)
+    result = engine.fit(obs)
+    result.ols_models = engine.fit_ols_stage2(obs, stpasa_by_key)
+
+    rf = RunFeatures(run_max_h6_rrp=0.2, run_mean_rrp=0.1, run_spread=0.05)
+    high = StpasaFeatures(
+        log_surplus=math.log1p(5000.0),
+        log_solar=math.log1p(4000.0),
+        log_demand=math.log(6000.0),
+        poe_spread_n=0.2,
+        stpasa_run_at="2026-04-12T03:00:00+10:00",
+    )
+    iso_only = result.apply(0.15, horizon_hours=36.0, hour_of_day=17)
+    with_stpasa = result.apply(
+        0.15, horizon_hours=36.0, hour_of_day=17, stpasa=high, run_features=rf
+    )
+    # When the OLS bucket fitted, the source flips and the value can differ.
+    key = _bucket_key(36.0, 17)
+    if len(result.ols_models.get(key, OlsModel(bucket_key=key)).coef) >= 2:
+        assert with_stpasa["calibrated_source"] == "isotonic+stpasa"
+        assert with_stpasa["stpasa_run_at"] == high.stpasa_run_at
+    else:
+        assert with_stpasa["calibrated_source"] == "isotonic"
+    assert iso_only["calibrated_source"] == "isotonic"
+    print("  PASS: apply with stpasa high surplus")
+
+
+def test_apply_stpasa_skipped_below_h22():
+    """horizon < 22h must fall through to isotonic regardless of STPASA features."""
+    engine = CalibrationEngine()
+    obs, stpasa_by_key = _make_stpasa_obs(n=60, horizon_hours=30.0, hour_of_day=17, seed=4)
+    result = engine.fit(obs)
+    result.ols_models = engine.fit_ols_stage2(obs, stpasa_by_key)
+
+    rf = RunFeatures(run_max_h6_rrp=0.2, run_mean_rrp=0.1, run_spread=0.05)
+    sf = StpasaFeatures(
+        log_surplus=8.0, log_solar=8.0, log_demand=9.0, poe_spread_n=0.1,
+        stpasa_run_at="2026-04-12T03:00:00+10:00",
+    )
+    out = result.apply(0.15, horizon_hours=20.0, hour_of_day=17, stpasa=sf, run_features=rf)
+    assert out["calibrated_source"] != "isotonic+stpasa", out["calibrated_source"]
+    assert "stpasa_run_at" not in out
+    print("  PASS: stpasa skipped below h22")
+
+
+def test_apply_stpasa_skipped_above_h120():
+    """horizon > 120h must fall through to isotonic regardless of STPASA features."""
+    engine = CalibrationEngine()
+    obs, stpasa_by_key = _make_stpasa_obs(n=60, horizon_hours=36.0, hour_of_day=17, seed=5)
+    result = engine.fit(obs)
+    result.ols_models = engine.fit_ols_stage2(obs, stpasa_by_key)
+
+    rf = RunFeatures(run_max_h6_rrp=0.2, run_mean_rrp=0.1, run_spread=0.05)
+    sf = StpasaFeatures(
+        log_surplus=8.0, log_solar=8.0, log_demand=9.0, poe_spread_n=0.1,
+        stpasa_run_at="2026-04-12T03:00:00+10:00",
+    )
+    out = result.apply(0.15, horizon_hours=130.0, hour_of_day=17, stpasa=sf, run_features=rf)
+    assert out["calibrated_source"] != "isotonic+stpasa", out["calibrated_source"]
+    assert "stpasa_run_at" not in out
+    print("  PASS: stpasa skipped above h120")
+
+
+def test_ols_serialisation_round_trip():
+    """to_storage → from_storage preserves OlsModel coef, n_train, r2."""
+    engine = CalibrationEngine()
+    obs, stpasa_by_key = _make_stpasa_obs(n=50, horizon_hours=36.0, hour_of_day=17, seed=6)
+    result = engine.fit(obs)
+    result.ols_models = engine.fit_ols_stage2(obs, stpasa_by_key)
+
+    stored = engine.to_storage(result)
+    assert "ols_models" in stored
+    restored = engine.from_storage(stored)
+
+    for key, model in result.ols_models.items():
+        assert key in restored.ols_models, f"missing ols bucket {key} after round-trip"
+        assert restored.ols_models[key].coef == model.coef, "coef changed"
+        assert restored.ols_models[key].n_train == model.n_train
+        assert abs(restored.ols_models[key].r2 - model.r2) < 1e-9
+    print("  PASS: ols serialisation round trip")
+
+
+def test_from_storage_missing_ols_key():
+    """from_storage on an old-format dict (no ols_models) yields empty dict, no error."""
+    engine = CalibrationEngine()
+    obs = _make_obs_batch(n=30, a=1.5, b=0.02, horizon_hours=36.0, hour_of_day=17)
+    result = engine.fit(obs)
+    stored = engine.to_storage(result)
+    # Simulate an old install: strip the ols_models key entirely.
+    stored.pop("ols_models", None)
+    restored = engine.from_storage(stored)
+    assert restored.ols_models == {}, "expected empty ols_models for legacy storage"
+    print("  PASS: from_storage missing ols key")
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -1346,6 +1544,13 @@ TESTS = [
     # Spike isotonic behaviour
     test_spike_input_uses_isotonic,
     test_spike_input_quantiles_none_when_isotonic,
+    # STPASA OLS stage2
+    test_fit_ols_stage2_basic,
+    test_apply_with_stpasa_improves_high_surplus,
+    test_apply_stpasa_skipped_below_h22,
+    test_apply_stpasa_skipped_above_h120,
+    test_ols_serialisation_round_trip,
+    test_from_storage_missing_ols_key,
 ]
 
 

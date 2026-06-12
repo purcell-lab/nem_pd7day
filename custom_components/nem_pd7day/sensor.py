@@ -91,9 +91,69 @@ from .coordinator import PD7DayCoordinator
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
+    from datetime import datetime
+    from .calibration_engine import StpasaFeatures
     from .notice_store import GridNoticeStore
 
 _LOGGER = logging.getLogger(__name__)
+
+# STPASA OLS stage2 is applied only within this forecast-horizon band.
+# Below 22h Amber/CSIRO covers the near-term; beyond 120h STPASA is
+# counterproductive and the pipeline falls through to isotonic-only.
+_STPASA_MIN_HORIZON_H = 22.0
+_STPASA_MAX_HORIZON_H = 120.0
+
+
+def _stpasa_features_for_interval(
+    coordinator: PD7DayCoordinator,
+    interval_time_iso: str,
+    horizon_hours: float,
+) -> "StpasaFeatures | None":
+    """
+    Look up STPASA features for a forecast interval from the coordinator's
+    STPASA store.  Returns None when STPASA is unavailable or the horizon is
+    outside the OLS band (h < 22 or h > 120).
+
+    STPASA interval_datetime is the interval END (AEMO convention); the
+    forecast_history / PricePeriod key is the interval START.  We match by
+    comparing the STPASA END to the PricePeriod END (nemtime) when available;
+    here we match on the START-derived value passed in, falling back to the
+    nearest interval by absolute time distance.
+    """
+    if horizon_hours < _STPASA_MIN_HORIZON_H or horizon_hours > _STPASA_MAX_HORIZON_H:
+        return None
+    store = getattr(coordinator, "_stpasa_store", None)
+    if store is None:
+        return None
+    result = store.latest()
+    if result is None or not result.intervals:
+        return None
+
+    from .calibration_engine import StpasaFeatures
+    from .nem_time import interval_start
+
+    # Match on interval START: STPASA interval_datetime is the END, so convert.
+    exact = None
+    nearest = None
+    nearest_delta: float | None = None
+    target = parse_iso(interval_time_iso)
+    for si in result.intervals:
+        try:
+            si_start = parse_iso(interval_start(si.interval_datetime))
+        except (ValueError, TypeError):
+            continue
+        if si_start == target:
+            exact = si
+            break
+        delta = abs((si_start - target).total_seconds())
+        if nearest_delta is None or delta < nearest_delta:
+            nearest_delta = delta
+            nearest = si
+
+    chosen = exact or nearest
+    if chosen is None:
+        return None
+    return StpasaFeatures.from_interval(chosen)
 
 
 def _horizon_hours(run_at_str: str | None, interval_time_str: str) -> float:
@@ -346,8 +406,15 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
         if self._store:
             covariates = self._covariates_for_interval(interval_key)
+            stpasa_features = _stpasa_features_for_interval(
+                self.coordinator, interval_key, h
+            )
+            run_features = self.coordinator.current_run_features
             cal = self._store.apply_to_price(
-                period.value, h, hour, **covariates,
+                period.value, h, hour,
+                stpasa_features=stpasa_features,
+                run_features=run_features,
+                **covariates,
             )
             cal_update = {
                 ATTR_CAL_CALIBRATED: cal["calibrated"],
@@ -360,6 +427,8 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 "value": cal["calibrated"],
                 "spike_credible": cal.get("spike_credible"),
             }
+            if cal.get("stpasa_run_at"):
+                cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
             base.update(cal_update)
         else:
             base["value"] = period.value
@@ -576,7 +645,16 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
         }
         if self._store:
             covariates = self._covariates_for_interval(interval_key)
-            cal = self._store.apply_to_price(period.value, h, hour, **covariates)
+            stpasa_features = _stpasa_features_for_interval(
+                self.coordinator, interval_key, h
+            )
+            run_features = self.coordinator.current_run_features
+            cal = self._store.apply_to_price(
+                period.value, h, hour,
+                stpasa_features=stpasa_features,
+                run_features=run_features,
+                **covariates,
+            )
             cal_update = {
                 ATTR_CAL_CALIBRATED: cal["calibrated"],
                 ATTR_CAL_P10: cal["p10"],
@@ -588,6 +666,8 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
                 "value": cal["calibrated"],
                 "spike_credible": cal.get("spike_credible"),
             }
+            if cal.get("stpasa_run_at"):
+                cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
             base.update(cal_update)
         else:
             base["value"] = period.value

@@ -21,6 +21,7 @@ so they are correct regardless of the HA system timezone.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,8 @@ from .calibration_engine import (
     CalibrationEngine,
     CalibrationResult,
     Observation,
+    RunFeatures,
+    StpasaFeatures,
     all_bucket_keys,
 )
 from .const import (
@@ -52,6 +55,7 @@ from .const import (
 
 if TYPE_CHECKING:
     from .pd7day_client import PD7DayData, InterconnectorData, CaseSolutionData, MarketSummaryData
+    from .stpasa_client import StpasaResult
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -195,6 +199,7 @@ class CalibrationStore:
         interconnectors: dict[str, "InterconnectorData"],
         case: "CaseSolutionData | None",
         market_summary: "MarketSummaryData | None" = None,
+        stpasa: "StpasaResult | None" = None,
     ) -> None:
         """
         Called by the coordinator on each successful fetch.
@@ -202,6 +207,20 @@ class CalibrationStore:
         """
         run_at_str = price_data.forecast_generated_at or _now_nem().isoformat()
         is_intervention = case.intervention if case else False
+
+        # Build an interval-START → StpasaInterval lookup for O(1) join.
+        # STPASA interval_datetime is interval-END (AEMO convention); the
+        # forecast_history key is interval-START (= END − 30 min), so we key
+        # the lookup by the START to match.
+        stpasa_by_start: dict[str, object] = {}
+        if stpasa is not None:
+            from .nem_time import interval_start
+            for si in stpasa.intervals:
+                try:
+                    start_key = interval_start(si.interval_datetime)
+                except (ValueError, TypeError):
+                    continue
+                stpasa_by_start[start_key] = si
 
         # Build per-interval lookups from the interconnector forecast
         qni = interconnectors.get("NSW1-QLD1")
@@ -252,6 +271,18 @@ class CalibrationStore:
                 "is_intervention": is_intervention,
                 "region": region,
             }
+
+            # Join STPASA signals for this interval if available.
+            si = stpasa_by_start.get(key)
+            if si is not None:
+                entry["stpasa_run_at"] = si.run_datetime
+                entry["stpasa_demand10"] = si.demand10
+                entry["stpasa_demand50"] = si.demand50
+                entry["stpasa_demand90"] = si.demand90
+                entry["stpasa_surplus"] = si.surpluscapacity
+                entry["stpasa_solar"] = si.ss_solar_uigf
+                entry["stpasa_wind"] = si.ss_wind_uigf
+
             self._forecast_history[key].append(entry)
 
         # Prune old history — compare ISO strings directly (fixed offset sorts correctly)
@@ -337,6 +368,17 @@ class CalibrationStore:
                 "is_intervention": fc.get("is_intervention", False),
                 "actual_source": source,
             }
+
+            # Derive STPASA features when this forecast entry carries them.
+            if "stpasa_demand50" in fc:
+                obs["stpasa_log_surplus"] = math.log1p(max(fc.get("stpasa_surplus", 0.0), 0.0))
+                obs["stpasa_log_solar"] = math.log1p(max(fc.get("stpasa_solar", 0.0), 0.0))
+                obs["stpasa_log_demand"] = math.log(max(fc.get("stpasa_demand50", 1.0), 1.0))
+                obs["stpasa_poe_spread_n"] = (
+                    fc.get("stpasa_demand10", 0.0) - fc.get("stpasa_demand90", 0.0)
+                ) / max(fc.get("stpasa_demand50", 1.0), 1.0)
+                obs["stpasa_run_at"] = fc.get("stpasa_run_at", "")
+
             obs_idx = len(self._observations)
             self._observations.append(obs)
             self._actual_accum[pair_key] = {
@@ -359,6 +401,29 @@ class CalibrationStore:
 
     async def _save_observations(self) -> None:
         await self._obs_store.async_save({"observations": self._observations})
+
+    # ── STPASA feature map ─────────────────────────────────────────────────────
+
+    def build_stpasa_feature_map(self) -> dict[str, StpasaFeatures]:
+        """
+        Build dict[str → StpasaFeatures] from observations that carry STPASA data.
+
+        Key = interval_time + "|" + forecast_run_at — matches the lookup key used
+        by CalibrationEngine.fit_ols_stage2().
+        """
+        out: dict[str, StpasaFeatures] = {}
+        for o in self._observations:
+            if "stpasa_log_demand" not in o:
+                continue
+            key = f"{o['interval_time']}|{o['forecast_run_at']}"
+            out[key] = StpasaFeatures(
+                log_surplus=o.get("stpasa_log_surplus", 0.0),
+                log_solar=o.get("stpasa_log_solar", 0.0),
+                log_demand=o.get("stpasa_log_demand", 0.0),
+                poe_spread_n=o.get("stpasa_poe_spread_n", 0.0),
+                stpasa_run_at=o.get("stpasa_run_at", ""),
+            )
+        return out
 
     # ── Calibration fitting ───────────────────────────────────────────────────
 
@@ -385,6 +450,23 @@ class CalibrationStore:
             self._engine.fit, obs_list, self._region
         )
         self._calibration = result
+
+        # ── OLS stage2 (STPASA) ──────────────────────────────────────────────
+        # Best-effort: only fit when STPASA-tagged observations exist.  Failure
+        # leaves the isotonic-only result intact.
+        stpasa_map = self.build_stpasa_feature_map()
+        if stpasa_map:
+            try:
+                ols_models = await self._hass.async_add_executor_job(
+                    self._engine.fit_ols_stage2, obs_list, stpasa_map, self._region
+                )
+                result.ols_models = ols_models
+                _LOGGER.info(
+                    "OLS stage2 fit: %d buckets with STPASA data", len(ols_models)
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("OLS stage2 fit failed (non-fatal): %s", exc)
+
         await self._coeff_store.async_save(self._engine.to_storage(result))
 
         # Append compression_ratio snapshot to rolling iso_history.
@@ -441,6 +523,8 @@ class CalibrationStore:
         *,
         gas_forecast_tj: float | None = None,
         qni_mwflow: float | None = None,
+        stpasa_features: "StpasaFeatures | None" = None,
+        run_features: "RunFeatures | None" = None,
     ) -> dict:
         if self._calibration is None:
             return {
@@ -452,7 +536,13 @@ class CalibrationStore:
                 "calibrated_source": "passthrough",
                 "n_obs": 0,
             }
-        cal = self._calibration.apply(raw_price, horizon_hours, hour_of_day)
+        cal = self._calibration.apply(
+            raw_price,
+            horizon_hours,
+            hour_of_day,
+            stpasa=stpasa_features,
+            run_features=run_features,
+        )
 
         # Spike credibility annotation: when raw_price is in spike territory,
         # annotate whether the gas+QNI covariates support the spike signal.
@@ -473,6 +563,29 @@ class CalibrationStore:
         # else: raw below spike territory — no spike_credible key
 
         return cal
+
+    def apply_calibration(
+        self,
+        raw_price: float,
+        horizon_hours: float,
+        hour_of_day: int,
+        stpasa_features: "StpasaFeatures | None" = None,
+        run_features: "RunFeatures | None" = None,
+    ) -> dict:
+        """
+        Apply calibration with optional STPASA OLS stage2 correction.
+
+        Wraps apply_to_price(): isotonic-only when STPASA features are absent
+        or the horizon is outside the OLS band; otherwise applies the 9-feature
+        OLS correction.  Passthrough when no calibration is loaded.
+        """
+        return self.apply_to_price(
+            raw_price,
+            horizon_hours,
+            hour_of_day,
+            stpasa_features=stpasa_features,
+            run_features=run_features,
+        )
 
     def summary_attributes(self) -> dict:
         if not self._calibration:
