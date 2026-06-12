@@ -97,6 +97,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 0
+
 # STPASA OLS stage2 is applied only within this forecast-horizon band.
 # Below 22h Amber/CSIRO covers the near-term; beyond 120h STPASA is
 # counterproductive and the pipeline falls through to isotonic-only.

@@ -17,6 +17,8 @@ from .const import DEFAULT_ADDITIONAL_FEE, DOMAIN, get_region
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 0
+
 DEFAULT_MIN = 0.0
 DEFAULT_MAX = 1.0
 DEFAULT_STEP = 0.0001

@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 0
+
 _PLACEHOLDER = b""  # returned before first render
 
 
