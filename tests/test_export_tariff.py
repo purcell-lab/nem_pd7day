@@ -14,6 +14,7 @@ from __future__ import annotations
 import sys
 import os
 import importlib.util
+import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -206,6 +207,9 @@ def make_export_sensor(
     entry = MagicMock()
     entry.entry_id = "entry_1"
     entry.options = {}
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=None, dispatch=None
+    )
 
     sensor = NemPd7dayExportTariffSensor.__new__(NemPd7dayExportTariffSensor)
     sensor.coordinator = coordinator
@@ -224,7 +228,7 @@ def make_export_sensor(
     else:
         sensor._attr_name = f"{distributor_display} {export_name} Export Tariff ({export_code})"
     sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {"entry_1": {}}}
+    sensor.hass.data = {DOMAIN: {}}
     sensor.hass.states.get.return_value = None
     return sensor
 
@@ -249,6 +253,9 @@ def make_import_sensor(
     entry = MagicMock()
     entry.entry_id = "entry_1"
     entry.options = {}
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=None, dispatch=None
+    )
 
     sensor = NemPd7dayTariffSensor.__new__(NemPd7dayTariffSensor)
     sensor.coordinator = coordinator
@@ -262,7 +269,7 @@ def make_import_sensor(
     tariff_name = get_tariff_name(distributor, tariff_code)
     sensor._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
     sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {"entry_1": {}}}
+    sensor.hass.data = {DOMAIN: {}}
     sensor.hass.states.get.return_value = None
     return sensor
 
@@ -391,15 +398,12 @@ def test_export_programs_registered_in_setup():
         CONF_ACTIVE_TARIFF: "ausgrid/EA025",
     }
 
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=MagicMock(), dispatch=None
+    )
+
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
 
     created = []
 

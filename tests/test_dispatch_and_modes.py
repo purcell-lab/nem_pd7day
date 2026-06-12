@@ -18,6 +18,7 @@ import asyncio
 import sys
 import os
 import importlib.util
+import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -200,10 +201,13 @@ def make_sensor(store=None, mode=FORECAST_MODE_DAYS_2_7) -> PD7DayForecastSensor
     entry = MagicMock()
     entry.entry_id = "entry_test"
     entry.options = {CONF_FORECAST_MODE: mode}
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=store, dispatch=None
+    )
     sensor._entry = entry
     sensor._attr_name = "NEM Spot Price Forecast"
     sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {"entry_test": {}}}
+    sensor.hass.data = {DOMAIN: {}}
     return sensor
 
 
@@ -232,6 +236,9 @@ def make_tariff_sensor(
         CONF_FORECAST_MODE: mode,
         CONF_ACTIVE_TARIFF: active_tariff,
     }
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=None, dispatch=None
+    )
 
     sensor = NemPd7dayTariffSensor.__new__(NemPd7dayTariffSensor)
     sensor.coordinator = coordinator
@@ -245,7 +252,7 @@ def make_tariff_sensor(
     tariff_name = get_tariff_name(distributor, tariff_code)
     sensor._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
     sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {"entry_1": {}}}
+    sensor.hass.data = {DOMAIN: {}}
     sensor.hass.states.get.return_value = None
     return sensor
 
@@ -302,7 +309,7 @@ def test_sensor_native_value_uses_dispatch_when_available():
     # Set up dispatch coordinator with prices
     dispatch = MagicMock()
     dispatch.prices = {"QLD1": DispatchPrice("QLD1", "2026/05/21 09:30:00", 0.042)}
-    sensor.hass.data = {DOMAIN: {"entry_test": {DISPATCH_KEY: dispatch}}}
+    sensor._entry.runtime_data.dispatch = dispatch
 
     assert abs(sensor.native_value - 0.042) < 1e-9
 
@@ -314,7 +321,7 @@ def test_sensor_native_value_falls_back_to_pd7day():
     # Set up dispatch with no prices for our region
     dispatch = MagicMock()
     dispatch.prices = {}
-    sensor.hass.data = {DOMAIN: {"entry_test": {DISPATCH_KEY: dispatch}}}
+    sensor._entry.runtime_data.dispatch = dispatch
 
     # Set up PD7DAY data
     now = datetime.now(NEM_TZ)
@@ -598,7 +605,7 @@ def test_tariff_sensor_dispatch_native_value():
     # Set up dispatch with prices
     dispatch = MagicMock()
     dispatch.prices = {"QLD1": DispatchPrice("QLD1", "2026/05/21 09:30:00", 0.050)}
-    sensor.hass.data = {DOMAIN: {"entry_1": {DISPATCH_KEY: dispatch}}}
+    sensor._entry.runtime_data.dispatch = dispatch
 
     # Mock spot_to_tariff for the dispatch path
     # New formula: (12.5/100 + 0.0293) * 1.1
@@ -619,7 +626,7 @@ def test_tariff_sensor_dispatch_fallback():
     # No dispatch data for QLD1
     dispatch = MagicMock()
     dispatch.prices = {}
-    sensor.hass.data = {DOMAIN: {"entry_1": {DISPATCH_KEY: dispatch}}}
+    sensor._entry.runtime_data.dispatch = dispatch
 
     # Fallback uses PD7DAY forecast path: (15.5/100 + 0.0293) * 1.1
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
@@ -646,15 +653,12 @@ def test_async_setup_entry_days_2_7_registers_day27_spot_sensor():
         CONF_ACTIVE_TARIFF: "energex/6900",
     }
 
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=MagicMock(), dispatch=None
+    )
+
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
 
     created = []
 
@@ -685,15 +689,12 @@ def test_async_setup_entry_days_1_7_no_day27_sensors():
     entry.data = {CONF_REGION: "QLD1"}
     entry.options = {CONF_FORECAST_MODE: FORECAST_MODE_FULL}
 
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=MagicMock(), dispatch=None
+    )
+
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
 
     created = []
 
@@ -725,15 +726,12 @@ def test_async_setup_entry_days_2_7_registers_day27_tariff_sensor():
         CONF_ACTIVE_TARIFF: "energex/6900",
     }
 
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=MagicMock(), dispatch=None
+    )
+
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
 
     created = []
 
@@ -800,7 +798,7 @@ def test_tariff_dispatch_listener_registered():
     # Set up a mock DispatchCoordinator with async_add_listener
     mock_dispatch = MagicMock()
     mock_dispatch.async_add_listener = MagicMock(return_value=lambda: None)
-    sensor.hass.data = {DOMAIN: {"entry_1": {DISPATCH_KEY: mock_dispatch}}}
+    sensor._entry.runtime_data.dispatch = mock_dispatch
 
     # Provide async_on_remove and async_write_ha_state stubs
     removals = []
@@ -822,7 +820,7 @@ def test_spot_dispatch_listener_registered():
     # Set up a mock DispatchCoordinator with async_add_listener
     mock_dispatch = MagicMock()
     mock_dispatch.async_add_listener = MagicMock(return_value=lambda: None)
-    sensor.hass.data = {DOMAIN: {"entry_test": {DISPATCH_KEY: mock_dispatch}}}
+    sensor._entry.runtime_data.dispatch = mock_dispatch
 
     # Provide async_on_remove and async_write_ha_state stubs
     removals = []

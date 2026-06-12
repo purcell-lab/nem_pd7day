@@ -28,7 +28,6 @@ from .const import (
     CONF_FORECAST_MODE,
     DEFAULT_ADDITIONAL_FEE,
     DEFAULT_ENABLED_TARIFFS,
-    DISPATCH_KEY,
     DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
     EXPORT_TARIFF_NAMES,
@@ -169,11 +168,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._schedule_next_boundary()
 
         # Subscribe to DispatchCoordinator so state refreshes every 5 minutes
-        dispatch_coordinator = (
-            self.hass.data.get(DOMAIN, {})
-            .get(self._entry.entry_id, {})
-            .get(DISPATCH_KEY)
-        )
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch_coordinator = runtime_data.dispatch if runtime_data else None
         if dispatch_coordinator is not None:
             self.async_on_remove(
                 dispatch_coordinator.async_add_listener(
@@ -384,7 +380,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     def native_value(self) -> float | None:
         """Current interval tariff price in $/kWh."""
         # Try 5-minute dispatch price first
-        dispatch = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {}).get(DISPATCH_KEY)
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch = runtime_data.dispatch if runtime_data else None
         if dispatch and dispatch.prices.get(self._region):
             rrp_kwh = dispatch.prices[self._region].rrp
             tariff_val = self._apply_tariff_to_spot(rrp_kwh, now_nem())
@@ -696,11 +693,8 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         await super().async_added_to_hass()
         self._schedule_next_boundary()
 
-        dispatch_coordinator = (
-            self.hass.data.get(DOMAIN, {})
-            .get(self._entry.entry_id, {})
-            .get(DISPATCH_KEY)
-        )
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch_coordinator = runtime_data.dispatch if runtime_data else None
         if dispatch_coordinator is not None:
             self.async_on_remove(
                 dispatch_coordinator.async_add_listener(
@@ -870,7 +864,8 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
 
     @property
     def native_value(self) -> float | None:
-        dispatch = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {}).get(DISPATCH_KEY)
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch = runtime_data.dispatch if runtime_data else None
         if dispatch and dispatch.prices.get(self._region):
             rrp_kwh = dispatch.prices[self._region].rrp
             tariff_val = self._apply_export_tariff_to_spot(rrp_kwh, now_nem())

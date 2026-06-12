@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from datetime import timedelta
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers.event import (
@@ -18,9 +19,7 @@ from homeassistant.util import dt as dt_util
 from .calibration_store import CalibrationStore
 from .const import (
     CONF_FORECAST_MODE,
-    COORDINATOR_KEY,
     DEFAULT_REGION,
-    DISPATCH_KEY,
     DOMAIN,
     FORECAST_MODE_DAYS_2_7,
     get_region,
@@ -30,7 +29,6 @@ from .const import (
     REFIT_INTERVAL,
     REGION_STARTUP_ORDER,
     region_startup_index,
-    STORE_KEY,
 )
 from .coordinator import DispatchCoordinator, PD7DayCoordinator
 from .forecast_store import ForecastStore
@@ -44,13 +42,31 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.CAMERA, Platform.NUMBER]
 
 
+@dataclass
+class NemPd7dayEntryData:
+    """Per-config-entry runtime data stored on ConfigEntry.runtime_data."""
+
+    coordinator: PD7DayCoordinator
+    store: CalibrationStore
+    forecast_store: ForecastStore
+    stpasa_store: StpasaStore
+    dispatch: DispatchCoordinator
+    notice_store: GridNoticeStore
+    region: str
+    unsubs: list = field(default_factory=list)
+
+
+# Typed alias for entries belonging to this integration.
+NemPd7dayConfigEntry = ConfigEntry[NemPd7dayEntryData]
+
+
 async def _delayed_refresh(coordinator: PD7DayCoordinator, delay_s: float) -> None:
     """Sleep delay_s then trigger a background coordinator refresh (phase 2)."""
     await asyncio.sleep(delay_s)
     await coordinator.async_refresh()
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> bool:
     """Set up NEM PD7DAY from a config entry."""
     from .actual_price_service import ActualPriceService
     from .nem_time import fetch_times_as_utc, now_nem
@@ -151,13 +167,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][_SHARED_DISPATCH] = dispatch
         hass.data[DOMAIN]["_dispatch_unsubs"] = _dispatch_unsubs
 
-    hass.data[DOMAIN][entry.entry_id] = {
-        COORDINATOR_KEY: coordinator,
-        STORE_KEY: store,
-        DISPATCH_KEY: dispatch,
-        "notice_store": notice_store,
-        "stpasa_store": stpasa_store,
-    }
+    entry.runtime_data = NemPd7dayEntryData(
+        coordinator=coordinator,
+        store=store,
+        forecast_store=forecast_store,
+        stpasa_store=stpasa_store,
+        dispatch=dispatch,
+        notice_store=notice_store,
+        region=region,
+    )
 
     # ── Central STPASA fetch + distribution ──────────────────────────────────
     # The STPASA ZIP contains every NEM region. Download it ONCE per PD7DAY
@@ -297,11 +315,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for cfg_entry in hass.config_entries.async_entries(DOMAIN):
             if entry_id and cfg_entry.entry_id != entry_id:
                 continue
-            entry_data = hass.data[DOMAIN].get(cfg_entry.entry_id)
+            entry_data: NemPd7dayEntryData | None = getattr(
+                cfg_entry, "runtime_data", None
+            )
             if not entry_data:
                 continue
-            coord = entry_data[COORDINATOR_KEY]
-            st = entry_data[STORE_KEY]
+            coord = entry_data.coordinator
+            st = entry_data.store
             _LOGGER.info(
                 "force_refit service: refitting entry %s (%d observations)",
                 cfg_entry.entry_id,
@@ -318,21 +338,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
-        # Check if any config entries remain (ignoring shared keys)
-        _SHARED_KEYS = {
-            NEMWEB_SEMAPHORE_KEY,
-            "notice_store",
-            "notice_client",
-            "stpasa_client",
-            "stpasa_stores",
-        }
+        # Per-entry runtime data lives on entry.runtime_data and is released by
+        # HA automatically once the entry is unloaded. Determine whether any
+        # OTHER config entry is still loaded to decide on shared-object cleanup.
         remaining = [
-            k for k in hass.data[DOMAIN]
-            if not k.startswith("_") and k not in _SHARED_KEYS
+            cfg_entry
+            for cfg_entry in hass.config_entries.async_entries(DOMAIN)
+            if cfg_entry.entry_id != entry.entry_id
+            and cfg_entry.state == ConfigEntryState.LOADED
         ]
         if not remaining:
             # Last entry unloaded — cancel shared dispatch poll and clean up

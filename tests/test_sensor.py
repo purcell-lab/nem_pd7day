@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 import os
 import importlib.util
+import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
@@ -188,10 +189,13 @@ def make_sensor(store=None) -> PD7DayForecastSensor:
     entry = MagicMock()
     entry.entry_id = "entry_test"
     entry.options = {}
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=store, dispatch=None
+    )
     sensor._entry = entry
-    # Mock hass.data so dispatch lookup doesn't crash
+    # runtime_data.dispatch is None so the dispatch fast path is skipped.
     sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {"entry_test": {}}}
+    sensor.hass.data = {DOMAIN: {}}
     return sensor
 
 
@@ -208,15 +212,14 @@ def test_async_setup_entry_creates_forecast_entity_for_single_region():
     entry.data = {CONF_REGION: "QLD1"}
     entry.options = {}
 
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator,
+        store=MagicMock(),
+        dispatch=None,
+    )
+
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
 
     created = []
 
@@ -249,15 +252,14 @@ def test_async_setup_entry_creates_selected_region_interconnector_entities():
     entry.data = {CONF_REGION: "NSW1"}
     entry.options = {}
 
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator,
+        store=MagicMock(),
+        dispatch=None,
+    )
+
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
 
     created = []
 
@@ -287,15 +289,14 @@ def test_async_setup_entry_creates_calibration_sensor_for_configured_region():
     entry.data = {CONF_REGION: "NSW1"}
     entry.options = {}
 
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator,
+        store=MagicMock(),
+        dispatch=None,
+    )
+
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
 
     created = []
 
@@ -322,15 +323,14 @@ def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
     entry.data = {CONF_REGION: "QLD1"}
     entry.options = {}
 
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator,
+        store=MagicMock(),
+        dispatch=None,
+    )
+
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: MagicMock(),
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
 
     created = []
 
@@ -877,9 +877,12 @@ def test_day27_sensor_forecast_only_contains_post_cutoff_intervals():
     entry = MagicMock()
     entry.entry_id = "entry_test"
     entry.options = {}
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=None, dispatch=None
+    )
     sensor._entry = entry
     sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {"entry_test": {}}}
+    sensor.hass.data = {DOMAIN: {}}
 
     fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
     # Use a fixed cutoff 12 hours into the window so the test is deterministic

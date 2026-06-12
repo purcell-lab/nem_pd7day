@@ -15,6 +15,7 @@ from __future__ import annotations
 import sys
 import os
 import importlib.util
+import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -176,6 +177,9 @@ def make_tariff_sensor(
     entry = MagicMock()
     entry.entry_id = "entry_1"
     entry.options = {}
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=None, dispatch=None
+    )
 
     sensor = NemPd7dayTariffSensor.__new__(NemPd7dayTariffSensor)
     sensor.coordinator = coordinator
@@ -188,9 +192,10 @@ def make_tariff_sensor(
     distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
     tariff_name = get_tariff_name(distributor, tariff_code)
     sensor._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
-    # Mock hass.data so dispatch lookup doesn't crash
+    # runtime_data carries the dispatch coordinator; None here so the
+    # dispatch-price fast path is skipped and PD7DAY fallback is exercised.
     sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {"entry_1": {}}}
+    sensor.hass.data = {DOMAIN: {}}
     # Return None for the additional fee input_number so fallback is used
     sensor.hass.states.get.return_value = None
     return sensor

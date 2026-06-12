@@ -37,7 +37,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the ToD chart camera and bias chart camera from a config entry."""
-    coordinator: PD7DayCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator: PD7DayCoordinator = entry.runtime_data.coordinator
     region = entry.data.get("region", "QLD1").upper()
     async_add_entities([
         NemPd7dayTodCamera(coordinator, region, entry),
