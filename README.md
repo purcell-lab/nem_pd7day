@@ -22,6 +22,21 @@ Both the spot price sensor and tariff sensors apply this trim automatically.
 
 ---
 
+## How it works — M3+STPASA forecasting model
+
+The integration uses a two-stage forecasting pipeline:
+
+- **Stage 1 — PD7DAY isotonic calibration**: AEMO's 7-day PD7DAY price forecasts are calibrated using isotonic regression fit on 60 days of rolling history. This corrects systematic bias and shapes the time-of-day profile across all horizons (h0–168).
+- **Stage 2 — STPASA OLS correction** (horizons h22–h120): At medium-range horizons, an OLS model trained on AEMO STPASA supply/demand features (solar UIGF, wind UIGF, surplus capacity, demand 10/50/90) further corrects the isotonic output. Beyond h120, the model falls back to isotonic-only.
+
+### Performance vs isotonic-only
+
+- MAE improvement at h24–168: **−10.7%** vs isotonic alone (14.65 vs 16.06 $/MWh)
+- Day-rank Spearman ρ: **0.917** vs 0.850
+- Solar UIGF is the dominant STPASA signal (ρ = −0.78)
+
+---
+
 ## Features
 
 - **Days 2–7 price forecast** — calibrated $/kWh with P10/P50/P90 confidence bands, trimmed to the window beyond Amber Express
@@ -119,6 +134,12 @@ AEMO publishes 7-day ahead price forecasts three times per day. The integration 
 | 18:00 | 08:00 |
 
 Source: [AEMO NEMWeb PD7DAY](https://www.nemweb.com.au/REPORTS/CURRENT/PD7Day/)
+
+### STPASA supply/demand outlook
+
+The Stage 2 OLS correction is driven by AEMO's STPASA (Short-Term Projected Assessment of System Adequacy) feed, which provides the supply/demand outlook across all NEM regions in a single ZIP: solar UIGF, wind UIGF, surplus capacity, and demand 10/50/90 percentiles.
+
+Source: [AEMO NEMWeb STPASA](https://www.nemweb.com.au/REPORTS/CURRENT/Short_Term_PASA_Reports/)
 
 ### TradingIS actual prices (every 30 minutes)
 
@@ -262,6 +283,17 @@ Use these to verify h48_96/h96plus buckets are accumulating — `forecast_histor
 - `sensor.nem_pd7day_{region}_data_updated` — timestamp of the last coordinator data refresh
 
 Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the default dashboard.
+
+---
+
+### PD7DAY Data / STPASA Data (diagnostic)
+
+Two diagnostic sensors expose the full underlying forecast payloads as unrecorded HA attributes. Both are in the **Diagnostic** category and their large attribute lists are **not saved to the HA recorder/database**.
+
+| Sensor | State | Attribute | Description |
+|---|---|---|---|
+| `sensor.nem_pd7day_{region}_pd7day_data` | Forecast generation time | `forecast` | Full calibrated 7-day forecast list (336 intervals) |
+| `sensor.nem_pd7day_{region}_stpasa_data` | STPASA run time | `intervals` | Full STPASA supply/demand interval list |
 
 ---
 
