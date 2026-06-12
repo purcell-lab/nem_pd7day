@@ -43,6 +43,7 @@ from custom_components.nem_pd7day.stpasa_client import (  # noqa: E402
     StpasaClient,
     StpasaResult,
     _extract_csv_bytes,
+    _parse_all_regions,
     _parse_regionsolution,
 )
 
@@ -116,20 +117,21 @@ def test_parse_stpasa_csv_qld1():
 
 
 def test_region_filter():
-    """A CSV with QLD1 and NSW1 rows must yield only the requested region."""
+    """_parse_all_regions buckets a mixed CSV into one result per region."""
     raw = _csv(
         _header_row(),
         _data_row(region="QLD1", interval="2026/04/16 08:00:00", d50="6000"),
         _data_row(region="NSW1", interval="2026/04/16 08:00:00", d50="8000"),
         _data_row(region="QLD1", interval="2026/04/16 08:30:00", d50="6100"),
     )
-    result = _parse_regionsolution(raw, "QLD1")
-    assert result is not None
-    assert len(result.intervals) == 2, "only QLD1 rows expected"
-    assert all(i.demand50 in (6000.0, 6100.0) for i in result.intervals)
+    results = _parse_all_regions(raw)
+    assert set(results) == {"QLD1", "NSW1"}
 
-    nsw = _parse_regionsolution(raw, "NSW1")
-    assert nsw is not None
+    qld = results["QLD1"]
+    assert len(qld.intervals) == 2, "only QLD1 rows expected"
+    assert all(i.demand50 in (6000.0, 6100.0) for i in qld.intervals)
+
+    nsw = results["NSW1"]
     assert len(nsw.intervals) == 1
     assert nsw.intervals[0].demand50 == 8000.0
     print("  PASS: region filter")
@@ -150,6 +152,88 @@ def test_extract_nested_zip():
     result = _parse_regionsolution(extracted, "QLD1")
     assert result is not None and len(result.intervals) == 1
     print("  PASS: extract nested zip")
+
+
+# ── fetch_all_regions() happy path ────────────────────────────────────────────
+
+class _StubResponse:
+    """Async response stub yielding canned text/bytes."""
+
+    def __init__(self, *, text="", data=b"") -> None:
+        self._text = text
+        self._data = data
+
+    def raise_for_status(self):
+        return None
+
+    async def text(self, *args, **kwargs):
+        return self._text
+
+    async def read(self):
+        return self._data
+
+
+class _StubSession:
+    """Async session: first .get() returns the listing HTML, rest the ZIP."""
+
+    def __init__(self, *, html, zip_bytes) -> None:
+        self._html = html
+        self._zip_bytes = zip_bytes
+
+    def get(self, url, *args, **kwargs):
+        is_listing = url.endswith("/")
+        resp = (
+            _StubResponse(text=self._html)
+            if is_listing
+            else _StubResponse(data=self._zip_bytes)
+        )
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return resp
+
+            async def __aexit__(self_inner, *a):
+                return False
+
+        return _Ctx()
+
+
+def _build_stpasa_zip(csv_bytes: bytes) -> bytes:
+    """Wrap csv_bytes in the inner/outer ZIP layout STPASA uses."""
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as zf:
+        zf.writestr("PUBLIC_STPASA_20260415_072507_1.CSV", csv_bytes)
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w") as zf:
+        zf.writestr("PUBLIC_STPASA_20260415_072507_1.ZIP", inner.getvalue())
+    return outer.getvalue()
+
+
+def test_fetch_all_regions():
+    """fetch_all_regions downloads once and returns every region in the CSV."""
+    csv_bytes = _csv(
+        _header_row(),
+        _data_row(region="QLD1", interval="2026/04/16 08:00:00", d50="6000"),
+        _data_row(region="NSW1", interval="2026/04/16 08:00:00", d50="8000"),
+        _data_row(region="QLD1", interval="2026/04/16 08:30:00", d50="6100"),
+    )
+    zip_bytes = _build_stpasa_zip(csv_bytes)
+    html = (
+        '<a href="PUBLIC_STPASA_20260415_072507_1.ZIP">'
+        "PUBLIC_STPASA_20260415_072507_1.ZIP</a>"
+    )
+    session = _StubSession(html=html, zip_bytes=zip_bytes)
+    client = StpasaClient(session)
+
+    results = run_async(client.fetch_all_regions())
+    assert set(results) == {"QLD1", "NSW1"}
+    assert len(results["QLD1"].intervals) == 2
+    assert len(results["NSW1"].intervals) == 1
+    assert results["NSW1"].intervals[0].demand50 == 8000.0
+    # fetch(region) now delegates to fetch_all_regions.
+    qld = run_async(client.fetch("QLD1"))
+    assert qld is not None and qld.region == "QLD1"
+    print("  PASS: fetch all regions")
 
 
 # ── fetch() best-effort error handling ────────────────────────────────────────
@@ -197,6 +281,7 @@ TESTS = [
     test_parse_stpasa_csv_qld1,
     test_region_filter,
     test_extract_nested_zip,
+    test_fetch_all_regions,
     test_fetch_returns_none_on_404,
     test_fetch_returns_none_on_timeout,
 ]

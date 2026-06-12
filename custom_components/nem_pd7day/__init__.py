@@ -29,12 +29,14 @@ from .const import (
     NEMWEB_SEMAPHORE_KEY,
     REFIT_INTERVAL,
     REGION_STARTUP_ORDER,
+    region_startup_index,
     STORE_KEY,
 )
 from .coordinator import DispatchCoordinator, PD7DayCoordinator
 from .forecast_store import ForecastStore
 from .market_notice_client import MarketNoticeClient
 from .notice_store import GridNoticeStore
+from .stpasa_client import StpasaClient
 from .stpasa_store import StpasaStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,6 +85,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── STPASA store (per region) ─────────────────────────────────────────────
     stpasa_store = StpasaStore(hass, region)
     await stpasa_store.load()
+    # Register this region's store for central STPASA distribution. The STPASA
+    # ZIP holds every NEM region, so one download (below) populates them all.
+    stpasa_stores = hass.data[DOMAIN].setdefault("stpasa_stores", {})
+    stpasa_stores[region] = stpasa_store
 
     # ── Shared market notice store + client ──────────────────────────────────
     # All five region coordinators share ONE notice store + client so the
@@ -96,6 +102,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN]["notice_client"] = MarketNoticeClient(session)
     notice_store = hass.data[DOMAIN]["notice_store"]
     notice_client = hass.data[DOMAIN]["notice_client"]
+
+    # ── Shared STPASA client (one fetch serves all regions) ──────────────────
+    if "stpasa_client" not in hass.data[DOMAIN]:
+        semaphore = hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY)
+        hass.data[DOMAIN]["stpasa_client"] = StpasaClient(session, semaphore=semaphore)
 
     # ── Coordinator (no automatic polling) ───────────────────────────────────
     coordinator = PD7DayCoordinator(
@@ -147,6 +158,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "notice_store": notice_store,
         "stpasa_store": stpasa_store,
     }
+
+    # ── Central STPASA fetch + distribution ──────────────────────────────────
+    # The STPASA ZIP contains every NEM region. Download it ONCE per PD7DAY
+    # update cycle and populate all registered region stores, instead of each
+    # region coordinator downloading the full file independently.
+    async def _fetch_and_distribute_stpasa(_now=None) -> None:
+        """Download STPASA once and populate all region stores."""
+        client: StpasaClient | None = hass.data[DOMAIN].get("stpasa_client")
+        stores: dict[str, StpasaStore] = hass.data[DOMAIN].get("stpasa_stores", {})
+        if client is None or not stores:
+            return
+        try:
+            all_results = await client.fetch_all_regions()
+            for r, result in all_results.items():
+                store_for_region = stores.get(r)
+                if store_for_region is not None:
+                    await store_for_region.save(result)
+            if all_results:
+                _LOGGER.debug(
+                    "STPASA: fetched and distributed to %d region stores",
+                    len(all_results),
+                )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("STPASA central fetch failed (non-fatal): %s", exc)
+
+    # Only register the STPASA fetch listener on the first (QLD1) coordinator so
+    # the download fires once per cycle, not once per region coordinator.
+    if region_startup_index(region) == 0:
+        @callback
+        def _on_pd7day_update() -> None:
+            entry.async_create_background_task(
+                hass,
+                _fetch_and_distribute_stpasa(),
+                name="nem_pd7day_stpasa_central_fetch",
+            )
+
+        entry.async_on_unload(coordinator.async_add_listener(_on_pd7day_update))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -275,7 +323,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
         # Check if any config entries remain (ignoring shared keys)
-        _SHARED_KEYS = {NEMWEB_SEMAPHORE_KEY, "notice_store", "notice_client"}
+        _SHARED_KEYS = {
+            NEMWEB_SEMAPHORE_KEY,
+            "notice_store",
+            "notice_client",
+            "stpasa_client",
+            "stpasa_stores",
+        }
         remaining = [
             k for k in hass.data[DOMAIN]
             if not k.startswith("_") and k not in _SHARED_KEYS
@@ -287,6 +341,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.data[DOMAIN].pop("_shared_dispatch", None)
             hass.data[DOMAIN].pop("notice_store", None)
             hass.data[DOMAIN].pop("notice_client", None)
+            hass.data[DOMAIN].pop("stpasa_client", None)
+            hass.data[DOMAIN].pop("stpasa_stores", None)
             if hass.services.has_service(DOMAIN, "force_refit"):
                 hass.services.async_remove(DOMAIN, "force_refit")
     return unload_ok

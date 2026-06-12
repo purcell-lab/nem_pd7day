@@ -223,6 +223,7 @@ def make_coordinator(store=None, notice_store=None, notice_client=None) -> PD7Da
     coord.notice_store = notice_store
     coord._notice_client = notice_client
     coord._forecast_store = None
+    coord._stpasa_store = None
     coord._first_refresh_done = False
     return coord
 
@@ -496,9 +497,11 @@ def test_upgrade_path_resets_cursor_when_no_notices():
 
 def test_stpasa_fetch_failure_non_fatal():
     """
-    A STPASA fetch that raises must NOT fail the coordinator update.
-    _async_update_data must complete, ingest the PD7DAY forecast (with
-    stpasa=None falling through), and return the PD7DayResult.
+    The coordinator no longer fetches STPASA itself — a shared coroutine in
+    __init__.py downloads it centrally and populates the per-region stores.
+    With no STPASA data available (stpasa_store=None), _async_update_data must
+    still complete, ingest the PD7DAY forecast with stpasa=None, and return the
+    PD7DayResult — i.e. STPASA absence is non-fatal.
     """
     store = make_store()
     coord = make_coordinator(store=store)
@@ -510,34 +513,25 @@ def test_stpasa_fetch_failure_non_fatal():
     periods = [make_price_period(period_end_dt, value=0.085)]
     result = make_result(run_at_dt, periods)
 
-    # STPASA store present, but the client.fetch raises.
-    stpasa_store = MagicMock()
-    stpasa_store.latest = MagicMock(return_value=None)
-    stpasa_store.save = AsyncMock()
-    coord._stpasa_store = stpasa_store
+    # No STPASA store wired in — the coordinator must not attempt any fetch.
+    coord._stpasa_store = None
 
-    failing_client = MagicMock()
-    failing_client.fetch = AsyncMock(side_effect=RuntimeError("404 Not Found"))
-
-    # Patch the network-touching helpers: PD7DAY fetch returns our result,
-    # STPASA client raises on fetch.
+    # Patch only the PD7DAY fetch; there is no STPASA fetch path any more.
     with patch.object(coord, "_get_client", return_value=MagicMock()), \
          patch.object(coord, "_fetch_all_with_retry",
-                      AsyncMock(return_value=result)), \
-         patch.object(coord, "_get_stpasa_client", return_value=failing_client):
+                      AsyncMock(return_value=result)):
         out = run_async(coord._async_update_data())
 
-    # Coordinator update succeeded despite the STPASA failure.
+    # Coordinator update succeeded with no STPASA data.
     assert out is result
-    failing_client.fetch.assert_awaited_once()
-    # save() must NOT have been called (fetch raised before it).
-    stpasa_store.save.assert_not_called()
+    # Coordinator must not expose a STPASA fetch helper any more.
+    assert not hasattr(coord, "_get_stpasa_client")
     # Forecast still ingested into the calibration store.
     key = nem_iso(period_end_dt - timedelta(minutes=30))
     assert key in store._forecast_history
     entry = store._forecast_history[key][0]
     assert "stpasa_demand50" not in entry, (
-        "STPASA fetch failed → no stpasa_* annotation expected"
+        "No STPASA data → no stpasa_* annotation expected"
     )
 
 

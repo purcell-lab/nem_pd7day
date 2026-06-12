@@ -200,6 +200,86 @@ def _parse_regionsolution(raw_csv: bytes, region: str) -> StpasaResult | None:
     )
 
 
+def _parse_all_regions(raw_csv: bytes) -> dict[str, StpasaResult]:
+    """
+    Single-pass parse of an STPASA CSV → dict[region, StpasaResult].
+
+    Reads every REGIONSOLUTION D-row, buckets by REGIONID, and builds one
+    StpasaResult per region found (intervals sorted by interval_datetime).
+    This is the multi-region equivalent of _parse_regionsolution: the STPASA
+    ZIP holds all NEM regions, so a single pass populates every region store.
+    """
+    text = raw_csv.decode("utf-8", errors="ignore")
+    reader = csv.reader(io.StringIO(text))
+
+    col_index: dict[str, int] = {}
+    buckets: dict[str, list[StpasaInterval]] = {}
+    run_dt_by_region: dict[str, str] = {}
+
+    for row in reader:
+        if not row or len(row) < 3:
+            continue
+        rectype = row[0].strip()
+        table = row[2].strip().upper() if len(row) > 2 else ""
+
+        if table != "REGIONSOLUTION":
+            continue
+
+        if rectype == "I":
+            col_index = {name.strip().upper(): i for i, name in enumerate(row)}
+            continue
+
+        if rectype != "D" or not col_index:
+            continue
+
+        def _get(name: str) -> str:
+            idx = col_index.get(name)
+            if idx is None or idx >= len(row):
+                return ""
+            return row[idx]
+
+        region = _get("REGIONID").strip()
+        if not region:
+            continue
+
+        interval_raw = _get("INTERVAL_DATETIME").strip()
+        run_raw = _get("RUN_DATETIME").strip()
+        if not interval_raw:
+            continue
+
+        interval_iso = to_nem_iso(parse_nem_csv(interval_raw))
+        run_iso = to_nem_iso(parse_nem_csv(run_raw)) if run_raw else ""
+        if run_iso and region not in run_dt_by_region:
+            run_dt_by_region[region] = run_iso
+
+        buckets.setdefault(region, []).append(
+            StpasaInterval(
+                interval_datetime=interval_iso,
+                run_datetime=run_iso,
+                demand10=_flt(_get("DEMAND10")),
+                demand50=_flt(_get("DEMAND50")),
+                demand90=_flt(_get("DEMAND90")),
+                surpluscapacity=_flt(_get("SURPLUSCAPACITY")),
+                ss_solar_uigf=_flt(_get("SS_SOLAR_UIGF")),
+                ss_wind_uigf=_flt(_get("SS_WIND_UIGF")),
+            )
+        )
+
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    results: dict[str, StpasaResult] = {}
+    for region, intervals in buckets.items():
+        if not intervals:
+            continue
+        intervals.sort(key=lambda p: p.interval_datetime)
+        results[region] = StpasaResult(
+            region=region,
+            run_datetime=run_dt_by_region.get(region, ""),
+            intervals=intervals,
+            fetched_at=fetched_at,
+        )
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Async network client
 # ---------------------------------------------------------------------------
@@ -248,23 +328,34 @@ class StpasaClient:
                 resp.raise_for_status()
                 return await resp.read()
 
-    async def fetch(self, region: str) -> StpasaResult | None:
-        """Fetch latest STPASA for *region*.  Returns None on any error."""
+    async def fetch_all_regions(self) -> dict[str, StpasaResult]:
+        """
+        Fetch the latest STPASA ZIP once and parse ALL regions from it.
+
+        Returns dict[region_str, StpasaResult] — one entry per region found in
+        the CSV.  Returns an empty dict on any error (best-effort, non-fatal):
+        the STPASA ZIP holds every NEM region, so a single download serves all
+        region stores.
+        """
         try:
             files = await self._list_files()
             if not files:
                 _LOGGER.warning("STPASA: no PUBLIC_STPASA ZIP files found at NEMWeb")
-                return None
+                return {}
             newest = sorted(files, key=lambda x: x["name"])[-1]
             raw = await self._fetch_bytes(newest["url"])
             csv_bytes = _extract_csv_bytes(raw)
-            result = _parse_regionsolution(csv_bytes, region)
-            if result is None:
+            results = _parse_all_regions(csv_bytes)
+            if not results:
                 _LOGGER.warning(
-                    "STPASA: no REGIONSOLUTION rows for %s in %s",
-                    region, newest["name"],
+                    "STPASA: no REGIONSOLUTION rows in %s", newest["name"]
                 )
-            return result
+            return results
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("STPASA fetch failed (non-fatal): %s", exc)
-            return None
+            return {}
+
+    async def fetch(self, region: str) -> StpasaResult | None:
+        """Fetch latest STPASA for *region*.  Returns None on any error."""
+        all_results = await self.fetch_all_regions()
+        return all_results.get(region)

@@ -21,7 +21,6 @@ from .const import (
 )
 from .dispatch_client import DispatchPrice, StaleIntervalError, fetch_dispatch_prices
 from .pd7day_client import PD7DayClient, PD7DayResult
-from .stpasa_client import StpasaClient
 from . import tod_stats as _tod_stats
 from .tod_stats import TodStats
 
@@ -95,15 +94,6 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             semaphore=semaphore,
         )
 
-    def _get_stpasa_client(self) -> StpasaClient:
-        if self._session is None or self._session.closed:
-            self._session = async_get_clientsession(self.hass)
-        semaphore = None
-        domain_data = getattr(self.hass, "data", None)
-        if isinstance(domain_data, dict):
-            semaphore = domain_data.get(DOMAIN, {}).get(NEMWEB_SEMAPHORE_KEY)
-        return StpasaClient(self._session, semaphore=semaphore)
-
     async def _async_update_data(self) -> PD7DayResult:
         client = self._get_client()
         t0 = datetime.now(timezone.utc)
@@ -137,17 +127,10 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             list(result.interconnectors.keys()),
         )
 
-        # Fetch STPASA (best-effort — failure must never fail the coordinator).
-        # On any error we leave the store's previous (possibly stale) latest()
-        # in place; the calibration path falls through to isotonic-only.
-        if self._stpasa_store is not None:
-            try:
-                stpasa_client = self._get_stpasa_client()
-                stpasa_result = await stpasa_client.fetch(self._regions[0])
-                if stpasa_result is not None:
-                    await self._stpasa_store.save(stpasa_result)
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.warning("STPASA fetch failed (non-fatal): %s", exc)
+        # STPASA is fetched centrally (once per cycle) in __init__.py and
+        # distributed to every region store; the coordinator only READS its
+        # store here.  latest() returns None when no fresh data is available,
+        # so the calibration path falls through to isotonic-only silently.
 
         # Feed forecast history into calibration store
         if self._store is not None:
