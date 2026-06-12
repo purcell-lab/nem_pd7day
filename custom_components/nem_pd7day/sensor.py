@@ -22,7 +22,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -186,6 +186,11 @@ async def async_setup_entry(
     entities.append(PD7DayForecastSensor(coordinator, store, entry, region))
     entities.append(PD7DayRegionSourceFileDatetimeSensor(coordinator, entry, region))
     entities.append(PD7DayRegionDataUpdatedDatetimeSensor(coordinator, entry, region))
+
+    # Diagnostic data sensors — expose the full PD7DAY / STPASA datasets as
+    # unrecorded attributes (kept out of the HA recorder database).
+    entities.append(PD7DayDataSensor(coordinator, store, entry, region))
+    entities.append(StpasaDataSensor(coordinator, entry, region))
 
 
     # Interconnectors for this region
@@ -1178,4 +1183,167 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
             "last_fetched": self._notice_store.last_fetched_at.isoformat()
                 if hasattr(self._notice_store, "last_fetched_at") and self._notice_store.last_fetched_at
                 else None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic data sensors — full datasets as unrecorded attributes
+# ---------------------------------------------------------------------------
+
+class PD7DayDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """Diagnostic sensor exposing the full PD7DAY forecast as an attribute.
+
+    State is the PD7DAY run datetime (forecast_generated_at).  The full
+    forecast list is exposed under the unrecorded ``forecast`` attribute so the
+    HA recorder never persists the large payload.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:database-export"
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _unrecorded_attributes = frozenset({"forecast"})
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        store,
+        entry: ConfigEntry,
+        region: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._store = store
+        self._entry = entry
+        self._region = region
+        region_slug = region.lower()
+        self._attr_unique_id = f"nem_pd7day_{region_slug}_pd7day_data"
+        self._attr_name = f"NEM {region} PD7DAY Data"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
+
+    @property
+    def _price_data(self):
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.prices.get(self._region)
+
+    @property
+    def native_value(self):
+        d = self._price_data
+        if d is None or not d.forecast_generated_at:
+            return STATE_UNAVAILABLE
+        return d.forecast_generated_at
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        d = self._price_data
+        if d is None:
+            return {}
+
+        run_at = d.forecast_generated_at
+        forecast = []
+        for period in d.forecast:
+            cal = self._calibrate_period(period, run_at)
+            forecast.append(
+                {
+                    "time": cal.get("time"),
+                    "nemtime": cal.get("nemtime"),
+                    "raw_rrp": cal.get("raw_value"),
+                    "calibrated": cal.get(ATTR_CAL_CALIBRATED),
+                    "p10": cal.get(ATTR_CAL_P10),
+                    "p90": cal.get(ATTR_CAL_P90),
+                    "calibrated_source": cal.get(ATTR_CAL_SOURCE),
+                    "horizon_hours": cal.get("horizon_hours"),
+                }
+            )
+
+        return {
+            ATTR_RUN_DATETIME: run_at,
+            ATTR_REGION: self._region,
+            "interval_count": len(forecast),
+            ATTR_FORECAST: forecast,
+        }
+
+    # Reuse the calibration logic from PD7DayForecastSensor for a single period.
+    _covariates_for_interval = PD7DayForecastSensor._covariates_for_interval
+    _calibrate_period = PD7DayForecastSensor._calibrate_period
+
+
+class StpasaDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """Diagnostic sensor exposing the full STPASA intervals as an attribute.
+
+    State is the STPASA run datetime.  The STPASA dataset is read live from the
+    per-region store at attribute-build time (the PD7DAY coordinator only drives
+    refresh cadence).  The intervals list is exposed under the unrecorded
+    ``intervals`` attribute so the HA recorder never persists the large payload.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:database-export"
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _unrecorded_attributes = frozenset({"intervals"})
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._region = region
+        region_slug = region.lower()
+        self._attr_unique_id = f"nem_pd7day_{region_slug}_stpasa_data"
+        self._attr_name = f"NEM {region} STPASA Data"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
+
+    def _latest(self):
+        store = self.hass.data.get(DOMAIN, {}).get("stpasa_stores", {}).get(self._region)
+        if store is None:
+            return None
+        return store.latest()
+
+    @property
+    def native_value(self):
+        result = self._latest()
+        if result is None or not result.run_datetime:
+            return STATE_UNAVAILABLE
+        return result.run_datetime
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        result = self._latest()
+        if result is None:
+            return {}
+
+        intervals = [
+            {
+                "interval_datetime": si.interval_datetime,
+                "demand10": si.demand10,
+                "demand50": si.demand50,
+                "demand90": si.demand90,
+                "surpluscapacity": si.surpluscapacity,
+                "ss_solar_uigf": si.ss_solar_uigf,
+                "ss_wind_uigf": si.ss_wind_uigf,
+            }
+            for si in result.intervals
+        ]
+
+        return {
+            ATTR_RUN_DATETIME: result.run_datetime,
+            ATTR_REGION: self._region,
+            "interval_count": len(intervals),
+            "intervals": intervals,
         }
