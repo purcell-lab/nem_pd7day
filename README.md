@@ -22,7 +22,7 @@ Both the spot price sensor and tariff sensors apply this trim automatically.
 
 ---
 
-## How it works — M3+STPASA forecasting model
+## How it works — Two-stage forecasting pipeline
 
 The integration uses a two-stage forecasting pipeline:
 
