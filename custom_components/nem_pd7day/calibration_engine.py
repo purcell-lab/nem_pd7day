@@ -195,6 +195,7 @@ from .const import (
     IRLS_ITER,
     MAX_OBS,
     MIN_OBS,
+    OLS_MIN_OBS,
     QUANTILES,
     TOD_LABELS,
 )
@@ -500,8 +501,15 @@ class CalibrationResult:
             stpasa.poe_spread_n,
         ]
 
-        # 5–6. Predict, clamp >= 0.
-        prediction = max(ols.predict(feature_vec), 0.0)
+        # 5. Predict.
+        prediction = ols.predict(feature_vec)
+
+        # 6. If OLS yields a non-positive value fall back to the isotonic result
+        #    rather than clamping to 0.  A clamped-zero calibrated price is
+        #    indistinguishable from a genuine zero-forecast and silently discards
+        #    the isotonic correction that was already applied in step 1.
+        if prediction <= 0.0:
+            return result
 
         # 7. Replace the point estimate only; keep quantile band as-is.
         out = dict(result)
@@ -1014,7 +1022,7 @@ class CalibrationEngine:
 
         Returns dict[bucket_key, OlsModel].  Only buckets whose horizon falls in
         [OLS_MIN_HORIZON_H, OLS_MAX_HORIZON_H] are fitted; each requires at least
-        MIN_OBS observations carrying valid STPASA data.  Under-populated buckets
+        OLS_MIN_OBS observations carrying valid STPASA data.  Under-populated buckets
         get an empty OlsModel (coef=[]).
 
         Feature order (after a leading 1.0 intercept term):
@@ -1067,7 +1075,7 @@ class CalibrationEngine:
 
         ols_models: dict[str, OlsModel] = {}
         for bucket_key, rows in bucket_rows.items():
-            if len(rows) < MIN_OBS:
+            if len(rows) < OLS_MIN_OBS:
                 ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
                 continue
             # Design matrix with leading intercept column of ones.

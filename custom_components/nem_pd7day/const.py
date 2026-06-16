@@ -96,7 +96,15 @@ INTERVAL_DURATION = timedelta(minutes=30)
 REFIT_INTERVAL = timedelta(hours=24)
 
 # Calibration engine tuning
+# MIN_OBS is the minimum training observations for the single-predictor
+# isotonic and linear models (BucketModel / LinearCoeff).
 MIN_OBS = 10
+# OLS_MIN_OBS is the minimum for the 9-feature multi-variate OLS used in
+# fit_ols_stage2().  Rule-of-thumb is ~10× features = 90; 50 is used as a
+# practical interim threshold.  Raising from 10 prevents severe over-fit
+# (r²≈0.99 with n=10–25) that produced destructive negative coefficients
+# and non-positive predictions clamped silently to 0.
+OLS_MIN_OBS = 50
 MAX_OBS = 5000
 IRLS_ITER = 15
 IRLS_EPS = 1e-8
