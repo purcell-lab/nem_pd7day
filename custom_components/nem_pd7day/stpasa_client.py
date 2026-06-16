@@ -69,6 +69,7 @@ class StpasaResult:
     run_datetime: str        # ISO-8601 NEM +10:00 of the run (from first row)
     intervals: list[StpasaInterval] = field(default_factory=list)
     fetched_at: str = ""     # ISO-8601 UTC when fetched
+    is_stale: bool = False   # True when served beyond STPASA_CACHE_TTL (up to STPASA_STALE_TTL)
 
 
 # ---------------------------------------------------------------------------
