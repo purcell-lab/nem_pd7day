@@ -127,6 +127,11 @@ def _stpasa_features_for_interval(
     result = store.latest()
     if result is None or not result.intervals:
         return None
+    if result.is_stale:
+        _LOGGER.warning(
+            "STPASA cache is stale (>90 min old) — using stale data for OLS calibration. "
+            "STPASA fetch may have failed; check integration logs."
+        )
 
     from .calibration_engine import StpasaFeatures
     from .nem_time import interval_start
