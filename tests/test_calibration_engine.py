@@ -1421,8 +1421,9 @@ def test_fit_ols_stage2_basic():
     """fit_ols_stage2 returns OlsModel with non-empty coef for in-band buckets."""
     engine = CalibrationEngine()
     # h24_48 bucket (in OLS band) and h48_96 bucket.
-    obs1, sp1 = _make_stpasa_obs(n=40, horizon_hours=30.0, hour_of_day=17, seed=1)
-    obs2, sp2 = _make_stpasa_obs(n=40, horizon_hours=60.0, hour_of_day=17, seed=2)
+    # Use n=60 (>= OLS_MIN_OBS=50) to ensure buckets are fitted.
+    obs1, sp1 = _make_stpasa_obs(n=60, horizon_hours=30.0, hour_of_day=17, seed=1)
+    obs2, sp2 = _make_stpasa_obs(n=60, horizon_hours=60.0, hour_of_day=17, seed=2)
     observations = obs1 + obs2
     stpasa_by_key = {**sp1, **sp2}
 
@@ -1534,6 +1535,148 @@ def test_from_storage_missing_ols_key():
     print("  PASS: from_storage missing ols key")
 
 
+def test_apply_stpasa_negative_ols_falls_back_to_isotonic():
+    """When OLS predicts a non-positive value, apply() must return the isotonic
+    result rather than clamping to 0.
+
+    Regression test for the bug observed with h24_48__shoulder:
+    OLS coef[0] (iso_calibrated coefficient) was negative (-1.879 in the
+    wild), causing predictions of <=0 for typical forecast values.  Prior code
+    returned ``calibrated: 0``; the correct behaviour is to fall back to the
+    isotonic result and NOT emit ``calibrated_source: isotonic+stpasa``.
+    """
+    from custom_components.nem_pd7day.calibration_engine import (
+        OlsModel,
+        RunFeatures,
+        StpasaFeatures,
+        _bucket_key,
+    )
+
+    # Build a result with enough obs for isotonic but inject a broken OLS model
+    # whose intercept alone drives predictions below zero.
+    engine = CalibrationEngine()
+    obs = _make_obs_batch(n=60, a=1.2, b=0.02, horizon_hours=36.0, hour_of_day=10)
+    result = engine.fit(obs)
+
+    # Inject an OLS model with a strongly negative iso_calibrated coefficient
+    # (coef layout: [intercept, iso_cal, run_max_h6, run_mean, run_spread,
+    #                 h_norm, log_surplus, log_solar, log_demand, poe_spread]).
+    key = _bucket_key(36.0, 10)
+    negative_ols = OlsModel(
+        bucket_key=key,
+        coef=[0.05, -2.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        n_train=15,
+        r2=0.99,
+    )
+    result.ols_models[key] = negative_ols
+
+    rf = RunFeatures(run_max_h6_rrp=0.18, run_mean_rrp=0.12, run_spread=0.04)
+    sf = StpasaFeatures(
+        log_surplus=0.3,
+        log_solar=0.8,
+        log_demand=0.5,
+        poe_spread_n=0.1,
+        stpasa_run_at="2026-06-16T05:00:00+10:00",
+    )
+
+    out = result.apply(
+        0.15, horizon_hours=36.0, hour_of_day=10, stpasa=sf, run_features=rf
+    )
+
+    assert out["calibrated"] != 0.0, (
+        f"calibrated must not be 0 when OLS predicts negative; got {out['calibrated']}"
+    )
+    assert out["calibrated"] > 0.0, (
+        f"fallback isotonic result must be positive; got {out['calibrated']}"
+    )
+    assert out["calibrated_source"] != "isotonic+stpasa", (
+        f"calibrated_source must not be 'isotonic+stpasa' on negative-OLS fallback; "
+        f"got {out['calibrated_source']}"
+    )
+    assert "stpasa_run_at" not in out, (
+        "stpasa_run_at must be absent when falling back to isotonic"
+    )
+    print(
+        f"  PASS: negative OLS falls back to isotonic "
+        f"(calibrated={out['calibrated']:.4f}, source={out['calibrated_source']})"
+    )
+
+
+def test_apply_stpasa_zero_ols_falls_back_to_isotonic():
+    """An OLS prediction of exactly 0.0 must also trigger the isotonic fallback."""
+    from custom_components.nem_pd7day.calibration_engine import (
+        OlsModel,
+        RunFeatures,
+        StpasaFeatures,
+        _bucket_key,
+    )
+
+    engine = CalibrationEngine()
+    obs = _make_obs_batch(n=60, a=1.2, b=0.02, horizon_hours=36.0, hour_of_day=10)
+    result = engine.fit(obs)
+
+    key = _bucket_key(36.0, 10)
+    # All-zero coefs: predict() returns exactly 0.0 regardless of features.
+    zero_ols = OlsModel(
+        bucket_key=key,
+        coef=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        n_train=60,
+        r2=0.0,
+    )
+    result.ols_models[key] = zero_ols
+
+    rf = RunFeatures(run_max_h6_rrp=0.0, run_mean_rrp=0.0, run_spread=0.0)
+    sf = StpasaFeatures(
+        log_surplus=0.0,
+        log_solar=0.0,
+        log_demand=0.0,
+        poe_spread_n=0.0,
+        stpasa_run_at="2026-06-16T05:00:00+10:00",
+    )
+
+    out = result.apply(
+        0.15, horizon_hours=36.0, hour_of_day=10, stpasa=sf, run_features=rf
+    )
+
+    assert out["calibrated"] != 0.0, (
+        f"exact-zero OLS must fall back to isotonic; got calibrated={out['calibrated']}"
+    )
+    assert out["calibrated_source"] != "isotonic+stpasa"
+    print(
+        f"  PASS: zero OLS falls back to isotonic "
+        f"(calibrated={out['calibrated']:.4f}, source={out['calibrated_source']})"
+    )
+
+
+def test_min_obs_is_fifty():
+    """OLS_MIN_OBS must be 50 to prevent OLS over-fit with 9-feature models."""
+    from custom_components.nem_pd7day.const import OLS_MIN_OBS
+    assert OLS_MIN_OBS == 50, (
+        f"OLS_MIN_OBS must be 50 (9-feature OLS rule-of-thumb guard); got {OLS_MIN_OBS}"
+    )
+    print(f"  PASS: OLS_MIN_OBS == {OLS_MIN_OBS}")
+
+
+def test_ols_stage2_requires_min_obs_for_fit():
+    """fit_ols_stage2() must return an empty-coef OlsModel for buckets with
+    fewer than OLS_MIN_OBS observations (previously MIN_OBS=10 was too low
+    for the 9-feature model and caused severe over-fit)."""
+    from custom_components.nem_pd7day.const import OLS_MIN_OBS
+
+    engine = CalibrationEngine()
+    # Use exactly OLS_MIN_OBS - 1 observations: must NOT produce a fitted OLS model.
+    obs, stpasa_by_key = _make_stpasa_obs(
+        n=OLS_MIN_OBS - 1, horizon_hours=36.0, hour_of_day=17, seed=99
+    )
+    ols_models = engine.fit_ols_stage2(obs, stpasa_by_key)
+    for key, model in ols_models.items():
+        assert len(model.coef) < 2, (
+            f"Bucket {key!r} must not have a fitted OLS model with n < OLS_MIN_OBS ({OLS_MIN_OBS}); "
+            f"got coef={model.coef}"
+        )
+    print(f"  PASS: fit_ols_stage2 skips buckets with n < OLS_MIN_OBS ({OLS_MIN_OBS})")
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -1608,6 +1751,11 @@ TESTS = [
     test_apply_stpasa_skipped_above_h120,
     test_ols_serialisation_round_trip,
     test_from_storage_missing_ols_key,
+    # OLS stage2 negative-prediction fallback
+    test_apply_stpasa_negative_ols_falls_back_to_isotonic,
+    test_apply_stpasa_zero_ols_falls_back_to_isotonic,
+    test_min_obs_is_fifty,
+    test_ols_stage2_requires_min_obs_for_fit,
 ]
 
 
