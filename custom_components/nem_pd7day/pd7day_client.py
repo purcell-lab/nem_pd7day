@@ -33,7 +33,7 @@ from urllib.parse import urljoin
 
 import aiohttp
 
-from .const import FILE_PATTERN, NEMWEB_BASE_URL, QLD1_INTERCONNECTORS
+from .const import FILE_PATTERN, NEMWEB_BASE_URL, NEMWEB_HEADERS, QLD1_INTERCONNECTORS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -410,7 +410,9 @@ class PD7DayClient:
     async def _list_files(self) -> list[dict[str, str]]:
         async with self._gate():
             async with self._session.get(
-                self._base_url, timeout=aiohttp.ClientTimeout(total=30)
+                self._base_url,
+                headers=NEMWEB_HEADERS,
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 resp.raise_for_status()
                 html = await resp.text(errors="ignore")
@@ -434,7 +436,9 @@ class PD7DayClient:
     async def _fetch_bytes(self, url: str) -> bytes:
         async with self._gate():
             async with self._session.get(
-                url, timeout=aiohttp.ClientTimeout(total=60)
+                url,
+                headers=NEMWEB_HEADERS,
+                timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
                 resp.raise_for_status()
                 return await resp.read()
