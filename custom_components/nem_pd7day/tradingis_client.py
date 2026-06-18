@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 
 import aiohttp
 
-from .const import TRADINGIS_BASE_URL
+from .const import NEMWEB_HEADERS, TRADINGIS_BASE_URL
 from .nem_time import NEM_TZ
 
 _LOGGER = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ class TradingISClient:
         ):
             return self._dir_cache
 
-        async with self._session.get(self.BASE_URL) as resp:
+        async with self._session.get(self.BASE_URL, headers=NEMWEB_HEADERS) as resp:
             resp.raise_for_status()
             html = await resp.text()
 
@@ -129,7 +129,7 @@ class TradingISClient:
         Returns the RRP in $/kWh, or None if region not found or on error.
         """
         try:
-            async with self._session.get(url) as resp:
+            async with self._session.get(url, headers=NEMWEB_HEADERS) as resp:
                 resp.raise_for_status()
                 data = await resp.read()
         except aiohttp.ClientError as exc:

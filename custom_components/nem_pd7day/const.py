@@ -56,6 +56,19 @@ def region_startup_index(region: str) -> int:
 NEMWEB_SEMAPHORE_KEY = "nemweb_semaphore"
 NEMWEB_MAX_CONCURRENT_REQUESTS = 2
 
+# NEMWEB sits behind Akamai bot management that intermittently returns 403 to
+# requests carrying automated/default User-Agents (e.g. the default
+# "HomeAssistant/… aiohttp/…"). Send a consistent browser-like User-Agent on
+# every NEMWEB request to reduce throttling. (The dispatch and market-notice
+# clients already send a UA; this unifies the STPASA/PD7DAY/TradingIS clients,
+# which previously sent none.) Note: severe 403s are rate/IP-based and also need
+# request-volume limits + backoff, not just a UA.
+NEMWEB_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+NEMWEB_HEADERS = {"User-Agent": NEMWEB_USER_AGENT}
+
 # Config entry keys
 CONF_REGION = "region"
 CONF_REGIONS = "regions"  # kept for migration from old list-based config
