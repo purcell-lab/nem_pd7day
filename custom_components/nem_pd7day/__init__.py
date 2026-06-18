@@ -198,6 +198,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
                     "STPASA: fetched and distributed to %d region stores",
                     len(all_results),
                 )
+            else:
+                # Logged once per cycle here (not per forecast interval in
+                # sensor._stpasa_features_for_interval) to avoid log flooding.
+                # An empty result means this cycle got no fresh STPASA, so OLS
+                # stage-2 falls back to cached/stale STPASA or isotonic-only.
+                _LOGGER.warning(
+                    "STPASA: no fresh data this cycle — OLS calibration will use "
+                    "cached/stale STPASA or fall back to isotonic-only. See earlier "
+                    "STPASA fetch warnings for the cause (e.g. NEMWEB 403)."
+                )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("STPASA central fetch failed (non-fatal): %s", exc)
 

@@ -127,11 +127,11 @@ def _stpasa_features_for_interval(
     result = store.latest()
     if result is None or not result.intervals:
         return None
-    if result.is_stale:
-        _LOGGER.warning(
-            "STPASA cache is stale (>90 min old) — using stale data for OLS calibration. "
-            "STPASA fetch may have failed; check integration logs."
-        )
+    # NOTE: staleness is intentionally NOT logged here. This function runs once
+    # per forecast interval (~196 intervals across the h22–h120 OLS band, per
+    # sensor, every coordinator update), so logging here produced ~2 warnings/s
+    # (~212k/day). The stale/failed-fetch condition is logged at most once per
+    # cycle in __init__'s _fetch_and_distribute_stpasa instead.
 
     from .calibration_engine import StpasaFeatures
     from .nem_time import interval_start
