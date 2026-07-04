@@ -210,7 +210,7 @@ DISTRIBUTOR_TARIFFS = {
     "evoenergy":   ["015", "016", "017", "018", "026", "090"],
     "jemena":      ["D1", "PRTOU"],
     "powercor":    ["D1", "PRTOU", "NDMO21", "NDTOU", "PRDS"],
-    "united":      ["D1", "URTOU", "FURTOU", "FURDS", "URDS", "NDMO21", "NDTOU", "PRDS"],
+    "united":      ["D1", "URTOU", "FURTOU", "FURDS", "URDS", "NDMO21", "NDTOU", "PRDS", "LVS1R", "URSTOU"],
     "ausnet":      ["NAST11S", "NEE11S"],
     "victoria":    ["VICR_SINGLE", "VICR_TOU", "VICR_DEMAND", "VICS_SINGLE", "VICS_TOU", "VICS_DEMAND"],
     "sapn":        ["RESELE", "RESELEX", "RELE2W", "SBELE", "SBELEX", "B2R", "RSR", "RTOU", "RTOUNE", "RPRO", "RELE", "SBTOU", "SBTOUNE"],
@@ -322,6 +322,8 @@ TARIFF_NAMES = {
         "NDMO21": "NDMO21 TOU",
         "NDTOU": "NDTOU TOU",
         "PRDS": "Residential Daytime Saver",
+        "LVS1R": "Residential Single Rate",
+        "URSTOU": "Residential ToU",
     },
     # AusNet
     "ausnet": {
@@ -391,8 +393,8 @@ DEFAULT_ENABLED_TARIFFS = {
     ("powercor", "PRTOU"), # Residential TOU
     ("powercor", "PRDS"),  # Residential Daytime Saver (trial)
     # United
-    ("united", "URTOU"),   # Residential TOU
-    ("united", "PRDS"),    # Residential Daytime Saver (trial)
+    ("united", "URSTOU"),   # Residential TOU
+    ("united", "LVS1R"),    # Residential Single Rate
     # AusNet — small set, enable both
     ("ausnet", "NAST11S"),
     ("ausnet", "NEE11S"),
