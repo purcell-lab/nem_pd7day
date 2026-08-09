@@ -121,40 +121,43 @@ def _stpasa_features_for_interval(
     """
     if horizon_hours < _STPASA_MIN_HORIZON_H or horizon_hours > _STPASA_MAX_HORIZON_H:
         return None
-    store = getattr(coordinator, "_stpasa_store", None)
-    if store is None:
-        return None
-    result = store.latest()
-    if result is None or not result.intervals:
-        return None
+    # Use the coordinator's cached interval-START index (built once per STPASA
+    # run) instead of a per-interval linear scan over all STPASA intervals.
     # NOTE: staleness is intentionally NOT logged here. This function runs once
     # per forecast interval (~196 intervals across the h22–h120 OLS band, per
     # sensor, every coordinator update), so logging here produced ~2 warnings/s
     # (~212k/day). The stale/failed-fetch condition is logged at most once per
     # cycle in __init__'s _fetch_and_distribute_stpasa instead.
+    result, index_map, sorted_intervals = coordinator.stpasa_index()
+    if result is None or not index_map:
+        return None
 
     from .calibration_engine import StpasaFeatures
-    from .nem_time import interval_start
 
-    # Match on interval START: STPASA interval_datetime is the END, so convert.
-    exact = None
-    nearest = None
-    nearest_delta: float | None = None
-    target = parse_iso(interval_time_iso)
-    for si in result.intervals:
+    # Match on interval START: STPASA interval_datetime is the END, already
+    # converted to START in the index.
+    chosen = index_map.get(interval_time_iso)
+    if chosen is None:
+        # O(log n) nearest-match fallback against the sorted (epoch, interval) list.
         try:
-            si_start = parse_iso(interval_start(si.interval_datetime))
+            target_epoch = parse_iso(interval_time_iso).timestamp()
         except (ValueError, TypeError):
-            continue
-        if si_start == target:
-            exact = si
-            break
-        delta = abs((si_start - target).total_seconds())
-        if nearest_delta is None or delta < nearest_delta:
-            nearest_delta = delta
-            nearest = si
+            return None
+        import bisect
 
-    chosen = exact or nearest
+        epochs = [e for e, _ in sorted_intervals]
+        pos = bisect.bisect_left(epochs, target_epoch)
+        best = None
+        best_delta: float | None = None
+        for cand in (pos - 1, pos):
+            if 0 <= cand < len(sorted_intervals):
+                e, si = sorted_intervals[cand]
+                delta = abs(e - target_epoch)
+                if best_delta is None or delta < best_delta:
+                    best_delta = delta
+                    best = si
+        chosen = best
+
     if chosen is None:
         return None
     return StpasaFeatures.from_interval(chosen)
@@ -286,6 +289,44 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             model=DEVICE_MODEL,
             configuration_url=DEVICE_CONFIGURATION_URL,
         )
+
+    # Run-keyed calibrated-forecast cache. The calibrated forecast only changes
+    # when a new PD7DAY run lands or STPASA/calibration is refit, so we memoise
+    # the per-interval calibration (the expensive path) and reuse it across
+    # state writes that carry an unchanged run.
+    def _calibrated_forecast(self, d) -> list[dict]:
+        """
+        Return the calibrated forecast list for PriceData ``d``, memoised on the
+        PD7DAY run plus the STPASA index and calibration versions.
+
+        Recomputes only when an input that affects calibration changes:
+          * ``forecast_generated_at`` and interval count (new PD7DAY run),
+          * the STPASA index cache key (new/refetched STPASA run),
+          * the calibration store's fit identity (refit).
+        Otherwise the previously computed list is returned unchanged, avoiding
+        the full per-interval recalibration on every state write.
+        """
+        # Refresh the coordinator STPASA index so its cache key reflects the
+        # latest store contents before we fold it into our cache key.
+        try:
+            self.coordinator.stpasa_index()
+        except Exception:  # noqa: BLE001 - defensive: never break state build
+            pass
+        stpasa_key = getattr(self.coordinator, "_stpasa_index_run", None)
+        cal_gen = None
+        if self._store is not None:
+            cal = getattr(self._store, "calibration", None)
+            cal_gen = id(cal) if cal is not None else None
+        key = (d.forecast_generated_at, len(d.forecast), stpasa_key, cal_gen)
+        cached_key = getattr(self, "_cal_cache_key", None)
+        cached_val = getattr(self, "_cal_cache_value", None)
+        if key == cached_key and cached_val is not None:
+            return cached_val
+        run_at = d.forecast_generated_at
+        value = [self._calibrate_period(p, run_at) for p in d.forecast]
+        self._cal_cache_key = key
+        self._cal_cache_value = value
+        return value
 
     @property
     def _price_data(self):
@@ -448,9 +489,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             return {}
 
         run_at = d.forecast_generated_at
-        calibrated_forecast = [
-            self._calibrate_period(p, run_at) for p in d.forecast
-        ]
+        calibrated_forecast = self._calibrated_forecast(d)
 
         # Base sensor always provides full day 1-7 forecast
         trimmed_forecast = calibrated_forecast
@@ -677,15 +716,18 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
             base["value"] = period.value
         return base
 
+    # Run-keyed calibrated-forecast cache (shared implementation). Memoises the
+    # per-interval calibration so unchanged runs are not recomputed on every
+    # state write.
+    _calibrated_forecast = PD7DayForecastSensor._calibrated_forecast
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         d = self._price_data
         if d is None:
             return {}
         run_at = d.forecast_generated_at
-        calibrated_forecast = [
-            self._calibrate_period(p, run_at) for p in d.forecast
-        ]
+        calibrated_forecast = self._calibrated_forecast(d)
         # Day 2-7: trim to post-amber-express-cutoff only
         cutoff_dt = _amber_express_cutoff()
         trimmed_forecast = [
@@ -1240,21 +1282,19 @@ class PD7DayDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             return {}
 
         run_at = d.forecast_generated_at
-        forecast = []
-        for period in d.forecast:
-            cal = self._calibrate_period(period, run_at)
-            forecast.append(
-                {
-                    "time": cal.get("time"),
-                    "nemtime": cal.get("nemtime"),
-                    "raw_rrp": cal.get("raw_value"),
-                    "calibrated": cal.get(ATTR_CAL_CALIBRATED),
-                    "p10": cal.get(ATTR_CAL_P10),
-                    "p90": cal.get(ATTR_CAL_P90),
-                    "calibrated_source": cal.get(ATTR_CAL_SOURCE),
-                    "horizon_hours": cal.get("horizon_hours"),
-                }
-            )
+        forecast = [
+            {
+                "time": cal.get("time"),
+                "nemtime": cal.get("nemtime"),
+                "raw_rrp": cal.get("raw_value"),
+                "calibrated": cal.get(ATTR_CAL_CALIBRATED),
+                "p10": cal.get(ATTR_CAL_P10),
+                "p90": cal.get(ATTR_CAL_P90),
+                "calibrated_source": cal.get(ATTR_CAL_SOURCE),
+                "horizon_hours": cal.get("horizon_hours"),
+            }
+            for cal in self._calibrated_forecast(d)
+        ]
 
         return {
             ATTR_RUN_DATETIME: run_at,
@@ -1266,6 +1306,7 @@ class PD7DayDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     # Reuse the calibration logic from PD7DayForecastSensor for a single period.
     _covariates_for_interval = PD7DayForecastSensor._covariates_for_interval
     _calibrate_period = PD7DayForecastSensor._calibrate_period
+    _calibrated_forecast = PD7DayForecastSensor._calibrated_forecast
 
 
 class StpasaDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
