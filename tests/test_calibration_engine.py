@@ -10,6 +10,30 @@ import math
 import sys
 import os
 import random
+from datetime import datetime, timedelta, timezone
+
+# ── Fixture date anchoring ────────────────────────────────────────────────────
+# CalibrationEngine.fit() only trains on observations newer than
+# OBSERVATION_WINDOW_DAYS (90).  Fixture dates must therefore be relative to
+# "now", not a fixed calendar date: the previous hard-coded 2026-04-13 anchor
+# aged out of the window on 2026-07-12, after which every observation was
+# silently dropped, all buckets fitted empty, and apply() returned
+# "passthrough" instead of "isotonic" — turning 17 tests red with no code
+# change.  Anchoring to now keeps these tests valid indefinitely.
+NEM_TZ = timezone(timedelta(hours=10))  # NEM is UTC+10 year-round (no DST)
+_OBS_ANCHOR = datetime.now(NEM_TZ) - timedelta(days=2)
+
+
+def _obs_day(offset_days: int = 0) -> datetime:
+    """Return the fixture base date, optionally offset, at midnight NEM time."""
+    return (_OBS_ANCHOR + timedelta(days=offset_days)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+
+def _obs_iso(offset_days: int = 0, hour: int = 0, minute: int = 0) -> str:
+    """ISO-8601 NEM timestamp for a fixture interval, relative to the anchor."""
+    return _obs_day(offset_days).replace(hour=hour, minute=minute).isoformat()
 
 # Allow running from repo root without installing the package.
 # Import the engine module directly to avoid loading the HA-dependent __init__.py.
@@ -76,17 +100,19 @@ def make_obs(
     hour_of_day: int = 14,
     is_intervention: bool = False,
 ) -> Observation:
-    # Build interval_time that matches hour_of_day so solar classification is consistent
-    interval_time = f"2026-04-13T{hour_of_day:02d}:00:00+10:00"
+    # Build interval_time that matches hour_of_day so solar classification is
+    # consistent.  Anchored to the fixture base date (see _OBS_ANCHOR) so the
+    # observation always falls inside the engine's rolling training window.
+    interval_dt = _obs_day().replace(hour=hour_of_day)
     return Observation(
-        interval_time=interval_time,
+        interval_time=interval_dt.isoformat(),
         horizon_hours=horizon_hours,
         pd7day_forecast=forecast,
         actual_rrp=actual,
-        forecast_run_at="2026-04-12T03:30:00+10:00",
+        forecast_run_at=_obs_iso(offset_days=-1, hour=3, minute=30),
         hour_of_day=hour_of_day,
-        day_of_week=0,
-        month=4,
+        day_of_week=interval_dt.weekday(),
+        month=interval_dt.month,
         gas_forecast_tj=75.0,
         qni_mwflow=-150.0,
         qni_violation_degree=0.0,
@@ -1355,7 +1381,7 @@ def _make_stpasa_obs(
     features so the OLS fit sees real variation.
     """
     rng = random.Random(seed)
-    run_at = "2026-04-12T03:30:00+10:00"
+    run_at = _obs_iso(offset_days=-1, hour=3, minute=30)
     obs: list[Observation] = []
     stpasa_by_key: dict[str, StpasaFeatures] = {}
 
@@ -1363,17 +1389,17 @@ def _make_stpasa_obs(
     # _compute_run_features populates RunFeatures for this run.  A real PD7DAY
     # run always contains near-term intervals; the in-band rows need them.
     for j in range(6):
-        near_it = f"2026-04-12T{(4 + j):02d}:00:00+10:00"
+        near_dt = _obs_day(offset_days=-1).replace(hour=4 + j)
         obs.append(
             Observation(
-                interval_time=near_it,
+                interval_time=near_dt.isoformat(),
                 horizon_hours=2.0 + j,
                 pd7day_forecast=rng.uniform(0.05, 0.25),
                 actual_rrp=rng.uniform(0.05, 0.30),
                 forecast_run_at=run_at,
                 hour_of_day=4 + j,
-                day_of_week=0,
-                month=4,
+                day_of_week=near_dt.weekday(),
+                month=near_dt.month,
                 gas_forecast_tj=75.0,
                 qni_mwflow=-150.0,
                 qni_violation_degree=0.0,
@@ -1383,8 +1409,10 @@ def _make_stpasa_obs(
 
     for i in range(n):
         # Distinct interval_time per obs (vary the day so keys are unique).
-        day = 13 + (i % 15)
-        interval_time = f"2026-04-{day:02d}T{hour_of_day:02d}:{(i % 2) * 30:02d}:00+10:00"
+        # Days step backwards from the anchor to stay inside the training window.
+        interval_time = _obs_day(offset_days=-(i % 15)).replace(
+            hour=hour_of_day, minute=(i % 2) * 30
+        ).isoformat()
         fc = rng.uniform(0.05, 0.25)
         # Higher surplus / solar pushes actual price down.
         surplus = rng.uniform(500.0, 5000.0)
@@ -1412,7 +1440,7 @@ def _make_stpasa_obs(
             log_solar=math.log1p(solar),
             log_demand=math.log(max(demand50, 1.0)),
             poe_spread_n=(demand50 * 1.1 - demand50 * 0.9) / demand50,
-            stpasa_run_at="2026-04-12T03:00:00+10:00",
+            stpasa_run_at=_obs_iso(offset_days=-1, hour=3),
         )
     return obs, stpasa_by_key
 
@@ -1450,7 +1478,7 @@ def test_apply_with_stpasa_improves_high_surplus():
         log_solar=math.log1p(4000.0),
         log_demand=math.log(6000.0),
         poe_spread_n=0.2,
-        stpasa_run_at="2026-04-12T03:00:00+10:00",
+        stpasa_run_at=_obs_iso(offset_days=-1, hour=3),
     )
     iso_only = result.apply(0.15, horizon_hours=36.0, hour_of_day=17)
     with_stpasa = result.apply(
@@ -1477,7 +1505,7 @@ def test_apply_stpasa_skipped_below_h22():
     rf = RunFeatures(run_max_h6_rrp=0.2, run_mean_rrp=0.1, run_spread=0.05)
     sf = StpasaFeatures(
         log_surplus=8.0, log_solar=8.0, log_demand=9.0, poe_spread_n=0.1,
-        stpasa_run_at="2026-04-12T03:00:00+10:00",
+        stpasa_run_at=_obs_iso(offset_days=-1, hour=3),
     )
     out = result.apply(0.15, horizon_hours=20.0, hour_of_day=17, stpasa=sf, run_features=rf)
     assert out["calibrated_source"] != "isotonic+stpasa", out["calibrated_source"]
@@ -1495,7 +1523,7 @@ def test_apply_stpasa_skipped_above_h120():
     rf = RunFeatures(run_max_h6_rrp=0.2, run_mean_rrp=0.1, run_spread=0.05)
     sf = StpasaFeatures(
         log_surplus=8.0, log_solar=8.0, log_demand=9.0, poe_spread_n=0.1,
-        stpasa_run_at="2026-04-12T03:00:00+10:00",
+        stpasa_run_at=_obs_iso(offset_days=-1, hour=3),
     )
     out = result.apply(0.15, horizon_hours=130.0, hour_of_day=17, stpasa=sf, run_features=rf)
     assert out["calibrated_source"] != "isotonic+stpasa", out["calibrated_source"]
@@ -1783,3 +1811,87 @@ def run_all():
 if __name__ == "__main__":
     success = run_all()
     sys.exit(0 if success else 1)
+
+
+# ── Guard: fixture observations must stay inside the training window ──────────
+# These tests exist because the suite silently rotted once before: fixture
+# observations were pinned to a fixed calendar date (2026-04-13), which aged
+# past OBSERVATION_WINDOW_DAYS on 2026-07-12.  Every observation was then
+# discarded by fit(), all buckets fitted empty, and 17 tests failed with
+# confusing "expected isotonic, got passthrough" assertions rather than
+# pointing at the real cause.  These guards fail loudly and specifically.
+
+def test_fixture_observations_are_inside_training_window():
+    """Fixture dates must be recent enough for fit() to train on them."""
+    window_days = _engine_mod.OBSERVATION_WINDOW_DAYS
+    now = datetime.now(NEM_TZ)
+    cutoff = now - timedelta(days=window_days)
+
+    for label, obs in (
+        ("make_obs", [make_obs(0.10, 0.20)]),
+        ("_make_obs_batch", _make_obs_batch(
+            n=5, a=2.0, b=0.02, horizon_hours=18.0, hour_of_day=12
+        )),
+    ):
+        for o in obs:
+            interval = datetime.fromisoformat(o.interval_time)
+            age_days = (now - interval).days
+            assert interval >= cutoff, (
+                f"{label}() produced an observation dated {o.interval_time} "
+                f"({age_days}d old), outside the engine's "
+                f"{window_days}-day training window. Fixture dates must be "
+                f"anchored to datetime.now(), not a fixed calendar date."
+            )
+            run_at = datetime.fromisoformat(o.forecast_run_at)
+            assert run_at <= interval, (
+                f"{label}() forecast_run_at {o.forecast_run_at} must not be "
+                f"after interval_time {o.interval_time}"
+            )
+
+
+def test_fixture_anchor_is_not_in_the_future():
+    """The anchor must be in the past, or horizons/actuals are nonsensical."""
+    now = datetime.now(NEM_TZ)
+    assert _OBS_ANCHOR < now, (
+        f"Fixture anchor {_OBS_ANCHOR.isoformat()} is in the future relative "
+        f"to {now.isoformat()}"
+    )
+
+
+def test_stale_observations_yield_empty_buckets():
+    """
+    Document the failure mode the guards above protect against: observations
+    older than OBSERVATION_WINDOW_DAYS are discarded by fit(), producing empty
+    buckets and a "passthrough" result with n_obs=0.
+    """
+    window_days = _engine_mod.OBSERVATION_WINDOW_DAYS
+    stale_day = datetime.now(NEM_TZ) - timedelta(days=window_days + 30)
+
+    stale_obs = [
+        Observation(
+            interval_time=stale_day.replace(
+                hour=12, minute=0, second=0, microsecond=0
+            ).isoformat(),
+            horizon_hours=18.0,
+            pd7day_forecast=fc,
+            actual_rrp=2.2 * fc + 0.025,
+            forecast_run_at=(stale_day - timedelta(days=1)).replace(
+                hour=3, minute=30, second=0, microsecond=0
+            ).isoformat(),
+            hour_of_day=12,
+            day_of_week=stale_day.weekday(),
+            month=stale_day.month,
+            gas_forecast_tj=75.0,
+            qni_mwflow=-150.0,
+            qni_violation_degree=0.0,
+            is_intervention=False,
+        )
+        for fc in [0.05 + 0.0025 * i for i in range(80)]
+    ]
+
+    result = CalibrationEngine().fit(stale_obs)
+    out = result.apply(0.10, horizon_hours=18.0, hour_of_day=12)
+
+    assert out["calibrated_source"] == "passthrough"
+    assert out["n_obs"] == 0
+    assert out["calibrated"] == 0.10, "stale fit must pass the raw value through"

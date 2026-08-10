@@ -340,16 +340,33 @@ def test_accumulator_rebuilt_from_loaded_observations():
 
 # ── Tests: sanity guard in calibration engine ─────────────────────────────────
 
+# ── Fixture date anchoring ───────────────────────────────────────────────────
+# CalibrationEngine.fit() only trains on observations newer than
+# OBSERVATION_WINDOW_DAYS (90), so fixture dates must be relative to "now".
+# A previously hard-coded 2026-04-14 anchor aged out of the window on
+# 2026-07-13, after which every observation was silently discarded and
+# apply() returned "passthrough" with n_obs=0 instead of "isotonic".
+NEM_TZ_FIXTURE = timezone(timedelta(hours=10))  # NEM is UTC+10 year-round
+_OBS_ANCHOR = (datetime.now(NEM_TZ_FIXTURE) - timedelta(days=2)).replace(
+    minute=0, second=0, microsecond=0
+)
+
+
+def _obs_iso(hour: int, offset_days: int = 0) -> str:
+    """ISO-8601 NEM timestamp for a fixture interval, relative to the anchor."""
+    return (_OBS_ANCHOR + timedelta(days=offset_days)).replace(hour=hour).isoformat()
+
+
 def _make_obs(forecast, actual, horizon=3.0, hour=21):
     return Observation(
-        interval_time="2026-04-14T21:00:00+10:00",
+        interval_time=_obs_iso(hour=21),
         horizon_hours=horizon,
         pd7day_forecast=forecast,
         actual_rrp=actual,
-        forecast_run_at="2026-04-14T18:00:00+10:00",
+        forecast_run_at=_obs_iso(hour=18),
         hour_of_day=hour,
-        day_of_week=1,
-        month=4,
+        day_of_week=_OBS_ANCHOR.weekday(),
+        month=_OBS_ANCHOR.month,
         gas_forecast_tj=None,
         qni_mwflow=None,
         qni_violation_degree=None,
@@ -937,14 +954,14 @@ def _make_store_with_calibration():
     # Fit with enough normal observations so the calibration is active
     obs = [
         Observation(
-            interval_time="2026-04-14T21:00:00+10:00",
+            interval_time=_obs_iso(hour=21),
             horizon_hours=rng.uniform(0, 96),
             pd7day_forecast=rng.uniform(0.05, 0.25),
             actual_rrp=rng.uniform(0.06, 0.28),
-            forecast_run_at="2026-04-14T18:00:00+10:00",
+            forecast_run_at=_obs_iso(hour=18),
             hour_of_day=rng.randint(0, 23),
-            day_of_week=1,
-            month=4,
+            day_of_week=_OBS_ANCHOR.weekday(),
+            month=_OBS_ANCHOR.month,
             gas_forecast_tj=None,
             qni_mwflow=None,
             qni_violation_degree=None,
@@ -1175,3 +1192,38 @@ def test_build_stpasa_feature_map():
     # poe_spread_n = (d10 - d90) / d50 = (5500 - 6500) / 6000
     assert abs(feat.poe_spread_n - ((5500.0 - 6500.0) / 6000.0)) < 1e-9
     assert feat.stpasa_run_at == nem_iso(stpasa_run_dt)
+
+
+# ── Guard: fixture observations must stay inside the training window ──────────
+# See the matching guard in test_calibration_engine.py. Fixture dates pinned to
+# a fixed calendar date age out of OBSERVATION_WINDOW_DAYS and silently turn
+# every calibration assertion into a "passthrough" failure with n_obs=0.
+
+def test_store_fixture_observations_are_inside_training_window():
+    """_make_obs() dates must be recent enough for CalibrationEngine to fit."""
+    window_days = _engine_mod.OBSERVATION_WINDOW_DAYS
+    now = datetime.now(NEM_TZ_FIXTURE)
+    cutoff = now - timedelta(days=window_days)
+
+    o = _make_obs(forecast=0.10, actual=0.20)
+    interval = datetime.fromisoformat(o.interval_time)
+    assert interval >= cutoff, (
+        f"_make_obs() produced an observation dated {o.interval_time} "
+        f"({(now - interval).days}d old), outside the engine's "
+        f"{window_days}-day training window. Anchor fixture dates to "
+        f"datetime.now(), not a fixed calendar date."
+    )
+
+
+def test_store_fixture_calibration_actually_fits():
+    """
+    _make_store_with_calibration() must produce a *fitted* calibration.
+    If fixture dates rot, the fit silently yields empty buckets and every
+    apply_to_price() assertion degrades to passthrough.
+    """
+    store = _make_store_with_calibration()
+    out = store._calibration.apply(0.10, horizon_hours=3.0, hour_of_day=21)
+    assert out["n_obs"] > 0, (
+        f"Fixture calibration fitted zero observations: {out}. "
+        f"Fixture dates have likely aged out of the training window."
+    )
