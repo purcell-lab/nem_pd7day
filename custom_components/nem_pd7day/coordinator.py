@@ -76,6 +76,14 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         self._notice_client: "MarketNoticeClient | None" = notice_client
         self._forecast_store: "ForecastStore | None" = forecast_store
         self._stpasa_store: "StpasaStore | None" = stpasa_store
+        # STPASA interval-start index cache, rebuilt once per STPASA run_datetime.
+        # Maps interval START (ISO-8601 NEM +10:00) -> StpasaInterval, plus a
+        # sorted list of (epoch_seconds, StpasaInterval) for O(log n) nearest
+        # match. Avoids the previous O(intervals x stpasa_intervals) linear scan
+        # that ran once per forecast interval per state write.
+        self._stpasa_index_run: str | None = None
+        self._stpasa_index_map: dict[str, Any] = {}
+        self._stpasa_index_sorted: list[tuple[float, Any]] = []
         self._first_refresh_done = False
         # 0-based position in the fixed region order — retained for callers that
         # still query it; background refreshes are now staggered in __init__.py.
@@ -258,6 +266,53 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             run_mean_rrp=(sum(day) / len(day)) if day else 0.0,
             run_spread=_p90_minus_p10(day),
         )
+
+    def stpasa_index(self):
+        """
+        Return a cached STPASA lookup index for the latest STPASA result.
+
+        Returns a tuple ``(result, index_map, sorted_intervals)`` where:
+          * ``result`` is the ``StpasaResult`` from the store (or ``None``),
+          * ``index_map`` maps interval-START ISO strings to ``StpasaInterval``,
+          * ``sorted_intervals`` is a list of ``(epoch_seconds, StpasaInterval)``
+            sorted by epoch, for O(log n) nearest-match fallback.
+
+        The index is built once per STPASA ``run_datetime`` and reused across
+        every forecast interval and every sensor state write, replacing the old
+        O(forecast_intervals x stpasa_intervals) linear scan.
+        """
+        store = self._stpasa_store
+        if store is None:
+            return None, {}, []
+        result = store.latest()
+        if result is None or not result.intervals:
+            self._stpasa_index_run = None
+            self._stpasa_index_map = {}
+            self._stpasa_index_sorted = []
+            return result, {}, []
+
+        # Rebuild only when the STPASA run changes (fetched_at disambiguates a
+        # same-run refetch that could, in principle, change interval contents).
+        cache_key = f"{result.run_datetime}|{result.fetched_at}"
+        if cache_key != self._stpasa_index_run:
+            from .nem_time import interval_start, parse_iso
+
+            index_map: dict[str, Any] = {}
+            sorted_intervals: list[tuple[float, Any]] = []
+            for si in result.intervals:
+                try:
+                    start_iso = interval_start(si.interval_datetime)
+                    epoch = parse_iso(start_iso).timestamp()
+                except (ValueError, TypeError):
+                    continue
+                index_map[start_iso] = si
+                sorted_intervals.append((epoch, si))
+            sorted_intervals.sort(key=lambda t: t[0])
+            self._stpasa_index_run = cache_key
+            self._stpasa_index_map = index_map
+            self._stpasa_index_sorted = sorted_intervals
+
+        return result, self._stpasa_index_map, self._stpasa_index_sorted
 
 
 # Seconds after each 5-minute dispatch boundary to poll ELEC_NEM_SUMMARY.
