@@ -56,6 +56,11 @@ def region_startup_index(region: str) -> int:
 NEMWEB_SEMAPHORE_KEY = "nemweb_semaphore"
 NEMWEB_MAX_CONCURRENT_REQUESTS = 2
 
+# hass.data[DOMAIN] key for the shared PD7DAY fetcher. The PD7DAY archive holds
+# every region, so it is downloaded and parsed once per cycle and each region
+# coordinator is served a filtered view. See pd7day_shared.py.
+SHARED_FETCH_KEY = "pd7day_shared_fetch"
+
 # NEMWEB sits behind Akamai bot management that intermittently returns 403 to
 # requests carrying automated/default User-Agents (e.g. the default
 # "HomeAssistant/… aiohttp/…"). Send a consistent browser-like User-Agent on
