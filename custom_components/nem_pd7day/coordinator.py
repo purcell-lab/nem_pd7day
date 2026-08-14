@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -15,6 +16,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     DOMAIN,
     NEMWEB_SEMAPHORE_KEY,
+    NOTICE_FETCH_LOCK_KEY,
+    NOTICE_FETCH_STAMP_KEY,
+    NOTICE_FETCH_WINDOW_S,
     QLD1_INTERCONNECTORS,
     SHARED_FETCH_KEY,
     interconnectors_for_regions,
@@ -223,22 +227,69 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                 raise
 
     async def async_fetch_notices(self) -> None:
-        """Fetch new market notices and persist."""
+        """Fetch new market notices and persist.
+
+        Market notices are not region-specific: the store and client are shared,
+        and every region coordinator reads the same notices out of the same
+        store. So this runs once per cycle across the whole integration rather
+        than once per region, which previously multiplied the directory poll and
+        every file fetch by five.
+        """
         if self._notice_client is None or self.notice_store is None:
             return
-        # Upgrade path: if store has a non-zero cursor but zero stored notices,
-        # the previous bootstrap skipped the 7-day backfill. Reset to trigger it.
-        total_notices = sum(
-            len(v) for v in self.notice_store._notices.values()
+
+        domain_data = self.hass.data.get(DOMAIN) if self.hass is not None else None
+        if not isinstance(domain_data, dict):
+            # No shared domain data to coordinate through, so there is no sibling
+            # coordinator to deduplicate against. Fetch directly.
+            await self._fetch_notices_once()
+            return
+
+        lock: asyncio.Lock = domain_data.setdefault(
+            NOTICE_FETCH_LOCK_KEY, asyncio.Lock()
         )
-        if self.notice_store.last_seen_notice_id > 0 and total_notices == 0:
-            self.notice_store.reset_cursor_for_backfill()
+        # Serialised rather than checked-then-fetched, so five coordinators
+        # arriving together queue behind one fetch and then see its timestamp,
+        # instead of all passing a staleness check simultaneously.
+        async with lock:
+            last = domain_data.get(NOTICE_FETCH_STAMP_KEY)
+            now = time.monotonic()
+            if last is not None and (now - last) < NOTICE_FETCH_WINDOW_S:
+                _LOGGER.debug(
+                    "[%s] Market notices fetched %.1f s ago by another region, "
+                    "using shared store",
+                    self._regions[0],
+                    now - last,
+                )
+                return
+            await self._fetch_notices_once()
+            domain_data[NOTICE_FETCH_STAMP_KEY] = time.monotonic()
+
+    async def _fetch_notices_once(self) -> None:
+        """Poll NEMWEB for current notices and persist any change."""
+        assert self._notice_client is not None and self.notice_store is not None
+        started = time.monotonic()
         self._notice_client.last_seen_notice_id = self.notice_store.last_seen_notice_id
         new_notices = await self._notice_client.fetch_new_notices()
+
+        # Persist the cursor even when nothing relevant was found. The client has
+        # examined those files and will not examine them again, so the store has
+        # to record that or the same window is re-read on every cycle.
+        cursor_moved = self.notice_store.advance_cursor(
+            self._notice_client.last_seen_notice_id
+        )
         if new_notices:
             self.notice_store.add_notices(new_notices)
+        if new_notices or cursor_moved:
             await self.notice_store.async_save()
+        if new_notices:
             _LOGGER.info("Fetched %d new market notices", len(new_notices))
+        _LOGGER.debug(
+            "[%s] Notice fetch took %.0f ms, cursor %d",
+            self._regions[0],
+            (time.monotonic() - started) * 1000,
+            self.notice_store.last_seen_notice_id,
+        )
 
     @property
     def current_run_features(self) -> "RunFeatures | None":

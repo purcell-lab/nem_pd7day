@@ -362,14 +362,19 @@ async def test_first_run_backfills_but_no_recent_files():
         __aexit__=AsyncMock(return_value=False),
     ))
 
-    client = MarketNoticeClient(mock_session)
+    # Clock set well after the fixture dates, so every listed file is outside the
+    # current-notice window.
+    client = MarketNoticeClient(
+        mock_session, clock=lambda: datetime(2026, 3, 1, 12, 0, tzinfo=NEM_TZ)
+    )
     assert client.last_seen_notice_id == 0
 
     result = await client.fetch_new_notices()
-    # All files are dated 20260101/20260102, which is > 7 days ago.
-    # Backfill date filter excludes them, so no files fetched.
+    # Every file predates the current window, so none is fetched.
     assert result == []
-    assert client.last_seen_notice_id == 0  # no files processed, cursor unchanged
+    # The cursor still advances past them. Leaving it at 0 would mean
+    # reconsidering and re-skipping the same files on every future cycle.
+    assert client.last_seen_notice_id == 133910
 
 
 @pytest.mark.asyncio
@@ -433,7 +438,10 @@ async def test_incremental_fetch_skips_old_notices():
         __aexit__=AsyncMock(return_value=False),
     ))
 
-    client = MarketNoticeClient(mock_session)
+    # Clock inside the fixture's own date window, so 20260102 counts as current.
+    client = MarketNoticeClient(
+        mock_session, clock=lambda: datetime(2026, 1, 2, 15, 0, tzinfo=NEM_TZ)
+    )
     client.last_seen_notice_id = 133909  # one behind the latest
 
     # _fetch_and_parse will be called for 133910 only

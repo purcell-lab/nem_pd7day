@@ -56,6 +56,25 @@ def region_startup_index(region: str) -> int:
 NEMWEB_SEMAPHORE_KEY = "nemweb_semaphore"
 NEMWEB_MAX_CONCURRENT_REQUESTS = 2
 
+# Guards the one-time creation of shared objects on hass.data[DOMAIN]. The five
+# region entries are set up concurrently and the creation paths await, so a bare
+# "if key not in data" check is not atomic and lets every entry build its own
+# copy of a supposedly shared object.
+SETUP_LOCK_KEY = "setup_lock"
+
+# Market notices are global, not per region, so one fetch serves all five region
+# coordinators. These keys hold the shared in-flight lock and the timestamp of
+# the last completed fetch, so coordinators refreshing together in a burst poll
+# the Market_Notice directory once between them instead of five times.
+NOTICE_FETCH_LOCK_KEY = "notice_fetch_lock"
+NOTICE_FETCH_STAMP_KEY = "notice_fetch_stamp"
+
+# A notice fetch within this many seconds of the previous one is served from the
+# shared store instead of hitting NEMWEB. Comfortably longer than the spread of
+# a staggered five-region refresh, far shorter than the 30-minute cycle, so no
+# real notice is delayed.
+NOTICE_FETCH_WINDOW_S = 60.0
+
 # hass.data[DOMAIN] key for the shared PD7DAY fetcher. The PD7DAY archive holds
 # every region, so it is downloaded and parsed once per cycle and each region
 # coordinator is served a filtered view. See pd7day_shared.py.
