@@ -185,16 +185,22 @@ class GridNoticeStore:
     def last_seen_notice_id(self) -> int:
         return self._last_seen_notice_id
 
-    def reset_cursor_for_backfill(self) -> None:
-        """Reset last_seen to 0 so the next fetch triggers a 7-day backfill.
-        Call when the store has no notices but a cursor was already set
-        (e.g. after upgrading from a version that skipped first-run backfill).
+    def advance_cursor(self, notice_id: int) -> bool:
+        """Move the cursor forward to notice_id, returning True if it moved.
+
+        add_notices only advances the cursor when a notice was actually stored,
+        which is wrong as the sole mechanism: LOR and MSL notices are rare, so
+        most cycles store nothing and the cursor would never move. The client
+        then re-examines every notice published since the last relevant one,
+        which grows without bound.
+
+        The cursor is monotonic. It is a high-water mark of what has been
+        examined, not of what has been kept.
         """
-        _LOGGER.info(
-            "Resetting notice cursor from %d to 0 to trigger 7-day backfill",
-            self._last_seen_notice_id,
-        )
-        self._last_seen_notice_id = 0
+        if notice_id <= self._last_seen_notice_id:
+            return False
+        self._last_seen_notice_id = notice_id
+        return True
 
     def _prune(self) -> None:
         """Remove notices older than NOTICE_RETENTION_DAYS past their period_to."""

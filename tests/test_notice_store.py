@@ -75,22 +75,29 @@ def test_notice_store_last_fetched_at_set_on_add():
     assert store.last_fetched_at is not None
 
 
-def test_reset_cursor_for_backfill():
-    """reset_cursor_for_backfill sets last_seen_notice_id back to 0."""
-    hass = MagicMock()
-    store = GridNoticeStore(hass)
+def test_advance_cursor_moves_forward_only():
+    """The cursor is a monotonic high-water mark of what has been examined."""
+    store = GridNoticeStore.__new__(GridNoticeStore)
+    store._notices = {}
+    store._last_seen_notice_id = 5000
+    store.last_fetched_at = None
 
-    now = datetime(2026, 5, 14, 12, 0, tzinfo=NEM_TZ)
-    notices = [
-        GridNoticeAnnotation(
-            notice_id=5001, notice_type="LOR", level=1, region="SA1",
-            period_from=now + timedelta(hours=1),
-            period_to=now + timedelta(hours=3),
-            issued_at=now, is_cancelled=False,
-        ),
-    ]
-    store.add_notices(notices)
-    assert store.last_seen_notice_id == 5001
+    assert store.advance_cursor(5100) is True
+    assert store.last_seen_notice_id == 5100
 
-    store.reset_cursor_for_backfill()
-    assert store.last_seen_notice_id == 0
+    # A stale or out-of-order value must not rewind it, which would re-open the
+    # whole backlog for re-reading.
+    assert store.advance_cursor(5050) is False
+    assert store.last_seen_notice_id == 5100
+    assert store.advance_cursor(5100) is False
+    assert store.last_seen_notice_id == 5100
+
+
+def test_advance_cursor_from_cold_start():
+    store = GridNoticeStore.__new__(GridNoticeStore)
+    store._notices = {}
+    store._last_seen_notice_id = 0
+    store.last_fetched_at = None
+
+    assert store.advance_cursor(1) is True
+    assert store.last_seen_notice_id == 1

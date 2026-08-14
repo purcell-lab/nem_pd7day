@@ -3,7 +3,16 @@ NEMWEB Market Notice poller and parser.
 
 Polls https://www.nemweb.com.au/REPORTS/CURRENT/Market_Notice/ directory
 for new RESERVE NOTICE (LOR) and MINIMUM SYSTEM LOAD (MSL) notices.
-Tracks last-seen notice ID to avoid re-fetching old files.
+
+Only current notices are fetched, meaning the current and previous NEM day. An
+LOR or MSL notice exists to annotate a forecast period that is running or about
+to run, so older notices have no use here and the store prunes them anyway.
+
+The last-seen notice ID advances past every file each cycle considers, including
+files that turned out not to be LOR or MSL and files whose fetch failed. Only
+advancing it when a relevant notice was found leaves it parked below a growing
+backlog, and since LOR and MSL notices are rare, that is the normal case rather
+than the exception.
 """
 
 from __future__ import annotations
@@ -11,9 +20,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 import aiohttp
 
@@ -22,12 +32,27 @@ _LOGGER = logging.getLogger(__name__)
 NEM_TZ = timezone(timedelta(hours=10))
 NEMWEB_MARKET_NOTICE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/Market_Notice/"
 
-# On first run (cold start) backfill only this many hours of notices instead of
-# the full directory, to limit the startup request burst to NEMWEB.
-_NOTICE_BACKFILL_HOURS = 24
+# Only notices from the current or previous NEM day are of any use here. An LOR
+# or MSL notice annotates a forecast period that is either running now or about
+# to, so anything older is dead weight. The previous day is kept because a
+# notice issued late in the evening can cover a period that crosses midnight.
+#
+# Without this cap the directory listing is the only bound on how far back a
+# fetch reaches, which is how a stalled cursor turned into 145 file requests per
+# region per cycle.
+_NOTICE_CURRENT_DAYS = 1
 
-# Delay between individual notice file fetches to avoid bursting NEMWEB.
-_NOTICE_FETCH_DELAY_S = 0.5
+# Hard ceiling on file fetches per cycle, applied oldest-first so the cursor
+# still advances contiguously and any remainder is picked up next cycle. This is
+# a backstop: with the cursor advancing correctly, a normal cycle fetches a
+# handful of files.
+_NOTICE_MAX_FILES_PER_CYCLE = 40
+
+# Small delay inside the concurrency gate, so requests are paced rather than
+# fired as a burst. Fetches are now bounded by the shared NEMWEB semaphore, so
+# this no longer needs to carry throttling on its own and is much shorter than
+# the 0.5 s serial sleep it replaces.
+_NOTICE_FETCH_DELAY_S = 0.1
 
 # Relevant notice type codes in the file body
 NOTICE_TYPE_LOR = "RESERVE NOTICE"
@@ -275,18 +300,42 @@ class MarketNoticeClient:
     Called 3x per day at the same fetch schedule as pd7day_client.
     """
 
-    def __init__(self, session: aiohttp.ClientSession) -> None:
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        semaphore: asyncio.Semaphore | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self._session = session
+        # Injectable so the current-notice window can be tested against fixed
+        # directory fixtures. Without this, any test using a hardcoded date in a
+        # filename starts failing once that date falls outside the window.
+        self._clock = clock or (lambda: datetime.now(NEM_TZ))
         self.last_seen_notice_id: int = 0
+        # Shared with every other NEMWEB caller in the integration so notice
+        # fetches cannot burst past the global concurrency cap. A private
+        # semaphore is used when none is supplied, which keeps the client usable
+        # standalone and in tests.
+        self._semaphore = semaphore or asyncio.Semaphore(2)
+        # Highest notice ID present in the last directory listing, whether or not
+        # its file was fetched. Lets a caller distinguish "nothing new" from
+        # "nothing relevant", which the cursor alone cannot express.
+        self.highest_listed_notice_id: int = 0
 
     async def fetch_new_notices(self) -> list[GridNoticeAnnotation]:
         """
-        Fetch and parse any new notices since last_seen_notice_id.
+        Fetch and parse any new current notices since last_seen_notice_id.
 
-        On first run (last_seen_notice_id == 0): initialises cursor to the
-        highest current notice ID without fetching any files, then returns [].
-        Subsequent calls fetch only new notices incrementally.
+        Only files from the current or previous NEM day are considered, capped at
+        _NOTICE_MAX_FILES_PER_CYCLE per call and fetched under the shared NEMWEB
+        concurrency gate.
+
+        last_seen_notice_id always advances past every file this call decided
+        not to fetch, including ones skipped as stale. Leaving the cursor parked
+        below skipped files means the same files are reconsidered on every cycle
+        forever, which is precisely the failure this replaces.
         """
+        started = time.monotonic()
         try:
             async with self._session.get(
                 NEMWEB_MARKET_NOTICE_URL,
@@ -313,46 +362,98 @@ class MarketNoticeClient:
         if not files:
             return []
 
-        # First-run bootstrap: fetch notices from the last _NOTICE_BACKFILL_HOURS.
-        # The directory filename encodes the date (YYYYMMDD), so we filter by
-        # filename date rather than notice_id to avoid fetching thousands of old files.
-        if self.last_seen_notice_id == 0:
-            # The filename encodes only a date (YYYYMMDD), not a time, so the
-            # tightest cap we can apply from the listing alone is whole-day
-            # granularity: keep files whose date is >= the cutoff date.
-            cutoff = datetime.now(NEM_TZ) - timedelta(hours=_NOTICE_BACKFILL_HOURS)
-            cutoff_str = cutoff.strftime("%Y%m%d")  # e.g. "20260510"
-            new_files = []
-            for nid, fname in files:
-                date_match = re.search(r'_(\d{8})\.', fname)
-                if date_match and date_match.group(1) >= cutoff_str:
-                    new_files.append((nid, fname))
-            _LOGGER.info(
-                "Market notice client first run: backfilling %d files since %s",
-                len(new_files), cutoff_str,
-            )
-        else:
-            new_files = [(nid, fname) for nid, fname in files if nid > self.last_seen_notice_id]
+        self.highest_listed_notice_id = max(nid for nid, _ in files)
 
-        if not new_files:
+        # Everything below is bounded to current notices, so the first-run and
+        # incremental paths differ only in where the cursor starts.
+        cutoff_str = (
+            self._clock() - timedelta(days=_NOTICE_CURRENT_DAYS)
+        ).strftime("%Y%m%d")
+
+        candidates: list[tuple[int, str]] = []
+        stale_ids: list[int] = []
+        for nid, fname in files:
+            if nid <= self.last_seen_notice_id:
+                continue
+            date_match = re.search(r"_(\d{8})\.", fname)
+            if date_match is not None and date_match.group(1) < cutoff_str:
+                # Older than the current window. Record it so the cursor can move
+                # past it instead of reconsidering it every cycle.
+                stale_ids.append(nid)
+                continue
+            candidates.append((nid, fname))
+
+        # Oldest first, so the cap below truncates the newest and the cursor
+        # advances without leaving unfetched gaps behind it.
+        candidates.sort(key=lambda item: item[0])
+        deferred = 0
+        if len(candidates) > _NOTICE_MAX_FILES_PER_CYCLE:
+            deferred = len(candidates) - _NOTICE_MAX_FILES_PER_CYCLE
+            candidates = candidates[:_NOTICE_MAX_FILES_PER_CYCLE]
+
+        # Move the cursor past stale files, but never past a file still queued
+        # for fetching, otherwise the deferred remainder would be lost.
+        if stale_ids:
+            limit = candidates[0][0] if candidates else None
+            passable = [
+                nid for nid in stale_ids if limit is None or nid < limit
+            ]
+            if passable and max(passable) > self.last_seen_notice_id:
+                self.last_seen_notice_id = max(passable)
+                _LOGGER.debug(
+                    "Market notices: skipped %d file(s) dated before %s, cursor "
+                    "advanced to %d",
+                    len(passable),
+                    cutoff_str,
+                    self.last_seen_notice_id,
+                )
+
+        if not candidates:
+            _LOGGER.debug(
+                "Market notices: no current notices to fetch, cursor at %d "
+                "(listing high-water mark %d), %.0f ms",
+                self.last_seen_notice_id,
+                self.highest_listed_notice_id,
+                (time.monotonic() - started) * 1000,
+            )
             return []
 
-        notices = []
-        for notice_id, filename in new_files:
-            # Throttle BEFORE every individual notice file GET so there is a
-            # genuine _NOTICE_FETCH_DELAY_S gap between each HTTP request.
-            await asyncio.sleep(_NOTICE_FETCH_DELAY_S)
-            notice = await self._fetch_and_parse(notice_id, filename)
-            if notice is not None:
-                notices.append(notice)
-            # Always advance last_seen even if notice type is not LOR/MSL
-            self.last_seen_notice_id = max(self.last_seen_notice_id, notice_id)
+        # Fetched concurrently under the shared NEMWEB gate. The previous version
+        # slept _NOTICE_FETCH_DELAY_S before each of these sequentially, which on
+        # a 145-file backlog was over a minute of deliberate waiting per region
+        # per cycle.
+        results = await asyncio.gather(
+            *(self._fetch_guarded(nid, fname) for nid, fname in candidates)
+        )
+        notices = [n for n in results if n is not None]
+
+        # Advance past everything just attempted, including files that were not
+        # LOR or MSL and files whose fetch failed. A failed fetch is not retried:
+        # notices are immutable once published, so a transient 403 on an
+        # irrelevant file is not worth re-reading the whole window for, and
+        # retrying is what produced the runaway request volume.
+        self.last_seen_notice_id = max(
+            [self.last_seen_notice_id] + [nid for nid, _ in candidates]
+        )
 
         _LOGGER.debug(
-            "Market notices: checked %d new files, found %d LOR/MSL notices",
-            len(new_files), len(notices)
+            "Market notices: fetched %d current file(s), found %d LOR/MSL "
+            "notice(s), %d deferred to next cycle, cursor now %d, %.0f ms",
+            len(candidates),
+            len(notices),
+            deferred,
+            self.last_seen_notice_id,
+            (time.monotonic() - started) * 1000,
         )
         return notices
+
+    async def _fetch_guarded(
+        self, notice_id: int, filename: str
+    ) -> Optional[GridNoticeAnnotation]:
+        """Fetch one notice, holding the shared NEMWEB concurrency gate."""
+        async with self._semaphore:
+            await asyncio.sleep(_NOTICE_FETCH_DELAY_S)
+            return await self._fetch_and_parse(notice_id, filename)
 
     async def _fetch_and_parse(self, notice_id: int, filename: str) -> Optional[GridNoticeAnnotation]:
         url = NEMWEB_MARKET_NOTICE_URL + filename

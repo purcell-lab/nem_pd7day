@@ -462,17 +462,19 @@ def test_forecast_price_stored_is_raw_not_calibrated():
     )
 
 
-# ── Tests: upgrade-path cursor reset ──────────────────────────────────────────
+# ── Tests: notice cursor advance ──────────────────────────────────────────────
 
-def test_upgrade_path_resets_cursor_when_no_notices():
+def test_cursor_advances_when_no_relevant_notices_found():
     """
-    Upgrade path: if notice_store has last_seen > 0 but total_notices == 0,
-    async_fetch_notices must reset cursor to 0 to trigger 7-day backfill.
+    The cursor must be persisted forward even when a cycle finds no LOR or MSL
+    notices.
+
+    Those notices are rare, so most cycles legitimately store nothing. When the
+    cursor only moved on a stored notice it stayed parked while NEMWEB kept
+    publishing, and every later cycle re-examined the whole growing backlog.
     """
     from custom_components.nem_pd7day.notice_store import GridNoticeStore
-    from custom_components.nem_pd7day.market_notice_client import MarketNoticeClient
 
-    # Build a notice_store with cursor set but no stored notices
     notice_store = GridNoticeStore.__new__(GridNoticeStore)
     notice_store._notices = {}
     notice_store._last_seen_notice_id = 50000
@@ -480,7 +482,41 @@ def test_upgrade_path_resets_cursor_when_no_notices():
     notice_store._store = MagicMock()
     notice_store._store.async_save = AsyncMock()
 
-    # Build a notice client that returns no new notices
+    # The client examined files up to 50120 and found nothing relevant.
+    notice_client = MagicMock()
+    notice_client.last_seen_notice_id = 50000
+    async def _fetch():
+        notice_client.last_seen_notice_id = 50120
+        return []
+    notice_client.fetch_new_notices = AsyncMock(side_effect=_fetch)
+
+    coord = make_coordinator(notice_store=notice_store, notice_client=notice_client)
+
+    run_async(coord.async_fetch_notices())
+
+    assert notice_store.last_seen_notice_id == 50120
+    # Advancing the cursor is only useful if it survives a restart.
+    notice_store._store.async_save.assert_awaited()
+
+
+def test_empty_store_does_not_trigger_backfill_reset():
+    """
+    An empty notice store must not reset the cursor.
+
+    A store with a cursor and no notices was treated as an incomplete upgrade
+    needing a full backfill. But with LOR and MSL notices being rare and pruned
+    after 7 days, an empty store is the ordinary state of a quiet grid, so that
+    reset fired on every cycle and forced a full re-read each time.
+    """
+    from custom_components.nem_pd7day.notice_store import GridNoticeStore
+
+    notice_store = GridNoticeStore.__new__(GridNoticeStore)
+    notice_store._notices = {}
+    notice_store._last_seen_notice_id = 50000
+    notice_store.last_fetched_at = None
+    notice_store._store = MagicMock()
+    notice_store._store.async_save = AsyncMock()
+
     notice_client = MagicMock()
     notice_client.last_seen_notice_id = 50000
     notice_client.fetch_new_notices = AsyncMock(return_value=[])
@@ -489,10 +525,43 @@ def test_upgrade_path_resets_cursor_when_no_notices():
 
     run_async(coord.async_fetch_notices())
 
-    # The store cursor should have been reset to 0
-    assert notice_store.last_seen_notice_id == 0
-    # And the client should have been called with cursor = 0
-    assert notice_client.last_seen_notice_id == 0
+    assert notice_store.last_seen_notice_id == 50000
+    assert notice_client.last_seen_notice_id == 50000
+
+
+def test_notices_fetched_once_per_cycle_across_regions():
+    """
+    Notices are global, so five region coordinators sharing a store must poll
+    NEMWEB once between them, not once each.
+    """
+    from custom_components.nem_pd7day.notice_store import GridNoticeStore
+    from custom_components.nem_pd7day.const import DOMAIN
+
+    notice_store = GridNoticeStore.__new__(GridNoticeStore)
+    notice_store._notices = {}
+    notice_store._last_seen_notice_id = 50000
+    notice_store.last_fetched_at = None
+    notice_store._store = MagicMock()
+    notice_store._store.async_save = AsyncMock()
+
+    notice_client = MagicMock()
+    notice_client.last_seen_notice_id = 50000
+    notice_client.fetch_new_notices = AsyncMock(return_value=[])
+
+    shared_data = {}
+    coords = []
+    for region in ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]:
+        c = make_coordinator(notice_store=notice_store, notice_client=notice_client)
+        c._regions = [region]
+        c.hass.data = {DOMAIN: shared_data}
+        coords.append(c)
+
+    async def _all():
+        await asyncio.gather(*(c.async_fetch_notices() for c in coords))
+
+    run_async(_all())
+
+    assert notice_client.fetch_new_notices.await_count == 1
 
 
 def test_stpasa_fetch_failure_non_fatal():
