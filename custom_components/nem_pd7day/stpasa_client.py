@@ -40,6 +40,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .const import NEMWEB_HEADERS
+from .executor import ExecutorJob, run_in_executor
 from .nem_time import parse_nem_csv, to_nem_iso
 
 _LOGGER = logging.getLogger(__name__)
@@ -125,6 +126,14 @@ def _extract_csv_bytes(raw: bytes) -> bytes:
     if zipfile.is_zipfile(io.BytesIO(data)):
         raise FileNotFoundError("No CSV found inside nested STPASA archive")
     return data
+
+
+def _extract_and_parse_all_regions(raw: bytes) -> dict[str, StpasaResult]:
+    """Unwrap the nested STPASA archive and parse every region.
+
+    Runs in the executor as a single unit — see executor.py.
+    """
+    return _parse_all_regions(_extract_csv_bytes(raw))
 
 
 def _parse_regionsolution(raw_csv: bytes, region: str) -> StpasaResult | None:
@@ -295,8 +304,11 @@ class StpasaClient:
         self,
         session: aiohttp.ClientSession,
         semaphore: Any | None = None,
+        executor_job: ExecutorJob | None = None,
     ) -> None:
         self._session = session
+        # hass.async_add_executor_job — see executor.py.
+        self._executor_job = executor_job
         # Shared across all region coordinators to cap concurrent NEMWEB
         # requests. nullcontext when absent (e.g. unit tests).
         self._semaphore = semaphore
@@ -352,8 +364,12 @@ class StpasaClient:
                 return {}
             newest = sorted(files, key=lambda x: x["name"])[-1]
             raw = await self._fetch_bytes(newest["url"])
-            csv_bytes = _extract_csv_bytes(raw)
-            results = _parse_all_regions(csv_bytes)
+            # Nested-ZIP extraction plus a ~5.4 MB CSV parse across all five
+            # regions is ~350 ms of CPU. Both steps go to the executor in one
+            # hand-off so the loop is never held.
+            results = await run_in_executor(
+                self._executor_job, _extract_and_parse_all_regions, raw
+            )
             if not results:
                 _LOGGER.warning(
                     "STPASA: no REGIONSOLUTION rows in %s", newest["name"]

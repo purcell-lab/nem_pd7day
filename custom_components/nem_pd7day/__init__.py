@@ -122,7 +122,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # ── Shared STPASA client (one fetch serves all regions) ──────────────────
     if "stpasa_client" not in hass.data[DOMAIN]:
         semaphore = hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY)
-        hass.data[DOMAIN]["stpasa_client"] = StpasaClient(session, semaphore=semaphore)
+        hass.data[DOMAIN]["stpasa_client"] = StpasaClient(
+            session,
+            semaphore=semaphore,
+            executor_job=hass.async_add_executor_job,
+        )
 
     # ── Coordinator (no automatic polling) ───────────────────────────────────
     coordinator = PD7DayCoordinator(

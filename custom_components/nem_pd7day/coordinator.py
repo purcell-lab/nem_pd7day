@@ -100,6 +100,10 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             self._session,
             interconnector_ids=self._interconnector_ids,
             semaphore=semaphore,
+            # Decompression and CSV parsing run in HA's executor, not on the
+            # event loop. async_add_executor_job also tracks the job so HA can
+            # await it during shutdown.
+            executor_job=self.hass.async_add_executor_job,
         )
 
     async def _async_update_data(self) -> PD7DayResult:

@@ -40,7 +40,9 @@ class ActualPriceService:
         self._hass = hass
         self._store = store
         self._regions = regions
-        self._client = TradingISClient(session)
+        self._client = TradingISClient(
+            session, executor_job=hass.async_add_executor_job
+        )
         self._calibration_region = calibration_region
 
     async def async_setup(self, entry: ConfigEntry) -> None:

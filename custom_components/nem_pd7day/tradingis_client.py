@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 import aiohttp
 
 from .const import NEMWEB_HEADERS, TRADINGIS_BASE_URL
+from .executor import ExecutorJob, run_in_executor
 from .nem_time import NEM_TZ
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,8 +46,14 @@ class TradingISClient:
 
     BASE_URL = TRADINGIS_BASE_URL
 
-    def __init__(self, session: aiohttp.ClientSession) -> None:
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        executor_job: ExecutorJob | None = None,
+    ) -> None:
         self._session = session
+        # hass.async_add_executor_job — see executor.py.
+        self._executor_job = executor_job
         self._dir_cache: dict[datetime, str] | None = None
         self._dir_cache_ts: float = 0.0
 
@@ -137,16 +144,26 @@ class TradingISClient:
             return None
 
         try:
-            with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                names = zf.namelist()
-                if not names:
-                    return None
-                csv_content = zf.read(names[0]).decode("utf-8", errors="replace")
+            # Small archive, but decompression is still CPU on the loop.
+            csv_content = await run_in_executor(
+                self._executor_job, self._unzip_csv, data
+            )
         except (zipfile.BadZipFile, KeyError, IndexError) as exc:
             _LOGGER.warning("TradingIS: bad zip from %s: %s", url, exc)
             return None
+        if csv_content is None:
+            return None
 
         return self._parse_rrp(csv_content, region)
+
+    @staticmethod
+    def _unzip_csv(data: bytes) -> str | None:
+        """Extract the first CSV member as text. Runs in the executor."""
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+            if not names:
+                return None
+            return zf.read(names[0]).decode("utf-8", errors="replace")
 
     @staticmethod
     def _parse_rrp(content: str, region: str) -> float | None:
