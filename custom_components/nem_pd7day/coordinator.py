@@ -16,6 +16,7 @@ from .const import (
     DOMAIN,
     NEMWEB_SEMAPHORE_KEY,
     QLD1_INTERCONNECTORS,
+    SHARED_FETCH_KEY,
     interconnectors_for_regions,
     region_startup_index,
 )
@@ -89,7 +90,26 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         # still query it; background refreshes are now staggered in __init__.py.
         self._region_index = region_startup_index(regions[0]) if regions else 0
 
-    def _get_client(self) -> PD7DayClient:
+    def _get_client(self):
+        """Return the object this coordinator fetches through.
+
+        Normally the shared fetcher created in __init__.py, which downloads and
+        parses PD7DAY once per cycle and serves every region from that one parse.
+        It presents the same fetch_all(regions, interconnector_ids) contract as
+        PD7DayClient, so everything downstream is unchanged.
+
+        Falls back to a private client when no shared fetcher is registered, so
+        the coordinator still works standalone (unit tests, single-entry setups
+        constructed directly).
+        """
+        domain_data = getattr(self.hass, "data", None)
+        if isinstance(domain_data, dict):
+            shared = domain_data.get(DOMAIN, {}).get(SHARED_FETCH_KEY)
+            if shared is not None:
+                return shared
+        return self._build_own_client()
+
+    def _build_own_client(self) -> PD7DayClient:
         if self._session is None or self._session.closed:
             self._session = async_get_clientsession(self.hass)
         semaphore = None
@@ -175,7 +195,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
 
         return result
 
-    async def _fetch_all_with_retry(self, client: PD7DayClient) -> PD7DayResult:
+    async def _fetch_all_with_retry(self, client) -> PD7DayResult:
         """
         Fetch PD7DAY data, retrying once after a 5s backoff on a 403 only.
 
@@ -184,7 +204,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         immediately so the existing stale-data fallback handles it.
         """
         try:
-            return await client.fetch_all(self._regions)
+            return await client.fetch_all(self._regions, self._interconnector_ids)
         except aiohttp.ClientResponseError as exc:
             if exc.status != 403:
                 raise
@@ -194,7 +214,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             await asyncio.sleep(5)
             try:
                 _LOGGER.debug("[DEBUG] PD7DAY 403 retry attempt")
-                return await client.fetch_all(self._regions)
+                return await client.fetch_all(self._regions, self._interconnector_ids)
             except aiohttp.ClientResponseError as retry_exc:
                 if retry_exc.status == 403:
                     _LOGGER.warning(

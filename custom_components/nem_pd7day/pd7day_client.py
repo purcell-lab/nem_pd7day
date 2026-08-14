@@ -438,6 +438,15 @@ class PD7DayClient:
             raise FileNotFoundError("No PUBLIC_PD7DAY ZIP/CSV files found at NEMWeb")
         return sorted(files, key=lambda x: x["name"])[-1]
 
+    async def newest_file(self) -> dict[str, str]:
+        """Return metadata for the newest PD7DAY file currently published.
+
+        Public because pd7day_shared resolves the newest file first, so it can
+        compare the name against a parse it already holds and skip re-downloading
+        a file it has already read.
+        """
+        return await self._newest_file()
+
     async def _fetch_bytes(self, url: str) -> bytes:
         async with self._gate():
             async with self._session.get(
@@ -469,15 +478,28 @@ class PD7DayClient:
             return name, csv_bytes
         return name, raw
 
-    async def fetch_all(self, regions: list[str]) -> PD7DayResult:
+    async def fetch_all(
+        self,
+        regions: list[str],
+        interconnector_ids: set[str] | None = None,
+        file_meta: dict[str, str] | None = None,
+    ) -> PD7DayResult:
         """
         Download the latest PD7DAY ZIP and parse all tables in one pass.
         All timestamps in the returned PD7DayResult are ISO-8601 strings
         with an explicit +10:00 (NEM time) offset.
+
+        interconnector_ids overrides the set given at construction, so one shared
+        client can parse the union across every region in a single pass.
+        file_meta skips the directory listing when the caller has already
+        resolved the newest file.
         """
         from .nem_time import now_nem, to_nem_iso  # noqa: E402
 
-        file_meta = await self._newest_file()
+        if interconnector_ids is None:
+            interconnector_ids = self._interconnector_ids
+        if file_meta is None:
+            file_meta = await self._newest_file()
         source_name, csv_bytes = await self._get_csv_bytes(file_meta)
 
         # ~339,000 CSV lines, ~700 ms of CPU. Parsing this on the event loop
@@ -487,7 +509,7 @@ class PD7DayClient:
             _parse_all_tables,
             csv_bytes,
             regions,
-            self._interconnector_ids,
+            interconnector_ids,
         )
 
         prices: dict[str, PD7DayData] = {}

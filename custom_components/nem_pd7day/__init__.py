@@ -28,12 +28,15 @@ from .const import (
     NEMWEB_SEMAPHORE_KEY,
     REFIT_INTERVAL,
     REGION_STARTUP_ORDER,
+    SHARED_FETCH_KEY,
     region_startup_index,
 )
 from .coordinator import DispatchCoordinator, PD7DayCoordinator
 from .forecast_store import ForecastStore
 from .market_notice_client import MarketNoticeClient
 from .notice_store import GridNoticeStore
+from .pd7day_client import PD7DayClient
+from .pd7day_shared import ALL_INTERCONNECTORS, SharedPD7DayFetch
 from .stpasa_client import StpasaClient
 from .stpasa_store import StpasaStore
 
@@ -118,6 +121,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         hass.data[DOMAIN]["notice_client"] = MarketNoticeClient(session)
     notice_store = hass.data[DOMAIN]["notice_store"]
     notice_client = hass.data[DOMAIN]["notice_client"]
+
+    # ── Shared PD7DAY fetcher (one download and parse serves all regions) ────
+    # The PD7DAY archive holds every region and every interconnector, so parsing
+    # it once for the union costs barely more than parsing it for one region
+    # (700 ms vs 631 ms measured) and replaces five such parses per cycle.
+    if SHARED_FETCH_KEY not in hass.data[DOMAIN]:
+        hass.data[DOMAIN][SHARED_FETCH_KEY] = SharedPD7DayFetch(
+            PD7DayClient(
+                session,
+                interconnector_ids=ALL_INTERCONNECTORS,
+                semaphore=hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY),
+                executor_job=hass.async_add_executor_job,
+            )
+        )
 
     # ── Shared STPASA client (one fetch serves all regions) ──────────────────
     if "stpasa_client" not in hass.data[DOMAIN]:
@@ -375,6 +392,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -
             hass.data[DOMAIN].pop("notice_client", None)
             hass.data[DOMAIN].pop("stpasa_client", None)
             hass.data[DOMAIN].pop("stpasa_stores", None)
+            hass.data[DOMAIN].pop(SHARED_FETCH_KEY, None)
             if hass.services.has_service(DOMAIN, "force_refit"):
                 hass.services.async_remove(DOMAIN, "force_refit")
     return unload_ok
