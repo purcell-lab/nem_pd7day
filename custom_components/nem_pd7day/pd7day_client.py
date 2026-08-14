@@ -34,6 +34,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .const import FILE_PATTERN, NEMWEB_BASE_URL, NEMWEB_HEADERS, QLD1_INTERCONNECTORS
+from .executor import ExecutorJob, run_in_executor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -393,6 +394,7 @@ class PD7DayClient:
         base_url: str = NEMWEB_BASE_URL,
         interconnector_ids: set[str] | None = None,
         semaphore: "asyncio.Semaphore | None" = None,
+        executor_job: ExecutorJob | None = None,
     ) -> None:
         self._session = session
         self._base_url = base_url
@@ -400,6 +402,9 @@ class PD7DayClient:
         # Shared across all region coordinators to cap concurrent NEMWEB
         # requests. nullcontext when absent (e.g. unit tests).
         self._semaphore = semaphore
+        # hass.async_add_executor_job — decompression and CSV parsing are run
+        # here rather than on the event loop. See executor.py.
+        self._executor_job = executor_job
 
     def _gate(self):
         """Return the semaphore context manager (or a no-op if unset)."""
@@ -443,16 +448,25 @@ class PD7DayClient:
                 resp.raise_for_status()
                 return await resp.read()
 
+    @staticmethod
+    def _unzip(raw: bytes, name: str) -> bytes:
+        """Extract the CSV member from a PD7DAY ZIP. Runs in the executor."""
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            members = [m for m in zf.namelist() if m.upper().endswith(".CSV")]
+            if not members:
+                raise FileNotFoundError(f"No CSV inside ZIP: {name}")
+            with zf.open(sorted(members)[0]) as f:
+                return f.read()
+
     async def _get_csv_bytes(self, file_meta: dict[str, str]) -> tuple[str, bytes]:
         raw = await self._fetch_bytes(file_meta["url"])
         name = file_meta["name"]
         if name.upper().endswith(".ZIP"):
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                members = [m for m in zf.namelist() if m.upper().endswith(".CSV")]
-                if not members:
-                    raise FileNotFoundError(f"No CSV inside ZIP: {name}")
-                with zf.open(sorted(members)[0]) as f:
-                    return name, f.read()
+            # ~4.8 MB -> ~47 MB; ~100 ms of CPU. Off the loop.
+            csv_bytes = await run_in_executor(
+                self._executor_job, self._unzip, raw, name
+            )
+            return name, csv_bytes
         return name, raw
 
     async def fetch_all(self, regions: list[str]) -> PD7DayResult:
@@ -466,8 +480,14 @@ class PD7DayClient:
         file_meta = await self._newest_file()
         source_name, csv_bytes = await self._get_csv_bytes(file_meta)
 
-        _, case, price_rows, market_summary, ic_rows = _parse_all_tables(
-            csv_bytes, regions, self._interconnector_ids
+        # ~339,000 CSV lines, ~700 ms of CPU. Parsing this on the event loop
+        # stalled Home Assistant startup once per region coordinator.
+        _, case, price_rows, market_summary, ic_rows = await run_in_executor(
+            self._executor_job,
+            _parse_all_tables,
+            csv_bytes,
+            regions,
+            self._interconnector_ids,
         )
 
         prices: dict[str, PD7DayData] = {}
