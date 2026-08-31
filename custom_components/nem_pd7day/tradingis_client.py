@@ -12,20 +12,46 @@ Files:     PUBLIC_TRADINGIS_YYYYMMDDHHMI_<seq>.zip
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import re
 import time
 import zipfile
 from datetime import datetime, timedelta
+from typing import Any, Awaitable, Callable
 
 import aiohttp
 
 from .const import NEMWEB_HEADERS, TRADINGIS_BASE_URL
 from .executor import ExecutorJob, run_in_executor
 from .nem_time import NEM_TZ
+from .nemweb_retry import classify_status, fetch_with_retry
 
 _LOGGER = logging.getLogger(__name__)
+
+# aiohttp transport failures are retryable, but nemweb_retry stays free of the
+# aiohttp import so it can be unit tested, so the class is handed to it from
+# here. Resolved defensively because unit tests stub the aiohttp module out
+# with a MagicMock, where ClientError is not an exception class at all and
+# naming it in an except clause would raise TypeError.
+_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = tuple(
+    candidate
+    for candidate in (getattr(aiohttp, "ClientError", None),)
+    if isinstance(candidate, type) and issubclass(candidate, BaseException)
+)
+
+# A dated TradingIS zip that is absent is the normal state for a few seconds
+# after an interval closes: this client is scheduled at HH:02 and HH:32 and
+# AEMO publishes on its own schedule. A 404 there means "not published yet",
+# so it logs at debug and is not retried, because no amount of retrying inside
+# one polling cycle makes AEMO publish sooner.
+_ZIP_NOT_PUBLISHED_STATUSES = (404,)
+
+# The directory listing URL always exists, so a 404 on it means the report path
+# moved or something is intercepting the request. That warns, and is pointless
+# to retry.
+_DIRECTORY_NOT_PUBLISHED_STATUSES: tuple[int, ...] = ()
 
 # Regex for TradingIS filenames — YYYYMMDDHHMI is the 30-min interval END
 _FILENAME_RE = re.compile(
@@ -50,12 +76,21 @@ class TradingISClient:
         self,
         session: aiohttp.ClientSession,
         executor_job: ExecutorJob | None = None,
+        semaphore: Any | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self._session = session
         # hass.async_add_executor_job — see executor.py.
         self._executor_job = executor_job
         self._dir_cache: dict[datetime, str] | None = None
         self._dir_cache_ts: float = 0.0
+        # Shared with every other NEMWEB caller in the integration, so retries
+        # here cannot push concurrent requests past
+        # NEMWEB_MAX_CONCURRENT_REQUESTS. This client previously took no
+        # semaphore at all and so sat outside the global cap.
+        self._semaphore = semaphore
+        # Injectable so retry tests do not spend real seconds asleep.
+        self._sleep = sleep or asyncio.sleep
 
     async def fetch_interval_price(
         self,
@@ -71,10 +106,12 @@ class TradingISClient:
         """
         interval_end = interval_start + timedelta(minutes=30)
 
-        try:
-            directory = await self._fetch_directory()
-        except Exception:
-            _LOGGER.warning("TradingIS: failed to fetch directory listing")
+        directory = await self._fetch_directory()
+        if directory is None:
+            # _fetch_directory has already logged the exception and the URL, at
+            # warning for a genuine failure and at debug otherwise. Returning
+            # None here means the interval is recorded as unavailable, never as
+            # a zero price.
             return None
 
         url = directory.get(interval_end)
@@ -96,10 +133,12 @@ class TradingISClient:
             )
         return price
 
-    async def _fetch_directory(self) -> dict[datetime, str]:
+    async def _fetch_directory(self) -> dict[datetime, str] | None:
         """Return {interval_end_datetime: full_url} for all TradingIS zip files.
 
-        Caches the result for _DIR_CACHE_TTL seconds.
+        Caches the result for _DIR_CACHE_TTL seconds. Returns None when the
+        listing could not be fetched; fetch_with_retry has logged the exception
+        and the URL by then, so the caller does not log again.
         """
         now = time.monotonic()
         if (
@@ -108,9 +147,19 @@ class TradingISClient:
         ):
             return self._dir_cache
 
-        async with self._session.get(self.BASE_URL, headers=NEMWEB_HEADERS) as resp:
-            resp.raise_for_status()
-            html = await resp.text()
+        html = await fetch_with_retry(
+            self._get_directory_html,
+            url=self.BASE_URL,
+            label="TradingIS directory listing",
+            logger=_LOGGER,
+            semaphore=self._semaphore,
+            sleep=self._sleep,
+            retryable_exceptions=_TRANSPORT_ERRORS,
+        )
+        if html is None:
+            # A failed listing is not cached, so the next tick retries rather
+            # than serving an empty directory for _DIR_CACHE_TTL seconds.
+            return None
 
         result: dict[datetime, str] = {}
         for match in _FILENAME_RE.finditer(html):
@@ -126,6 +175,28 @@ class TradingISClient:
         self._dir_cache_ts = now
         return result
 
+    async def _get_directory_html(self) -> str:
+        """One attempt at the directory listing. Raises on a bad status."""
+        async with self._session.get(self.BASE_URL, headers=NEMWEB_HEADERS) as resp:
+            classify_status(
+                resp.status,
+                url=self.BASE_URL,
+                headers=getattr(resp, "headers", None),
+                not_published_statuses=_DIRECTORY_NOT_PUBLISHED_STATUSES,
+            )
+            return await resp.text()
+
+    async def _get_zip_bytes(self, url: str) -> bytes:
+        """One attempt at a TradingIS zip. Raises on a bad status."""
+        async with self._session.get(url, headers=NEMWEB_HEADERS) as resp:
+            classify_status(
+                resp.status,
+                url=url,
+                headers=getattr(resp, "headers", None),
+                not_published_statuses=_ZIP_NOT_PUBLISHED_STATUSES,
+            )
+            return await resp.read()
+
     async def _fetch_price_from_zip(
         self,
         url: str,
@@ -135,14 +206,21 @@ class TradingISClient:
 
         Returns the RRP in $/kWh, or None if region not found or on error.
         """
-        try:
-            async with self._session.get(url, headers=NEMWEB_HEADERS) as resp:
-                resp.raise_for_status()
-                data = await resp.read()
-        except aiohttp.ClientError as exc:
-            _LOGGER.warning("TradingIS: failed to download %s: %s", url, exc)
+        data = await fetch_with_retry(
+            lambda: self._get_zip_bytes(url),
+            url=url,
+            label="TradingIS zip",
+            logger=_LOGGER,
+            semaphore=self._semaphore,
+            sleep=self._sleep,
+            retryable_exceptions=_TRANSPORT_ERRORS,
+        )
+        if data is None:
             return None
 
+        # Zip and CSV errors are not retried: the bytes arrived, they are just
+        # not what we expected, and asking NEMWEB again for the same file will
+        # produce the same bytes.
         try:
             # Small archive, but decompression is still CPU on the loop.
             csv_content = await run_in_executor(

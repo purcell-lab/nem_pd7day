@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -36,12 +37,18 @@ class ActualPriceService:
         regions: list[str],
         session: aiohttp.ClientSession,
         calibration_region: str | None = None,
+        semaphore: Any | None = None,
     ) -> None:
         self._hass = hass
         self._store = store
         self._regions = regions
+        # The shared NEMWEB semaphore is passed straight through so TradingIS
+        # fetches, and the retries added for issue #36, count against the same
+        # concurrency cap as every other NEMWEB caller.
         self._client = TradingISClient(
-            session, executor_job=hass.async_add_executor_job
+            session,
+            executor_job=hass.async_add_executor_job,
+            semaphore=semaphore,
         )
         self._calibration_region = calibration_region
 
