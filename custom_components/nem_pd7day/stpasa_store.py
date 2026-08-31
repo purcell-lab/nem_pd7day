@@ -11,7 +11,10 @@ On load failure the in-memory latest() returns None.
 
 When the cache is between 90 min and 4 h old, latest() returns the result
 with is_stale=True so the OLS calibration continues with slightly old data
-rather than silently dropping to isotonic-only.
+rather than silently dropping to isotonic-only. Loading a stale cache also
+requests an immediate refetch through StpasaRefreshCoordination, so the stale
+window is measured in one download rather than lasting until the next PD7DAY
+coordinator update.
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import STORAGE_VERSION
 from .stpasa_client import StpasaInterval, StpasaResult
+from .stpasa_refresh import StpasaRefreshCoordination
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,13 +101,31 @@ def _result_from_dict(data: dict[str, Any]) -> StpasaResult:
 class StpasaStore:
     """Per-region persistence for the latest STPASA REGIONSOLUTION result."""
 
-    def __init__(self, hass: HomeAssistant, region: str) -> None:
+    # Class-level defaults so a store built without a coordination object, or
+    # constructed directly in tests, still degrades to the plain warn-only path
+    # instead of raising AttributeError.
+    _refresh: StpasaRefreshCoordination | None = None
+    loaded_stale: bool = False
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        region: str,
+        refresh: StpasaRefreshCoordination | None = None,
+    ) -> None:
         self._hass = hass
         self._region = region
         self._store: Store[dict[str, Any]] = Store(
             hass, STORAGE_VERSION, _stpasa_storage_key(region)
         )
         self._latest: StpasaResult | None = None
+        # Shared across all five region stores. It is what turns "this cache is
+        # stale" into an actual refetch, and it collapses the five identical
+        # per-region warnings into one.
+        self._refresh = refresh
+        # True when load() found a cache past the fresh TTL. Read by
+        # async_setup_entry to force an immediate fetch.
+        self.loaded_stale = False
 
     async def load(self) -> StpasaResult | None:
         """Load the persisted STPASA result.  Returns None if stale/missing."""
@@ -121,10 +143,20 @@ class StpasaStore:
         result = _result_from_dict(data)
         if status == "stale":
             result.is_stale = True
-            _LOGGER.warning(
-                "STPASA store: loaded stale cache (age >90 min) — "
-                "OLS calibration will use stale STPASA data until next fetch"
-            )
+            self.loaded_stale = True
+            # Before v3.1.7 this branch only warned, and nothing downstream read
+            # the staleness, so no refetch was triggered and the startup refit
+            # consumed the stale cache. Requesting the fetch through the shared
+            # coordination object is what makes the warning actionable.
+            should_warn = True
+            if self._refresh is not None:
+                should_warn = self._refresh.note_stale_load(self._region)
+            if should_warn:
+                _LOGGER.warning(
+                    "STPASA store: loaded stale cache (age >90 min, discarded "
+                    "at 4 h), forcing an immediate STPASA fetch so the startup "
+                    "calibration refit is not fitted on stale STPASA"
+                )
         self._latest = result
         return self._latest
 
