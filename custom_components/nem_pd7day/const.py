@@ -62,6 +62,11 @@ NEMWEB_MAX_CONCURRENT_REQUESTS = 2
 # copy of a supposedly shared object.
 SETUP_LOCK_KEY = "setup_lock"
 
+# Shared DispatchCoordinator and its boundary-poll cancel callbacks. Both live at
+# domain level because one coordinator serves every configured region.
+SHARED_DISPATCH_KEY = "_shared_dispatch"
+DISPATCH_UNSUBS_KEY = "_dispatch_unsubs"
+
 # Market notices are global, not per region, so one fetch serves all five region
 # coordinators. These keys hold the shared in-flight lock and the timestamp of
 # the last completed fetch, so coordinators refreshing together in a burst poll

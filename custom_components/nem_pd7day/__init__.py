@@ -20,6 +20,7 @@ from .calibration_store import CalibrationStore
 from .const import (
     CONF_FORECAST_MODE,
     DEFAULT_REGION,
+    DISPATCH_UNSUBS_KEY,
     DOMAIN,
     FORECAST_MODE_DAYS_2_7,
     get_region,
@@ -29,6 +30,7 @@ from .const import (
     REFIT_INTERVAL,
     REGION_STARTUP_ORDER,
     SETUP_LOCK_KEY,
+    SHARED_DISPATCH_KEY,
     SHARED_FETCH_KEY,
     region_startup_index,
 )
@@ -38,6 +40,7 @@ from .market_notice_client import MarketNoticeClient
 from .notice_store import GridNoticeStore
 from .pd7day_client import PD7DayClient
 from .pd7day_shared import ALL_INTERCONNECTORS, SharedPD7DayFetch
+from .shared_dispatch import async_shared_dispatch
 from .startup_trace import StartupTrace
 from .stpasa_client import StpasaClient
 from .stpasa_store import StpasaStore
@@ -217,20 +220,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
             await coordinator.async_config_entry_first_refresh()
 
     # ── Dispatch coordinator (5-minute polling, shared across all entries) ─────
-    _SHARED_DISPATCH = "_shared_dispatch"
-    dispatch: DispatchCoordinator = hass.data[DOMAIN].get(_SHARED_DISPATCH)  # type: ignore[assignment]
-    if dispatch is None:
-        dispatch = DispatchCoordinator(hass)
-        # Awaited during setup, so this is a NEMWEB request inside setup even on
-        # the cached path. Small file, but not free, so it is measured.
-        with trace.phase("dispatch first refresh (NEMWEB download)"):
-            await dispatch.async_config_entry_first_refresh()
-        # Start boundary-aligned polling once — shared coordinator self-reschedules.
-        _dispatch_unsubs: list = []
-        dispatch.schedule_next_poll(entry_unsub_list=_dispatch_unsubs)
-        # Store cancel callbacks at domain level — cleaned up when last entry unloads.
-        hass.data[DOMAIN][_SHARED_DISPATCH] = dispatch
-        hass.data[DOMAIN]["_dispatch_unsubs"] = _dispatch_unsubs
+    # The claim has to be lock-guarded because the first refresh awaits. See
+    # shared_dispatch.py and issue #34 for what went wrong without the lock.
+    dispatch = await async_shared_dispatch(hass, setup_lock, trace)
 
     entry.runtime_data = NemPd7dayEntryData(
         coordinator=coordinator,
@@ -453,9 +445,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -
         ]
         if not remaining:
             # Last entry unloaded — cancel shared dispatch poll and clean up
-            for _unsub in hass.data[DOMAIN].pop("_dispatch_unsubs", []):
+            for _unsub in hass.data[DOMAIN].pop(DISPATCH_UNSUBS_KEY, []):
                 _unsub()
-            hass.data[DOMAIN].pop("_shared_dispatch", None)
+            hass.data[DOMAIN].pop(SHARED_DISPATCH_KEY, None)
             hass.data[DOMAIN].pop("notice_store", None)
             hass.data[DOMAIN].pop("notice_client", None)
             hass.data[DOMAIN].pop("stpasa_client", None)
