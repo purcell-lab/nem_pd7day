@@ -294,15 +294,25 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     # when a new PD7DAY run lands or STPASA/calibration is refit, so we memoise
     # the per-interval calibration (the expensive path) and reuse it across
     # state writes that carry an unchanged run.
+    #
+    # The cache lives on the coordinator, not on the entity. The coordinator is
+    # per region and so is the calibrated forecast: PD7DayForecastSensor,
+    # SpotPriceForecastDays27Sensor and PD7DayDataSensor all call this for the
+    # same region with the same coordinator and the same calibration store, and
+    # their _calibrate_period and _covariates_for_interval implementations are
+    # byte for byte the same computation. Memoising on the entity therefore ran
+    # the full recalibration of roughly 336 intervals three times per region
+    # instead of once, which is what made platform setup take 42 to 53 seconds
+    # per region.
     def _calibrated_forecast(self, d) -> list[dict]:
         """
-        Return the calibrated forecast list for PriceData ``d``, memoised on the
-        PD7DAY run plus the STPASA index and calibration versions.
+        Return the calibrated forecast list for PriceData ``d``, memoised per
+        region on the PD7DAY run plus the STPASA index and calibration versions.
 
         Recomputes only when an input that affects calibration changes:
           * ``forecast_generated_at`` and interval count (new PD7DAY run),
           * the STPASA index cache key (new/refetched STPASA run),
-          * the calibration store's fit identity (refit).
+          * the calibration store's fit generation (refit or OLS stage 2).
         Otherwise the previously computed list is returned unchanged, avoiding
         the full per-interval recalibration on every state write.
         """
@@ -315,17 +325,38 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         stpasa_key = getattr(self.coordinator, "_stpasa_index_run", None)
         cal_gen = None
         if self._store is not None:
-            cal = getattr(self._store, "calibration", None)
-            cal_gen = id(cal) if cal is not None else None
-        key = (d.forecast_generated_at, len(d.forecast), stpasa_key, cal_gen)
-        cached_key = getattr(self, "_cal_cache_key", None)
-        cached_val = getattr(self, "_cal_cache_value", None)
-        if key == cached_key and cached_val is not None:
-            return cached_val
+            # A monotonic counter, not id(calibration). async_refit publishes the
+            # result and then mutates it in place to attach the OLS stage 2
+            # models, so object identity does not change across a change that
+            # moves every calibrated price, and CPython recycles id() values for
+            # freed objects. See CalibrationStore.fit_generation.
+            cal_gen = getattr(self._store, "fit_generation", None)
+        key = (
+            self._region,
+            d.forecast_generated_at,
+            len(d.forecast),
+            stpasa_key,
+            cal_gen,
+        )
+        # PD7DayCoordinator initialises this dict. Check the type rather than
+        # just checking for None, because the tests substitute a MagicMock
+        # coordinator and attribute access on a mock invents an object instead of
+        # raising, so getattr alone never reports the attribute as missing.
+        cache = getattr(self.coordinator, "_calibrated_forecast_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            try:
+                self.coordinator._calibrated_forecast_cache = cache
+            except (AttributeError, TypeError):  # pragma: no cover - read-only mock
+                pass
+        entry = cache.get(self._region)
+        if isinstance(entry, tuple) and len(entry) == 2:
+            cached_key, cached_val = entry
+            if key == cached_key and cached_val is not None:
+                return cached_val
         run_at = d.forecast_generated_at
         value = [self._calibrate_period(p, run_at) for p in d.forecast]
-        self._cal_cache_key = key
-        self._cal_cache_value = value
+        cache[self._region] = (key, value)
         return value
 
     @property

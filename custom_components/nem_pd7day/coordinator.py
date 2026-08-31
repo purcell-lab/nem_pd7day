@@ -87,6 +87,12 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         # match. Avoids the previous O(intervals x stpasa_intervals) linear scan
         # that ran once per forecast interval per state write.
         self._stpasa_index_run: str | None = None
+        # Calibrated forecast memo, keyed by region, owned here rather than by
+        # the entities. Three sensors per region ask for the same calibrated
+        # forecast and compute it with the same code, so an entity level memo
+        # recalibrated roughly 336 intervals three times per region during
+        # platform setup. See PD7DayForecastSensor._calibrated_forecast.
+        self._calibrated_forecast_cache: dict[str, tuple] = {}
         self._stpasa_index_map: dict[str, Any] = {}
         self._stpasa_index_sorted: list[tuple[float, Any]] = []
         self._first_refresh_done = False
