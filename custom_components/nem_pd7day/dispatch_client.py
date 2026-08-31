@@ -230,11 +230,13 @@ def fetch_dispatch_prices(
                         f"{expected_settlement.strftime('%Y-%m-%dT%H:%M')}"
                     )
 
-        _LOGGER.debug(
-            "Dispatch: %d regions fetched, settlement=%s (NEMtime)",
-            len(results),
-            sample.interval_datetime.replace("/", "-").replace(" ", "T")[:16] if sample else "?",
-        )
+        # No second summary line on the success path (issue #33).  The
+        # "ELEC_NEM_SUMMARY fetched: ..." line above already names every
+        # region with its settlement and price, so a follow-up
+        # "Dispatch: %d regions fetched, settlement=..." record restated the
+        # count and settlement that line already carried.  The DispatchIS
+        # fallback below keeps its own line because that path emits no
+        # per-region summary and is rare enough to be worth announcing.
         return results
     except StaleIntervalError:
         raise  # let caller handle retry — don't fall through to DispatchIS
