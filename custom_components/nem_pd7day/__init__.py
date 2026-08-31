@@ -426,6 +426,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     actual_service = ActualPriceService(
         hass, store, [region], session,
         calibration_region=region,
+        semaphore=hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY),
     )
     await actual_service.async_setup(entry)
 
