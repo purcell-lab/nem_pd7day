@@ -30,7 +30,6 @@ from .const import (
     REGION_STARTUP_ORDER,
     SETUP_LOCK_KEY,
     SHARED_FETCH_KEY,
-    region_startup_index,
 )
 from .coordinator import DispatchCoordinator, PD7DayCoordinator
 from .forecast_store import ForecastStore
@@ -40,6 +39,16 @@ from .pd7day_client import PD7DayClient
 from .pd7day_shared import ALL_INTERCONNECTORS, SharedPD7DayFetch
 from .startup_trace import StartupTrace
 from .stpasa_client import StpasaClient
+from .stpasa_refresh import (
+    FETCH_FAILED,
+    FETCH_FRESH,
+    REFIT_WAIT_TIMEOUT_S,
+    STALE_FETCH_DELAY_S,
+    STPASA_REFRESH_KEY,
+    StpasaRefreshCoordination,
+    run_refit_when_stpasa_ready,
+    should_trigger_central_fetch,
+)
 from .stpasa_store import StpasaStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -111,9 +120,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     forecast_store = ForecastStore(hass, region)
 
     # ── STPASA store (per region) ─────────────────────────────────────────────
-    stpasa_store = StpasaStore(hass, region)
+    # One coordination object across all five entries. It carries the stale-cache
+    # signal that forces a refetch, the single-flight claim that keeps the shared
+    # download to one per cycle, and the gate the startup refit waits on.
+    stpasa_refresh: StpasaRefreshCoordination = hass.data[DOMAIN].setdefault(
+        STPASA_REFRESH_KEY, StpasaRefreshCoordination()
+    )
+    stpasa_store = StpasaStore(hass, region, refresh=stpasa_refresh)
     await stpasa_store.load()
-    trace.checkpoint("stpasa store load")
+    trace.checkpoint(
+        "stpasa store load",
+        "stale cache, refetch forced" if stpasa_store.loaded_stale else None,
+    )
     # Register this region's store for central STPASA distribution. The STPASA
     # ZIP holds every NEM region, so one download (below) populates them all.
     stpasa_stores = hass.data[DOMAIN].setdefault("stpasa_stores", {})
@@ -252,6 +270,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         stores: dict[str, StpasaStore] = hass.data[DOMAIN].get("stpasa_stores", {})
         if client is None or not stores:
             return
+        # Every loaded region carries the trigger now, so this can be entered up
+        # to five times per cycle. The claim keeps the download itself single.
+        if not stpasa_refresh.claim_fetch():
+            _LOGGER.debug(
+                "STPASA: another region already holds this cycle's fetch, "
+                "skipping the duplicate download for %s",
+                region,
+            )
+            return
         try:
             all_results = await client.fetch_all_regions()
             for r, result in all_results.items():
@@ -259,11 +286,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
                 if store_for_region is not None:
                     await store_for_region.save(result)
             if all_results:
+                stpasa_refresh.mark_fresh()
                 _LOGGER.debug(
                     "STPASA: fetched and distributed to %d region stores",
                     len(all_results),
                 )
             else:
+                # No regions came back, so treat it as a definitive failure for
+                # this cycle: any refit waiting on fresh data must not hang.
+                stpasa_refresh.mark_failed("no regions in STPASA response")
                 # Logged once per cycle here (not per forecast interval in
                 # sensor._stpasa_features_for_interval) to avoid log flooding.
                 # An empty result means this cycle got no fresh STPASA, so OLS
@@ -274,20 +305,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
                     "STPASA fetch warnings for the cause (e.g. NEMWEB 403)."
                 )
         except Exception as exc:  # noqa: BLE001
+            stpasa_refresh.mark_failed(str(exc))
             _LOGGER.warning("STPASA central fetch failed (non-fatal): %s", exc)
 
-    # Only register the STPASA fetch listener on the first (QLD1) coordinator so
-    # the download fires once per cycle, not once per region coordinator.
-    if region_startup_index(region) == 0:
+    # The fetch trigger used to be registered only where region_startup_index
+    # was 0, meaning QLD1. Disabling or removing the QLD1 entry therefore stopped
+    # STPASA refreshes for every region, silently (issue #37). Register it on any
+    # loaded region instead. The download stays single because
+    # _fetch_and_distribute_stpasa claims the cycle before touching NEMWEB.
+    if should_trigger_central_fetch(region, registered_regions=stpasa_stores):
         @callback
         def _on_pd7day_update() -> None:
             entry.async_create_background_task(
                 hass,
                 _fetch_and_distribute_stpasa(),
-                name="nem_pd7day_stpasa_central_fetch",
+                name=f"nem_pd7day_stpasa_central_fetch_{region}",
             )
 
         entry.async_on_unload(coordinator.async_add_listener(_on_pd7day_update))
+
+    # A stale cache used to produce a warning and nothing else, so the first
+    # fresh STPASA of the session did not arrive until the next PD7DAY update,
+    # which on the cached startup path is at least 30 s away and can be a full
+    # cycle away. Force the fetch now instead. The short delay lets the other
+    # entries register their stores first, so this one download still refreshes
+    # all five regions.
+    if stpasa_refresh.fetch_pending:
+
+        async def _forced_stale_fetch() -> None:
+            await asyncio.sleep(STALE_FETCH_DELAY_S)
+            await _fetch_and_distribute_stpasa()
+
+        entry.async_create_background_task(
+            hass,
+            _forced_stale_fetch(),
+            name=f"nem_pd7day_stpasa_stale_refetch_{region}",
+        )
 
     trace.checkpoint("coordinators ready")
 
@@ -394,13 +447,61 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # Run as a background task so integration setup completes immediately.
     # Guard: skip if fewer than MIN_OBS observations (nothing to fit).
     if store.observation_count >= 10:
-        hass.async_create_task(_do_refit())
-        _LOGGER.debug(
-            "[STARTUP] %s: calibration refit queued as a background task "
-            "(%d observations)",
-            region,
-            store.observation_count,
-        )
+        if stpasa_refresh.fetch_pending:
+            # The refit reads STPASA as an OLS stage-2 feature, and it is the
+            # most expensive calibration work the integration does, so it is the
+            # worst operation to feed a cache that is past the 90 minute fresh
+            # TTL. Hold it until the forced fetch resolves either way.
+            @callback
+            def _log_refit_gate(outcome: str) -> None:
+                if outcome == FETCH_FRESH:
+                    _LOGGER.info(
+                        "[STARTUP] %s: fresh STPASA arrived, running the "
+                        "deferred calibration refit (%d observations)",
+                        region,
+                        store.observation_count,
+                    )
+                elif outcome == FETCH_FAILED:
+                    _LOGGER.warning(
+                        "[STARTUP] %s: forced STPASA refetch failed (%s), "
+                        "running the calibration refit anyway on the stale "
+                        "cache rather than blocking startup",
+                        region,
+                        stpasa_refresh.failure_reason or "no reason reported",
+                    )
+                else:
+                    _LOGGER.warning(
+                        "[STARTUP] %s: no STPASA fetch outcome within %.0f s, "
+                        "running the calibration refit anyway on the stale "
+                        "cache rather than blocking startup",
+                        region,
+                        REFIT_WAIT_TIMEOUT_S,
+                    )
+
+            hass.async_create_task(
+                run_refit_when_stpasa_ready(
+                    stpasa_refresh,
+                    _do_refit,
+                    timeout=REFIT_WAIT_TIMEOUT_S,
+                    on_outcome=_log_refit_gate,
+                )
+            )
+            _LOGGER.info(
+                "[STARTUP] %s: STPASA cache was stale, so the calibration "
+                "refit is deferred until the forced fetch resolves (up to "
+                "%.0f s, %d observations)",
+                region,
+                REFIT_WAIT_TIMEOUT_S,
+                store.observation_count,
+            )
+        else:
+            hass.async_create_task(_do_refit())
+            _LOGGER.debug(
+                "[STARTUP] %s: calibration refit queued as a background task "
+                "(%d observations)",
+                region,
+                store.observation_count,
+            )
 
     entry.async_on_unload(
         async_track_time_interval(hass, _refit, REFIT_INTERVAL)
@@ -460,6 +561,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -
             hass.data[DOMAIN].pop("notice_client", None)
             hass.data[DOMAIN].pop("stpasa_client", None)
             hass.data[DOMAIN].pop("stpasa_stores", None)
+            hass.data[DOMAIN].pop(STPASA_REFRESH_KEY, None)
             hass.data[DOMAIN].pop(SHARED_FETCH_KEY, None)
             if hass.services.has_service(DOMAIN, "force_refit"):
                 hass.services.async_remove(DOMAIN, "force_refit")
