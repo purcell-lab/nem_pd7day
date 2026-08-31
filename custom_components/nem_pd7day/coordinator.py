@@ -508,19 +508,23 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
 
             self.prices = prices
             self.last_updated = datetime.now(timezone.utc)
-            elapsed = (self.last_updated - t0).total_seconds()
-            _LOGGER.debug(
-                "Finished fetching NEM Dispatch data in %.3f seconds — %d regions",
-                elapsed,
-                len(prices),
-            )
-            for region_id, dp in sorted(prices.items()):
-                _LOGGER.debug(
-                    "  Dispatch: %s settlement=%s (NEMtime) — $%.4f/kWh",
-                    region_id,
-                    dp.interval_datetime.replace("/", "-").replace(" ", "T")[:16],
-                    dp.rrp,
-                )
+            # No success-path DEBUG line here, deliberately (issue #33).
+            #
+            # This block used to log a "Finished fetching ... - N regions"
+            # timing line plus one line per region with settlement and price.
+            # With five regions that is 6 of the 9 DEBUG lines the dispatch
+            # path emitted every 5 minutes, and every one of them was a
+            # restatement of something already logged:
+            #   * the per-region settlement and price are already in the
+            #     single "ELEC_NEM_SUMMARY fetched: ..." line emitted by
+            #     dispatch_client.fetch_dispatch_prices(), which covers all
+            #     regions in one record;
+            #   * the region count and elapsed time are already in the
+            #     "Finished fetching %s data in %.3f seconds (success: %s)"
+            #     line that DataUpdateCoordinator._async_refresh() emits for
+            #     every coordinator in HA core.
+            # Failure paths below still log, at WARNING, because those carry
+            # information nothing else records.
             return prices
         except Exception as exc:  # noqa: BLE001
             elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
