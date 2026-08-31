@@ -90,6 +90,18 @@ class CalibrationStore:
 
         self._observations: list[dict[str, Any]] = []
         self._calibration: CalibrationResult | None = None
+        # Monotonic counter, bumped every time the calibration changes in a way
+        # that changes calibrated output. Consumers memoise calibrated forecasts
+        # and need a cache key that is stable while the fit is unchanged and
+        # different afterwards.
+        #
+        # Identity of the CalibrationResult object cannot serve that purpose.
+        # async_refit assigns the result and then mutates it in place, setting
+        # result.ols_models for the OLS stage 2 fit, so the object is the same
+        # object before and after a change that moves every calibrated price.
+        # CPython also recycles id() values, so a fresh result allocated where a
+        # discarded one used to live can compare equal to the stale key.
+        self._fit_generation = 0
 
         # Forecast history: interval_time_iso → list of forecast entries
         # Keys and run_at values are ISO-8601 +10:00 strings.
@@ -150,6 +162,7 @@ class CalibrationStore:
         if coeff_data:
             try:
                 self._calibration = self._engine.from_storage(coeff_data)
+                self._fit_generation += 1
                 _LOGGER.info(
                     "PD7DAY calibration: restored coefficients fitted at %s (%d obs)",
                     self._calibration.fitted_at,
@@ -456,6 +469,7 @@ class CalibrationStore:
             self._engine.fit, obs_list, self._region
         )
         self._calibration = result
+        self._fit_generation += 1
 
         # ── OLS stage2 (STPASA) ──────────────────────────────────────────────
         # Best-effort: only fit when STPASA-tagged observations exist.  Failure
@@ -467,6 +481,10 @@ class CalibrationStore:
                     self._engine.fit_ols_stage2, obs_list, stpasa_map, self._region
                 )
                 result.ols_models = ols_models
+                # Mutates the object already published as self._calibration, so
+                # the generation has to move again or memoised consumers keep
+                # serving stage 1 output.
+                self._fit_generation += 1
                 _LOGGER.info(
                     "OLS stage2 fit: %d buckets with STPASA data", len(ols_models)
                 )
@@ -497,6 +515,16 @@ class CalibrationStore:
     @property
     def calibration(self) -> CalibrationResult | None:
         return self._calibration
+
+    @property
+    def fit_generation(self) -> int:
+        """Monotonic counter identifying the current fit.
+
+        Increments on restore from storage, on refit, and on the in place OLS
+        stage 2 update. Safe to use as part of a memoisation key, which object
+        identity is not. Zero means nothing has been fitted or restored yet.
+        """
+        return self._fit_generation
 
     @property
     def observations(self) -> list[dict]:
