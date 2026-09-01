@@ -318,7 +318,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         ax.annotate(f'${mv:.3f}', xy=(mt, mv_plot),
                     xytext=(0, 9), textcoords='offset points',
                     fontsize=7.2, color='#B71C1C', ha='center', va='bottom',
-                    fontweight='semibold', zorder=9)
+                    fontweight='bold', zorder=9)
 
         ni, nv = ex['min']
         nt = times[ni]
@@ -326,7 +326,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         ax.annotate(f'${nv:.3f}', xy=(nt, nv),
                     xytext=(0, -11), textcoords='offset points',
                     fontsize=7.2, color='#1B5E20', ha='center', va='top',
-                    fontweight='semibold', zorder=9)
+                    fontweight='bold', zorder=9)
 
     # ── Rec 1 + 4: Horizon-gated spike callouts with persistence styling ─────
     # Classify spike intervals using raw value threshold + spike_credible + persistence.

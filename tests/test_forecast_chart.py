@@ -384,3 +384,97 @@ def test_render_forecast_chart_no_matplotlib():
         result = render_forecast_chart([], "QLD1")
     assert isinstance(result, bytes)
     assert result[:4] == b'\x89PNG'
+
+
+# ── Font weight ───────────────────────────────────────────────────────────────
+#
+# The extremes annotations used fontweight='semibold'. matplotlib maps that to
+# numeric weight 600, which the bundled DejaVu Sans does not ship, so every
+# render that hit the annotation path logged:
+#
+#     findfont: Failed to find font weight semibold, now using 700.
+#
+# 700 is 'bold', which is what the rest of the chart already asks for, so the
+# rendered image was never affected. Only the log was.
+
+def test_render_emits_no_findfont_warning():
+    """Chart rendering must not ask for a font weight the bundled font lacks."""
+    import logging
+
+    records: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    # findfont results are memoised per process and the warning is logged only
+    # on a cache miss, so an earlier render in the same session would otherwise
+    # let a regression through here unnoticed.
+    from matplotlib import font_manager
+
+    for name in ("_findfont_cached", "findfont"):
+        cached = getattr(font_manager, name, None)
+        cache_clear = getattr(cached, "cache_clear", None)
+        if callable(cache_clear):
+            cache_clear()
+    fm = getattr(font_manager, "fontManager", None)
+    for name in ("_findfont_cached", "findfont"):
+        cached = getattr(fm, name, None)
+        cache_clear = getattr(cached, "cache_clear", None)
+        if callable(cache_clear):
+            cache_clear()
+
+    logger = logging.getLogger("matplotlib.font_manager")
+    handler = _Capture()
+    logger.addHandler(handler)
+    previous_level = logger.level
+    logger.setLevel(logging.WARNING)
+    try:
+        # 48 intervals is enough to exercise the min and max annotations, which
+        # are the two call sites that requested the unsupported weight.
+        result = render_forecast_chart(_make_forecast(48), "QLD1")
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+
+    assert result[:4] == b'\x89PNG'
+    findfont = [m for m in records if "findfont" in m]
+    assert not findfont, f"matplotlib could not resolve a requested font: {findfont}"
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    ["forecast_chart", "bias_chart", "iso_chart", "tod_stats"],
+)
+def test_chart_modules_request_only_supported_font_weights(module_name):
+    """Guard every chart module, not just the one that regressed."""
+    import ast
+    import os
+
+    # DejaVu Sans, which matplotlib bundles and these charts use, ships regular
+    # and bold only. Anything else silently falls back and logs a warning.
+    supported = {"normal", "regular", "bold"}
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "custom_components", "nem_pd7day", f"{module_name}.py",
+    )
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg not in ("fontweight", "weight"):
+                continue
+            if not isinstance(keyword.value, ast.Constant):
+                continue
+            value = keyword.value.value
+            if isinstance(value, str) and value not in supported:
+                offenders.append(f"line {node.lineno}: {keyword.arg}={value!r}")
+
+    assert not offenders, (
+        f"{module_name}.py requests unsupported font weights: {offenders}"
+    )
