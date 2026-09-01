@@ -42,6 +42,10 @@ def _client(listing: str, *, body: str = "NOT A RELEVANT NOTICE", clock=None):
         calls["n"] += 1
         calls["urls"].append(url)
         resp = AsyncMock()
+        # status and headers are read directly now that the client classifies
+        # the response itself instead of calling raise_for_status.
+        resp.status = 200
+        resp.headers = {}
         resp.raise_for_status = MagicMock()
         resp.text = AsyncMock(return_value=listing if calls["n"] == 1 else body)
         return AsyncMock(
@@ -112,11 +116,14 @@ def test_cursor_advances_when_file_fetch_fails():
     def _get(url, *args, **kwargs):
         calls["n"] += 1
         resp = AsyncMock()
+        resp.headers = {}
         if calls["n"] == 1:
+            resp.status = 200
             resp.raise_for_status = MagicMock()
             resp.text = AsyncMock(return_value=listing)
         else:
             # Mirrors the 403s NEMWEB returned when the backlog was re-read.
+            resp.status = 403
             resp.raise_for_status = MagicMock(side_effect=Exception("403 Forbidden"))
             resp.text = AsyncMock(return_value="")
         return AsyncMock(
@@ -168,6 +175,8 @@ def test_fetches_respect_shared_concurrency_limit():
     def _get(url, *args, **kwargs):
         calls["n"] += 1
         resp = AsyncMock()
+        resp.status = 200
+        resp.headers = {}
         resp.raise_for_status = MagicMock()
         if calls["n"] == 1:
             resp.text = AsyncMock(return_value=listing)

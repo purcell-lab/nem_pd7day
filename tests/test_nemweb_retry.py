@@ -577,3 +577,53 @@ def test_fetches_hold_the_shared_semaphore():
     # Two listing attempts plus one zip fetch.
     assert sem.acquired == 3
     assert sem.max_held <= _const_mod.NEMWEB_MAX_CONCURRENT_REQUESTS
+
+
+# ── warn_on_exhausted lets a fan-out caller aggregate (issue #44) ───────────
+
+def test_warn_on_exhausted_false_drops_the_give_up_line_to_debug(caplog):
+    """
+    The market notice client fans out to up to forty file fetches per cycle and
+    summarises the failures itself, so each individual give-up must not warn.
+    The line still has to exist at debug, carrying the URL and the exception,
+    or the per-file cause becomes unrecoverable. Issue #44.
+    """
+    async def always_fails():
+        raise _retry.NemwebFetchError("HTTP 503", retryable=True, status=503)
+
+    async def scenario(warn: bool):
+        return await _retry.fetch_with_retry(
+            always_fails,
+            url="https://example.invalid/notice.txt",
+            label="Notice 1234",
+            logger=logging.getLogger("nemweb_retry_test"),
+            max_attempts=2,
+            sleep=_noop_sleep,
+            warn_on_exhausted=warn,
+        )
+
+    with caplog.at_level(logging.DEBUG, logger="nemweb_retry_test"):
+        assert run_async(scenario(False)) is None
+
+    levels = {r.levelno for r in caplog.records}
+    assert logging.WARNING not in levels, (
+        "suppressed give-up must not warn: "
+        f"{[r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]}"
+    )
+    give_up = [r for r in caplog.records if "giving up" in r.getMessage()]
+    assert give_up, "the give-up line must still be emitted at debug"
+    assert give_up[0].levelno == logging.DEBUG
+    assert "example.invalid/notice.txt" in give_up[0].getMessage()
+    assert "NemwebFetchError" in give_up[0].getMessage()
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="nemweb_retry_test"):
+        assert run_async(scenario(True)) is None
+    assert any(r.levelno == logging.WARNING for r in caplog.records), (
+        "the default must still warn"
+    )
+
+
+async def _noop_sleep(_delay: float) -> None:
+    """Skip the backoff so the test does not spend real time sleeping."""
+    return None
