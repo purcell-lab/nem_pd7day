@@ -1,12 +1,11 @@
 """Diagnostics support for NEM PD7DAY."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.loader import async_get_integration
 
 from .const import (
     COORDINATOR_KEY,
@@ -17,14 +16,25 @@ from .const import (
 )
 
 
-def _integration_version() -> str | None:
-    """Read the integration version from manifest.json."""
-    manifest_path = Path(__file__).parent / "manifest.json"
+async def _integration_version(hass: HomeAssistant) -> str | None:
+    """Return the integration version from the loader's cached manifest.
+
+    This used to read and parse manifest.json from disk on every diagnostics
+    download. Because async_get_config_entry_diagnostics is a coroutine, that
+    synchronous read ran on the event loop and Home Assistant flagged it:
+
+        Detected blocking call to read_text with args
+        (PosixPath('/config/custom_components/nem_pd7day/manifest.json'),)
+        inside the event loop by custom integration 'nem_pd7day'
+
+    The loader has already read and cached this manifest during setup, so
+    asking it costs nothing and touches no disk.
+    """
     try:
-        manifest = json.loads(manifest_path.read_text())
-    except (OSError, ValueError):
+        integration = await async_get_integration(hass, DOMAIN)
+    except Exception:  # noqa: BLE001 - diagnostics must never raise
         return None
-    return manifest.get("version")
+    return integration.manifest.get("version")
 
 
 def _calibration_summary(store: Any) -> dict[str, Any] | None:
@@ -103,5 +113,5 @@ async def async_get_config_entry_diagnostics(
         "stpasa_run_datetime": _stpasa_run_datetime(stpasa_store),
         "pd7day_run_datetime": _pd7day_run_datetime(coordinator, region),
         "nemweb_gate": _nemweb_gate(hass),
-        "integration_version": _integration_version(),
+        "integration_version": await _integration_version(hass),
     }
