@@ -200,14 +200,30 @@ async def async_setup_entry(
     entities.append(StpasaDataSensor(coordinator, entry, region))
 
 
-    # Interconnectors for this region
+    # Interconnectors for this region.
+    #
+    # The entity set comes from the static region map alone, never from the
+    # contents of one fetch. Gating creation on live data made the entity
+    # population a function of whatever AEMO happened to publish at the moment
+    # setup ran, so two restarts of the same install could yield different
+    # entities, and an interconnector absent from a single file vanished from
+    # dashboards, templates and recorder history with nothing logged. See
+    # issue #48. PD7DayInterconnectorSensor.available already reports False
+    # when the coordinator holds no row for the id, which is the correct way
+    # to surface missing data.
     region_ic_ids = interconnectors_for_regions([region])
     live_ic_ids = set(coordinator.data.interconnectors) if (
         coordinator.data and coordinator.data.interconnectors
     ) else set()
     for ic_id in sorted(region_ic_ids):
-        if ic_id in (live_ic_ids or region_ic_ids):
-            entities.append(PD7DayInterconnectorSensor(coordinator, entry, region, ic_id))
+        entities.append(PD7DayInterconnectorSensor(coordinator, entry, region, ic_id))
+    _LOGGER.debug(
+        "PD7DAY %s interconnector entities created=%s, of which without data "
+        "in this result=%s",
+        region,
+        sorted(region_ic_ids),
+        sorted(region_ic_ids - live_ic_ids) if live_ic_ids else "no data yet",
+    )
 
     entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
     entities.append(PD7DayTodSensor(coordinator, entry, region))

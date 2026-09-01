@@ -17,7 +17,10 @@ DEVICE_CONFIGURATION_URL = AEMO_WWW
 # Interconnectors per region
 QLD1_INTERCONNECTORS = {"NSW1-QLD1", "N-Q-MNSP1"}
 NSW1_INTERCONNECTORS = {"NSW1-QLD1", "VIC1-NSW1", "N-Q-MNSP1"}
-VIC1_INTERCONNECTORS = {"VIC1-NSW1", "SA1-VIC1", "V-S-MNSP1", "T-V-MNSP1"}
+# Heywood is published by AEMO as "V-SA". "SA1-VIC1" is not an id that appears
+# in the PD7DAY file, so listing it here gave VIC1 no Heywood sensor at all
+# while SA1, which uses the correct id below, had one. See issue #46.
+VIC1_INTERCONNECTORS = {"VIC1-NSW1", "V-SA", "V-S-MNSP1", "T-V-MNSP1"}
 SA1_INTERCONNECTORS = {"V-SA", "V-S-MNSP1"}
 TAS1_INTERCONNECTORS = {"T-V-MNSP1"}
 
