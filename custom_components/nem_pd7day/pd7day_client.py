@@ -35,8 +35,19 @@ import aiohttp
 
 from .const import FILE_PATTERN, NEMWEB_BASE_URL, NEMWEB_HEADERS, QLD1_INTERCONNECTORS
 from .executor import ExecutorJob, run_in_executor
+from .nemweb_retry import NemwebFetchError, classify_status, fetch_with_retry
 
 _LOGGER = logging.getLogger(__name__)
+
+# aiohttp transport failures are retryable, but nemweb_retry stays free of the
+# aiohttp import so it can be unit tested, so the class is handed to it from
+# here. Resolved defensively because unit tests stub the aiohttp module out
+# with a MagicMock, where ClientError is not an exception class at all.
+_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = tuple(
+    candidate
+    for candidate in (getattr(aiohttp, "ClientError", None),)
+    if isinstance(candidate, type) and issubclass(candidate, BaseException)
+)
 
 
 # ---------------------------------------------------------------------------
@@ -412,15 +423,45 @@ class PD7DayClient:
             return contextlib.nullcontext()
         return self._semaphore
 
+    async def _get_listing_html(self) -> str:
+        """One attempt at the PD7DAY directory listing. Raises on a bad status."""
+        async with self._session.get(
+            self._base_url,
+            headers=NEMWEB_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            classify_status(
+                resp.status,
+                url=self._base_url,
+                headers=getattr(resp, "headers", None),
+                # The report directory always exists, so a 404 means the path
+                # moved rather than that a file is unpublished.
+                not_published_statuses=(),
+            )
+            return await resp.text(errors="ignore")
+
     async def _list_files(self) -> list[dict[str, str]]:
-        async with self._gate():
-            async with self._session.get(
-                self._base_url,
-                headers=NEMWEB_HEADERS,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                resp.raise_for_status()
-                html = await resp.text(errors="ignore")
+        # Retried here rather than in the coordinator. The coordinator used to
+        # re-run the entire fetch_all after a flat 5 s sleep on a 403, which
+        # repeated the listing and every file fetch, and only for PD7DAY. See
+        # issue #22.
+        html = await fetch_with_retry(
+            self._get_listing_html,
+            url=self._base_url,
+            label="PD7DAY directory listing",
+            logger=_LOGGER,
+            semaphore=self._semaphore,
+            retryable_exceptions=_TRANSPORT_ERRORS,
+        )
+        if html is None:
+            # fetch_with_retry has already logged the status, URL and exception.
+            # Raised rather than returned empty so the caller does not mistake a
+            # failed fetch for an empty directory, and so the coordinator's
+            # stale-data fallback still sees an exception.
+            raise NemwebFetchError(
+                "PD7DAY directory listing unavailable after retry",
+                retryable=False,
+            )
 
         parser = _LinkExtractor()
         parser.feed(html)
@@ -447,15 +488,38 @@ class PD7DayClient:
         """
         return await self._newest_file()
 
+    async def _get_bytes_once(self, url: str) -> bytes:
+        """One attempt at a single PD7DAY file. Raises on a bad status."""
+        async with self._session.get(
+            url,
+            headers=NEMWEB_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as resp:
+            classify_status(
+                resp.status,
+                url=url,
+                headers=getattr(resp, "headers", None),
+                # The filename came from the listing moments earlier, so a 404
+                # means it rotated out mid-cycle. Retrying the same URL cannot
+                # fix that; the next cycle resolves the new newest file.
+                not_published_statuses=(404,),
+            )
+            return await resp.read()
+
     async def _fetch_bytes(self, url: str) -> bytes:
-        async with self._gate():
-            async with self._session.get(
-                url,
-                headers=NEMWEB_HEADERS,
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp:
-                resp.raise_for_status()
-                return await resp.read()
+        raw = await fetch_with_retry(
+            lambda: self._get_bytes_once(url),
+            url=url,
+            label="PD7DAY file",
+            logger=_LOGGER,
+            semaphore=self._semaphore,
+            retryable_exceptions=_TRANSPORT_ERRORS,
+        )
+        if raw is None:
+            raise NemwebFetchError(
+                "PD7DAY file unavailable after retry", retryable=False
+            )
+        return raw
 
     @staticmethod
     def _unzip(raw: bytes, name: str) -> bytes:

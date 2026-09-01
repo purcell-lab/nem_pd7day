@@ -8,7 +8,13 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import COORDINATOR_KEY, DOMAIN, STORE_KEY, get_region
+from .const import (
+    COORDINATOR_KEY,
+    DOMAIN,
+    NEMWEB_SEMAPHORE_KEY,
+    STORE_KEY,
+    get_region,
+)
 
 
 def _integration_version() -> str | None:
@@ -63,6 +69,20 @@ def _pd7day_run_datetime(coordinator: Any, region: str) -> str | None:
     return getattr(price_data, "forecast_generated_at", None)
 
 
+def _nemweb_gate(hass: HomeAssistant) -> dict[str, Any] | None:
+    """Counters from the shared NEMWEB request gate, or None if absent.
+
+    These are what let a future 403 investigation tell "NEMWEB throttled us"
+    apart from "we throttled ourselves", which the bare semaphore this gate
+    replaced could never express. See issue #22.
+    """
+    gate = hass.data.get(DOMAIN, {}).get(NEMWEB_SEMAPHORE_KEY)
+    diagnostics = getattr(gate, "diagnostics", None)
+    if not callable(diagnostics):
+        return None
+    return diagnostics()
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
@@ -82,5 +102,6 @@ async def async_get_config_entry_diagnostics(
         "calibration_summary": _calibration_summary(store),
         "stpasa_run_datetime": _stpasa_run_datetime(stpasa_store),
         "pd7day_run_datetime": _pd7day_run_datetime(coordinator, region),
+        "nemweb_gate": _nemweb_gate(hass),
         "integration_version": _integration_version(),
     }

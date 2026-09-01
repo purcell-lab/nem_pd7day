@@ -586,15 +586,19 @@ def test_stpasa_fetch_failure_non_fatal():
     coord._stpasa_store = None
 
     # Patch only the PD7DAY fetch; there is no STPASA fetch path any more.
-    with patch.object(coord, "_get_client", return_value=MagicMock()), \
-         patch.object(coord, "_fetch_all_with_retry",
-                      AsyncMock(return_value=result)):
+    # The coordinator calls client.fetch_all directly; the 403 retry that used
+    # to sit in _fetch_all_with_retry now lives inside the client, per issue #22.
+    client = MagicMock()
+    client.fetch_all = AsyncMock(return_value=result)
+    with patch.object(coord, "_get_client", return_value=client):
         out = run_async(coord._async_update_data())
 
     # Coordinator update succeeded with no STPASA data.
     assert out is result
     # Coordinator must not expose a STPASA fetch helper any more.
     assert not hasattr(coord, "_get_stpasa_client")
+    # Nor a PD7DAY retry wrapper: retries belong to the client.
+    assert not hasattr(coord, "_fetch_all_with_retry")
     # Forecast still ingested into the calibration store.
     key = nem_iso(period_end_dt - timedelta(minutes=30))
     assert key in store._forecast_history

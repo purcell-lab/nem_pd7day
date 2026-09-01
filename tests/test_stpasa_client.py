@@ -159,9 +159,15 @@ def test_extract_nested_zip():
 class _StubResponse:
     """Async response stub yielding canned text/bytes."""
 
-    def __init__(self, *, text="", data=b"") -> None:
+    def __init__(self, *, text="", data=b"", status: int = 200) -> None:
         self._text = text
         self._data = data
+        # The NEMWEB clients inspect resp.status via classify_status now
+        # instead of calling raise_for_status, so the stub must carry a
+        # status and headers. raise_for_status is kept as a no-op so any
+        # remaining caller still works.
+        self.status = status
+        self.headers = {}
 
     def raise_for_status(self):
         return None

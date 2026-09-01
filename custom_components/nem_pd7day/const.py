@@ -59,6 +59,19 @@ def region_startup_index(region: str) -> int:
 NEMWEB_SEMAPHORE_KEY = "nemweb_semaphore"
 NEMWEB_MAX_CONCURRENT_REQUESTS = 2
 
+# Minimum interval between the starts of successive NEMWEB requests, applied
+# globally on top of the concurrency cap above. Concurrency is not frequency:
+# two slots turning over quickly still issue dozens of requests a second, which
+# is what a directory listing followed by a batch of file fetches does, and what
+# NEMWEB answers with a 403. See nemweb_gate.py and issue #22.
+#
+# 0.25 s bounds the integration to four NEMWEB requests per second across all
+# five region coordinators and every report type. Steady state is a handful of
+# fetches three times a day, spaced far wider than this, so the gap is a no-op
+# in normal operation and cannot raise the steady-state request rate. It only
+# binds during a burst.
+NEMWEB_MIN_REQUEST_GAP_S = 0.25
+
 # Guards the one-time creation of shared objects on hass.data[DOMAIN]. The five
 # region entries are set up concurrently and the creation paths await, so a bare
 # "if key not in data" check is not atomic and lets every entry build its own

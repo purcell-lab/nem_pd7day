@@ -28,6 +28,7 @@ from .dispatch_client import DispatchPrice, StaleIntervalError, fetch_dispatch_p
 from .pd7day_client import PD7DayClient, PD7DayResult
 from . import tod_stats as _tod_stats
 from .tod_stats import TodStats
+from .nemweb_retry import NemwebFetchError, describe_status
 
 if TYPE_CHECKING:
     from .calibration_engine import RunFeatures
@@ -140,12 +141,30 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         client = self._get_client()
         t0 = datetime.now(timezone.utc)
         try:
-            result = await self._fetch_all_with_retry(client)
+            # The client retries each NEMWEB request internally now, so there is
+            # no retry wrapper here. The previous one re-ran the whole fetch,
+            # listing and every file, after a flat 5 s sleep on a 403, and only
+            # for PD7DAY. See issue #22.
+            result = await client.fetch_all(
+                self._regions, self._interconnector_ids
+            )
+        except NemwebFetchError as exc:
+            # Raised by the client once its retry budget is exhausted. Carries
+            # the status so the stale-data line can say which one arrived, with
+            # 403 and 429 spelled out rather than left as a bare number.
+            if self.data is not None:
+                _LOGGER.warning(
+                    "PD7DAY fetch failed (%s) — serving stale data from last "
+                    "successful fetch",
+                    describe_status(exc.status) or exc,
+                )
+                return self.data
+            raise UpdateFailed(f"PD7DAY fetch failed: {exc}") from exc
         except aiohttp.ClientResponseError as exc:
             if self.data is not None:
                 _LOGGER.warning(
                     "PD7DAY fetch failed (%s %s) — serving stale data from last successful fetch",
-                    exc.status,
+                    describe_status(exc.status) or exc.status,
                     exc.message,
                 )
                 return self.data
@@ -204,33 +223,6 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             self._first_refresh_done = True
 
         return result
-
-    async def _fetch_all_with_retry(self, client) -> PD7DayResult:
-        """
-        Fetch PD7DAY data, retrying once after a 5s backoff on a 403 only.
-
-        NEMWEB throttles bursts with 403s. A single retry after a short wait
-        usually succeeds. Any other error (404, 500, timeout, etc.) is raised
-        immediately so the existing stale-data fallback handles it.
-        """
-        try:
-            return await client.fetch_all(self._regions, self._interconnector_ids)
-        except aiohttp.ClientResponseError as exc:
-            if exc.status != 403:
-                raise
-            _LOGGER.warning(
-                "[WARNING] PD7DAY fetch got 403 from NEMWEB — retrying once in 5s"
-            )
-            await asyncio.sleep(5)
-            try:
-                _LOGGER.debug("[DEBUG] PD7DAY 403 retry attempt")
-                return await client.fetch_all(self._regions, self._interconnector_ids)
-            except aiohttp.ClientResponseError as retry_exc:
-                if retry_exc.status == 403:
-                    _LOGGER.warning(
-                        "[WARNING] PD7DAY retry also got 403 from NEMWEB"
-                    )
-                raise
 
     async def async_fetch_notices(self) -> None:
         """Fetch new market notices and persist.

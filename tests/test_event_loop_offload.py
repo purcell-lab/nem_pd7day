@@ -86,8 +86,14 @@ def _minimal_csv() -> bytes:
 
 
 class _FakeResp:
-    def __init__(self, payload: bytes):
+    def __init__(self, payload: bytes, status: int = 200):
         self._payload = payload
+        # The NEMWEB clients inspect resp.status via classify_status now
+        # instead of calling raise_for_status, so the stub must carry a
+        # status and headers. raise_for_status is kept as a no-op so any
+        # remaining caller still works.
+        self.status = status
+        self.headers = {}
 
     async def __aenter__(self):
         return self

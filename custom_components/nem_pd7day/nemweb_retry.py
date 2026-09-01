@@ -105,6 +105,31 @@ class NemwebFetchError(Exception):
         self.status = status
 
 
+# NEMWEB answers 403 where a well behaved origin would answer 429, so the two
+# look identical in a log line unless they are spelled out. Knowing which one
+# arrived decides the response: a 429 means back off on our own schedule, a 403
+# from Akamai may mean the IP is blocked and no amount of backing off helps.
+_STATUS_MEANINGS = {
+    403: "403 Forbidden, Akamai bot or rate block rather than an explicit "
+         "rate limit",
+    408: "408 Request Timeout",
+    425: "425 Too Early",
+    429: "429 Too Many Requests, an explicit rate limit",
+}
+
+
+def describe_status(status: int | None) -> str:
+    """Human readable status for a log line, or an empty string if unknown."""
+    if status is None:
+        return ""
+    described = _STATUS_MEANINGS.get(status)
+    if described is not None:
+        return described
+    if status >= 500:
+        return f"HTTP {status}, server side"
+    return f"HTTP {status}"
+
+
 def parse_retry_after(
     raw: Any,
     *,
@@ -167,6 +192,15 @@ def classify_status(
         retry_after=retry_after,
         status=status,
     )
+
+
+def _status_suffix(exc: BaseException | None) -> str:
+    """``" [<meaning>]"`` when the exception carries an HTTP status."""
+    status = getattr(exc, "status", None)
+    if not isinstance(status, int):
+        return ""
+    described = describe_status(status)
+    return f" [{described}]" if described else ""
 
 
 def is_retryable(
@@ -270,14 +304,17 @@ async def fetch_with_retry(
                 jitter=jitter,
             )
             log.debug(
-                "%s: attempt %d/%d failed (%s: %s), url=%s, retrying in %.2f s",
+                "%s: attempt %d/%d failed (%s: %s%s), url=%s, retrying in "
+                "%.2f s%s",
                 label,
                 attempt,
                 max_attempts,
                 type(exc).__name__,
                 exc,
+                _status_suffix(exc),
                 url,
                 delay,
+                " honouring Retry-After" if retry_after is not None else "",
             )
             await sleep(delay)
 
@@ -287,12 +324,13 @@ async def fetch_with_retry(
     # error were indistinguishable from each other.
     log.log(
         logging.WARNING if warn_on_exhausted else logging.DEBUG,
-        "%s: giving up after %d attempt(s), url=%s: %s: %s",
+        "%s: giving up after %d attempt(s), url=%s: %s: %s%s",
         label,
         attempts_used,
         url,
         type(last_exc).__name__,
         last_exc,
+        _status_suffix(last_exc),
     )
     # The traceback is one level down so a normal log stays one line per
     # failure while a debug run still shows where it came from.
