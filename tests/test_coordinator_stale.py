@@ -138,6 +138,7 @@ _load(
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
 )
 
+from custom_components.nem_pd7day.nemweb_retry import NemwebFetchError
 from custom_components.nem_pd7day.coordinator import (
     PD7DayCoordinator,
     DispatchCoordinator,
@@ -243,6 +244,85 @@ def test_pd7day_coordinator_raises_on_http_error_no_stale():
 
     with pytest.raises(_UpdateFailed):
         run_async(coord._async_update_data())
+
+
+def test_pd7day_coordinator_returns_stale_on_nemweb_fetch_error(caplog):
+    """The client now raises NemwebFetchError once its retries are spent.
+
+    Issue #22 moved retrying out of the coordinator and into the clients, so the
+    stale-data fallback has to recognise the client's own exhaustion error, not
+    only a raw aiohttp status error. Without this branch a sustained 403 would
+    surface as UpdateFailed and mark every entity unavailable rather than
+    holding the last good forecast.
+    """
+    import logging
+
+    coord = _make_pd7day_coordinator()
+    stale = MagicMock(name="stale_pd7day_result")
+    coord.data = stale
+
+    mock_client = MagicMock()
+    mock_client.fetch_all = AsyncMock(
+        side_effect=NemwebFetchError(
+            "PD7DAY directory listing unavailable after retry",
+            retryable=False,
+            status=403,
+        )
+    )
+    coord._get_client = lambda: mock_client
+
+    with caplog.at_level(logging.WARNING):
+        result = run_async(coord._async_update_data())
+
+    assert result is stale
+    warnings = [
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ]
+    stale_lines = [m for m in warnings if "serving stale data" in m]
+    assert len(stale_lines) == 1, "one stale-data warning, not a burst"
+    # The reason must be legible: "403" alone does not tell an operator that
+    # NEMWEB is rate blocking rather than that the report path is wrong.
+    assert "bot or rate block" in stale_lines[0]
+
+
+def test_pd7day_coordinator_raises_on_nemweb_fetch_error_no_stale():
+    """With no previous data there is nothing to serve, so it must fail."""
+    coord = _make_pd7day_coordinator()
+    coord.data = None
+
+    mock_client = MagicMock()
+    mock_client.fetch_all = AsyncMock(
+        side_effect=NemwebFetchError("exhausted", retryable=False, status=403)
+    )
+    coord._get_client = lambda: mock_client
+
+    with pytest.raises(_UpdateFailed):
+        run_async(coord._async_update_data())
+
+
+def test_pd7day_coordinator_no_longer_wraps_fetch_all_in_its_own_retry():
+    """Retrying belongs to the client, so the wrapper must be gone.
+
+    Leaving it in place would double the retry budget and re-download every
+    file on each attempt, which is what provoked the 403 to begin with.
+    """
+    coord = _make_pd7day_coordinator()
+    assert not hasattr(coord, "_fetch_all_with_retry")
+
+    calls = []
+
+    async def fetch_all(regions, interconnectors):
+        calls.append((tuple(regions), tuple(interconnectors)))
+        raise NemwebFetchError("exhausted", retryable=False, status=403)
+
+    mock_client = MagicMock()
+    mock_client.fetch_all = fetch_all
+    coord._get_client = lambda: mock_client
+    coord.data = MagicMock(name="stale")
+
+    run_async(coord._async_update_data())
+
+    assert len(calls) == 1, "the coordinator must attempt the fetch exactly once"
 
 
 # ── DispatchCoordinator stale-data tests ─────────────────────────────────────

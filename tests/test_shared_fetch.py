@@ -63,6 +63,9 @@ from custom_components.nem_pd7day.const import (  # noqa: E402
     REGIONS,
 )
 from custom_components.nem_pd7day.pd7day_client import PD7DayClient  # noqa: E402
+from custom_components.nem_pd7day.nemweb_retry import (  # noqa: E402
+    NemwebFetchError,
+)
 from custom_components.nem_pd7day.pd7day_shared import (  # noqa: E402
     ALL_INTERCONNECTORS,
     SharedPD7DayFetch,
@@ -120,8 +123,14 @@ def _all_region_csv() -> bytes:
 
 
 class _FakeResp:
-    def __init__(self, payload: bytes):
+    def __init__(self, payload: bytes, status: int = 200):
         self._payload = payload
+        # The NEMWEB clients inspect resp.status via classify_status now
+        # instead of calling raise_for_status, so the stub must carry a
+        # status and headers. raise_for_status is kept as a no-op so any
+        # remaining caller still works.
+        self.status = status
+        self.headers = {}
 
     async def __aenter__(self):
         return self
@@ -364,14 +373,19 @@ def test_reused_parse_is_restamped_so_the_disk_cache_stays_usable():
 
 
 def test_a_failed_fetch_is_not_cached():
-    """The coordinator's 403 retry has to be able to do real work."""
+    """The next cycle has to be able to do real work.
+
+    The client raises NemwebFetchError once its own retry budget is spent, and
+    a failure must not be memoised: the following fetch has to reach the
+    network rather than replay the stored exception.
+    """
     fetcher, session = _make_fetcher()
     session.fail_next_listing = RuntimeError("403 Forbidden")
 
     async def scenario():
-        with pytest.raises(RuntimeError):
+        with pytest.raises(NemwebFetchError):
             await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
-        # The retry must reach the network rather than a memoised failure.
+        # The next fetch must reach the network, not a memoised failure.
         return await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
 
     result = asyncio.run(scenario())

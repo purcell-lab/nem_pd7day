@@ -26,6 +26,7 @@ from .const import (
     get_region,
     interconnectors_for_regions,
     NEMWEB_MAX_CONCURRENT_REQUESTS,
+    NEMWEB_MIN_REQUEST_GAP_S,
     NEMWEB_SEMAPHORE_KEY,
     REFIT_INTERVAL,
     REGION_STARTUP_ORDER,
@@ -36,6 +37,7 @@ from .const import (
 from .coordinator import DispatchCoordinator, PD7DayCoordinator
 from .forecast_store import ForecastStore
 from .market_notice_client import MarketNoticeClient
+from .nemweb_gate import NemwebGate
 from .notice_store import GridNoticeStore
 from .pd7day_client import PD7DayClient
 from .pd7day_shared import ALL_INTERCONNECTORS, SharedPD7DayFetch
@@ -90,13 +92,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
 
     hass.data.setdefault(DOMAIN, {})
 
-    # ── Shared NEMWEB request semaphore ──────────────────────────────────────
-    # One semaphore across all region coordinators caps simultaneous requests
-    # to www.nemweb.com.au, preventing burst 403s when HA starts the entries
-    # concurrently. Created once in an async context, then reused.
+    # ── Shared NEMWEB request gate ───────────────────────────────────────────
+    # One gate across all region coordinators bounds both simultaneous requests
+    # and request frequency against www.nemweb.com.au, preventing the burst
+    # 403s that HA starting five entries concurrently used to provoke. Created
+    # once in an async context, then reused.
+    #
+    # NemwebGate is a drop-in for the asyncio.Semaphore that used to live under
+    # this key: every NEMWEB client only ever uses it as `async with`, so the
+    # added minimum request gap needed no client change. See nemweb_gate.py and
+    # issue #22.
     if NEMWEB_SEMAPHORE_KEY not in hass.data[DOMAIN]:
-        hass.data[DOMAIN][NEMWEB_SEMAPHORE_KEY] = asyncio.Semaphore(
-            NEMWEB_MAX_CONCURRENT_REQUESTS
+        hass.data[DOMAIN][NEMWEB_SEMAPHORE_KEY] = NemwebGate(
+            NEMWEB_MAX_CONCURRENT_REQUESTS,
+            NEMWEB_MIN_REQUEST_GAP_S,
         )
 
     # ── Migration: inject default forecast_mode for existing installs ────────

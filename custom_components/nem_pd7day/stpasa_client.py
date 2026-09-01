@@ -42,8 +42,19 @@ import aiohttp
 from .const import NEMWEB_HEADERS
 from .executor import ExecutorJob, run_in_executor
 from .nem_time import parse_nem_csv, to_nem_iso
+from .nemweb_retry import NemwebFetchError, classify_status, fetch_with_retry
 
 _LOGGER = logging.getLogger(__name__)
+
+# aiohttp transport failures are retryable, but nemweb_retry stays free of the
+# aiohttp import so it can be unit tested, so the class is handed to it from
+# here. Resolved defensively because unit tests stub the aiohttp module out
+# with a MagicMock, where ClientError is not an exception class at all.
+_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = tuple(
+    candidate
+    for candidate in (getattr(aiohttp, "ClientError", None),)
+    if isinstance(candidate, type) and issubclass(candidate, BaseException)
+)
 
 STPASA_CURRENT_URL = "https://www.nemweb.com.au/Reports/CURRENT/Short_Term_PASA_Reports/"
 STPASA_FILE_PATTERN = re.compile(r"PUBLIC_STPASA_.*\.ZIP$", re.IGNORECASE)
@@ -318,15 +329,45 @@ class StpasaClient:
             return contextlib.nullcontext()
         return self._semaphore
 
+    async def _get_listing_html(self) -> str:
+        """One attempt at the STPASA directory listing. Raises on a bad status."""
+        async with self._session.get(
+            STPASA_CURRENT_URL,
+            headers=NEMWEB_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            classify_status(
+                resp.status,
+                url=STPASA_CURRENT_URL,
+                headers=getattr(resp, "headers", None),
+                # The CURRENT directory always exists, so a 404 on it means the
+                # report path moved rather than that a file is unpublished.
+                not_published_statuses=(),
+            )
+            return await resp.text(errors="ignore")
+
     async def _list_files(self) -> list[dict[str, str]]:
-        async with self._gate():
-            async with self._session.get(
-                STPASA_CURRENT_URL,
-                headers=NEMWEB_HEADERS,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                resp.raise_for_status()
-                html = await resp.text(errors="ignore")
+        # A single 403 here used to drop the whole STPASA cycle for every
+        # region, since fetch_all_regions is best-effort and returns {} on any
+        # error. NEMWEB's 403s are scattered rather than sustained, so a short
+        # retry absorbs them. See issue #22.
+        html = await fetch_with_retry(
+            self._get_listing_html,
+            url=STPASA_CURRENT_URL,
+            label="STPASA directory listing",
+            logger=_LOGGER,
+            semaphore=self._semaphore,
+            retryable_exceptions=_TRANSPORT_ERRORS,
+        )
+        if html is None:
+            # fetch_with_retry has already logged the status, URL and exception,
+            # so this carries no detail of its own. Raised rather than returned
+            # empty so the caller does not mistake a failed fetch for a
+            # directory that genuinely holds no STPASA files.
+            raise NemwebFetchError(
+                "STPASA directory listing unavailable after retry",
+                retryable=False,
+            )
 
         parser = _LinkExtractor()
         parser.feed(html)
@@ -338,15 +379,38 @@ class StpasaClient:
                 files.append({"name": name, "url": urljoin(STPASA_CURRENT_URL, href)})
         return files
 
+    async def _get_bytes_once(self, url: str) -> bytes:
+        """One attempt at a single STPASA ZIP. Raises on a bad status."""
+        async with self._session.get(
+            url,
+            headers=NEMWEB_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as resp:
+            classify_status(
+                resp.status,
+                url=url,
+                headers=getattr(resp, "headers", None),
+                # The filename came from the listing moments earlier, so a 404
+                # means it was rotated out mid-cycle. Not retryable, and the
+                # next cycle picks up the new newest file.
+                not_published_statuses=(404,),
+            )
+            return await resp.read()
+
     async def _fetch_bytes(self, url: str) -> bytes:
-        async with self._gate():
-            async with self._session.get(
-                url,
-                headers=NEMWEB_HEADERS,
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp:
-                resp.raise_for_status()
-                return await resp.read()
+        raw = await fetch_with_retry(
+            lambda: self._get_bytes_once(url),
+            url=url,
+            label="STPASA ZIP",
+            logger=_LOGGER,
+            semaphore=self._semaphore,
+            retryable_exceptions=_TRANSPORT_ERRORS,
+        )
+        if raw is None:
+            raise NemwebFetchError(
+                "STPASA ZIP unavailable after retry", retryable=False
+            )
+        return raw
 
     async def fetch_all_regions(self) -> dict[str, StpasaResult]:
         """
