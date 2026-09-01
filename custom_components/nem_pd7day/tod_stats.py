@@ -80,9 +80,19 @@ class TodStats:
     date_to: str = ""
 
     def slot_for_now(self, dt: datetime) -> SlotStats | None:
-        """Return the SlotStats matching the given datetime's (hour, minute)."""
+        """Return the SlotStats for the 30 minute slot containing ``dt``.
+
+        Slots exist only at minute 0 and minute 30. This previously required
+        exact equality on ``dt.minute``, so any state write landing on another
+        minute matched nothing and the sensor rendered ``unknown`` until the
+        next boundary. A restart at an arbitrary minute blanked the sensor for
+        up to 30 minutes even though every slot was populated. Flooring to the
+        containing slot matches how slots are labelled elsewhere and matches
+        the "statistics for the slot we are in" reading. See issue #45.
+        """
+        minute = 0 if dt.minute < 30 else 30
         for s in self.slots:
-            if s.hour == dt.hour and s.minute == dt.minute:
+            if s.hour == dt.hour and s.minute == minute:
                 return s
         return None
 

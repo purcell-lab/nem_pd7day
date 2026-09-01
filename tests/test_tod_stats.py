@@ -241,3 +241,79 @@ def test_bias_chart_renders_without_tod_stats():
     assert isinstance(png, bytes)
     assert len(png) > 5000
     assert png[:4] == b'\x89PNG'
+
+
+# ── slot_for_now containment (issue #45) ────────────────────────────────────
+
+def _full_day_stats() -> TodStats:
+    """Statistics with all 48 slots populated, one observation each."""
+    obs = []
+    for hour in range(24):
+        for minute in (0, 30):
+            obs.append(
+                _make_obs(f"2026-04-20T{hour:02d}:{minute:02d}:00+10:00", 0.10)
+            )
+    return compute(obs)
+
+
+@pytest.mark.parametrize(
+    "minute,expected_label",
+    [
+        (0, "14:00"),
+        (1, "14:00"),
+        (15, "14:00"),
+        (29, "14:00"),
+        (30, "14:30"),
+        (31, "14:30"),
+        (45, "14:30"),
+        (59, "14:30"),
+    ],
+)
+def test_slot_for_now_floors_to_the_containing_slot(minute, expected_label):
+    """
+    Any minute must resolve to the 30 minute slot containing it.
+
+    Requiring exact equality on the minute meant a state write at, say,
+    10:06:39 matched no slot at all and the sensor rendered unknown until the
+    next boundary tick 24 minutes later. Issue #45.
+    """
+    from datetime import datetime, timezone, timedelta
+    NEM_TZ = timezone(timedelta(hours=10))
+    stats = _full_day_stats()
+    slot = stats.slot_for_now(datetime(2026, 4, 21, 14, minute, tzinfo=NEM_TZ))
+    assert slot is not None, f"minute {minute} resolved to no slot"
+    assert slot.label == expected_label
+
+
+def test_slot_for_now_resolves_every_minute_of_the_day():
+    """
+    A populated set of slots must never yield None for any wall clock minute,
+    which is the property that makes the sensor independent of when it happens
+    to be written.
+    """
+    from datetime import datetime, timezone, timedelta
+    NEM_TZ = timezone(timedelta(hours=10))
+    stats = _full_day_stats()
+    unresolved = [
+        (h, m)
+        for h in range(24)
+        for m in range(60)
+        if stats.slot_for_now(datetime(2026, 4, 21, h, m, tzinfo=NEM_TZ)) is None
+    ]
+    assert unresolved == [], f"minutes with no slot: {unresolved[:10]}"
+
+
+def test_slot_for_now_still_returns_none_when_the_slot_has_no_data():
+    """
+    Flooring must not invent a slot. An hour with no observations still
+    resolves to None rather than borrowing a neighbouring slot.
+    """
+    from datetime import datetime, timezone, timedelta
+    NEM_TZ = timezone(timedelta(hours=10))
+    obs = [
+        _make_obs("2026-04-20T14:00:00+10:00", 0.10),
+        _make_obs("2026-04-20T14:30:00+10:00", 0.12),
+    ]
+    stats = compute(obs)
+    assert stats.slot_for_now(datetime(2026, 4, 21, 14, 6, tzinfo=NEM_TZ)) is not None
+    assert stats.slot_for_now(datetime(2026, 4, 21, 15, 6, tzinfo=NEM_TZ)) is None
