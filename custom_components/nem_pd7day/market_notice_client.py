@@ -27,7 +27,50 @@ from typing import Callable, Optional
 
 import aiohttp
 
+from .nemweb_retry import classify_status, fetch_with_retry
+
 _LOGGER = logging.getLogger(__name__)
+
+# aiohttp transport failures are retryable, but nemweb_retry stays free of the
+# aiohttp import so it can be unit tested, so the class is handed to it from
+# here. Resolved defensively because unit tests stub the aiohttp module out
+# with a MagicMock, where ClientError is not an exception class at all and
+# naming it in an except clause would raise TypeError.
+_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = tuple(
+    candidate
+    for candidate in (getattr(aiohttp, "ClientError", None),)
+    if isinstance(candidate, type) and issubclass(candidate, BaseException)
+)
+
+# A notice file named in the listing but answering 404 has been withdrawn or
+# is not yet readable. Nothing to report and nothing to retry, so it stays at
+# debug and is not counted as a failure.
+_NOTICE_NOT_PUBLISHED_STATUSES = (404,)
+
+# The Market_Notice directory always exists, so a 404 on it means the report
+# path moved or something is intercepting the request. That is worth a warning
+# and pointless to retry.
+_DIRECTORY_NOT_PUBLISHED_STATUSES: tuple[int, ...] = ()
+
+# One retry per notice file, against three for the directory listing. The
+# listing is a single request that gates the whole cycle, so it is worth a
+# full ladder. Per-file fetches fan out to _NOTICE_MAX_FILES_PER_CYCLE, and a
+# three attempt ladder on each would treble request volume against a NEMWEB
+# that answers 403 precisely when it wants less traffic. One retry absorbs a
+# scattered failure without that risk.
+_NOTICE_FILE_MAX_ATTEMPTS = 2
+
+
+class _NotPublished:
+    """Sentinel: the notice file answered a not-published status.
+
+    Needed because ``fetch_with_retry`` collapses every unsuccessful outcome to
+    None, and a withdrawn notice must not be counted towards the cycle failure
+    total that raises a warning.
+    """
+
+
+_NOT_PUBLISHED = _NotPublished()
 
 NEM_TZ = timezone(timedelta(hours=10))
 NEMWEB_MARKET_NOTICE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/Market_Notice/"
@@ -321,6 +364,11 @@ class MarketNoticeClient:
         # its file was fetched. Lets a caller distinguish "nothing new" from
         # "nothing relevant", which the cursor alone cannot express.
         self.highest_listed_notice_id: int = 0
+        # Per-file fetch failures in the cycle currently running. Each per-file
+        # fetch suppresses its own give-up warning so that a bad cycle produces
+        # one aggregated warning rather than up to forty. Reset at the top of
+        # every fetch_new_notices call.
+        self._cycle_fetch_failures: int = 0
 
     async def fetch_new_notices(self) -> list[GridNoticeAnnotation]:
         """
@@ -336,26 +384,23 @@ class MarketNoticeClient:
         forever, which is precisely the failure this replaces.
         """
         started = time.monotonic()
-        try:
-            async with self._session.get(
-                NEMWEB_MARKET_NOTICE_URL,
-                timeout=aiohttp.ClientTimeout(total=30),
-                headers={"User-Agent": "nem_pd7day/2.3"},
-            ) as resp:
-                resp.raise_for_status()
-                html = await resp.text()
-        except aiohttp.ClientResponseError as exc:
-            if exc.status == 403:
-                # NEMWEB throttled the directory listing — skip this whole
-                # cycle rather than hammering it with per-file requests.
-                _LOGGER.debug(
-                    "[DEBUG] Market_Notice directory returned 403 — skipping cycle"
-                )
-                return []
-            _LOGGER.warning("Failed to fetch Market_Notice directory: %s", exc)
-            return []
-        except Exception as exc:
-            _LOGGER.warning("Failed to fetch Market_Notice directory: %s", exc)
+        self._cycle_fetch_failures = 0
+
+        # The listing gates the whole cycle, so a scattered 403 or read timeout
+        # here costs every notice in it. Retried under the shared NEMWEB gate,
+        # then warned about once. The previous version returned an empty list on
+        # a 403 with only a debug line, so a sustained throttle or outage left
+        # the grid notices sensor frozen with nothing in the log at the default
+        # level to explain why. See issue #44.
+        html = await fetch_with_retry(
+            self._get_directory_html,
+            url=NEMWEB_MARKET_NOTICE_URL,
+            label="Market_Notice directory listing",
+            logger=_LOGGER,
+            semaphore=self._semaphore,
+            retryable_exceptions=_TRANSPORT_ERRORS,
+        )
+        if html is None:
             return []
 
         files = _parse_directory_listing(html)
@@ -427,11 +472,27 @@ class MarketNoticeClient:
         )
         notices = [n for n in results if n is not None]
 
+        # One warning per bad cycle. Each per-file fetch ran with its own
+        # give-up log suppressed to debug, so without this line a total notice
+        # outage would still be silent at the default log level, which is the
+        # defect in issue #44. Every failure keeps its detail at debug.
+        if self._cycle_fetch_failures:
+            _LOGGER.warning(
+                "Market notices: %d of %d notice file fetch(es) failed this "
+                "cycle after retry, url=%s. Enable debug logging on %s for the "
+                "per-file cause.",
+                self._cycle_fetch_failures,
+                len(candidates),
+                NEMWEB_MARKET_NOTICE_URL,
+                __name__,
+            )
+
         # Advance past everything just attempted, including files that were not
-        # LOR or MSL and files whose fetch failed. A failed fetch is not retried:
-        # notices are immutable once published, so a transient 403 on an
-        # irrelevant file is not worth re-reading the whole window for, and
-        # retrying is what produced the runaway request volume.
+        # LOR or MSL and files whose fetch failed. A failure gets its bounded
+        # retry inside this cycle and is then left behind: notices are immutable
+        # once published, so a transient 403 on an irrelevant file is not worth
+        # re-reading the whole window for on every subsequent cycle, and that
+        # unbounded re-reading is what produced the runaway request volume.
         self.last_seen_notice_id = max(
             [self.last_seen_notice_id] + [nid for nid, _ in candidates]
         )
@@ -450,22 +511,83 @@ class MarketNoticeClient:
     async def _fetch_guarded(
         self, notice_id: int, filename: str
     ) -> Optional[GridNoticeAnnotation]:
-        """Fetch one notice, holding the shared NEMWEB concurrency gate."""
+        """Fetch one notice, holding the shared NEMWEB concurrency gate.
+
+        The gate is held across the retry ladder rather than acquired per
+        attempt, so a backoff sleep does occupy a slot. That is the deliberate
+        trade: pacing requests inside the gate is what keeps a large candidate
+        batch from arriving as a burst, and with one retry and a gate of two
+        the idle time is a few seconds across a whole bad cycle, on a client
+        that runs three times a day.
+        """
         async with self._semaphore:
             await asyncio.sleep(_NOTICE_FETCH_DELAY_S)
             return await self._fetch_and_parse(notice_id, filename)
 
+    async def _get_directory_html(self) -> str:
+        """One attempt at the directory listing. Raises on a bad status."""
+        async with self._session.get(
+            NEMWEB_MARKET_NOTICE_URL,
+            timeout=aiohttp.ClientTimeout(total=30),
+            headers={"User-Agent": "nem_pd7day/2.3"},
+        ) as resp:
+            classify_status(
+                resp.status,
+                url=NEMWEB_MARKET_NOTICE_URL,
+                headers=getattr(resp, "headers", None),
+                not_published_statuses=_DIRECTORY_NOT_PUBLISHED_STATUSES,
+            )
+            return await resp.text()
+
+    async def _get_notice_text(self, url: str) -> str | _NotPublished:
+        """One attempt at a single notice file. Raises on a bad status.
+
+        Returns the _NOT_PUBLISHED sentinel rather than raising for a withdrawn
+        file, so the caller can tell it apart from a genuine failure once
+        fetch_with_retry has collapsed both to a return value.
+        """
+        async with self._session.get(
+            url,
+            timeout=aiohttp.ClientTimeout(total=15),
+            headers={"User-Agent": "nem_pd7day/2.3"},
+        ) as resp:
+            if resp.status in _NOTICE_NOT_PUBLISHED_STATUSES:
+                _LOGGER.debug(
+                    "Market notice file not published, HTTP %d, url=%s",
+                    resp.status,
+                    url,
+                )
+                return _NOT_PUBLISHED
+            classify_status(
+                resp.status,
+                url=url,
+                headers=getattr(resp, "headers", None),
+            )
+            return await resp.text()
+
     async def _fetch_and_parse(self, notice_id: int, filename: str) -> Optional[GridNoticeAnnotation]:
+        """Fetch and parse one notice, or return None.
+
+        A failure here is counted rather than warned about individually, so the
+        caller can emit one line per cycle instead of one per file. The retry
+        budget is deliberately shorter than the directory listing's, because
+        this runs once per candidate file.
+        """
         url = NEMWEB_MARKET_NOTICE_URL + filename
-        try:
-            async with self._session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=15),
-                headers={"User-Agent": "nem_pd7day/2.3"},
-            ) as resp:
-                resp.raise_for_status()
-                text = await resp.text()
-        except Exception as exc:
-            _LOGGER.debug("Failed to fetch notice %d: %s", notice_id, exc)
+        text = await fetch_with_retry(
+            lambda: self._get_notice_text(url),
+            url=url,
+            label=f"Market notice {notice_id}",
+            logger=_LOGGER,
+            max_attempts=_NOTICE_FILE_MAX_ATTEMPTS,
+            retryable_exceptions=_TRANSPORT_ERRORS,
+            warn_on_exhausted=False,
+        )
+        if text is _NOT_PUBLISHED:
+            # A withdrawn or not-yet-readable file is not an outage, so it must
+            # not contribute to the cycle warning.
+            return None
+        if text is None:
+            self._cycle_fetch_failures += 1
             return None
         return _parse_notice_body(text, notice_id)

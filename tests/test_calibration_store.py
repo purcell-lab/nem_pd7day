@@ -15,6 +15,7 @@ from __future__ import annotations
 import sys
 import os
 import importlib.util
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timedelta, timezone
 
@@ -1227,3 +1228,112 @@ def test_store_fixture_calibration_actually_fits():
         f"Fixture calibration fitted zero observations: {out}. "
         f"Fixture dates have likely aged out of the training window."
     )
+
+
+# ── Incomplete STPASA intervals are skipped, not zero filled (issue #43) ────
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["d10", "d50", "d90", "surplus", "solar"],
+)
+def test_feature_map_omits_intervals_missing_any_stpasa_input(missing_field):
+    """
+    An interval short of any STPASA input must be omitted from the feature
+    map rather than fitted on a substituted zero.
+
+    Previously a missing field arrived as 0.0 from the parser, or was
+    defaulted to 0.0 by `.get(key, 0.0)` on the way into the observation, so
+    a truncated fetch became a training input and biased the fit rather than
+    being skipped. Issue #43.
+    """
+    store = make_store()
+    run_dt = BASE_DT
+    interval_end_dt = BASE_DT + timedelta(hours=24)
+    interval_start_str = nem_iso(interval_end_dt - timedelta(minutes=30))
+    period = make_price_period(interval_end_dt, value=0.108)
+    stpasa_run_dt = datetime(2026, 4, 14, 7, 25, 7, tzinfo=NEM_TZ)
+
+    kwargs = {"d10": 5500.0, "d50": 6000.0, "d90": 6500.0,
+              "surplus": 1200.0, "solar": 800.0, "wind": 400.0}
+    kwargs[missing_field] = None
+
+    stpasa = MagicMock(intervals=[
+        _make_stpasa_interval(interval_end_dt, stpasa_run_dt, **kwargs),
+    ])
+
+    run_async(store.ingest_forecast(
+        region="QLD1",
+        price_data=make_price_data(run_dt, [period]),
+        interconnectors={},
+        case=None,
+        stpasa=stpasa,
+    ))
+    run_async(store.async_record_actual(interval_start_str, 0.095))
+
+    fmap = store.build_stpasa_feature_map()
+    map_key = f"{interval_start_str}|{nem_iso(run_dt)}"
+    assert map_key not in fmap, (
+        f"interval missing {missing_field} must be skipped, not zero filled. "
+        f"Got {fmap.get(map_key)}"
+    )
+
+
+def test_missing_wind_alone_does_not_drop_the_interval():
+    """
+    ss_wind_uigf is carried for display but is not an OLS input, so an
+    interval missing only wind must still contribute to the fit.
+    """
+    store = make_store()
+    run_dt = BASE_DT
+    interval_end_dt = BASE_DT + timedelta(hours=24)
+    interval_start_str = nem_iso(interval_end_dt - timedelta(minutes=30))
+    period = make_price_period(interval_end_dt, value=0.108)
+    stpasa_run_dt = datetime(2026, 4, 14, 7, 25, 7, tzinfo=NEM_TZ)
+
+    stpasa = MagicMock(intervals=[
+        _make_stpasa_interval(interval_end_dt, stpasa_run_dt, wind=None),
+    ])
+
+    run_async(store.ingest_forecast(
+        region="QLD1",
+        price_data=make_price_data(run_dt, [period]),
+        interconnectors={},
+        case=None,
+        stpasa=stpasa,
+    ))
+    run_async(store.async_record_actual(interval_start_str, 0.095))
+
+    map_key = f"{interval_start_str}|{nem_iso(run_dt)}"
+    assert map_key in store.build_stpasa_feature_map()
+
+
+def test_a_genuine_zero_still_contributes_to_the_fit():
+    """
+    Zero solar at night is a real reading. The skip must key off None only,
+    never off falsiness, or every overnight interval would drop out.
+    """
+    store = make_store()
+    run_dt = BASE_DT
+    interval_end_dt = BASE_DT + timedelta(hours=24)
+    interval_start_str = nem_iso(interval_end_dt - timedelta(minutes=30))
+    period = make_price_period(interval_end_dt, value=0.108)
+    stpasa_run_dt = datetime(2026, 4, 14, 7, 25, 7, tzinfo=NEM_TZ)
+
+    stpasa = MagicMock(intervals=[
+        _make_stpasa_interval(interval_end_dt, stpasa_run_dt,
+                              solar=0.0, surplus=0.0),
+    ])
+
+    run_async(store.ingest_forecast(
+        region="QLD1",
+        price_data=make_price_data(run_dt, [period]),
+        interconnectors={},
+        case=None,
+        stpasa=stpasa,
+    ))
+    run_async(store.async_record_actual(interval_start_str, 0.095))
+
+    fmap = store.build_stpasa_feature_map()
+    map_key = f"{interval_start_str}|{nem_iso(run_dt)}"
+    assert map_key in fmap, "a genuine zero must not be treated as missing"
+    assert fmap[map_key].log_solar == 0.0

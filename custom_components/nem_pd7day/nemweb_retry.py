@@ -32,8 +32,8 @@ from ``aiohttp``, so it can be unit tested directly, in the same spirit as
 ``pd7day_shared.py``. Callers pass their own transport exception types in
 through ``retryable_exceptions``.
 
-Issue #22 tracks adopting this helper in ``stpasa_client.py`` and
-``pd7day_client.py``; only ``tradingis_client.py`` uses it today.
+Used today by ``tradingis_client.py`` and ``market_notice_client.py``. Issue
+#22 tracks adopting it in ``stpasa_client.py`` and ``pd7day_client.py`` too.
 """
 from __future__ import annotations
 
@@ -252,6 +252,7 @@ async def fetch_with_retry(
     retryable_exceptions: tuple[type[BaseException], ...] = (),
     base_delay: float = DEFAULT_BASE_DELAY_S,
     max_delay: float = DEFAULT_MAX_DELAY_S,
+    warn_on_exhausted: bool = True,
 ) -> Any | None:
     """Run ``operation`` with a bounded, jittered retry. Never raises.
 
@@ -262,6 +263,13 @@ async def fetch_with_retry(
     published, the failure is not retryable, or the attempts are exhausted.
     None means unavailable, and callers must surface it as such rather than
     substituting a zero.
+
+    ``warn_on_exhausted=False`` drops the give-up log line to debug. Use it
+    only where one call is a single member of a fan-out the caller then
+    summarises itself, as the market notice client does over its per-file
+    fetches. A caller that silences the warning takes on the obligation to
+    report the failure some other way, or the failure becomes invisible again,
+    which is the defect in issue #44.
     """
     log = logger or _LOGGER
     last_exc: BaseException | None = None
@@ -314,7 +322,8 @@ async def fetch_with_retry(
     # Both the exception and the URL go in the message. The old log line
     # carried neither, so a 403, a DNS failure, a read timeout and a parse
     # error were indistinguishable from each other.
-    log.warning(
+    log.log(
+        logging.WARNING if warn_on_exhausted else logging.DEBUG,
         "%s: giving up after %d attempt(s), url=%s: %s: %s%s",
         label,
         attempts_used,

@@ -143,8 +143,12 @@ from custom_components.nem_pd7day.const import (
     CONF_REGION,
     COORDINATOR_KEY,
     DOMAIN,
+    NSW1_INTERCONNECTORS,
+    REGION_INTERCONNECTORS,
     STORE_KEY,
+    VIC1_INTERCONNECTORS,
 )
+from collections import Counter
 from custom_components.nem_pd7day.nem_time import _amber_express_cutoff
 from custom_components.nem_pd7day.sensor import (
     _horizon_hours,
@@ -1044,4 +1048,115 @@ def test_next_value_from_trimmed_forecast():
         expected = forecast[0].get("value")
         assert next_val == expected, (
             f"next_value={next_val} should equal first trimmed forecast value={expected}"
+        )
+
+
+# ── Interconnector entity determinism (issues #46, #47, #48) ─────────────────
+
+def _setup_interconnectors(region: str, live_ic_ids):
+    """Run sensor setup for one region and return the interconnector ids created.
+
+    ``live_ic_ids`` stands in for what the coordinator holds after a fetch.
+    Pass ``None`` to model a coordinator that has no data at all.
+    """
+    coordinator = MagicMock()
+    if live_ic_ids is None:
+        coordinator.data = None
+    else:
+        coordinator.data = MagicMock()
+        coordinator.data.interconnectors = {ic: MagicMock() for ic in live_ic_ids}
+
+    entry = MagicMock()
+    entry.entry_id = f"entry_ic_{region.lower()}"
+    entry.data = {CONF_REGION: region}
+    entry.options = {}
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator,
+        store=MagicMock(),
+        dispatch=None,
+    )
+
+    hass = MagicMock()
+    hass.data = {DOMAIN: {}}
+
+    created = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
+
+    return sorted(
+        ent._ic_id for ent in created if isinstance(ent, PD7DayInterconnectorSensor)
+    )
+
+
+def test_vic1_interconnector_map_uses_the_published_heywood_id():
+    """
+    VIC1 must carry a Heywood sensor.
+
+    AEMO publishes Heywood as "V-SA". The map previously carried "SA1-VIC1",
+    an id that never appears in the PD7DAY file, so VIC1 silently had no
+    Heywood sensor while SA1 did. Issue #46.
+    """
+    assert "V-SA" in VIC1_INTERCONNECTORS
+    assert "SA1-VIC1" not in VIC1_INTERCONNECTORS
+
+
+def test_every_interconnector_is_mapped_to_both_of_its_regions():
+    """
+    Each interconnector joins two regions, so it must appear in exactly two
+    region sets. A one sided entry means one end of the link has no sensor,
+    which is how issue #46 went unnoticed.
+    """
+    counts = Counter(
+        ic for ics in REGION_INTERCONNECTORS.values() for ic in ics
+    )
+    one_sided = sorted(ic for ic, n in counts.items() if n != 2)
+    assert one_sided == [], (
+        "Every interconnector must be mapped to both of its regions. "
+        f"One sided entries: {one_sided}"
+    )
+
+
+def test_interconnector_entities_do_not_depend_on_live_fetch_contents():
+    """
+    The entity set must be a function of configuration, not of whatever AEMO
+    published at the moment setup ran. A restart where one interconnector is
+    missing from the file must still create its entity, so it reports
+    unavailable rather than disappearing from dashboards and history.
+    Issue #48.
+    """
+    expected = sorted(NSW1_INTERCONNECTORS)
+
+    no_data = _setup_interconnectors("NSW1", None)
+    full_fetch = _setup_interconnectors(
+        "NSW1", ["NSW1-QLD1", "VIC1-NSW1", "N-Q-MNSP1"]
+    )
+    partial_fetch = _setup_interconnectors("NSW1", ["NSW1-QLD1"])
+
+    assert no_data == expected
+    assert full_fetch == expected
+    assert partial_fetch == expected, (
+        "A fetch missing an interconnector must not drop its entity. "
+        f"Got {partial_fetch}, expected {expected}"
+    )
+
+
+def test_nsw1_creates_the_terranora_interconnector_sensor():
+    """
+    N-Q-MNSP1 is mapped to NSW1 as well as QLD1, but a live install carried it
+    only on the QLD1 side. Issue #47.
+    """
+    assert "N-Q-MNSP1" in _setup_interconnectors(
+        "NSW1", ["NSW1-QLD1", "VIC1-NSW1", "N-Q-MNSP1"]
+    )
+
+
+def test_interconnector_entity_count_matches_the_map_for_every_region():
+    """Guards the total, so a future map edit cannot silently drop an end."""
+    for region, mapped in REGION_INTERCONNECTORS.items():
+        created = _setup_interconnectors(region, [])
+        assert created == sorted(mapped), (
+            f"{region} created {created}, map says {sorted(mapped)}"
         )
