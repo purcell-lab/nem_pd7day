@@ -33,6 +33,34 @@ PARALLEL_UPDATES = 0
 _PLACEHOLDER = b""  # returned before first render
 
 
+class _InitialRenderMixin:
+    """Schedules the first chart render without blocking platform setup.
+
+    ``async_added_to_hass`` runs inside ``async_add_entities``, so awaiting the
+    first matplotlib render there holds up the whole camera platform. With 15
+    camera entities across five regions contending for the executor pool during
+    startup, that reliably exceeded Home Assistant's 10 second platform warning
+    threshold:
+
+        Setup of camera platform nem_pd7day is taking over 10 seconds.
+
+    Nothing needs the image to exist at setup time. ``async_camera_image``
+    already returns ``None`` while ``_image_bytes`` is the ``_PLACEHOLDER``
+    empty bytes, and ``_handle_coordinator_update`` has always fired the
+    refresh as a task rather than awaiting it. So the first render is scheduled
+    the same way, and setup returns immediately.
+    """
+
+    def _schedule_initial_render(self) -> None:
+        task = self.hass.async_create_background_task(
+            self._async_refresh_image(),
+            name=f"nem_pd7day initial chart render {self.entity_id}",
+        )
+        # Cancel an in-flight render if the entity is removed first. Cancelling
+        # an already-finished task is a no-op.
+        self.async_on_remove(task.cancel)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -48,7 +76,9 @@ async def async_setup_entry(
     ])
 
 
-class NemPd7dayTodCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
+class NemPd7dayTodCamera(
+    _InitialRenderMixin, CoordinatorEntity[PD7DayCoordinator], Camera
+):
     """
     Camera entity that serves the time-of-day actual price chart.
 
@@ -88,7 +118,7 @@ class NemPd7dayTodCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        await self._async_refresh_image()
+        self._schedule_initial_render()
 
     def _handle_coordinator_update(self) -> None:
         """Called by CoordinatorEntity on every coordinator refresh."""
@@ -120,7 +150,9 @@ class NemPd7dayTodCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
         return self._image_bytes if self._image_bytes else None
 
 
-class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
+class NemPd7dayBiasChartCamera(
+    _InitialRenderMixin, CoordinatorEntity[PD7DayCoordinator], Camera
+):
     """
     Camera entity that serves the duck-curve forecast bias chart.
 
@@ -160,7 +192,7 @@ class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        await self._async_refresh_image()
+        self._schedule_initial_render()
 
     def _handle_coordinator_update(self) -> None:
         self.hass.async_create_task(self._async_refresh_image())
@@ -198,7 +230,9 @@ class NemPd7dayBiasChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
         return self._image_bytes if self._image_bytes else None
 
 
-class NemPd7dayIsoChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
+class NemPd7dayIsoChartCamera(
+    _InitialRenderMixin, CoordinatorEntity[PD7DayCoordinator], Camera
+):
     """
     Camera entity that serves the isotonic calibration goodness dashboard.
 
@@ -238,7 +272,7 @@ class NemPd7dayIsoChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        await self._async_refresh_image()
+        self._schedule_initial_render()
 
     def _handle_coordinator_update(self) -> None:
         self.hass.async_create_task(self._async_refresh_image())
@@ -290,7 +324,9 @@ def _horizon_hours(run_at_str: str | None, interval_time_str: str) -> float:
         return 0.0
 
 
-class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera):
+class NemPd7dayForecastChartCamera(
+    _InitialRenderMixin, CoordinatorEntity[PD7DayCoordinator], Camera
+):
     """
     Camera entity that serves the 7-day price forecast chart.
 
@@ -330,7 +366,7 @@ class NemPd7dayForecastChartCamera(CoordinatorEntity[PD7DayCoordinator], Camera)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        await self._async_refresh_image()
+        self._schedule_initial_render()
 
     def _handle_coordinator_update(self) -> None:
         self.hass.async_create_task(self._async_refresh_image())
