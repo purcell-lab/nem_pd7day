@@ -284,12 +284,28 @@ class StpasaFeatures:
     stpasa_run_at: str       # ISO-8601, for attribute tagging
 
     @classmethod
-    def from_interval(cls, interval: "StpasaInterval") -> "StpasaFeatures":
+    def from_interval(cls, interval: "StpasaInterval") -> "StpasaFeatures | None":
+        """Derive features, or None when the interval is missing an input.
+
+        Every field below is now optional on the interval, because a missing
+        MW value is no longer coerced to 0.0 at parse time. An interval short
+        of any input is skipped rather than fitted on a substituted zero,
+        which would bias the fit rather than merely display wrongly. The
+        caller treats None as "no STPASA features for this interval". See
+        issue #43.
+        """
+        surplus = interval.surpluscapacity
+        solar = interval.ss_solar_uigf
+        demand50 = interval.demand50
+        demand10 = interval.demand10
+        demand90 = interval.demand90
+        if None in (surplus, solar, demand50, demand10, demand90):
+            return None
         return cls(
-            log_surplus=math.log1p(max(interval.surpluscapacity, 0.0)),
-            log_solar=math.log1p(max(interval.ss_solar_uigf, 0.0)),
-            log_demand=math.log(max(interval.demand50, 1.0)),
-            poe_spread_n=(interval.demand10 - interval.demand90) / max(interval.demand50, 1.0),
+            log_surplus=math.log1p(max(surplus, 0.0)),
+            log_solar=math.log1p(max(solar, 0.0)),
+            log_demand=math.log(max(demand50, 1.0)),
+            poe_spread_n=(demand10 - demand90) / max(demand50, 1.0),
             stpasa_run_at=interval.run_datetime,
         )
 

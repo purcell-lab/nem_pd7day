@@ -388,14 +388,23 @@ class CalibrationStore:
                 "actual_source": source,
             }
 
-            # Derive STPASA features when this forecast entry carries them.
-            if "stpasa_demand50" in fc:
-                obs["stpasa_log_surplus"] = math.log1p(max(fc.get("stpasa_surplus", 0.0), 0.0))
-                obs["stpasa_log_solar"] = math.log1p(max(fc.get("stpasa_solar", 0.0), 0.0))
-                obs["stpasa_log_demand"] = math.log(max(fc.get("stpasa_demand50", 1.0), 1.0))
+            # Derive STPASA features only when this forecast entry carries every
+            # input. A missing MW field is now None rather than 0.0, and the
+            # previous `.get(key, 0.0)` defaults would have turned that back
+            # into a zero and fed it to the fit as a real observation. An
+            # incomplete interval is omitted from the fit instead. See #43.
+            surplus = fc.get("stpasa_surplus")
+            solar = fc.get("stpasa_solar")
+            demand50 = fc.get("stpasa_demand50")
+            demand10 = fc.get("stpasa_demand10")
+            demand90 = fc.get("stpasa_demand90")
+            if None not in (surplus, solar, demand50, demand10, demand90):
+                obs["stpasa_log_surplus"] = math.log1p(max(surplus, 0.0))
+                obs["stpasa_log_solar"] = math.log1p(max(solar, 0.0))
+                obs["stpasa_log_demand"] = math.log(max(demand50, 1.0))
                 obs["stpasa_poe_spread_n"] = (
-                    fc.get("stpasa_demand10", 0.0) - fc.get("stpasa_demand90", 0.0)
-                ) / max(fc.get("stpasa_demand50", 1.0), 1.0)
+                    demand10 - demand90
+                ) / max(demand50, 1.0)
                 obs["stpasa_run_at"] = fc.get("stpasa_run_at", "")
 
             obs_idx = len(self._observations)
@@ -432,14 +441,25 @@ class CalibrationStore:
         """
         out: dict[str, StpasaFeatures] = {}
         for o in self._observations:
-            if "stpasa_log_demand" not in o:
+            # Require every derived feature rather than defaulting absent ones
+            # to 0.0. Observations recorded before #43 may hold a partial set,
+            # and a zero standing in for a missing feature becomes a training
+            # input rather than a skipped interval.
+            features = (
+                o.get("stpasa_log_surplus"),
+                o.get("stpasa_log_solar"),
+                o.get("stpasa_log_demand"),
+                o.get("stpasa_poe_spread_n"),
+            )
+            if None in features:
                 continue
+            log_surplus, log_solar, log_demand, poe_spread_n = features
             key = f"{o['interval_time']}|{o['forecast_run_at']}"
             out[key] = StpasaFeatures(
-                log_surplus=o.get("stpasa_log_surplus", 0.0),
-                log_solar=o.get("stpasa_log_solar", 0.0),
-                log_demand=o.get("stpasa_log_demand", 0.0),
-                poe_spread_n=o.get("stpasa_poe_spread_n", 0.0),
+                log_surplus=log_surplus,
+                log_solar=log_solar,
+                log_demand=log_demand,
+                poe_spread_n=poe_spread_n,
                 stpasa_run_at=o.get("stpasa_run_at", ""),
             )
         return out

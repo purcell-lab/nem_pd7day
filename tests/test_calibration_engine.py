@@ -1895,3 +1895,62 @@ def test_stale_observations_yield_empty_buckets():
     assert out["calibrated_source"] == "passthrough"
     assert out["n_obs"] == 0
     assert out["calibrated"] == 0.10, "stale fit must pass the raw value through"
+
+
+# ── StpasaFeatures skips incomplete intervals (issue #43) ──────────────────
+
+def test_stpasa_features_from_interval_returns_none_when_an_input_is_missing():
+    """
+    from_interval must report an incomplete interval as None rather than
+    deriving features from a substituted zero. Issue #43.
+    """
+    from custom_components.nem_pd7day.calibration_engine import StpasaFeatures
+    from custom_components.nem_pd7day.stpasa_client import StpasaInterval
+
+    base = dict(
+        interval_datetime="2026-06-17T04:30:00+10:00",
+        run_datetime="2026-06-16T12:00:00+10:00",
+        demand10=5500.0,
+        demand50=6000.0,
+        demand90=6500.0,
+        surpluscapacity=1200.0,
+        ss_solar_uigf=800.0,
+        ss_wind_uigf=400.0,
+    )
+
+    assert StpasaFeatures.from_interval(StpasaInterval(**base)) is not None
+
+    for field_name in (
+        "demand10", "demand50", "demand90", "surpluscapacity", "ss_solar_uigf"
+    ):
+        incomplete = dict(base)
+        incomplete[field_name] = None
+        assert StpasaFeatures.from_interval(StpasaInterval(**incomplete)) is None, (
+            f"a missing {field_name} must yield None, not derived features"
+        )
+
+
+def test_stpasa_features_tolerate_missing_wind_and_genuine_zeros():
+    """
+    Wind is not an OLS input, so its absence must not drop the interval, and
+    a real zero must produce features rather than being read as missing.
+    """
+    import math
+    from custom_components.nem_pd7day.calibration_engine import StpasaFeatures
+    from custom_components.nem_pd7day.stpasa_client import StpasaInterval
+
+    feats = StpasaFeatures.from_interval(StpasaInterval(
+        interval_datetime="2026-06-17T04:30:00+10:00",
+        run_datetime="2026-06-16T12:00:00+10:00",
+        demand10=5500.0,
+        demand50=6000.0,
+        demand90=6500.0,
+        surpluscapacity=0.0,
+        ss_solar_uigf=0.0,
+        ss_wind_uigf=None,
+    ))
+
+    assert feats is not None
+    assert feats.log_solar == 0.0
+    assert feats.log_surplus == 0.0
+    assert abs(feats.log_demand - math.log(6000.0)) < 1e-9
