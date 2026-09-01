@@ -272,10 +272,76 @@ async def async_setup_entry(
 
 
 # ---------------------------------------------------------------------------
+# Shared state-write path for the calibration-backed sensors
+# ---------------------------------------------------------------------------
+
+
+class CalibratedWriteMixin:
+    """Warms the calibrated forecast off the loop before writing state.
+
+    ``extra_state_attributes`` is a property, so it is evaluated during
+    ``async_write_ha_state()``. On a cache miss it runs
+    ``_calibrated_forecast()``, which calibrates every interval of the run,
+    367 of them at the time of writing. That landed on the event loop inside
+    the state write, and Home Assistant reported it:
+
+        Updating state for sensor.nem_pd7day_nsw1_nem_nsw1_pd7day_data
+        (PD7DayDataSensor) took 0.493 seconds.
+
+    All five regions fired at once because a new PD7DAY run invalidates every
+    region's memo simultaneously, so each region's next state write rebuilt its
+    own forecast. Worst single write observed on the live instance was 2.181 s,
+    just after a restart.
+
+    The memo added in #40 is correct and unchanged. The problem was that it is
+    *lazy*: whichever entity wrote state first paid for the whole rebuild, on
+    the loop. This warms it in the executor first, so the write itself only
+    ever reads an already-populated cache.
+
+    A cache hit costs one executor round-trip and no calibration, so routing
+    every write through here is cheap. It also covers invalidations that do not
+    come from a coordinator refresh, such as a calibration refit bumping
+    ``fit_generation``, which the previous code could only absorb inside a
+    state write.
+    """
+
+    async def _async_warm_calibrated_forecast(self) -> None:
+        """Populate the coordinator memo for this region, off the event loop."""
+        d = self._price_data
+        if d is None:
+            return
+        try:
+            await self.hass.async_add_executor_job(self._calibrated_forecast, d)
+        except Exception:  # noqa: BLE001 - warming is best effort
+            # The lazy path inside extra_state_attributes remains as the
+            # correctness fallback, so a failed warm costs speed, not data.
+            _LOGGER.debug(
+                "Calibrated forecast warm failed for %s, falling back to the "
+                "lazy path",
+                getattr(self, "entity_id", None),
+                exc_info=True,
+            )
+
+    async def _async_warm_then_write(self) -> None:
+        await self._async_warm_calibrated_forecast()
+        self.async_write_ha_state()
+
+    def _schedule_warm_state_write(self) -> None:
+        """Warm the memo then write state, without blocking the caller."""
+        self.hass.async_create_task(self._async_warm_then_write())
+
+    def _handle_coordinator_update(self) -> None:
+        """Replaces CoordinatorEntity's direct async_write_ha_state()."""
+        self._schedule_warm_state_write()
+
+
+# ---------------------------------------------------------------------------
 # Price forecast sensor — with calibration
 # ---------------------------------------------------------------------------
 
-class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+class PD7DayForecastSensor(
+    CalibratedWriteMixin, CoordinatorEntity[PD7DayCoordinator], SensorEntity
+):
     """
     Regional spot price forecast.
 
@@ -390,7 +456,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         await super().async_added_to_hass()
 
         async def _handle_tick(_now) -> None:
-            self.async_write_ha_state()
+            self._schedule_warm_state_write()
 
         self.async_on_remove(
             async_track_time_change(
@@ -407,7 +473,7 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         if dispatch_coordinator is not None:
             self.async_on_remove(
                 dispatch_coordinator.async_add_listener(
-                    lambda: self.async_write_ha_state()
+                    self._schedule_warm_state_write
                 )
             )
 
@@ -591,7 +657,9 @@ class PD7DayForecastSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
 
 
-class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+class SpotPriceForecastDays27Sensor(
+    CalibratedWriteMixin, CoordinatorEntity[PD7DayCoordinator], SensorEntity
+):
     """
     Day 2-7 spot price forecast sensor.
 
@@ -641,7 +709,7 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
         await super().async_added_to_hass()
 
         async def _handle_tick(_now) -> None:
-            self.async_write_ha_state()
+            self._schedule_warm_state_write()
 
         self.async_on_remove(
             async_track_time_change(
@@ -658,7 +726,7 @@ class SpotPriceForecastDays27Sensor(CoordinatorEntity[PD7DayCoordinator], Sensor
         if dispatch_coordinator is not None:
             self.async_on_remove(
                 dispatch_coordinator.async_add_listener(
-                    lambda: self.async_write_ha_state()
+                    self._schedule_warm_state_write
                 )
             )
 
@@ -1274,7 +1342,9 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
 # Diagnostic data sensors — full datasets as unrecorded attributes
 # ---------------------------------------------------------------------------
 
-class PD7DayDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+class PD7DayDataSensor(
+    CalibratedWriteMixin, CoordinatorEntity[PD7DayCoordinator], SensorEntity
+):
     """Diagnostic sensor exposing the full PD7DAY forecast as an attribute.
 
     State is the PD7DAY run datetime (forecast_generated_at).  The full
