@@ -306,3 +306,21 @@ def run_all():
 
 if __name__ == "__main__":
     sys.exit(0 if run_all() else 1)
+
+
+# ── Missing numerics stay unavailable, not zero (issue #43) ─────────────────
+
+def test_flt_opt_returns_none_rather_than_a_substituted_zero():
+    """
+    The MW fields parse through _flt_opt, which reports missing data as None.
+    _flt is retained for fields where a zero default is correct. Issue #43.
+    """
+    from custom_components.nem_pd7day.stpasa_client import _flt, _flt_opt
+
+    assert _flt_opt("6000.0") == 6000.0
+    assert _flt_opt("0") == 0.0
+    assert _flt_opt("") is None
+    assert _flt_opt("n/a") is None
+    assert _flt_opt(None) is None
+    # The original helper is unchanged for callers that want a zero default.
+    assert _flt("") == 0.0

@@ -57,12 +57,16 @@ STPASA_FILE_PATTERN = re.compile(r"PUBLIC_STPASA_.*\.ZIP$", re.IGNORECASE)
 class StpasaInterval:
     interval_datetime: str   # ISO-8601 NEM +10:00 (interval END, AEMO convention)
     run_datetime: str        # ISO-8601 NEM +10:00
-    demand10: float          # MW
-    demand50: float          # MW
-    demand90: float          # MW
-    surpluscapacity: float   # MW
-    ss_solar_uigf: float     # MW
-    ss_wind_uigf: float      # MW
+    # None means the field was absent or unparseable in the source row, not
+    # 0 MW. Zero is a meaningful reading for every one of these, so a missing
+    # value must stay distinguishable from a real zero all the way through to
+    # the sensor attribute and the calibration fit. See issue #43.
+    demand10: float | None          # MW
+    demand50: float | None          # MW
+    demand90: float | None          # MW
+    surpluscapacity: float | None   # MW
+    ss_solar_uigf: float | None     # MW
+    ss_wind_uigf: float | None      # MW
 
 
 @dataclass
@@ -99,6 +103,19 @@ def _flt(s: str, default: float = 0.0) -> float:
         return float(s)
     except (ValueError, TypeError):
         return default
+
+
+def _flt_opt(s: str) -> float | None:
+    """Parse a numeric STPASA field, returning None when it is not a number.
+
+    Used instead of ``_flt`` for the MW fields, where defaulting an absent or
+    blank value to 0.0 would be indistinguishable from a genuine zero reading
+    and would feed that zero into the calibration fit. See issue #43.
+    """
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
 
 
 def _extract_csv_bytes(raw: bytes) -> bytes:
@@ -192,12 +209,12 @@ def _parse_regionsolution(raw_csv: bytes, region: str) -> StpasaResult | None:
             StpasaInterval(
                 interval_datetime=interval_iso,
                 run_datetime=run_iso,
-                demand10=_flt(_get("DEMAND10")),
-                demand50=_flt(_get("DEMAND50")),
-                demand90=_flt(_get("DEMAND90")),
-                surpluscapacity=_flt(_get("SURPLUSCAPACITY")),
-                ss_solar_uigf=_flt(_get("SS_SOLAR_UIGF")),
-                ss_wind_uigf=_flt(_get("SS_WIND_UIGF")),
+                demand10=_flt_opt(_get("DEMAND10")),
+                demand50=_flt_opt(_get("DEMAND50")),
+                demand90=_flt_opt(_get("DEMAND90")),
+                surpluscapacity=_flt_opt(_get("SURPLUSCAPACITY")),
+                ss_solar_uigf=_flt_opt(_get("SS_SOLAR_UIGF")),
+                ss_wind_uigf=_flt_opt(_get("SS_WIND_UIGF")),
             )
         )
 
@@ -269,12 +286,12 @@ def _parse_all_regions(raw_csv: bytes) -> dict[str, StpasaResult]:
             StpasaInterval(
                 interval_datetime=interval_iso,
                 run_datetime=run_iso,
-                demand10=_flt(_get("DEMAND10")),
-                demand50=_flt(_get("DEMAND50")),
-                demand90=_flt(_get("DEMAND90")),
-                surpluscapacity=_flt(_get("SURPLUSCAPACITY")),
-                ss_solar_uigf=_flt(_get("SS_SOLAR_UIGF")),
-                ss_wind_uigf=_flt(_get("SS_WIND_UIGF")),
+                demand10=_flt_opt(_get("DEMAND10")),
+                demand50=_flt_opt(_get("DEMAND50")),
+                demand90=_flt_opt(_get("DEMAND90")),
+                surpluscapacity=_flt_opt(_get("SURPLUSCAPACITY")),
+                ss_solar_uigf=_flt_opt(_get("SS_SOLAR_UIGF")),
+                ss_wind_uigf=_flt_opt(_get("SS_WIND_UIGF")),
             )
         )
 

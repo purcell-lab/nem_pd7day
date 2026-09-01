@@ -76,17 +76,33 @@ def _cache_status(fetched_at: str) -> str:
     return "expired"
 
 
+def _opt_float(value: Any) -> float | None:
+    """Coerce a cached value to float, returning None when it is missing.
+
+    Every numeric STPASA field previously defaulted to 0.0 here, so a partial
+    or truncated cache payload read back as a genuine 0 MW. Zero is meaningful
+    for demand, availability and reserve, so missing data has to stay None.
+    See issue #43.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def _result_from_dict(data: dict[str, Any]) -> StpasaResult:
     intervals = [
         StpasaInterval(
             interval_datetime=si.get("interval_datetime", ""),
             run_datetime=si.get("run_datetime", ""),
-            demand10=float(si.get("demand10", 0.0)),
-            demand50=float(si.get("demand50", 0.0)),
-            demand90=float(si.get("demand90", 0.0)),
-            surpluscapacity=float(si.get("surpluscapacity", 0.0)),
-            ss_solar_uigf=float(si.get("ss_solar_uigf", 0.0)),
-            ss_wind_uigf=float(si.get("ss_wind_uigf", 0.0)),
+            demand10=_opt_float(si.get("demand10")),
+            demand50=_opt_float(si.get("demand50")),
+            demand90=_opt_float(si.get("demand90")),
+            surpluscapacity=_opt_float(si.get("surpluscapacity")),
+            ss_solar_uigf=_opt_float(si.get("ss_solar_uigf")),
+            ss_wind_uigf=_opt_float(si.get("ss_wind_uigf")),
         )
         for si in data.get("intervals", [])
     ]
