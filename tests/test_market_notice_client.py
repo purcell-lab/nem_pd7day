@@ -355,6 +355,8 @@ async def test_first_run_backfills_but_no_recent_files():
 
     mock_session = MagicMock()
     mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.headers = {}
     mock_resp.raise_for_status = MagicMock()
     mock_resp.text = AsyncMock(return_value=DIRECTORY_HTML)  # dates are 20260101/02
     mock_session.get = MagicMock(return_value=AsyncMock(
@@ -398,6 +400,8 @@ async def test_first_run_backfills_recent_files():
         nonlocal call_count
         call_count += 1
         resp = AsyncMock()
+        resp.status = 200
+        resp.headers = {}
         resp.raise_for_status = MagicMock()
         if call_count == 1:
             # First call: directory listing
@@ -431,6 +435,8 @@ async def test_incremental_fetch_skips_old_notices():
 
     mock_session = MagicMock()
     mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.headers = {}
     mock_resp.raise_for_status = MagicMock()
     mock_resp.text = AsyncMock(return_value=DIRECTORY_HTML)
     mock_session.get = MagicMock(return_value=AsyncMock(
