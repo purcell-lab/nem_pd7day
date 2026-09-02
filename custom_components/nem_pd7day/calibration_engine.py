@@ -270,6 +270,16 @@ class Observation(NamedTuple):
 # OLS residual correction is applied only inside this horizon band.  Below
 # OLS_MIN_HORIZON_H, Amber/CSIRO short-term forecasts dominate; above
 # OLS_MAX_HORIZON_H STPASA is empirically counterproductive (backtest).
+#
+# These stay static deliberately. STPASA coverage begins at a trading day
+# boundary, so the horizon at which it begins moves with run time, and the
+# serving path narrows its band per run in
+# sensor._stpasa_effective_min_horizon_h. The fit must not: its rows span many
+# historical runs with different coverage, so filtering them by the current
+# run's coverage would drop training data that was genuinely covered when it
+# was recorded. The fit already excludes uncovered intervals structurally,
+# because it joins on an exact interval_time|run_at key and skips rows with no
+# STPASA match.
 OLS_MIN_HORIZON_H = 22.0
 OLS_MAX_HORIZON_H = 120.0
 
