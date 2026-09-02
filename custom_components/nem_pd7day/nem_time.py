@@ -29,6 +29,11 @@ from .const import FETCH_TIMES_NEM, INTERVAL_DURATION, NEM_TZ
 _ISO_FMT = "%Y-%m-%dT%H:%M:%S%z"       # parses both +10:00 and naive
 _ISO_OUT = "%Y-%m-%dT%H:%M:%S+10:00"   # always write with explicit offset
 
+# Compared against in parse_iso to recognise a timestamp that is already at NEM
+# time and so needs no conversion. Derived from NEM_TZ rather than restated, so
+# the two cannot drift.
+_NEM_UTCOFFSET = NEM_TZ.utcoffset(None)
+
 
 def now_nem() -> datetime:
     """Return the current time as a timezone-aware datetime in NEM time."""
@@ -65,28 +70,43 @@ def to_nem_iso(dt: datetime) -> str:
 def parse_iso(s: str) -> datetime:
     """
     Parse an ISO-8601 string previously written by to_nem_iso().
-    Always returns a timezone-aware datetime in NEM time.
+    Always returns a timezone-aware datetime whose tzinfo is NEM_TZ.
 
-    Handles both:
+    Handles:
       "2026-04-14T07:30:00+10:00"   (correctly stored)
       "2026-04-14T07:30:00"         (legacy naive — assumed NEM time)
+      "2026-04-13T21:30:00Z"        (other offsets — converted to NEM time)
+
+    Uses ``fromisoformat`` rather than ``strptime``. This is one of the hottest
+    functions in the integration, reached roughly eight times per forecast
+    interval per state write, and the two parsers measure 0.16 us against
+    5.84 us on the canonical string. The previous implementation spent 0.316 s
+    of an 0.802 s tariff attribute build inside ``strptime``. See #62.
+
+    A side effect of the change is that any ISO-8601 form CPython accepts now
+    parses, including fractional seconds, minute precision and a space date
+    separator. The old code raised ValueError on all three when they carried a
+    "+10:00" suffix.
     """
     s = s.strip()
-    if s.endswith("+10:00"):
-        # Fast path — strip and parse as naive then reattach
-        naive = datetime.strptime(s[:-6], "%Y-%m-%dT%H:%M:%S")
-        return naive.replace(tzinfo=NEM_TZ)
     try:
-        # Generic aware parse (handles other offsets defensively)
         dt = datetime.fromisoformat(s)
-        if dt.tzinfo is not None:
-            return dt.astimezone(NEM_TZ)
-        # Truly naive legacy value — assume NEM time
-        return dt.replace(tzinfo=NEM_TZ)
     except ValueError:
-        # Last resort
+        # Last resort for anything fromisoformat rejects.
         naive = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S")
         return naive.replace(tzinfo=NEM_TZ)
+
+    offset = dt.utcoffset()
+    if offset is None or offset == _NEM_UTCOFFSET:
+        # Either a legacy naive value, assumed to be NEM time, or already at
+        # +10:00. Attach NEM_TZ rather than keeping whatever fromisoformat
+        # built: NEM_TZ carries name="AEST", and a bare timezone(timedelta(
+        # hours=10)) compares equal to it but reports a different tzname(),
+        # which would leak into anything formatting %Z. replace() is a field
+        # swap with no conversion, so the instant is untouched.
+        return dt.replace(tzinfo=NEM_TZ)
+    # Some other offset. Convert, which is the only case that shifts fields.
+    return dt.astimezone(NEM_TZ)
 
 
 def interval_start(nemtime_iso: str) -> str:
