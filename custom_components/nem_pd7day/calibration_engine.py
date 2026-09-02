@@ -222,6 +222,23 @@ SPIKE_THRESHOLD = 3.00  # $/kWh
 # calibration.  Set to −0.10 $/kWh (−$100/MWh) as the passthrough boundary.
 NEGATIVE_PASSTHROUGH_THRESHOLD = -0.10  # $/kWh
 
+
+def is_negative_passthrough(forecast: float) -> bool:
+    """True when a raw forecast bypasses calibration entirely.
+
+    One definition of the boundary, shared by the serving path
+    (BucketModel.apply_all, which returns the raw value and the
+    "passthrough_negative" source) and by the stage-2 training path
+    (CalibrationEngine.fit_ols_stage2, which drops these rows).
+
+    WHY a helper rather than the comparison inlined twice: the two paths have
+    to agree, or stage 2 is fitted on a region it is never asked about, or
+    worse is asked about a region it never saw. Issue #68 was that class of
+    train and serve drift, and the boundary is now a single place to change.
+    """
+    return forecast <= NEGATIVE_PASSTHROUGH_THRESHOLD
+
+
 # ── Rolling observation window ────────────────────────────────────────────────
 # Only observations within the last N days are used when fitting the
 # calibration model.  This prevents stale/seasonal data from corrupting the
@@ -492,7 +509,7 @@ class BucketModel:
                                      out_of_bounds='clip', returning the training-range
                                      maximum — a clean normal-market estimate.
         """
-        if x <= NEGATIVE_PASSTHROUGH_THRESHOLD:
+        if is_negative_passthrough(x):
             return {
                 "calibrated": round(x, 6),
                 "p10": round(x, 6),
@@ -1172,6 +1189,9 @@ class CalibrationEngine:
         OLS_MIN_OBS observations carrying valid STPASA data.  Under-populated buckets
         get an empty OlsModel (coef=[]).
 
+        Rows whose raw forecast reaches the negative passthrough boundary are
+        dropped before fitting; see the comment on the filter below.
+
         Feature order (after a leading 1.0 intercept term):
           [iso_calibrated, run_max_h6_rrp, run_mean_rrp, run_spread,
            horizon_hours/168, log_surplus, log_solar, log_demand, poe_spread_n]
@@ -1183,8 +1203,12 @@ class CalibrationEngine:
         # exact isotonic output it will see at apply() time.
         iso_result = self.fit(observations, region=region)
 
-        # Group rows by bucket.
+        # Group rows by bucket.  ``bucket_excluded`` counts the rows dropped by
+        # the negative passthrough filter, per bucket, so the exposure is
+        # visible in the log rather than merely assumed to be zero (issue #79
+        # noted the count was unknown).
         bucket_rows: dict[str, list[tuple[list[float], float]]] = {}
+        bucket_excluded: dict[str, int] = {}
         for obs in observations:
             if obs.is_intervention:
                 continue
@@ -1202,6 +1226,42 @@ class CalibrationEngine:
                 continue
 
             bucket_key = _bucket_key(obs.horizon_hours, obs.hour_of_day)
+
+            # Drop rows that the serving path never asks this model about.
+            #
+            # WHY: the first feature below is the stage-1 output, and
+            # apply_all floors that output at 0.0 for every raw forecast above
+            # NEGATIVE_PASSTHROUGH_THRESHOLD while returning the raw value at
+            # or below it. The feature therefore has no attainable value in the
+            # open interval (-0.10, 0.0), and a sub-threshold row lands on the
+            # far side of that gap with nothing between it and the cluster. In
+            # ordinary least squares leverage grows with squared distance from
+            # the feature mean, so such a row is fitted largely by itself:
+            # measured hat leverage for a single one is 0.92 to 0.98 against a
+            # bucket mean of 0.13, that is roughly 7x. One mis-joined deep
+            # negative observation moved the fitted iso_cal coefficient from
+            # +1.13 to -0.15 in a 78 row bucket, a sign flip, while the same
+            # corruption on an ordinary row moved it by 6 percent. A negative
+            # iso_cal coefficient of -1.879 was observed in the wild on
+            # h24_48__shoulder and is pinned by
+            # test_apply_stpasa_negative_ols_falls_back_to_isotonic.
+            #
+            # Dropping them also removes train and serve skew rather than
+            # creating it: PR #74 made CalibrationResult.apply return early on
+            # a "passthrough_negative" result, so stage 2 is never consulted
+            # below the boundary. Training on a region that is never served
+            # only lets it distort the coefficient used for every ordinary
+            # in-band interval. Both paths now read the boundary from
+            # is_negative_passthrough so they cannot drift apart. See #79.
+            #
+            # Deliberately narrow: the stage-1 isotonic fit above and the run
+            # level features still see these rows, because the serving path
+            # computes both the same way from the live run. Only the stage-2
+            # design matrix changes.
+            if is_negative_passthrough(obs.pd7day_forecast):
+                bucket_excluded[bucket_key] = bucket_excluded.get(bucket_key, 0) + 1
+                continue
+
             bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
             iso_cal = bucket.apply_all(obs.pd7day_forecast).get(
                 "calibrated", obs.pd7day_forecast
@@ -1221,7 +1281,20 @@ class CalibrationEngine:
             bucket_rows.setdefault(bucket_key, []).append((feature_vec, obs.actual_rrp))
 
         ols_models: dict[str, OlsModel] = {}
-        for bucket_key, rows in bucket_rows.items():
+        # Iterate the union so a bucket whose every candidate row was excluded
+        # still gets an empty OlsModel rather than disappearing from the
+        # result. apply() treats a missing key and an empty coef list the same
+        # way, but the diagnostic summary should not lose the bucket.
+        # Sorted, so the fit order and the log line are deterministic.
+        for bucket_key in sorted(set(bucket_rows) | set(bucket_excluded)):
+            rows = bucket_rows.get(bucket_key, [])
+            # OLS_MIN_OBS is counted AFTER exclusion, deliberately. A bucket
+            # that only clears the floor by including rows the model is never
+            # served on has not really cleared it, so it falls back to an empty
+            # OlsModel and apply() keeps the stage-1 isotonic result. Falling
+            # back is the safe direction: the alternative is a 9 feature fit on
+            # fewer than 50 points, which is the over-fit that raised this
+            # floor from 10 in the first place. See #79.
             if len(rows) < OLS_MIN_OBS:
                 ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
                 continue
@@ -1245,10 +1318,18 @@ class CalibrationEngine:
                 r2=round(r2, 6),
             )
 
+        n_excluded = sum(bucket_excluded.values())
         _LOGGER.info(
-            "OLS stage2 fit: %d buckets evaluated (%d with sufficient STPASA obs)",
+            "OLS stage2 fit: %d buckets evaluated (%d with sufficient STPASA obs), "
+            "%d rows excluded at or below the negative passthrough boundary%s",
             len(ols_models),
             sum(1 for m in ols_models.values() if len(m.coef) >= 2),
+            n_excluded,
+            (
+                " (" + ", ".join(
+                    f"{k}: {v}" for k, v in sorted(bucket_excluded.items())
+                ) + ")"
+            ) if n_excluded else "",
         )
         return ols_models
 
