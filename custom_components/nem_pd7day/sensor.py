@@ -102,6 +102,24 @@ PARALLEL_UPDATES = 0
 _STPASA_MIN_HORIZON_H = 22.0
 _STPASA_MAX_HORIZON_H = 120.0
 
+# Largest time distance the nearest-match fallback may bridge, in seconds.
+# STPASA is a half-hourly product, so a genuine match is either exact or one
+# interval away after an END/START convention slip. Anything further means the
+# run does not cover this interval at all, and the honest answer is None.
+#
+# Without this bound the fallback returned the closest interval at any
+# distance. AEMO defines Short Term PASA as covering six trading days from the
+# end of the trading day covered by the most recent pre-dispatch schedule, so
+# it structurally does not reach the near horizon: a 16:05 run began at h39,
+# 17h after the h22 band floor. Every in-band interval below h39 was therefore
+# scored against pre-dawn features borrowed from up to 17h away, chiefly
+# ss_solar_uigf of 0 MW in place of ~3510 MW. That is a feature combination the
+# stage-2 fit never sees, because the fit joins on an exact
+# interval_time|run_at key and skips intervals with no STPASA row. Serving a
+# substitute where training skipped is train/serve skew, and it produced
+# 642 $/MWh in a solar trough whose raw forecast was negative.
+_STPASA_MAX_MATCH_SECONDS = 1800.0
+
 # How many times CalibratedWriteMixin will re-warm the calibrated forecast memo
 # when the cache key moves while the warm is in flight. See
 # CalibratedWriteMixin._async_warm_until_current for why one attempt is not
@@ -124,6 +142,12 @@ def _stpasa_features_for_interval(
     comparing the STPASA END to the PricePeriod END (nemtime) when available;
     here we match on the START-derived value passed in, falling back to the
     nearest interval by absolute time distance.
+
+    The fallback is bounded by _STPASA_MAX_MATCH_SECONDS. When the run does not
+    cover this interval within that distance the result is None, matching what
+    the stage-2 fit does with the same gap, so the interval keeps its
+    isotonic-only value rather than being scored against another interval's
+    weather.
     """
     if horizon_hours < _STPASA_MIN_HORIZON_H or horizon_hours > _STPASA_MAX_HORIZON_H:
         return None
@@ -162,6 +186,10 @@ def _stpasa_features_for_interval(
                 if best_delta is None or delta < best_delta:
                     best_delta = delta
                     best = si
+        # Reject a match the run cannot honestly support. Deliberately not
+        # logged: see the note above on this function's call frequency.
+        if best_delta is None or best_delta > _STPASA_MAX_MATCH_SECONDS:
+            return None
         chosen = best
 
     if chosen is None:
