@@ -24,9 +24,9 @@ _LOGGER = logging.getLogger(__name__)
 
 # Horizons and ToDs shown in heatmap (h48_96+ excluded — too sparse early on)
 _HORIZONS   = ["h00_06", "h06_12", "h12_24", "h24_48"]
-_HOR_LABELS = ["0–6h ahead", "6–12h ahead", "12–24h ahead", "24–48h ahead"]
+_HOR_LABELS = ["0-6h ahead", "6-12h ahead", "12-24h ahead", "24-48h ahead"]
 _TODS       = ["shoulder", "morning_ramp", "solar", "peak"]
-_TOD_LABELS = ["Shoulder\nel≤0°", "Morning Ramp\n0°<el≤15°", "Solar\nel>15°", "Peak\n16–21h"]
+_TOD_LABELS = ["Shoulder\nel≤0°", "Morning Ramp\n0°<el≤15°", "Solar\nel>15°", "Peak\n16-21h"]
 _TOD_COL    = {
     "shoulder":     "#7D3C98",
     "morning_ramp": "#E67E22",
@@ -151,7 +151,7 @@ def render_chart(
         ax1.set_xticklabels([f"{int(t):02d}:00" for t in range(0, 25, 2)],
                             color="#333333", fontsize=10, rotation=25)
         ax1.set_ylabel("$/kWh", color="#444444", fontsize=11)
-        ax1.set_title(f"{region} Spot Price — Average by Time of Day",
+        ax1.set_title(f"{region} Spot Price: Average by Time of Day",
                       color="#111111", fontsize=13, fontweight="bold", pad=8)
         ax1.legend(handles=handles, facecolor=_PAN, edgecolor="#CCCCCC",
                    labelcolor="#111111", fontsize=11, loc="upper left", framealpha=0.95)
@@ -160,7 +160,7 @@ def render_chart(
         ax1.text(0.5, 0.5, "No time-of-day data available",
                  transform=ax1.transAxes, ha="center", va="center",
                  fontsize=14, color="#999999")
-        ax1.set_title(f"{region} Spot Price — Average by Time of Day",
+        ax1.set_title(f"{region} Spot Price: Average by Time of Day",
                       color="#111111", fontsize=13, fontweight="bold", pad=8)
 
     ax1.tick_params(colors="#666666", length=3)
@@ -224,7 +224,7 @@ def render_chart(
         for tod in _TODS:
             n, a, b = data[(hor, tod)]
             if n > 0:
-                hor_short = hor.replace("h", "").replace("_", "\u2013") + "h"
+                hor_short = hor.replace("h", "").replace("_", "-") + "h"
                 tod_short = tod[:4].capitalize()
                 lbl = f"{tod_short}\n{hor_short}\n(n={n})"
                 all_cells.append((lbl, a, tod, n))

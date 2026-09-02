@@ -88,7 +88,7 @@ def render_iso_chart(
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.colors import TwoSlopeNorm
     except ImportError:
-        _LOGGER.warning("matplotlib not available — returning placeholder image for iso chart")
+        _LOGGER.warning("matplotlib not available, returning placeholder image for iso chart")
         return _placeholder_png(
             "Iso chart unavailable\n(matplotlib not installed)"
         )
@@ -186,7 +186,7 @@ def _render_panel_a(ax, buckets: dict) -> None:
                         color="white" if abs(cr - 1.0) > 0.25 else "black")
 
     ax.set_title(
-        "Compression Ratio (y_range / x_range) \u2014 <1 = AEMO over-forecasts, =1 = no correction",
+        "Compression Ratio (y_range / x_range): <1 = AEMO over-forecasts, =1 = no correction",
         fontsize=11, pad=10,
     )
     ax.set_facecolor(_PAN)
@@ -292,7 +292,7 @@ def _render_panel_d(ax, iso_history: list[dict]) -> None:
             transform=ax.transAxes,
         )
         ax.set_facecolor(_PAN)
-        ax.set_title("Compression Ratio Drift \u2014 Key Buckets", fontsize=11, pad=10)
+        ax.set_title("Compression Ratio Drift: Key Buckets", fontsize=11, pad=10)
         return
 
     for bucket_key, (color, label) in _KEY_BUCKETS.items():
@@ -319,6 +319,6 @@ def _render_panel_d(ax, iso_history: list[dict]) -> None:
     ax.tick_params(axis="x", rotation=30, labelsize=8)
 
     ax.set_ylabel("compression_ratio", fontsize=9)
-    ax.set_title("Compression Ratio Drift \u2014 Key Buckets", fontsize=11, pad=10)
+    ax.set_title("Compression Ratio Drift: Key Buckets", fontsize=11, pad=10)
     ax.set_facecolor(_PAN)
     ax.grid(color=_GRD, linewidth=0.5)
