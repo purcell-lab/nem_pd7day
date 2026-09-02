@@ -359,9 +359,15 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             return None, {}, []
         result = store.latest()
         if result is None or not result.intervals:
-            self._stpasa_index_run = None
+            # Clear the data first and the key last, the same order the
+            # rebuild below uses. Here it is only consistency: None never
+            # matches a computed cache key, so a reader that lands mid clear
+            # recomputes either way. Keeping both branches identical is what
+            # makes the invariant readable, which is that the key is only ever
+            # visible once the data it names is in place.
             self._stpasa_index_map = {}
             self._stpasa_index_sorted = []
+            self._stpasa_index_run = None
             return result, {}, []
 
         # Rebuild only when the STPASA run changes (fetched_at disambiguates a
