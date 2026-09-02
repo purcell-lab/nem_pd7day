@@ -441,13 +441,28 @@ class NemPd7dayForecastChartCamera(
                     ATTR_CAL_SOURCE: cal["calibrated_source"],
                     ATTR_CAL_N_OBS: cal["n_obs"],
                 }
-                # NOT carried through here: spike_credible. The sensor
-                # publishes it and _save_spike_intervals below already reads
-                # it, so the set it builds has always been empty and the chart
-                # spike callouts have never fired. Switching them on is a
-                # visible change to the rendered image and needs its own
-                # review, so it is deliberately left out of this parity fix.
-                # See issue #84.
+                # spike_credible, issue #84. Until this line the camera never
+                # wrote the key, so the set _save_spike_intervals builds below
+                # was always empty, spike_first_run was therefore always True,
+                # and forecast_chart.py drops any interval whose
+                # spike_credible is not True before it reaches the callout
+                # eligibility check. The chart's spike callouts had never once
+                # been drawn. The sensor has carried the field all along, so
+                # this is the same camera and sensor divergence as #66 and #80.
+                #
+                # The key is copied only when apply_to_price actually set it,
+                # rather than with cal.get(), because the field is a tri-state
+                # and the three states are not the same fact. True means the
+                # gas and QNI covariates both support the spike. None means at
+                # least one of them was missing, so the question was not
+                # answered. Absent means the raw price is below
+                # SPIKE_THRESHOLD, so the question was never asked. Only True
+                # draws a callout, and the other two draw nothing, which is the
+                # conservative direction. What must not happen is a default of
+                # False, which would record an unanswered question as a
+                # confirmed negative.
+                if "spike_credible" in cal:
+                    cal_update["spike_credible"] = cal["spike_credible"]
                 entry.update(cal_update)
             else:
                 # No calibration store, or no raw price. Carry the raw value

@@ -56,6 +56,31 @@ _PASSTHROUGH_CLIP = 2.0
 _SPIKE_CALLOUT_THRESHOLD_24H = 1.50  # $/kWh
 _SPIKE_CALLOUT_THRESHOLD_48H = 3.00  # $/kWh
 
+# Spike callout layout. Until issue #84 the camera never set spike_credible, so
+# no chart had ever drawn one of these boxes and none of the numbers below had
+# ever been checked against a rendered image. They were measured by rendering
+# synthetic runs with a non-empty credible set and reading back the placed
+# artists, and each one fixes a defect that measurement found.
+#
+# A callout box is roughly 93 px wide on the 1322 px plotting area this figure
+# produces, so it covers about 7 per cent of the chart width, and it is drawn
+# 32 pt, another 3.3 per cent, to one side of its anchor. Two neighbouring
+# callouts can point toward each other, one offset right and one offset left,
+# so the room a label needs to its neighbour on the same tier is twice that.
+_CALLOUT_LABEL_SPAN_FRAC = 0.22
+# Spikes closer together than this share one label. The old 60 min window split
+# a single evening episode into several clusters whose boxes then landed on top
+# of each other; the triangles still mark every interval individually.
+_CALLOUT_CLUSTER_GAP_MIN = 360.0
+# Vertical tiers, in points above the clip line, tried in order.
+_CALLOUT_Y_OFFSETS_PT = (45, 65, 85)
+# Fraction of the visible y span kept clear above the clip line when callouts
+# are present. The tier offsets are a fixed number of points but the y span is
+# not: a run whose p10 reaches the -$1000/MWh market floor stretches the axis
+# far enough that a 65 pt offset lands outside it, and the box was then painted
+# over the title. Measured overflow before this reservation: 55 px.
+_CALLOUT_HEADROOM_FRAC = 0.34
+
 
 def _tod_label(hour: int) -> str:
     """Classify an hour into a time-of-day label."""
@@ -160,6 +185,44 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     p99 = float(np.percentile(non_spike_cals, 99)) if len(non_spike_cals) > 0 else 0.20
     CLIP_Y = float(np.ceil(max(p99 * 1.15, 0.15) / 0.05) * 0.05)
 
+    # ── Rec 1 + 4: classify spike callout intervals ─────────────────────────
+    # Done here rather than at the drawing site because the y limits below have
+    # to know whether any callout boxes will be drawn before they are set.
+    # spike_credible is a tri-state: True, None when a covariate the gate needs
+    # is missing, and absent below SPIKE_THRESHOLD. Only True is a confirmed
+    # credible spike, so the test is "is not True" and a missing covariate
+    # draws nothing rather than being read as a negative answer.
+    confirmed_indices = []
+    candidate_indices = []
+    for i in range(len(raws)):
+        if float(raws[i]) < _SPIKE_CALLOUT_THRESHOLD_48H:
+            continue
+        if spike_credibles[i] is not True:
+            continue
+        eligible, style = _is_spike_callout_eligible(
+            float(raws[i]), horizons[i], spike_first_runs[i],
+        )
+        if not eligible:
+            continue
+        if style == "confirmed":
+            confirmed_indices.append(i)
+        elif style == "candidate":
+            candidate_indices.append(i)
+
+    # Y limits, fixed once here so the zone label, the callout tiers and
+    # set_ylim below all work in the same span. Callout boxes are placed a
+    # fixed number of points above the clip line, so when there are any the
+    # axis top is raised until that many points fit inside the axes.
+    y_min = min(float(np.min(p10s)), -0.04)
+    y_bottom = y_min * 1.25
+    y_top = CLIP_Y * 1.35
+    if confirmed_indices:
+        y_top = max(
+            y_top,
+            (CLIP_Y - _CALLOUT_HEADROOM_FRAC * y_bottom)
+            / (1.0 - _CALLOUT_HEADROOM_FRAC),
+        )
+
     # Per-day min/max on calibrated values (all intervals — isotonic values
     # are clean normal-market estimates even for spike-raw inputs)
     by_day = defaultdict(list)
@@ -190,6 +253,10 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
 
     # ── Grid stress annotations ──────────────────────────────────────────────
     notice_types_present: set[tuple] = set()
+    # x positions of the grid stress labels, in date2num days. The spike
+    # callout tiers below sit in the same strip of chart above the clip line as
+    # these do, so a callout placed near one has to start a tier higher.
+    notice_label_x: list[float] = []
     if annotations:
         NOTICE_COLORS = {
             ("LOR", 1): ("#F39C12", 0.15, "LOR1"),   # amber
@@ -232,6 +299,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                 tier += 1
             tier = min(tier, len(label_y_levels) - 1)
             placed.append((mid_num, tier))
+            notice_label_x.append(mid_num)
             ax.text(
                 mid, label_y_levels[tier], label_text,
                 ha="center", va="top", fontsize=7, color=color,
@@ -287,12 +355,10 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                     color='#888888', linewidth=0.7, alpha=0.35, linestyle=':', zorder=5)
 
         # 24h and 72h boundary lines
-        y_min_prelim = min(float(np.min(p10s)), -0.04)
-        y_top_prelim = CLIP_Y * 1.35
         if times[0] < zone_24h < times[-1]:
             ax.axvline(zone_24h, color='#666688', linewidth=0.8,
                        linestyle='--', alpha=0.3, zorder=3)
-            ax.text(zone_24h, y_top_prelim * 0.96,
+            ax.text(zone_24h, y_top * 0.96,
                     '\u2190 reliable | uncertain \u2192',
                     fontsize=6.5, color='#666688', alpha=0.6,
                     ha='center', va='top', zorder=8)
@@ -329,23 +395,8 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                     fontweight='bold', zorder=9)
 
     # ── Rec 1 + 4: Horizon-gated spike callouts with persistence styling ─────
-    # Classify spike intervals using raw value threshold + spike_credible + persistence.
-    confirmed_indices = []
-    candidate_indices = []
-    for i in range(len(raws)):
-        if float(raws[i]) < _SPIKE_CALLOUT_THRESHOLD_48H:
-            continue
-        if spike_credibles[i] is not True:
-            continue
-        eligible, style = _is_spike_callout_eligible(
-            float(raws[i]), horizons[i], spike_first_runs[i],
-        )
-        if not eligible:
-            continue
-        if style == "confirmed":
-            confirmed_indices.append(i)
-        elif style == "candidate":
-            candidate_indices.append(i)
+    # confirmed_indices and candidate_indices were classified above, next to
+    # the y limits that depend on them.
 
     # Confirmed spike markers — solid red triangle (existing style)
     if confirmed_indices:
@@ -366,7 +417,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         current: list[int] = [pt_indices[0]]
         for prev_idx, idx in zip(pt_indices, pt_indices[1:]):
             gap = (times[idx] - times[prev_idx]).total_seconds() / 60
-            if gap <= 60:
+            if gap <= _CALLOUT_CLUSTER_GAP_MIN:
                 current.append(idx)
             else:
                 clusters.append(current)
@@ -376,19 +427,50 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         chart_start = times[0]
         chart_end = times[-1]
         chart_span = (chart_end - chart_start).total_seconds()
-        y_offsets = [45, 65, 45, 65]
-        for cluster_num, cluster in enumerate(clusters):
+        chart_span_days = mdates.date2num(chart_end) - mdates.date2num(chart_start)
+        # Tier assignment by horizontal proximity rather than by cluster order.
+        # The old code cycled [45, 65, 45, 65] on the cluster index, so the
+        # first and third clusters always shared a tier however close together
+        # they were: nine callouts on a synthetic run produced 21 overlapping
+        # pairs. Slots already taken by a grid stress label count as taken.
+        placed_callouts: list[tuple[float, int]] = [
+            (x, 0) for x in notice_label_x
+        ]
+        for cluster in clusters:
             c_times = [times[i] for i in cluster]
-            c_vals = [float(cals[i]) for i in cluster]
-            max_val = max(c_vals)
-            peak_idx = c_vals.index(max_val)
-            peak_time = c_times[peak_idx]
-            frac = (peak_time - chart_start).total_seconds() / chart_span if chart_span > 0 else 0.5
+            # The peak of the cluster is its highest raw forecast, because the
+            # raw forecast is what a spike callout is about. The label used to
+            # report the calibrated value, so a $12.00/kWh raw spike was
+            # annotated "$0.18/kWh", which is the number the calibrated line
+            # already draws and says nothing about the spike being called out.
+            c_raws = [float(raws[i]) for i in cluster]
+            max_raw = max(c_raws)
+            peak_time = c_times[c_raws.index(max_raw)]
+            # A one interval chart has no span, and the old fallback of 0.5
+            # sent the box left off the axes because the only point sits on
+            # the left edge. Treat a degenerate chart as being at its start.
+            frac = (peak_time - chart_start).total_seconds() / chart_span if chart_span > 0 else 0.0
             xoff = 32 if frac < 0.5 else -32
-            yoff = y_offsets[cluster_num % len(y_offsets)]
+            peak_num = mdates.date2num(peak_time)
+            gap_days = _CALLOUT_LABEL_SPAN_FRAC * chart_span_days
+            tier = None
+            for candidate_tier in range(len(_CALLOUT_Y_OFFSETS_PT)):
+                if not any(
+                    t == candidate_tier and abs(peak_num - px) < gap_days
+                    for px, t in placed_callouts
+                ):
+                    tier = candidate_tier
+                    break
+            if tier is None:
+                # Every tier here is occupied. Drawing a fourth box on top of
+                # three others would hide all four, and the interval is already
+                # marked by its triangle, so this cluster gets no label.
+                continue
+            placed_callouts.append((peak_num, tier))
+            yoff = _CALLOUT_Y_OFFSETS_PT[tier]
             ha = 'left' if xoff > 0 else 'right'
             ax.annotate(
-                f'${max_val:.2f}/kWh',
+                f'raw ${max_raw:.2f}/kWh',
                 xy=(peak_time, CLIP_Y),
                 xytext=(xoff, yoff), textcoords='offset points',
                 fontsize=7.5, color='#C62828', ha=ha, va='bottom',
@@ -408,8 +490,6 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     ax.xaxis.grid(True, which='minor', color='#EEEEEE', linewidth=0.4, alpha=0.5, zorder=1)
     ax.tick_params(axis='x', labelsize=8.5, pad=2)
 
-    y_min = min(float(np.min(p10s)), -0.04)
-    y_top = CLIP_Y * 1.35
     for mt in [t for t in times if t.hour == 0 and t.minute == 0]:
         ax.axvline(mdates.date2num(mt), color='#CCCCCC', linewidth=1.0,
                    linestyle='--', zorder=1)
@@ -419,7 +499,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                 bbox=dict(facecolor='white', edgecolor='none', alpha=0.7, pad=1))
 
     # Y-axis left: $/kWh
-    ax.set_ylim(bottom=y_min * 1.25, top=y_top)
+    ax.set_ylim(bottom=y_bottom, top=y_top)
     ax.set_ylabel('$/kWh', fontsize=10, labelpad=6)
     ax.yaxis.set_tick_params(labelsize=9)
     ax.axhline(CLIP_Y, color='#C62828', linewidth=0.8, linestyle=':', alpha=0.6)
