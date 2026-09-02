@@ -40,10 +40,19 @@ def test_iso_chart_renders_png():
 def test_summary_isotonic_fields():
     """summary() emits isotonic diagnostic fields per bucket."""
     from custom_components.nem_pd7day.calibration_engine import CalibrationEngine, Observation
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
-    # Use recent dates so observations fall within the 90-day rolling window
-    base = datetime.now().astimezone()
+    # Recent dates, so the observations fall inside the 90-day rolling window,
+    # but anchored to 12:00 NEM rather than to the wall clock. The bucket key
+    # is derived from solar elevation at the observation time, so whenever the
+    # suite ran at a time of day near an elevation boundary these 30
+    # observations split across two buckets and neither reached the 20 this
+    # test asserts on. Midday in SE Queensland is in the solar bucket all year,
+    # so all 30 land together whatever the clock says. NEM time is UTC+10 with
+    # no DST.
+    base = datetime.now(timezone(timedelta(hours=10))).replace(
+        hour=12, minute=0, second=0, microsecond=0
+    )
     obs = []
     for i in range(30):
         x = 0.05 + i * 0.005
