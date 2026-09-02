@@ -490,6 +490,75 @@ def test_uncalibratable_interval_degrades_to_none_not_zero():
     print("  PASS: uncalibratable interval degrades to None, not 0")
 
 
+class _TripwireIndexMap(dict):
+    """An index map that refuses to be queried.
+
+    Copied in spirit from tests/test_stpasa_band_floor.py, which uses the same
+    trick to show the per-run floor short-circuits ahead of the lookup.
+    """
+
+    def get(self, *args, **kwargs):  # noqa: D102
+        raise AssertionError("STPASA index consulted for an interval below coverage")
+
+
+def test_tariff_path_gets_the_per_run_band_floor():
+    """The tariff path resolves the stage 2 band floor from run coverage too.
+
+    Issue #68 made the floor a property of the run's STPASA coverage rather
+    than the flat 22h constant, but it only threaded the run timestamp into the
+    forecast sensor's feature lookup. The shared entry point of issue #66 now
+    carries run_at_iso, so the tariff path applies the same edge.
+
+    The interval here sits at h30, inside the static band and below the run's
+    coverage, which starts at h37. With the run timestamp threaded through, the
+    floor gates it and the index is never consulted. Without it the static 22h
+    floor applies and the tripwire fires, which is what makes this test
+    non vacuous.
+
+    Note honestly what this does and does not change: after issue #67 the
+    bounded nearest match already declined these intervals, so the published
+    tariff number is the same either way. What the tariff path gains is the
+    same band edge semantics and the same short circuit, so the two paths
+    cannot drift apart again when that edge next moves.
+    """
+    run_dt = parse_iso(RUN_AT)
+    below = (run_dt + timedelta(hours=30)).replace(minute=0)
+    covered = (run_dt + timedelta(days=1)).replace(hour=17, minute=0)
+    periods = [make_period(below, 0.12093)]
+    stpasa = [make_stpasa_interval(covered, solar=1200.0)]
+
+    forecast, tariff, _export, coordinator, store = make_sensors(periods, stpasa)
+    coordinator._map = _TripwireIndexMap(coordinator._map)
+
+    h = (parse_iso(periods[0].time) - run_dt).total_seconds() / 3600.0
+    assert 22.0 < h < 36.0, f"probe must be inside the static band, got h{h}"
+
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
+        entries = tariff.extra_state_attributes["forecast"]
+    assert len(entries) == 1
+    tariff_spot = entries[0]["spot"]
+
+    ff = forecast_entries_by_time(forecast)
+    assert entries[0]["spot"] == round(ff[entries[0]["time"]]["value"], 6)
+
+    # Non vacuity: the same call without the run timestamp falls back to the
+    # static floor and does reach the index.
+    from custom_components.nem_pd7day.calibration_inputs import calibrate_interval
+    try:
+        calibrate_interval(
+            store, coordinator, periods[0].value, entries[0]["time"], h, below.hour,
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(
+            "the static floor should have let this interval reach the index, so "
+            "the tripwire proves nothing"
+        )
+    print(f"  PASS: tariff path gated by the per-run floor at h{h:.1f}, "
+          f"spot={tariff_spot}")
+
+
 def test_isotonic_only_call_is_what_used_to_disagree():
     """Regression case from the issue: the old argument list disagrees.
 
@@ -526,4 +595,5 @@ if __name__ == "__main__":
     test_tariff_value_is_the_shared_spot_with_network_applied()
     test_uncalibratable_interval_degrades_to_none_not_zero()
     test_isotonic_only_call_is_what_used_to_disagree()
+    test_tariff_path_gets_the_per_run_band_floor()
     print("All tariff calibration parity tests passed.")

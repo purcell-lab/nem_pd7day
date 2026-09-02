@@ -270,6 +270,16 @@ class Observation(NamedTuple):
 # OLS residual correction is applied only inside this horizon band.  Below
 # OLS_MIN_HORIZON_H, Amber/CSIRO short-term forecasts dominate; above
 # OLS_MAX_HORIZON_H STPASA is empirically counterproductive (backtest).
+#
+# These stay static deliberately. STPASA coverage begins at a trading day
+# boundary, so the horizon at which it begins moves with run time, and the
+# serving path narrows its band per run in
+# sensor._stpasa_effective_min_horizon_h. The fit must not: its rows span many
+# historical runs with different coverage, so filtering them by the current
+# run's coverage would drop training data that was genuinely covered when it
+# was recorded. The fit already excludes uncovered intervals structurally,
+# because it joins on an exact interval_time|run_at key and skips rows with no
+# STPASA match.
 OLS_MIN_HORIZON_H = 22.0
 OLS_MAX_HORIZON_H = 120.0
 
@@ -375,6 +385,68 @@ class QuantileCoeff:
         return self.a * x + self.b
 
 
+def _order_band(
+    p10: float | None, p50: float | None, p90: float | None
+) -> tuple[float | None, float | None, float | None]:
+    """Sort the fitted quantile values so that ``p10 <= p50 <= p90``.
+
+    The three quantile lines are fitted independently, so ``a * x + b`` can
+    invert for a negative forecast: with slopes 0.4 and 0.7 and x = -0.076 the
+    p10 line returns -0.030 while the p90 line returns -0.053.  Ordering is a
+    property of a band that holds regardless of how the point estimate was
+    produced, so it is enforced separately from containment (see _clamp_band).
+
+    Levels that were not fitted stay ``None`` and keep their slot; the fitted
+    values are redistributed across the remaining slots in ascending order.
+    """
+    fitted = sorted(v for v in (p10, p50, p90) if v is not None)
+    ordered = iter(fitted)
+    return tuple(  # type: ignore[return-value]
+        next(ordered) if level is not None else None for level in (p10, p50, p90)
+    )
+
+
+def _clamp_band(
+    calibrated: float,
+    p10: float | None,
+    p50: float | None,
+    p90: float | None,
+) -> tuple[float | None, float | None, float | None]:
+    """Clamp a quantile band so it contains ``calibrated`` and stays ordered.
+
+    Quantile IRLS sorts slopes but not intercepts, so the fitted lines can
+    cross near the x-axis intercept and produce p10 > p90, or a band that does
+    not contain the published point estimate.  This enforcement guarantees the
+    published triple satisfies ``p10 <= calibrated <= p90`` and
+    ``p10 <= p50 <= p90``.
+
+    A fitted p10 is first floored at 0.0, because a quantile line extrapolated
+    below zero is not a credible price, and then clamped down to
+    ``calibrated``.  Both callers pass a non-negative point estimate, for which
+    that order is equivalent to flooring last; it is written this way so a
+    future caller passing a negative estimate cannot end up with a lower bound
+    above the value it is meant to bracket.
+
+    A ``None`` quantile means that level was not fitted (fewer than MIN_OBS
+    observations) and stays ``None`` rather than being invented.
+
+    Every published point estimate must be clamped through this function.
+    Stage 2 originally clamped only against the isotonic value and then
+    replaced the point estimate without re-clamping, which published a value
+    outside its own band on roughly one interval in six (issue #69).
+    """
+    if p10 is not None:
+        p10 = min(max(0.0, p10), calibrated)
+    if p90 is not None:
+        p90 = max(calibrated, p90)
+    if p50 is not None:
+        # Same floor reasoning as p10 when there is no fitted p10 to bound by.
+        p50_lo = p10 if p10 is not None else min(0.0, calibrated)
+        p50_hi = p90 if p90 is not None else float("inf")
+        p50 = max(p50_lo, min(p50_hi, p50))
+    return p10, p50, p90
+
+
 @dataclass
 class BucketModel:
     """All models for one (horizon, tod) bucket."""
@@ -388,6 +460,25 @@ class BucketModel:
     # Uses out_of_bounds='clip': forecasts outside the training x-range are
     # clipped to the nearest boundary rather than extrapolated.
     iso_model: IsotonicRegression | None = None
+
+    def raw_band(
+        self, x: float
+    ) -> tuple[float | None, float | None, float | None]:
+        """Unclamped quantile-regression band for forecast ``x``.
+
+        Returns the three fitted quantile lines evaluated at ``x``, before any
+        clamping against a point estimate.  Each level is ``None`` when its
+        coefficients were not fitted (fewer than MIN_OBS observations).
+
+        Exposed separately from ``apply_all`` so stage 2 can re-derive the band
+        from the fits rather than inherit a band already clamped against a
+        point estimate it then discards.
+        """
+        return (
+            self.q10.apply(x) if not self.q10.is_default else None,
+            self.q50.apply(x) if not self.q50.is_default else None,
+            self.q90.apply(x) if not self.q90.is_default else None,
+        )
 
     def apply_all(self, x: float) -> dict:
         """Return calibrated point estimate + confidence interval.
@@ -415,9 +506,17 @@ class BucketModel:
             # Isotonic model not available (< MIN_OBS or not persisted) —
             # pass raw forecast through but still compute quantile intervals
             # if the quantile coefficients are fitted (they survive serialisation).
-            p10 = self.q10.apply(x) if not self.q10.is_default else None
-            p50 = self.q50.apply(x) if not self.q50.is_default else None
-            p90 = self.q90.apply(x) if not self.q90.is_default else None
+            # Deliberately NOT clamped against x.  On this path the point
+            # estimate is the un-calibrated raw forecast, while the band comes
+            # from quantile fits that did survive serialisation, so the two can
+            # legitimately disagree: a fitted p10 above the raw forecast is the
+            # calibration saying the forecast is too low.  Clamping would erase
+            # that signal.  This is the one path where the published value may
+            # sit outside its own band, and it is transient — the next
+            # engine.fit() restores the isotonic model.
+            # Ordering is still enforced: the fitted lines invert for a
+            # negative forecast, which no reading of the band can justify.
+            p10, p50, p90 = _order_band(*self.raw_band(x))
             return {
                 "calibrated": round(x, 6),
                 "p10": round(p10, 6) if p10 is not None else None,
@@ -434,23 +533,8 @@ class BucketModel:
         # negative (negative forecasts are caught by passthrough_negative).
         calibrated = float(max(self.iso_model.predict(np.asarray([x], dtype=float))[0], 0.0))
 
-        p10 = self.q10.apply(x) if not self.q10.is_default else None
-        p50 = self.q50.apply(x) if not self.q50.is_default else None
-        p90 = self.q90.apply(x) if not self.q90.is_default else None
-
-        # Clamp P10/P90 so the confidence band always contains calibrated,
-        # then clamp P50 to [P10, P90] so all three are strictly ordered.
-        # Quantile IRLS sorts slopes but not intercepts, so crossing at the
-        # x-axis intercept can still occur — this post-fit enforcement ensures
-        # the published interval is always monotone: P10 ≤ P50 ≤ P90.
-        if p10 is not None:
-            p10 = max(0.0, min(p10, calibrated))
-        if p90 is not None:
-            p90 = max(calibrated, p90)
-        if p50 is not None:
-            p50_lo = p10 if p10 is not None else 0.0
-            p50_hi = p90 if p90 is not None else float("inf")
-            p50 = max(p50_lo, min(p50_hi, p50))
+        # Clamp the band so it contains calibrated and stays ordered.
+        p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(x))
 
         return {
             "calibrated": round(calibrated, 6),
@@ -485,9 +569,32 @@ class CalibrationResult:
         run_features: "RunFeatures | None" = None,
     ) -> dict:
         # 1. Isotonic (existing) result.
-        result = self.get_bucket(horizon_hours, hour_of_day).apply_all(forecast)
+        bucket = self.get_bucket(horizon_hours, hour_of_day)
+        result = bucket.apply_all(forecast)
 
-        # 2. Gate: STPASA correction only inside the OLS horizon band, and only
+        # 2a. Gate: never override the deliberate negative bypass.
+        #
+        #     WHY: the stage-2 OLS is fitted in fit_ols_stage2 whose first
+        #     feature is the stage-1 output, and apply_all floors that output at
+        #     0.0 for every raw forecast above NEGATIVE_PASSTHROUGH_THRESHOLD
+        #     while returning the raw value below it. The training set therefore
+        #     holds no row whatever between the threshold and zero, and below the
+        #     threshold only the deeply negative rows the observation store
+        #     happened to accumulate. Those are rare: NEM negative prices are
+        #     common but shallow, with the large majority of negative intervals
+        #     sitting above -$30/MWh against a -$100/MWh threshold here, and a
+        #     bucket needs OLS_MIN_OBS rows before it is fitted at all. A
+        #     prediction at a deeply negative forecast is extrapolation, not fit.
+        #     It also carries an asymmetric cost: a positive prediction over a
+        #     negative raw forecast flips the published sign, turning "paid to
+        #     consume" into "pay to consume", which is the one error a battery or
+        #     controllable load schedule cannot absorb. The later
+        #     `prediction <= 0.0` guard blocks that only by accident, and only
+        #     when the prediction happens to be non-positive itself. See #73.
+        if result.get("calibrated_source") == "passthrough_negative":
+            return result
+
+        # 2b. Gate: STPASA correction only inside the OLS horizon band, and only
         #    when both feature groups are present.
         if (
             stpasa is None
@@ -527,11 +634,35 @@ class CalibrationResult:
         if prediction <= 0.0:
             return result
 
-        # 7. Replace the point estimate only; keep quantile band as-is.
+        # 7. Replace the point estimate, then re-clamp the band around it.
+        #
+        #    apply_all() in step 1 clamped the band against the *isotonic*
+        #    value.  Replacing the point estimate and inheriting that band
+        #    published a value outside its own p10 to p90 whenever the stage-2
+        #    prediction moved past a stage-1 bound, which on a five-region
+        #    snapshot was 522 of 3075 intervals across 9 sensors (issue #69).
+        #
+        #    The band is re-derived from the unclamped quantile fits rather
+        #    than from the already-clamped stage-1 band, so the result is
+        #    exactly what apply_all() would have returned had the stage-2
+        #    value been the point estimate all along.  Re-clamping the clamped
+        #    band instead would inherit a p10 pulled down to the isotonic
+        #    value and publish a looser interval than the fits support.
+        #
+        #    This makes the triple self-consistent; it does not make the band
+        #    a stage-2 interval.  The quantile fits know nothing about the
+        #    STPASA features, so where the prediction lands outside them the
+        #    nearer bound collapses onto the point estimate.  A genuine
+        #    stage-2 interval needs stage-2 residual quantiles, which are not
+        #    currently stored — tracked separately.
         out = dict(result)
         out["calibrated"] = round(prediction, 6)
         out["calibrated_source"] = "isotonic+stpasa"
         out["stpasa_run_at"] = stpasa.stpasa_run_at
+        p10, p50, p90 = _clamp_band(prediction, *bucket.raw_band(forecast))
+        out["p10"] = round(p10, 6) if p10 is not None else None
+        out["p50"] = round(p50, 6) if p50 is not None else None
+        out["p90"] = round(p90, 6) if p90 is not None else None
         return out
 
     def summary(self) -> dict[str, Any]:

@@ -264,6 +264,13 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         different spot price than the forecast sensor for the same interval of
         the same run. Assembling the features here instead of calling the shared
         helper would recreate exactly the drift that caused the defect.
+
+        run_at is passed on as well as being used for the horizon. It is what
+        lets the shared entry point resolve the stage-2 band floor from this
+        run's STPASA coverage (issue #68) instead of the static 22h constant,
+        so the tariff spot is gated exactly as the forecast spot is. Without it
+        the tariff path would keep the wider band and the two would disagree
+        again on intervals below coverage.
         """
         if not self._store:
             return period.value
@@ -281,6 +288,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             interval_key_for_period(period),
             h,
             hour,
+            run_at_iso=run_at,
         )
         if cal is None:
             return None
