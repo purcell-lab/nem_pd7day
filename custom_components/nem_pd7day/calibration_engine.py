@@ -239,6 +239,50 @@ def is_negative_passthrough(forecast: float) -> bool:
     return forecast <= NEGATIVE_PASSTHROUGH_THRESHOLD
 
 
+# Key under which BucketModel.apply_all publishes the stage-1 value that stage 2
+# uses as its first feature. It is deliberately NOT the published "calibrated"
+# price: see stage2_iso_feature below and issue #85.
+ISO_FEATURE_KEY = "iso_feature"
+
+
+def stage2_iso_feature(calibrated: dict, forecast: float) -> float:
+    """The stage-1 value that stage 2 takes as its first OLS feature.
+
+    One definition, read by the stage-2 training path
+    (CalibrationEngine.fit_ols_stage2) and the serving path
+    (CalibrationResult.apply), so a row is fitted from the same number the
+    same interval would be served from. Drift between those two is the #68 bug
+    class, which is why this is a helper rather than a dict lookup written out
+    twice.
+
+    WHY this is not the published "calibrated" price: apply_all floors the
+    isotonic prediction at 0.0, because a published negative calibrated price
+    is not credible above the negative passthrough boundary. For a raw forecast
+    in the open interval (-0.10, 0.0), which is above the boundary and so is
+    genuinely served by stage 2, that floor set the feature to exactly 0.0
+    while the settled actual for the same interval was negative. The regression
+    was then asked to explain a negative actual from a feature pinned at zero,
+    and the fitted iso_cal coefficient absorbed the error: measured +8.1 per
+    cent from one such row in a 78 row bucket and +87.5 per cent from sixteen,
+    monotone in the count and the same sign in every seed. Those rows are also
+    LESS leveraged than an average row, about 0.55x the bucket mean, so no
+    leverage or influence diagnostic would ever surface them. See issue #85.
+
+    The floor stays on the published price. Only the feature is unfloored, so
+    nothing a user sees moves. The isotonic model is already fitted on every
+    (forecast, actual) pair including negative forecasts, so the unfloored
+    prediction is a genuine fitted value rather than an extrapolation, and it
+    closes the gap the feature used to have between the boundary and zero.
+
+    The dict fallbacks are for a caller holding a result dict built before this
+    split existed, which degrades to the previous behaviour instead of raising.
+    """
+    value = calibrated.get(ISO_FEATURE_KEY)
+    if value is None:
+        value = calibrated.get("calibrated", forecast)
+    return float(value)
+
+
 # ── Rolling observation window ────────────────────────────────────────────────
 # Only observations within the last N days are used when fitting the
 # calibration model.  This prevents stale/seasonal data from corrupting the
@@ -515,6 +559,11 @@ class BucketModel:
                 "p10": round(x, 6),
                 "p50": round(x, 6),
                 "p90": round(x, 6),
+                # Nothing is floored on this path, so the feature is the same
+                # raw value. Stage 2 is gated off here anyway (PR #74) and
+                # these rows are out of the fit (PR #83); the key is present so
+                # no caller has to fall back to the published value.
+                ISO_FEATURE_KEY: round(x, 6),
                 "calibrated_source": "passthrough_negative",
                 "n_obs": self.ols.n,
             }
@@ -539,6 +588,9 @@ class BucketModel:
                 "p10": round(p10, 6) if p10 is not None else None,
                 "p50": round(p50, 6) if p50 is not None else None,
                 "p90": round(p90, 6) if p90 is not None else None,
+                # No isotonic model, so there is nothing to floor and the
+                # feature is the raw forecast, exactly as the point estimate is.
+                ISO_FEATURE_KEY: round(x, 6),
                 "calibrated_source": "passthrough",
                 "n_obs": self.ols.n,
             }
@@ -548,13 +600,18 @@ class BucketModel:
         # outside the training x-range are clipped to the nearest boundary.
         # Result floored at 0.0 — calibrated prices cannot be physically
         # negative (negative forecasts are caught by passthrough_negative).
-        calibrated = float(max(self.iso_model.predict(np.asarray([x], dtype=float))[0], 0.0))
+        iso_raw = float(self.iso_model.predict(np.asarray([x], dtype=float))[0])
+        calibrated = max(iso_raw, 0.0)
 
         # Clamp the band so it contains calibrated and stays ordered.
         p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(x))
 
         return {
             "calibrated": round(calibrated, 6),
+            # The unfloored prediction, for stage 2 only. Published fields are
+            # all derived from the floored value above and are unchanged by
+            # this key existing. See stage2_iso_feature and issue #85.
+            ISO_FEATURE_KEY: round(iso_raw, 6),
             "p10": round(p10, 6) if p10 is not None else None,
             "p50": round(p50, 6) if p50 is not None else None,
             "p90": round(p90, 6) if p90 is not None else None,
@@ -628,7 +685,10 @@ class CalibrationResult:
             return result
 
         # 4. Build the 8-feature vector (intercept handled inside predict()).
-        iso_cal = result.get("calibrated", forecast)
+        #    The feature is the unfloored stage-1 value, which differs from the
+        #    published one only inside the floored band, and is read through
+        #    the same helper fit_ols_stage2 uses. See issue #85.
+        iso_cal = stage2_iso_feature(result, forecast)
         feature_vec = [
             float(iso_cal),
             run_features.run_max_h6_rrp,
@@ -1263,8 +1323,13 @@ class CalibrationEngine:
                 continue
 
             bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
-            iso_cal = bucket.apply_all(obs.pd7day_forecast).get(
-                "calibrated", obs.pd7day_forecast
+            # The unfloored stage-1 value, through the same helper the serving
+            # path reads, so a row is fitted from the number the same interval
+            # would be served from. A floored feature paired with a genuinely
+            # negative actual is what biased this coefficient: see
+            # stage2_iso_feature and issue #85.
+            iso_cal = stage2_iso_feature(
+                bucket.apply_all(obs.pd7day_forecast), obs.pd7day_forecast
             )
 
             feature_vec = [
