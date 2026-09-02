@@ -694,7 +694,16 @@ def test_sensor_reads_capped_value():
 
     # apply_to_price should be called WITH covariate kwargs — we verify this
     # by making it return covariate_capped when called correctly
-    def _apply(raw, h, hour, *, gas_forecast_tj=None, qni_mwflow=None):
+    # Signature mirrors CalibrationStore.apply_to_price, which has always taken
+    # stpasa_features and run_features as well. The sensor now assembles the
+    # full argument set in one shared place (issue #66), so a stub that accepts
+    # only the covariates rejects the call. The assertion below is unchanged:
+    # the covariates must still reach the store.
+    def _apply(
+        raw, h, hour, *,
+        gas_forecast_tj=None, qni_mwflow=None,
+        stpasa_features=None, run_features=None,
+    ):
         if gas_forecast_tj is not None and qni_mwflow is not None:
             return {
                 "calibrated": SPIKE_COVARIATE_CAP,

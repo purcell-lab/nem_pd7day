@@ -84,232 +84,60 @@ from .const import (
     REGION_DISTRIBUTORS,
     storage_keys,
 )
+from .calibration_inputs import (
+    STPASA_BAND_EDGE_SLACK_H,
+    STPASA_COVERAGE_MARGIN_H,
+    STPASA_MAX_MATCH_SECONDS,
+    STPASA_MAX_HORIZON_H,
+    STPASA_MIN_HORIZON_H,
+    calibrate_interval,
+    covariates_for_interval,
+    horizon_hours,
+    interval_key_for_period,
+    stpasa_coverage_start,
+    stpasa_effective_min_horizon_h,
+    stpasa_features_for_interval,
+)
 from .coordinator import PD7DayCoordinator
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
     from datetime import datetime
-    from .calibration_engine import StpasaFeatures
     from .notice_store import GridNoticeStore
 
 _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
 
-# STPASA OLS stage2 is applied only within this forecast-horizon band.
+# The STPASA band, the nearest-match bound, the coverage margin, the horizon
+# computation, the per-run band floor and the STPASA feature lookup now live in
+# calibration_inputs so the tariff sensors use exactly the same ones. See issue
+# #66: the two paths drifted precisely because each had its own copy, and issue
+# #68's per-run floor is the same hazard, since a floor that only the forecast
+# path applies is a second way for the two sensors to disagree. These names are
+# kept as module-level aliases because tests and other modules import them from
+# here.
+#
 # _STPASA_MIN_HORIZON_H is the hard lower bound, not the effective one: it
 # encodes the judgement that Amber/CSIRO cover the near term better, which
 # holds whatever STPASA happens to cover. The effective lower edge is resolved
 # per run by _stpasa_effective_min_horizon_h. Beyond 120h STPASA is
 # counterproductive and the pipeline falls through to isotonic-only.
-_STPASA_MIN_HORIZON_H = 22.0
-_STPASA_MAX_HORIZON_H = 120.0
-
-# Largest time distance the nearest-match fallback may bridge, in seconds.
-# STPASA is a half-hourly product, so a genuine match is either exact or one
-# interval away after an END/START convention slip. Anything further means the
-# run does not cover this interval at all, and the honest answer is None.
-#
-# Without this bound the fallback returned the closest interval at any
-# distance. AEMO defines Short Term PASA as covering six trading days from the
-# end of the trading day covered by the most recent pre-dispatch schedule, so
-# it structurally does not reach the near horizon: a 16:05 run began at h39,
-# 17h after the h22 band floor. Every in-band interval below h39 was therefore
-# scored against pre-dawn features borrowed from up to 17h away, chiefly
-# ss_solar_uigf of 0 MW in place of ~3510 MW. That is a feature combination the
-# stage-2 fit never sees, because the fit joins on an exact
-# interval_time|run_at key and skips intervals with no STPASA row. Serving a
-# substitute where training skipped is train/serve skew, and it produced
-# 642 $/MWh in a solar trough whose raw forecast was negative.
-_STPASA_MAX_MATCH_SECONDS = 1800.0
-
-# The nearest-match bridge above is one interval wide, so a run's usable
-# coverage effectively reaches half an hour below its earliest interval START.
-_STPASA_COVERAGE_MARGIN_H = _STPASA_MAX_MATCH_SECONDS / 3600.0
-
-# One second of slack on the resolved band edge. The interval that the coverage
-# margin exists to admit lands exactly on the edge, so two different float
-# divisions by 3600 decide whether it is in band. Horizons here are half-hourly,
-# so a second cannot admit an interval that was not already on the boundary.
-_STPASA_BAND_EDGE_SLACK_H = 1.0 / 3600.0
+_STPASA_MIN_HORIZON_H = STPASA_MIN_HORIZON_H
+_STPASA_MAX_HORIZON_H = STPASA_MAX_HORIZON_H
+_STPASA_MAX_MATCH_SECONDS = STPASA_MAX_MATCH_SECONDS
+_STPASA_COVERAGE_MARGIN_H = STPASA_COVERAGE_MARGIN_H
+_STPASA_BAND_EDGE_SLACK_H = STPASA_BAND_EDGE_SLACK_H
+_stpasa_features_for_interval = stpasa_features_for_interval
+_stpasa_effective_min_horizon_h = stpasa_effective_min_horizon_h
+_stpasa_coverage_start = stpasa_coverage_start
+_horizon_hours = horizon_hours
 
 # How many times CalibratedWriteMixin will re-warm the calibrated forecast memo
 # when the cache key moves while the warm is in flight. See
 # CalibratedWriteMixin._async_warm_until_current for why one attempt is not
 # enough and why this is bounded.
 _MAX_CALIBRATION_WARM_ATTEMPTS = 3
-
-
-def _stpasa_effective_min_horizon_h(
-    run_at_iso: str | None,
-    coverage_start_epoch: float | None,
-) -> float:
-    """
-    Resolve the lower edge of the stage-2 STPASA band for one forecast run.
-
-    WHY this cannot be a constant: AEMO scopes Short Term PASA to six trading
-    days from the end of the trading day covered by the most recent
-    pre-dispatch schedule, so coverage begins at a trading day boundary and the
-    horizon at which it begins moves with the forecast run time. Observed live
-    on this install, a 16:05 run first reached h39, leaving 17h of open band
-    with no data behind it, while a later run left only about 2h. A single
-    hardcoded floor cannot track that, and it drifts silently if AEMO changes
-    the product horizon.
-
-    The resolved edge is the earliest covered interval START expressed as a
-    horizon against run_at, less _STPASA_COVERAGE_MARGIN_H. Subtracting the
-    margin is deliberate: it puts the band edge exactly where the bounded
-    nearest-match in _stpasa_features_for_interval already stops matching, so
-    this function never removes a match that used to succeed. Without the
-    margin the one-interval END/START bridge kept by issue #67 would be lost
-    for the single interval immediately below coverage.
-
-    _STPASA_MIN_HORIZON_H remains the floor of the floor, and the static value
-    is returned unchanged when run_at or coverage is unknown, because widening
-    the band on the strength of missing data is the failure mode being fixed.
-    """
-    if not run_at_iso or coverage_start_epoch is None:
-        return _STPASA_MIN_HORIZON_H
-    try:
-        run_at_epoch = parse_iso(run_at_iso).timestamp()
-    except (ValueError, TypeError):
-        return _STPASA_MIN_HORIZON_H
-    coverage_h = (coverage_start_epoch - run_at_epoch) / 3600.0
-    return max(
-        _STPASA_MIN_HORIZON_H,
-        coverage_h - _STPASA_COVERAGE_MARGIN_H - _STPASA_BAND_EDGE_SLACK_H,
-    )
-
-
-def _stpasa_coverage_start(result) -> "tuple[str | None, float | None]":
-    """
-    Earliest covered interval START of a STPASA run, as (iso, epoch).
-
-    Returns (None, None) when the run holds no parseable interval, so callers
-    surface missing coverage rather than a zero horizon.
-    """
-    if result is None or not getattr(result, "intervals", None):
-        return None, None
-    from .nem_time import interval_start
-
-    best_iso: str | None = None
-    best_epoch: float | None = None
-    for si in result.intervals:
-        try:
-            start_iso = interval_start(si.interval_datetime)
-            epoch = parse_iso(start_iso).timestamp()
-        except (ValueError, TypeError):
-            continue
-        if best_epoch is None or epoch < best_epoch:
-            best_iso = start_iso
-            best_epoch = epoch
-    return best_iso, best_epoch
-
-
-def _stpasa_features_for_interval(
-    coordinator: PD7DayCoordinator,
-    interval_time_iso: str,
-    horizon_hours: float,
-    run_at_iso: str | None = None,
-) -> "StpasaFeatures | None":
-    """
-    Look up STPASA features for a forecast interval from the coordinator's
-    STPASA store.  Returns None when STPASA is unavailable or the horizon is
-    outside the OLS band.
-
-    The band's upper edge is the constant _STPASA_MAX_HORIZON_H. Its lower edge
-    is resolved per run by _stpasa_effective_min_horizon_h, which never returns
-    less than _STPASA_MIN_HORIZON_H. When run_at_iso is not supplied the lower
-    edge falls back to that constant.
-
-    STPASA interval_datetime is the interval END (AEMO convention); the
-    forecast_history / PricePeriod key is the interval START.  We match by
-    comparing the STPASA END to the PricePeriod END (nemtime) when available;
-    here we match on the START-derived value passed in, falling back to the
-    nearest interval by absolute time distance.
-
-    The fallback is bounded by _STPASA_MAX_MATCH_SECONDS. When the run does not
-    cover this interval within that distance the result is None, matching what
-    the stage-2 fit does with the same gap, so the interval keeps its
-    isotonic-only value rather than being scored against another interval's
-    weather.
-    """
-    if horizon_hours < _STPASA_MIN_HORIZON_H or horizon_hours > _STPASA_MAX_HORIZON_H:
-        return None
-    # Use the coordinator's cached interval-START index (built once per STPASA
-    # run) instead of a per-interval linear scan over all STPASA intervals.
-    # NOTE: staleness is intentionally NOT logged here. This function runs once
-    # per forecast interval (~196 intervals across the h22–h120 OLS band, per
-    # sensor, every coordinator update), so logging here produced ~2 warnings/s
-    # (~212k/day). The stale/failed-fetch condition is logged at most once per
-    # cycle in __init__'s _fetch_and_distribute_stpasa instead.
-    result, index_map, sorted_intervals = coordinator.stpasa_index()
-    if result is None or not index_map:
-        return None
-
-    # Dynamic lower edge. Checked here rather than beside the static gate above
-    # because it is a property of this run's coverage, which is only known once
-    # the index is loaded. sorted_intervals is sorted by epoch, so element 0
-    # carries the earliest covered START. Deliberately not logged: see the note
-    # above on this function's call frequency.
-    coverage_start_epoch = sorted_intervals[0][0] if sorted_intervals else None
-    if horizon_hours < _stpasa_effective_min_horizon_h(
-        run_at_iso, coverage_start_epoch
-    ):
-        return None
-
-    from .calibration_engine import StpasaFeatures
-
-    # Match on interval START: STPASA interval_datetime is the END, already
-    # converted to START in the index.
-    chosen = index_map.get(interval_time_iso)
-    if chosen is None:
-        # O(log n) nearest-match fallback against the sorted (epoch, interval) list.
-        try:
-            target_epoch = parse_iso(interval_time_iso).timestamp()
-        except (ValueError, TypeError):
-            return None
-        import bisect
-
-        # Bisect the (epoch, interval) tuples directly. A one-element probe
-        # compares on epoch alone and never reaches the StpasaInterval, so no
-        # per-call copy of the run's epochs is built for every in-band interval
-        # that misses the exact key.
-        pos = bisect.bisect_left(sorted_intervals, (target_epoch,))
-        best = None
-        best_delta: float | None = None
-        for cand in (pos - 1, pos):
-            if 0 <= cand < len(sorted_intervals):
-                e, si = sorted_intervals[cand]
-                delta = abs(e - target_epoch)
-                if best_delta is None or delta < best_delta:
-                    best_delta = delta
-                    best = si
-        # Reject a match the run cannot honestly support. Deliberately not
-        # logged: see the note above on this function's call frequency.
-        if best_delta is None or best_delta > _STPASA_MAX_MATCH_SECONDS:
-            return None
-        chosen = best
-
-    if chosen is None:
-        return None
-    return StpasaFeatures.from_interval(chosen)
-
-
-def _horizon_hours(run_at_str: str | None, interval_time_str: str) -> float:
-    """
-    Compute forecast horizon in hours between run_at and interval_time.
-    Both inputs are ISO-8601 +10:00 strings; subtraction of tz-aware
-    datetimes is unambiguous regardless of the HA system timezone.
-    """
-    if not run_at_str:
-        return 0.0
-    try:
-        run_at = parse_iso(run_at_str)
-        interval = parse_iso(interval_time_str)
-        return max(0.0, (interval - run_at).total_seconds() / 3600)
-    except (ValueError, TypeError):
-        return 0.0
 
 
 async def async_setup_entry(
@@ -798,31 +626,12 @@ class PD7DayForecastSensor(
         return forecast[0] if forecast else None
 
     def _covariates_for_interval(self, interval_key: str) -> dict:
-        """Extract gas_forecast_tj and qni_mwflow for an interval from coordinator data."""
-        gas_tj: float | None = None
-        qni_mw: float | None = None
-        data = self.coordinator.data
-        if data is None:
-            return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+        """Extract gas_forecast_tj and qni_mwflow for an interval from coordinator data.
 
-        # QNI MW flow lookup
-        qni_data = data.interconnectors.get("NSW1-QLD1") if data.interconnectors else None
-        if qni_data:
-            for p in qni_data.forecast:
-                if p.time == interval_key:
-                    qni_mw = p.mwflow
-                    break
-
-        # Gas TJ lookup (daily resolution, keyed by date)
-        ms = getattr(data, "market_summary", None)
-        if ms:
-            interval_date = interval_key[:10]
-            for g in ms.forecast:
-                if g.nemtime[:10] == interval_date:
-                    gas_tj = g.value_tj
-                    break
-
-        return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+        Kept as a method because subclasses and tests reach for it by name; the
+        body lives in calibration_inputs so the tariff sensors use the same one.
+        """
+        return covariates_for_interval(self.coordinator, interval_key)
 
     @property
     def native_value(self) -> float | None:
@@ -845,11 +654,17 @@ class PD7DayForecastSensor(
                 hour = parse_iso(period.time).hour
             except (ValueError, TypeError):
                 hour = now_nem().hour
-            interval_key = period.time if isinstance(period.time, str) else to_nem_iso(parse_iso(period.time))
-            covariates = self._covariates_for_interval(interval_key)
-            cal = self._store.apply_to_price(
-                period.value, h, hour, **covariates,
+            interval_key = interval_key_for_period(period)
+            # Same shared call as the forecast attribute path, so the published
+            # state and the forecast entry for the current interval cannot
+            # disagree. See issue #66. run_at carries through for the per-run
+            # stage-2 band floor of issue #68.
+            cal = calibrate_interval(
+                self._store, self.coordinator, period.value, interval_key, h, hour,
+                run_at_iso=d.forecast_generated_at,
             )
+            if cal is None:
+                return None
             return cal["calibrated"]
         return period.value
 
@@ -861,7 +676,7 @@ class PD7DayForecastSensor(
         except (ValueError, TypeError):
             hour = 0
 
-        interval_key = to_nem_iso(parse_iso(period.time))
+        interval_key = interval_key_for_period(period)
 
         base = {
             "nemtime": to_nem_iso(parse_iso(period.nemtime)),
@@ -870,18 +685,15 @@ class PD7DayForecastSensor(
             "horizon_hours": round(h, 1),
         }
 
-        if self._store:
-            covariates = self._covariates_for_interval(interval_key)
-            stpasa_features = _stpasa_features_for_interval(
-                self.coordinator, interval_key, h, run_at_iso=run_at_str
-            )
-            run_features = self.coordinator.current_run_features
-            cal = self._store.apply_to_price(
-                period.value, h, hour,
-                stpasa_features=stpasa_features,
-                run_features=run_features,
-                **covariates,
-            )
+        # run_at_str is passed on so the stage-2 band floor is resolved from
+        # this run's STPASA coverage (issue #68) rather than the static
+        # constant. It is threaded through the shared entry point, not applied
+        # here, so the tariff path gets the same floor.
+        cal = calibrate_interval(
+            self._store, self.coordinator, period.value, interval_key, h, hour,
+            run_at_iso=run_at_str,
+        )
+        if cal is not None:
             cal_update = {
                 ATTR_CAL_CALIBRATED: cal["calibrated"],
                 ATTR_CAL_P10: cal["p10"],
@@ -897,6 +709,9 @@ class PD7DayForecastSensor(
                 cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
             base.update(cal_update)
         else:
+            # No calibration store: raw passthrough, as before. Store present
+            # but no raw price: there is no honest calibrated number, so the
+            # entry carries the raw value through and never a stand-in 0.
             base["value"] = period.value
 
         return base
@@ -1049,25 +864,8 @@ class SpotPriceForecastDays27Sensor(
         return forecast[0] if forecast else None
 
     def _covariates_for_interval(self, interval_key: str) -> dict:
-        gas_tj: float | None = None
-        qni_mw: float | None = None
-        data = self.coordinator.data
-        if data is None:
-            return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
-        qni_data = data.interconnectors.get("NSW1-QLD1") if data.interconnectors else None
-        if qni_data:
-            for p in qni_data.forecast:
-                if p.time == interval_key:
-                    qni_mw = p.mwflow
-                    break
-        ms = getattr(data, "market_summary", None)
-        if ms:
-            interval_date = interval_key[:10]
-            for g in ms.forecast:
-                if g.nemtime[:10] == interval_date:
-                    gas_tj = g.value_tj
-                    break
-        return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+        """Same computation as PD7DayForecastSensor, delegated to one body."""
+        return covariates_for_interval(self.coordinator, interval_key)
 
     @property
     def native_value(self) -> float | None:
@@ -1088,9 +886,13 @@ class SpotPriceForecastDays27Sensor(
                 hour = parse_iso(period.time).hour
             except (ValueError, TypeError):
                 hour = now_nem().hour
-            interval_key = period.time if isinstance(period.time, str) else to_nem_iso(parse_iso(period.time))
-            covariates = self._covariates_for_interval(interval_key)
-            cal = self._store.apply_to_price(period.value, h, hour, **covariates)
+            interval_key = interval_key_for_period(period)
+            cal = calibrate_interval(
+                self._store, self.coordinator, period.value, interval_key, h, hour,
+                run_at_iso=d.forecast_generated_at,
+            )
+            if cal is None:
+                return None
             return cal["calibrated"]
         return period.value
 
@@ -1100,25 +902,22 @@ class SpotPriceForecastDays27Sensor(
             hour = parse_iso(period.time).hour
         except (ValueError, TypeError):
             hour = 0
-        interval_key = to_nem_iso(parse_iso(period.time))
+        interval_key = interval_key_for_period(period)
         base = {
             "nemtime": to_nem_iso(parse_iso(period.nemtime)),
             "time": interval_key,
             "raw_value": period.value,
             "horizon_hours": round(h, 1),
         }
-        if self._store:
-            covariates = self._covariates_for_interval(interval_key)
-            stpasa_features = _stpasa_features_for_interval(
-                self.coordinator, interval_key, h, run_at_iso=run_at_str
-            )
-            run_features = self.coordinator.current_run_features
-            cal = self._store.apply_to_price(
-                period.value, h, hour,
-                stpasa_features=stpasa_features,
-                run_features=run_features,
-                **covariates,
-            )
+        # run_at_str is passed on so the stage-2 band floor is resolved from
+        # this run's STPASA coverage (issue #68) rather than the static
+        # constant. It is threaded through the shared entry point, not applied
+        # here, so the tariff path gets the same floor.
+        cal = calibrate_interval(
+            self._store, self.coordinator, period.value, interval_key, h, hour,
+            run_at_iso=run_at_str,
+        )
+        if cal is not None:
             cal_update = {
                 ATTR_CAL_CALIBRATED: cal["calibrated"],
                 ATTR_CAL_P10: cal["p10"],
@@ -1134,6 +933,9 @@ class SpotPriceForecastDays27Sensor(
                 cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
             base.update(cal_update)
         else:
+            # No calibration store: raw passthrough, as before. Store present
+            # but no raw price: there is no honest calibrated number, so the
+            # entry carries the raw value through and never a stand-in 0.
             base["value"] = period.value
         return base
 
