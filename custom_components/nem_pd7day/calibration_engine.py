@@ -562,7 +562,29 @@ class CalibrationResult:
         bucket = self.get_bucket(horizon_hours, hour_of_day)
         result = bucket.apply_all(forecast)
 
-        # 2. Gate: STPASA correction only inside the OLS horizon band, and only
+        # 2a. Gate: never override the deliberate negative bypass.
+        #
+        #     WHY: the stage-2 OLS is fitted in fit_ols_stage2 whose first
+        #     feature is the stage-1 output, and apply_all floors that output at
+        #     0.0 for every raw forecast above NEGATIVE_PASSTHROUGH_THRESHOLD
+        #     while returning the raw value below it. The training set therefore
+        #     holds no row whatever between the threshold and zero, and below the
+        #     threshold only the deeply negative rows the observation store
+        #     happened to accumulate. Those are rare: NEM negative prices are
+        #     common but shallow, with the large majority of negative intervals
+        #     sitting above -$30/MWh against a -$100/MWh threshold here, and a
+        #     bucket needs OLS_MIN_OBS rows before it is fitted at all. A
+        #     prediction at a deeply negative forecast is extrapolation, not fit.
+        #     It also carries an asymmetric cost: a positive prediction over a
+        #     negative raw forecast flips the published sign, turning "paid to
+        #     consume" into "pay to consume", which is the one error a battery or
+        #     controllable load schedule cannot absorb. The later
+        #     `prediction <= 0.0` guard blocks that only by accident, and only
+        #     when the prediction happens to be non-positive itself. See #73.
+        if result.get("calibrated_source") == "passthrough_negative":
+            return result
+
+        # 2b. Gate: STPASA correction only inside the OLS horizon band, and only
         #    when both feature groups are present.
         if (
             stpasa is None
