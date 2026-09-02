@@ -370,3 +370,179 @@ def calibrate_interval(
         run_features=run_features,
         **covariates,
     )
+
+
+def calibrated_spot_for_period(
+    store,
+    coordinator: "PD7DayCoordinator",
+    period,
+    run_at_iso: str | None,
+) -> float | None:
+    """Calibrated spot price in $/kWh for one PricePeriod, or None.
+
+    This is the whole of what a tariff sensor needs from the calibration
+    pipeline for one interval, and it is the only implementation of it. The
+    memo below serves values produced by this function, and the tariff sensors
+    call it directly when the memo does not hold the interval, so a memo hit
+    and a memo miss cannot publish different prices. That equality is a
+    property of there being one body, not of two bodies agreeing today.
+
+    ``run_at_iso`` is both the horizon origin and the input that resolves the
+    stage-2 band floor from this run's STPASA coverage, per issue #68, so it
+    must be the run timestamp of the same PriceData the period came from.
+
+    Returns None when the interval cannot be calibrated. Callers publish that
+    as none or unavailable, never as 0 and never as the raw price.
+    """
+    h = horizon_hours(run_at_iso, period.time)
+    try:
+        hour = parse_iso(period.time).hour
+    except (ValueError, TypeError):
+        hour = 0
+    cal = calibrate_interval(
+        store,
+        coordinator,
+        period.value,
+        interval_key_for_period(period),
+        h,
+        hour,
+        run_at_iso=run_at_iso,
+    )
+    if cal is None:
+        return None
+    return cal.get("calibrated")
+
+
+# Memo attribute names on the coordinator. The forecast memo is written by
+# sensor.py and holds the full enriched forecast entries; the spot memo holds
+# the {interval key: calibrated spot} view the tariff sensors need.
+CALIBRATED_FORECAST_MEMO_ATTR = "_calibrated_forecast_cache"
+CALIBRATED_SPOT_MEMO_ATTR = "_calibrated_spot_cache"
+
+
+def calibrated_forecast_key(
+    coordinator: "PD7DayCoordinator", store, region: str, price_data
+) -> tuple:
+    """Build the memo key for one region's calibrated forecast.
+
+    Recompute is required exactly when an input that moves a calibrated price
+    moves: a new PD7DAY run (``forecast_generated_at`` and the interval count),
+    a new or refetched STPASA run (the coordinator's index key), or a
+    calibration refit (the store's fit generation).
+
+    ``fit_generation`` is a monotonic counter rather than ``id(calibration)``
+    because ``async_refit`` publishes the result and then mutates it in place
+    to attach the OLS stage 2 models, so object identity does not change
+    across a change that moves every calibrated price, and CPython recycles
+    id() values for freed objects.
+
+    This lives here rather than in sensor.py because the tariff sensors now
+    read the same memo. Two implementations of a memo key is the same class of
+    defect as issue #66: the reader would decide currency against one rule
+    while the writer stored under another, and the disagreement would be a
+    stale published price rather than a crash.
+    """
+    # Refresh the coordinator STPASA index so its cache key reflects the latest
+    # store contents before it is folded in.
+    try:
+        coordinator.stpasa_index()
+    except Exception:  # noqa: BLE001 - defensive: never break a state build
+        pass
+    stpasa_key = getattr(coordinator, "_stpasa_index_run", None)
+    cal_gen = None
+    if store is not None:
+        cal_gen = getattr(store, "fit_generation", None)
+    return (
+        region,
+        price_data.forecast_generated_at,
+        len(price_data.forecast),
+        stpasa_key,
+        cal_gen,
+    )
+
+
+def _memo_dict(coordinator, attr: str, create: bool = False) -> dict | None:
+    """The coordinator's memo dict for ``attr``, or None if unusable.
+
+    The type is checked rather than just testing for None because the tests
+    substitute a MagicMock coordinator, and attribute access on a mock invents
+    an object instead of raising, so getattr alone never reports an attribute
+    as missing.
+    """
+    cache = getattr(coordinator, attr, None)
+    if isinstance(cache, dict):
+        return cache
+    if not create:
+        return None
+    cache = {}
+    try:
+        setattr(coordinator, attr, cache)
+    except (AttributeError, TypeError):  # pragma: no cover - read-only mock
+        return None
+    return cache
+
+
+def _memo_entry(coordinator, attr: str, region: str, key):
+    """The memoised value stored for ``region`` under ``key``, or None."""
+    cache = _memo_dict(coordinator, attr)
+    if cache is None:
+        return None
+    entry = cache.get(region)
+    if not (isinstance(entry, tuple) and len(entry) == 2):
+        return None
+    cached_key, cached_val = entry
+    if cached_key != key or cached_val is None:
+        return None
+    return cached_val
+
+
+def calibrated_spot_map(
+    store,
+    coordinator: "PD7DayCoordinator",
+    region: str,
+    price_data,
+    key,
+) -> dict:
+    """Calibrated spot per interval key for one run, memoised per region.
+
+    ``key`` is required and is never derived inside this function. PR #76
+    established the rule after a memo key taken inside executor work was used
+    to publish a result computed under a key that had since moved: take the key
+    on the event loop, once, and pass it down. Nothing here hops off the loop,
+    and requiring the argument keeps it that way for callers too.
+
+    The map is preferably derived from the forecast memo that sensor.py already
+    populates for this region, so a tariff write costs nothing at all when the
+    price forecast sensor has already been warmed for the same run. Those
+    entries carry ``value``, which is ``cal["calibrated"]`` when the interval
+    calibrated and the raw price when it did not, which is what
+    ``calibrated_spot_for_period`` returns in each of those cases. When the
+    forecast memo is absent or stale the map is built here from
+    ``calibrated_spot_for_period`` directly, so the values are the same either
+    way and the tariff entities of one region share one build.
+
+    A missing interval is left out of the map rather than mapped to None, so a
+    caller can tell "not memoised" from "calibrated to nothing" and fall back
+    to computing it.
+    """
+    cached = _memo_entry(coordinator, CALIBRATED_SPOT_MEMO_ATTR, region, key)
+    if isinstance(cached, dict):
+        return cached
+
+    spot_map: dict = {}
+    entries = _memo_entry(coordinator, CALIBRATED_FORECAST_MEMO_ATTR, region, key)
+    if isinstance(entries, list):
+        for entry in entries:
+            if isinstance(entry, dict) and "time" in entry:
+                spot_map[entry["time"]] = entry.get("value")
+    else:
+        run_at = price_data.forecast_generated_at
+        for period in price_data.forecast:
+            spot_map[interval_key_for_period(period)] = calibrated_spot_for_period(
+                store, coordinator, period, run_at
+            )
+
+    cache = _memo_dict(coordinator, CALIBRATED_SPOT_MEMO_ATTR, create=True)
+    if cache is not None:
+        cache[region] = (key, spot_map)
+    return spot_map

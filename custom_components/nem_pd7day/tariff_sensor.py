@@ -38,7 +38,9 @@ from .const import (
     additional_fee_entity_id,
 )
 from .calibration_inputs import (
-    calibrate_interval,
+    calibrated_forecast_key,
+    calibrated_spot_for_period,
+    calibrated_spot_map,
     horizon_hours as _horizon_hours,
     interval_key_for_period,
 )
@@ -276,23 +278,60 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             return period.value
         d = self._price_data
         run_at = d.forecast_generated_at if d else None
-        h = _horizon_hours(run_at, period.time)
-        try:
-            hour = parse_iso(period.time).hour
-        except (ValueError, TypeError):
-            hour = 0
-        cal = calibrate_interval(
-            self._store,
-            self.coordinator,
-            period.value,
-            interval_key_for_period(period),
-            h,
-            hour,
-            run_at_iso=run_at,
+        return calibrated_spot_for_period(
+            self._store, self.coordinator, period, run_at
         )
-        if cal is None:
+
+    def _calibrated_value_memoised(self, period, spot_map: dict | None) -> float | None:
+        """Calibrated spot for a period, from the per run memo when it holds it.
+
+        ``spot_map`` comes from ``_calibrated_spot_map`` and is None when there
+        is nothing to memoise. An interval the memo does not carry falls through
+        to ``_calibrated_value`` rather than being reported as None, because a
+        memo miss is not evidence that the interval calibrates to nothing.
+
+        The memo is filled from the same ``calibrated_spot_for_period`` that
+        ``_calibrated_value`` calls, so a hit and a miss cannot publish
+        different prices for the same interval of the same run. That is the
+        safety argument for issue #62: it rests on there being one body, not on
+        two bodies agreeing today.
+        """
+        if spot_map is not None:
+            interval_key = interval_key_for_period(period)
+            if interval_key in spot_map:
+                return spot_map[interval_key]
+        return self._calibrated_value(period)
+
+    def _calibrated_spot_map(self, d) -> dict | None:
+        """The per run calibrated spot memo for this region, or None.
+
+        Called once per attribute build, on the event loop, and the key is taken
+        here and passed down rather than being derived inside the memo helper:
+        that is the rule PR #76 established after a key taken inside executor
+        work was used to publish a result computed under a key that had already
+        moved. This path does no executor work at all, so there is no window
+        between the key and the read, and the argument keeps it impossible to
+        reintroduce one without changing this call site.
+
+        None when there is no calibration store, because then every interval is
+        a raw passthrough and there is nothing to memoise.
+        """
+        if not self._store or d is None:
             return None
-        return cal.get("calibrated")
+        try:
+            key = calibrated_forecast_key(
+                self.coordinator, self._store, self._region, d
+            )
+            return calibrated_spot_map(
+                self._store, self.coordinator, self._region, d, key
+            )
+        except Exception:  # noqa: BLE001 - a memo must never break a state write
+            _LOGGER.debug(
+                "calibrated spot memo unavailable for %s, calibrating inline",
+                self._region,
+                exc_info=True,
+            )
+            return None
 
     def _tariff_windows(self, tariff_periods) -> list[tuple]:
         """Parse the period start/end strings into ``time`` objects, once.
@@ -576,13 +615,18 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         d = self._price_data
         forecast_list: list[dict[str, Any]] = []
         if d is not None:
+            # One memo read for the whole build, taken on the loop. Every
+            # tariff entity of this region, and the price forecast sensor,
+            # calibrate the same intervals of the same run, so the second and
+            # later builds of a run do no calibration at all. See issue #62.
+            spot_map = self._calibrated_spot_map(d)
             # Base tariff sensor always provides full day 1-7 forecast
             for period in d.forecast:
                 # Calibrate once and reuse for both the tariff and the spot key.
                 # A None spot means the interval could not be calibrated, so
                 # both keys stay None rather than being filled with a raw or
                 # zero stand-in.
-                spot = self._calibrated_value(period)
+                spot = self._calibrated_value_memoised(period, spot_map)
                 tariff_val = (
                     None if spot is None
                     else self._compute_tariff(period, calibrated=spot)
@@ -676,12 +720,15 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
             filtered_periods = [
                 p for p in d.forecast if parse_iso(p.time) > cutoff_dt
             ]
+            # The memo covers the whole run, so the day 2 to 7 trim shares the
+            # slot the day 1 to 7 sensor of the same region filled.
+            spot_map = self._calibrated_spot_map(d)
             for period in filtered_periods:
                 # Calibrate once and reuse for both the tariff and the spot key.
                 # A None spot means the interval could not be calibrated, so
                 # both keys stay None rather than being filled with a raw or
                 # zero stand-in.
-                spot = self._calibrated_value(period)
+                spot = self._calibrated_value_memoised(period, spot_map)
                 tariff_val = (
                     None if spot is None
                     else self._compute_tariff(period, calibrated=spot)
@@ -865,6 +912,11 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
     # export tariff on the weaker calibration. Bound the same way sensor.py
     # binds _calibrate_period across its classes.
     _calibrated_value = NemPd7dayTariffSensor._calibrated_value
+    # The memo accessor comes with it. A class that took the value method
+    # without the memo would calibrate every interval inline while the import
+    # sensors of the same region read the slot, which is the cost this fixes.
+    _calibrated_spot_map = NemPd7dayTariffSensor._calibrated_spot_map
+    _calibrated_value_memoised = NemPd7dayTariffSensor._calibrated_value_memoised
 
     def _get_tariff_periods(self) -> list[dict[str, Any]]:
         """Export tariffs have no TOU period structure in aemo_to_tariff.
@@ -984,10 +1036,12 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         d = self._price_data
         forecast_list: list[dict[str, Any]] = []
         if d is not None:
+            # Same per region memo the import tariff sensors read. See #62.
+            spot_map = self._calibrated_spot_map(d)
             for period in d.forecast:
                 # Calibrate once and reuse for both the tariff and the spot key.
                 # See the import loop for why a None spot stays None.
-                spot = self._calibrated_value(period)
+                spot = self._calibrated_value_memoised(period, spot_map)
                 tariff_val = (
                     None if spot is None
                     else self._compute_export_tariff(period, calibrated=spot)

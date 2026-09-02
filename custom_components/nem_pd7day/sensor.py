@@ -91,6 +91,7 @@ from .calibration_inputs import (
     STPASA_MAX_HORIZON_H,
     STPASA_MIN_HORIZON_H,
     calibrate_interval,
+    calibrated_forecast_key,
     covariates_for_interval,
     horizon_hours,
     interval_key_for_period,
@@ -508,29 +509,14 @@ class PD7DayForecastSensor(
         whether the memo is current without recomputing the forecast to find
         out. Both callers must derive the key identically or the check is
         worthless, so there is deliberately only one implementation.
+
+        The body moved to ``calibration_inputs.calibrated_forecast_key`` when
+        the tariff sensors started reading the same memo (issue #62). A reader
+        that decided currency by its own rule while the writer stored under
+        another would publish a stale price rather than fail, which is the
+        issue #66 failure mode again.
         """
-        # Refresh the coordinator STPASA index so its cache key reflects the
-        # latest store contents before we fold it into our cache key.
-        try:
-            self.coordinator.stpasa_index()
-        except Exception:  # noqa: BLE001 - defensive: never break state build
-            pass
-        stpasa_key = getattr(self.coordinator, "_stpasa_index_run", None)
-        cal_gen = None
-        if self._store is not None:
-            # A monotonic counter, not id(calibration). async_refit publishes the
-            # result and then mutates it in place to attach the OLS stage 2
-            # models, so object identity does not change across a change that
-            # moves every calibrated price, and CPython recycles id() values for
-            # freed objects. See CalibrationStore.fit_generation.
-            cal_gen = getattr(self._store, "fit_generation", None)
-        return (
-            self._region,
-            d.forecast_generated_at,
-            len(d.forecast),
-            stpasa_key,
-            cal_gen,
-        )
+        return calibrated_forecast_key(self.coordinator, self._store, self._region, d)
 
     def _calibrated_forecast(self, d) -> list[dict]:
         """
