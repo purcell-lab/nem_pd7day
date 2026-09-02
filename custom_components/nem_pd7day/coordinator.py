@@ -381,9 +381,18 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                 index_map[start_iso] = si
                 sorted_intervals.append((epoch, si))
             sorted_intervals.sort(key=lambda t: t[0])
-            self._stpasa_index_run = cache_key
+            # Publish the run key LAST. It is the freshness token the sensor
+            # calibrated forecast memo folds into its cache key, and this method
+            # is called both from the event loop and from the calibration warm
+            # running in the executor. Assigning the key first left a window in
+            # which a reader on the other thread saw the new key alongside the
+            # old index, and memoised a forecast built from the old STPASA run
+            # under the new run's key, where nothing would ever recompute it.
+            # Publishing the key last makes the failure the harmless direction:
+            # old key with new data, which is recomputed at the next check.
             self._stpasa_index_map = index_map
             self._stpasa_index_sorted = sorted_intervals
+            self._stpasa_index_run = cache_key
 
         return result, self._stpasa_index_map, self._stpasa_index_sorted
 
