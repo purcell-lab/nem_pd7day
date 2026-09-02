@@ -189,6 +189,7 @@ class IsotonicRegression:
         )
 
 from .const import (
+    ATTR_CAL_BAND_SOURCE,
     HORIZON_EDGES,
     HORIZON_LABELS,
     IRLS_EPS,
@@ -243,6 +244,29 @@ def is_negative_passthrough(forecast: float) -> bool:
 # uses as its first feature. It is deliberately NOT the published "calibrated"
 # price: see stage2_iso_feature below and issue #85.
 ISO_FEATURE_KEY = "iso_feature"
+
+# ── Band provenance ──────────────────────────────────────────────────────────
+# Which model produced the published p10/p50/p90, published alongside them
+# because the answer is no longer always "the stage-1 quantile lines" and a
+# consumer cannot tell from the numbers themselves. Issue #72 asked for this
+# explicitly: the fallback band and the stage-2 band look identical in the
+# attributes and mean quite different things.
+# One definition, imported from const so the engine and the sensor attribute
+# cannot drift apart the way the calibration inputs did in issue #66.
+BAND_SOURCE_KEY = ATTR_CAL_BAND_SOURCE
+# The three stage-1 quantile lines, clamped to contain the isotonic value.
+BAND_SOURCE_STAGE1 = "stage1_quantile"
+# Same lines, unclamped, on the passthrough path. See apply_all.
+BAND_SOURCE_STAGE1_RAW = "stage1_quantile_unclamped"
+# The raw forecast repeated on all three levels: the deep negative bypass.
+BAND_SOURCE_PASSTHROUGH = "raw_passthrough"
+# Stage-2 leave-one-out residual quantiles added to the stage-2 prediction.
+BAND_SOURCE_STAGE2 = "stage2_residual"
+# Stage-2 point estimate with the stage-1 lines re-clamped around it, which is
+# what v3.4.0 always published. Now reached only when a bucket has OLS
+# coefficients but no usable residual quantiles, and a bound can still collapse
+# onto the point estimate here.
+BAND_SOURCE_STAGE2_FALLBACK = "stage1_quantile_reclamped"
 
 
 def stage2_iso_feature(calibrated: dict, forecast: float) -> float:
@@ -390,18 +414,91 @@ class RunFeatures:
 
 
 @dataclass
+class ResidualQuantiles:
+    """Quantiles of the stage-2 leave-one-out residual for one OLS bucket.
+
+    ``actual - prediction`` in $/kWh, so a band is built by adding these to a
+    stage-2 point estimate.  ``q10`` is normally negative and ``q90`` positive.
+
+    WHY these exist at all: the stage-1 q10/q50/q90 lines are single-variable
+    regressions of the actual on the RAW PD7DAY forecast.  A stage-2 prediction
+    is a different function of nine features those lines have never seen, so
+    their spread does not describe the stage-2 error.  Reading it as if it did
+    is what forced the #69 re-clamp to collapse a bound onto the point estimate
+    on 98 of 330 published intervals in the first live measurement on issue #72.
+    """
+    bucket_key: str
+    q10: float | None = None
+    q50: float | None = None
+    q90: float | None = None
+    n: int = 0
+
+    @property
+    def is_fitted(self) -> bool:
+        """True when this triple can be published as a stage-2 band.
+
+        Four conditions, all of them load-bearing:
+
+        * ``n >= OLS_MIN_OBS``.  The residuals come from exactly the rows that
+          fitted the coefficients, so this is the same floor the OLS itself
+          cleared; it is re-checked here because a stored payload from any
+          other source has not been through that check.
+        * all three levels present.
+        * ordered.
+        * ``q10 <= 0 <= q90``.  An OLS residual vector sums to zero, so its
+          10th and 90th percentiles bracket zero for any ordinary sample, and a
+          triple that does not is a symptom rather than a band: it would publish
+          an interval that excludes its own point estimate and then be dragged
+          back onto it by _clamp_band, which is the collapse this is meant to
+          remove.  Such a fit is treated as unfitted and falls back instead.
+        """
+        if self.n < OLS_MIN_OBS:
+            return False
+        if self.q10 is None or self.q50 is None or self.q90 is None:
+            return False
+        if not (self.q10 <= self.q50 <= self.q90):
+            return False
+        return self.q10 <= 0.0 <= self.q90
+
+
+@dataclass
 class OlsModel:
     """Fitted OLS coefficients for one (horizon_band, tod_bucket) cell."""
     bucket_key: str
     coef: list[float] = field(default_factory=list)  # intercept first, then 8 features
     n_train: int = 0
     r2: float = 0.0
+    # Residual quantiles from the same rows and the same fit as ``coef``.
+    # WHY they live on this object rather than in a parallel dict on
+    # CalibrationResult: the residuals only describe THESE coefficients. Held
+    # side by side, a partial storage write or a hand-built result could pair
+    # one bucket's coefficients with another's residuals, or keep coefficients
+    # and lose residuals, and nothing would notice. Travelling together the
+    # pairing cannot come apart.
+    resid: ResidualQuantiles | None = None
 
     def predict(self, features: list[float]) -> float:
         """Apply: intercept + dot(coef[1:], features)."""
         if len(self.coef) < 2:
             return 0.0
         return self.coef[0] + sum(c * x for c, x in zip(self.coef[1:], features))
+
+    def residual_band(
+        self, prediction: float
+    ) -> tuple[float, float, float] | None:
+        """Stage-2 band around ``prediction``, or None when unfitted.
+
+        Additive: the residual quantiles are a single spread per bucket rather
+        than a function of the price level.  Bucketing by horizon and
+        time-of-day already separates most of the level variation, and a
+        location-scale residual model on 50 to 100 rows would be fitting the
+        scale on the same handful of order statistics that give the location.
+        Stated as a known limitation on issue #72 rather than hidden.
+        """
+        r = self.resid
+        if r is None or not r.is_fitted:
+            return None
+        return (prediction + r.q10, prediction + r.q50, prediction + r.q90)
 
 
 @dataclass
@@ -564,6 +661,7 @@ class BucketModel:
                 # these rows are out of the fit (PR #83); the key is present so
                 # no caller has to fall back to the published value.
                 ISO_FEATURE_KEY: round(x, 6),
+                BAND_SOURCE_KEY: BAND_SOURCE_PASSTHROUGH,
                 "calibrated_source": "passthrough_negative",
                 "n_obs": self.ols.n,
             }
@@ -591,6 +689,7 @@ class BucketModel:
                 # No isotonic model, so there is nothing to floor and the
                 # feature is the raw forecast, exactly as the point estimate is.
                 ISO_FEATURE_KEY: round(x, 6),
+                BAND_SOURCE_KEY: BAND_SOURCE_STAGE1_RAW,
                 "calibrated_source": "passthrough",
                 "n_obs": self.ols.n,
             }
@@ -616,6 +715,7 @@ class BucketModel:
             "p50": round(p50, 6) if p50 is not None else None,
             "p90": round(p90, 6) if p90 is not None else None,
             "ols_mae": self.ols.mae,
+            BAND_SOURCE_KEY: BAND_SOURCE_STAGE1,
             "calibrated_source": "isotonic",
             "n_obs": self.ols.n,
         }
@@ -726,20 +826,62 @@ class CalibrationResult:
         #    band instead would inherit a p10 pulled down to the isotonic
         #    value and publish a looser interval than the fits support.
         #
-        #    This makes the triple self-consistent; it does not make the band
-        #    a stage-2 interval.  The quantile fits know nothing about the
-        #    STPASA features, so where the prediction lands outside them the
-        #    nearer bound collapses onto the point estimate.  A genuine
-        #    stage-2 interval needs stage-2 residual quantiles, which are not
-        #    currently stored — tracked separately.
+        #    Re-clamping made the triple self-consistent; it did not make the
+        #    band a stage-2 interval.  The quantile fits know nothing about the
+        #    STPASA features, so where the prediction landed outside them the
+        #    nearer bound was pulled onto the point estimate, reporting zero
+        #    uncertainty on that side.  On the first live measurement, a single
+        #    residential premises in SE Queensland, QLD1, the run at
+        #    2026-09-03T07:30:00+10:00, that was 98 of 330 intervals, up from 36
+        #    before the re-clamp, and strongly one-sided: 82 onto p10 against 16
+        #    onto p90.  The band also did not tighten, median width 0.035764 to
+        #    0.036862 $/kWh.  See issue #72.
+        #
+        #    So the band is now built from the stage-2 model's own residual
+        #    quantiles when the bucket has them: prediction plus the 10th, 50th
+        #    and 90th percentile of its leave-one-out residuals.  That band is
+        #    centred on the prediction by construction, so it contains it
+        #    without any clamping and cannot collapse.
+        #
+        #    _clamp_band is still applied on top, for two reasons that are not
+        #    about containment: it floors p10 at 0.0, which is the same floor
+        #    every other published lower bound carries, and it is the one place
+        #    the ordering and containment invariants are enforced, so leaving it
+        #    out would make this the only published triple not passing through
+        #    them.  On the residual path it is a no-op except for that floor.
         out = dict(result)
         out["calibrated"] = round(prediction, 6)
         out["calibrated_source"] = "isotonic+stpasa"
         out["stpasa_run_at"] = stpasa.stpasa_run_at
-        p10, p50, p90 = _clamp_band(prediction, *bucket.raw_band(forecast))
+
+        resid_band = ols.residual_band(prediction)
+        if resid_band is not None:
+            raw_p10, raw_p50, raw_p90 = resid_band
+            band_source = BAND_SOURCE_STAGE2
+        else:
+            # Fallback: a bucket with coefficients but no usable residual
+            # quantiles.  Reached by a store written before issue #72, until the
+            # next engine fit rewrites it, and by a bucket whose residual sample
+            # failed the validity check in ResidualQuantiles.is_fitted.
+            #
+            # WHY the old behaviour rather than something safer: the choice is
+            # between publishing v3.4.0's re-clamped stage-1 band, which is
+            # self-consistent but can collapse a bound, and withholding the
+            # stage-2 point estimate entirely, which would move the published
+            # price on a path that is otherwise working.  Moving the price to
+            # improve the band is the larger change of the two, so the point
+            # estimate is kept and the band is labelled.  This is a judgement
+            # call and it is written up on the pull request: nothing collapses
+            # silently, because BAND_SOURCE_STAGE2_FALLBACK is published on the
+            # interval and the fit logs a warning naming the buckets.
+            raw_p10, raw_p50, raw_p90 = bucket.raw_band(forecast)
+            band_source = BAND_SOURCE_STAGE2_FALLBACK
+
+        p10, p50, p90 = _clamp_band(prediction, raw_p10, raw_p50, raw_p90)
         out["p10"] = round(p10, 6) if p10 is not None else None
         out["p50"] = round(p50, 6) if p50 is not None else None
         out["p90"] = round(p90, 6) if p90 is not None else None
+        out[BAND_SOURCE_KEY] = band_source
         return out
 
     def summary(self) -> dict[str, Any]:
@@ -1010,6 +1152,99 @@ def _quantile_regression(
     ) / n
 
     return round(a, 6), round(b, 6), round(pinball, 6)
+
+
+# ── Stage-2 residual quantiles ────────────────────────────────────────────────
+
+# A leave-one-out residual is e_i / (1 - h_ii), and h_ii approaches 1 for a row
+# the fit is essentially interpolating, which sends that ratio to infinity.
+# The divisor is floored so such a row contributes a large but finite number.
+# This is numerical safety, not a statistical choice: the band is read off the
+# 10th and 90th percentiles, which are order statistics and do not move unless
+# more than a tenth of the rows are affected.
+_LOO_DIVISOR_FLOOR = 0.05
+
+
+def _loo_residuals(X: Any, y: Any, coef: Any) -> Any:
+    """Leave-one-out (PRESS) residuals of an OLS fit, in closed form.
+
+    For ordinary least squares the residual the model would have made on row
+    ``i`` had row ``i`` been left out of the fit is exactly ``e_i / (1 - h_ii)``
+    where ``h_ii`` is that row's hat-matrix diagonal.  No refit is needed.
+
+    WHY not the plain in-sample residual: an in-sample OLS residual is
+    systematically too small, because the fit has already spent degrees of
+    freedom moving toward the row it is being scored on
+    (``E[e_i^2] = sigma^2 (1 - h_ii)``).  With ten coefficients on 50 to 100
+    rows the mean ``h_ii`` is 0.10 to 0.20, so in-sample residual quantiles
+    understate the real predictive spread by roughly 5 to 10 per cent on
+    average and far more on a leveraged row.  A published band that is too
+    narrow is the failure mode worth avoiding here, and the whole complaint on
+    issue #72 is that the band does not describe the error it claims to.
+
+    WHY not an explicit holdout: at ``OLS_MIN_OBS`` of 50 a 30 per cent holdout
+    leaves 15 rows, and a 10th percentile taken from 15 points is one or two
+    order statistics wide.  Leave-one-out uses every row as its own holdout and
+    costs one matrix inverse.
+    """
+    resid = y - X @ coef
+    # h = diag(X (X'X)^+ X'), computed row-wise so the n x n hat matrix is
+    # never materialised. pinv, not inv: a rank-deficient design must degrade
+    # rather than raise, the same way the lstsq call above tolerates it.
+    gram_inv = np.linalg.pinv(X.T @ X)
+    leverage = np.einsum("ij,jk,ik->i", X, gram_inv, X)
+    divisor = np.clip(1.0 - leverage, _LOO_DIVISOR_FLOOR, 1.0)
+    return resid / divisor
+
+
+def _conformal_index(n: int, level: float) -> int:
+    """0-based index into ``n`` sorted values for a finite-sample quantile.
+
+    Split-conformal style: the upper bound takes the
+    ``ceil(level * (n + 1))``-th smallest value and the lower bound the
+    ``floor(level * (n + 1))``-th, which is one order statistic wider than the
+    plain empirical quantile.  With 50 rows that is the 46th of 50 rather than
+    the 45th at the top and the 5th rather than the 6th at the bottom.
+
+    WHY err wide: the correction is only worth roughly one order statistic, and
+    at these sample sizes the estimate of a tail quantile is genuinely noisy.
+    Given a choice of direction for that noise, a band slightly too wide
+    overstates uncertainty while a band slightly too narrow understates it, and
+    understating it is the defect being fixed.
+    """
+    if level >= 0.5:
+        idx = math.ceil(level * (n + 1)) - 1
+    else:
+        idx = math.floor(level * (n + 1)) - 1
+    return max(0, min(n - 1, idx))
+
+
+def _residual_quantiles(
+    bucket_key: str, X: Any, y: Any, coef: Any
+) -> ResidualQuantiles:
+    """Fit the stage-2 residual quantile triple for one bucket.
+
+    Empirical quantiles of the leave-one-out residuals.  Nothing parametric:
+    a normal assumption on a residual that is bounded below by the market floor
+    and unbounded above through the spike regime would be worse than the order
+    statistics, and there are enough rows for the order statistics to exist.
+    """
+    loo = np.sort(_loo_residuals(X, y, coef))
+    n = int(loo.size)
+    if n < OLS_MIN_OBS:
+        return ResidualQuantiles(bucket_key=bucket_key)
+    lo = float(loo[_conformal_index(n, 0.1)])
+    hi = float(loo[_conformal_index(n, 0.9)])
+    # The median needs no conservative direction: it is a location estimate,
+    # not a bound, and is the best-supported order statistic in the sample.
+    mid = float(np.median(loo))
+    return ResidualQuantiles(
+        bucket_key=bucket_key,
+        q10=round(lo, 6),
+        q50=round(mid, 6),
+        q90=round(hi, 6),
+        n=n,
+    )
 
 
 # ── Run-level feature computation (for OLS stage2) ────────────────────────────
@@ -1381,14 +1616,47 @@ class CalibrationEngine:
                 coef=[round(float(c), 8) for c in coef],
                 n_train=len(rows),
                 r2=round(r2, 6),
+                # Fitted from the same X, y and coef, so the residual quantiles
+                # can never describe a different fit than the one they ship
+                # with. Issue #72.
+                resid=_residual_quantiles(bucket_key, X, y, coef),
+            )
+
+        n_resid_fitted = sum(
+            1
+            for m in ols_models.values()
+            if m.resid is not None and m.resid.is_fitted
+        )
+        n_resid_missing = sum(
+            1
+            for m in ols_models.values()
+            if len(m.coef) >= 2 and (m.resid is None or not m.resid.is_fitted)
+        )
+        if n_resid_missing:
+            # Loud rather than silent: a bucket with coefficients but no usable
+            # residual quantiles publishes the old re-clamped stage-1 band and
+            # so can still collapse a bound onto the point estimate. See #72.
+            _LOGGER.warning(
+                "OLS stage2 fit: %d fitted bucket(s) have no usable residual "
+                "quantiles and will publish a re-clamped stage-1 band: %s",
+                n_resid_missing,
+                ", ".join(
+                    sorted(
+                        k for k, m in ols_models.items()
+                        if len(m.coef) >= 2
+                        and (m.resid is None or not m.resid.is_fitted)
+                    )
+                ),
             )
 
         n_excluded = sum(bucket_excluded.values())
         _LOGGER.info(
-            "OLS stage2 fit: %d buckets evaluated (%d with sufficient STPASA obs), "
+            "OLS stage2 fit: %d buckets evaluated (%d with sufficient STPASA obs, "
+            "%d with stage-2 residual quantiles), "
             "%d rows excluded at or below the negative passthrough boundary%s",
             len(ols_models),
             sum(1 for m in ols_models.values() if len(m.coef) >= 2),
+            n_resid_fitted,
             n_excluded,
             (
                 " (" + ", ".join(
@@ -1419,8 +1687,31 @@ class CalibrationEngine:
                 "q50": {"a": model.q50.a, "b": model.q50.b, "n": model.q50.n, "pl": model.q50.pinball_loss},
                 "q90": {"a": model.q90.a, "b": model.q90.b, "n": model.q90.n, "pl": model.q90.pinball_loss},
             }
+        # "resid" is written in the same dict as "coef" so a reader cannot get
+        # one without the other; a payload from before issue #72 simply has no
+        # "resid" key and deserialises to None, which the serving path treats as
+        # unfitted. Persisting these matters: the isotonic model is not
+        # serialisable and does not survive a restart, but the OLS coefficients
+        # do, so stage 2 keeps overriding after a restart and would otherwise
+        # have no stage-2 band to publish with until the next fit.
         out["ols_models"] = {
-            key: {"coef": m.coef, "n_train": m.n_train, "r2": m.r2}
+            key: {
+                "coef": m.coef,
+                "n_train": m.n_train,
+                "r2": m.r2,
+                **(
+                    {
+                        "resid": {
+                            "q10": m.resid.q10,
+                            "q50": m.resid.q50,
+                            "q90": m.resid.q90,
+                            "n": m.resid.n,
+                        }
+                    }
+                    if m.resid is not None
+                    else {}
+                ),
+            }
             for key, m in result.ols_models.items()
         }
         return out
@@ -1445,11 +1736,24 @@ class CalibrationEngine:
         # OLS stage2 models — absent on pre-STPASA installs (graceful default).
         ols_models: dict[str, OlsModel] = {}
         for key, md in data.get("ols_models", {}).items():
+            rd = md.get("resid")
+            resid = (
+                ResidualQuantiles(
+                    bucket_key=key,
+                    q10=rd.get("q10"),
+                    q50=rd.get("q50"),
+                    q90=rd.get("q90"),
+                    n=rd.get("n", 0),
+                )
+                if isinstance(rd, dict)
+                else None
+            )
             ols_models[key] = OlsModel(
                 bucket_key=key,
                 coef=md.get("coef", []),
                 n_train=md.get("n_train", 0),
                 r2=md.get("r2", 0.0),
+                resid=resid,
             )
 
         return CalibrationResult(

@@ -530,6 +530,11 @@ ATTR_CAL_P90 = "p90"
 ATTR_CAL_MAE = "ols_mae"
 ATTR_CAL_SOURCE = "calibrated_source"
 ATTR_CAL_N_OBS = "n_obs"
+# Which model produced p10/p50/p90 on this interval. See BAND_SOURCE_* in
+# calibration_engine: it is no longer always the stage-1 quantile lines, and a
+# consumer cannot tell a stage-2 residual band from a re-clamped stage-1 band by
+# looking at the numbers. Issue #72.
+ATTR_CAL_BAND_SOURCE = "band_source"
 
 # ── Additional usage fee ─────────────────────────────────────────────────────
 DEFAULT_ADDITIONAL_FEE = 0.0293
