@@ -62,12 +62,6 @@ _SPIKE_CALLOUT_THRESHOLD_48H = 3.00  # $/kWh
 # synthetic runs with a non-empty credible set and reading back the placed
 # artists, and each one fixes a defect that measurement found.
 #
-# A callout box is roughly 93 px wide on the 1322 px plotting area this figure
-# produces, so it covers about 7 per cent of the chart width, and it is drawn
-# 32 pt, another 3.3 per cent, to one side of its anchor. Two neighbouring
-# callouts can point toward each other, one offset right and one offset left,
-# so the room a label needs to its neighbour on the same tier is twice that.
-_CALLOUT_LABEL_SPAN_FRAC = 0.22
 # Spikes closer together than this share one label. The old 60 min window split
 # a single evening episode into several clusters whose boxes then landed on top
 # of each other; the triangles still mark every interval individually.
@@ -88,27 +82,60 @@ _CALLOUT_CLUSTER_GAP_MIN = 360.0
 #   9 pt   daily maximum and minimum labels (unchanged, set at the draw site)
 #  17 pt   the clip line label
 #  28 pt   grid stress notice labels, three tiers when notices overlap in time
-#  58 pt   spike callout boxes, three tiers
+#  58 pt   spike callout boxes, two tiers
 #
 # Each entry allows about 7.5 pt for a line of text and the callout boxes about
 # 13.5 pt including their padding.
 _CLIP_LABEL_OFFSET_PT = 17
 _NOTICE_LABEL_OFFSETS_PT = (28, 38, 48)
-# Vertical tiers, in points above the clip line, tried in order. These sit
-# above the notice label tiers so a callout and a notice label cannot collide
-# vertically at all, which matters because the horizontal seeding below only
-# separates them when the notice is close enough in time to be noticed.
-_CALLOUT_Y_OFFSETS_PT = (58, 76, 94)
+# Vertical tiers, in points above the clip line, tried in order. These sit above
+# the notice label tiers so a callout and a notice label cannot collide
+# vertically at all. Two tiers rather than three: with the boxes now fanned out
+# sideways and placed by measurement, the third tier bought almost nothing, and
+# dropping it lowers the reserved headroom, which is what compresses the price
+# curve on exactly the days a spike is forecast. Measured on the seven day
+# example fixture the axis top falls from 1.70 to 1.54 times the clip value,
+# against 1.35 with no callout at all, and the cost across a 150 chart sweep is
+# two labels of 240 that lose their leader line.
+_CALLOUT_Y_OFFSETS_PT = (58, 76)
+# Horizontal offsets, in points, tried in order within each tier. Fixing the
+# strip allocation stopped the boxes landing on other labels but not the leader
+# lines, which still crossed them: with only a 32 pt sideways offset available a
+# line rising out of the clip line strip stays nearly vertical, and everything
+# it has to avoid is stacked vertically right there. Fanning the box out
+# sideways lets the line leave the strip within a few pixels of its start. The
+# long offsets earn their place: the clip line label is about 138 px wide and can
+# sit 11 px above the point a callout aims at, so a line escaping it sideways
+# needs to cover about 3.7 px across for every 1 px up, and 184 pt only buys 3.2.
+_CALLOUT_X_OFFSETS_PT = (32, 64, 100, 140, 184, 240, 300)
+# Offsets tried when no leader line placement is free at all. The box goes
+# beside its own marker with the line switched off, rather than a line being
+# drawn across somebody else's text.
+_CALLOUT_DIRECT_OFFSETS_PT = (
+    (12, 4), (-12, 4), (12, 18), (-12, 18), (26, -14), (-26, -14),
+)
+# Rectangles are inflated by this many pixels before the overlap test, so a box
+# that merely grazes a label still counts as a collision.
+_CALLOUT_COLLISION_MARGIN_PX = 2.0
+# A leader line that starts inside a label crosses it whichever way it leaves,
+# and the point a callout naturally aims at, the clip line at the spike, is
+# underneath the daily maximum label of that very interval and often the clip
+# line label as well. So the start of the line is raised clear of anything that
+# encloses it, by at most this much, which keeps it below the lowest callout
+# tier. The line then arrives just above the marker rather than on it, in the
+# same vertical, and crosses nothing.
+_CALLOUT_ANCHOR_LIFT_MAX_PT = 48.0
+_CALLOUT_ANCHOR_LIFT_PASSES = 4
 # Fraction of the visible y span kept clear above the clip line when callouts
 # are present. The tier offsets are a fixed number of points but the y span is
 # not: a run whose p10 reaches the -$1000/MWh market floor stretches the axis
 # far enough that the top offset lands outside it, and the box was then painted
 # over the title. Measured overflow before this reservation: 55 px. The top of
-# the tallest callout box sits about 108 pt above the clip line and the axes are
-# about 371 pt tall, so 29 per cent is the minimum that fits and this leaves
+# the upper callout box sits about 90 pt above the clip line and the axes are
+# about 371 pt tall, so 24 per cent is the minimum that fits and this leaves
 # margin for the topmost y tick label. The ratio of points to axis fraction does
 # not depend on dpi, because the axes height in points does not either.
-_CALLOUT_HEADROOM_FRAC = 0.36
+_CALLOUT_HEADROOM_FRAC = 0.30
 
 
 def _tod_label(hour: int) -> str:
@@ -145,6 +172,410 @@ def _is_spike_callout_eligible(raw_value: float, horizon_hours: float, spike_fir
     if spike_first_run:
         return True, "candidate"
     return True, "confirmed"
+
+
+def _as_rect(bbox) -> tuple[float, float, float, float]:
+    """Normalise a matplotlib Bbox to an ordered (x0, y0, x1, y1) tuple."""
+    return (
+        min(bbox.x0, bbox.x1), min(bbox.y0, bbox.y1),
+        max(bbox.x0, bbox.x1), max(bbox.y0, bbox.y1),
+    )
+
+
+def _rects_overlap(a, b, margin: float = _CALLOUT_COLLISION_MARGIN_PX) -> bool:
+    """True when two (x0, y0, x1, y1) rectangles overlap, allowing a margin."""
+    return (
+        a[0] - margin < b[2] and b[0] - margin < a[2]
+        and a[1] - margin < b[3] and b[1] - margin < a[3]
+    )
+
+
+def _segment_rect_clip(p0, p1, rect, margin: float = _CALLOUT_COLLISION_MARGIN_PX):
+    """Clip a segment against a rectangle, Liang Barsky.
+
+    Returns the (t0, t1) parameter interval of the part of p0 to p1 that lies
+    inside the rectangle, or None when the segment misses it entirely.
+    """
+    x0, y0 = p0
+    dx, dy = p1[0] - x0, p1[1] - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in (
+        (-dx, x0 - (rect[0] - margin)),
+        (dx, (rect[2] + margin) - x0),
+        (-dy, y0 - (rect[1] - margin)),
+        (dy, (rect[3] + margin) - y0),
+    ):
+        if p == 0:
+            if q < 0:
+                return None
+            continue
+        r = q / p
+        if p < 0:
+            if r > t1:
+                return None
+            t0 = max(t0, r)
+        else:
+            if r < t0:
+                return None
+            t1 = min(t1, r)
+    if t0 > t1:
+        return None
+    return (t0, t1)
+
+
+def _segments_cross(a0, a1, b0, b1) -> bool:
+    """True when two segments properly cross, used to keep leader lines apart."""
+    def side(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    d1, d2 = side(a0, a1, b0), side(a0, a1, b1)
+    d3, d4 = side(b0, b1, a0), side(b0, b1, a1)
+    return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
+
+
+def text_obstacle_rects(axes_list, renderer, exclude=()) -> list:
+    """Collect the display space rectangles of every text artist on the axes.
+
+    This is what callout placement has to route around, and the tests call the
+    same function so the assertion measures what the placement measured. A text
+    that carries a bbox patch is measured from the patch, because that painted
+    box is what the reader sees. An Annotation window extent would swallow its
+    own arrow as well and overstate the label.
+    """
+    skip = {id(a) for a in exclude}
+    rects = []
+    for ax in axes_list:
+        if ax is None:
+            continue
+        candidates = list(ax.texts)
+        candidates.append(ax.title)
+        candidates.extend(ax.get_xticklabels())
+        candidates.extend(ax.get_yticklabels())
+        for art in candidates:
+            if art is None or id(art) in skip:
+                continue
+            if not art.get_visible() or not str(art.get_text()).strip():
+                continue
+            patch = art.get_bbox_patch() if hasattr(art, "get_bbox_patch") else None
+            try:
+                bbox = (patch or art).get_window_extent(renderer)
+            except (RuntimeError, ValueError, AttributeError):
+                continue
+            if bbox.width <= 0 or bbox.height <= 0:
+                continue
+            rects.append(_as_rect(bbox))
+        legend = ax.get_legend()
+        if legend is not None and legend.get_visible():
+            try:
+                rects.append(_as_rect(legend.get_window_extent(renderer)))
+            except (RuntimeError, ValueError):
+                pass
+    return rects
+
+
+def callout_box_rect(art, renderer):
+    """The painted label box of a callout annotation, in display coordinates."""
+    patch = art.get_bbox_patch()
+    if patch is None:
+        return None
+    return _as_rect(patch.get_window_extent(renderer))
+
+
+def callout_leader_segment(ax, art, renderer):
+    """The visible part of a callout leader line, in display coordinates.
+
+    Returns None when the arrow is switched off, which is how a callout that
+    could not be placed cleanly degrades. The segment is trimmed at the label
+    box border so the stretch hidden behind the box is not reported as a line
+    crossing something.
+    """
+    arrow = getattr(art, "arrow_patch", None)
+    if arrow is None or not arrow.get_visible():
+        return None
+    box = callout_box_rect(art, renderer)
+    if box is None:
+        return None
+    x = ax.xaxis.convert_units(art.xy[0])
+    y = ax.yaxis.convert_units(art.xy[1])
+    anchor = tuple(ax.transData.transform((x, y)))
+    centre = ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
+    clipped = _segment_rect_clip(anchor, centre, box, margin=0.0)
+    t = clipped[0] if clipped is not None else 1.0
+    end = (anchor[0] + t * (centre[0] - anchor[0]),
+           anchor[1] + t * (centre[1] - anchor[1]))
+    return (anchor, end)
+
+
+def count_callout_text_collisions(fig, ax, callout_artists, other_axes=()):
+    """Count callout collisions with the rest of the chart text.
+
+    Returns (line_over_text, box_over_text). Both must be zero. The first
+    revision of this work compared callout boxes only with each other, which is
+    why it reported no overlaps on a chart whose leader line ran straight
+    through the clip line annotation and through a daily maximum label.
+    """
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    axes_list = [ax] + [a for a in other_axes if a is not None]
+    obstacles = text_obstacle_rects(axes_list, renderer, exclude=callout_artists)
+    boxes = [callout_box_rect(a, renderer) for a in callout_artists]
+    obstacles += [b for b in boxes if b is not None]
+    line_hits = 0
+    box_hits = 0
+    for i, art in enumerate(callout_artists):
+        own = boxes[i]
+        for rect in obstacles:
+            if own is not None and rect is own:
+                continue
+            if own is not None and _rects_overlap(own, rect):
+                box_hits += 1
+        seg = callout_leader_segment(ax, art, renderer)
+        if seg is None:
+            continue
+        for rect in obstacles:
+            if own is not None and rect is own:
+                continue
+            if _segment_rect_clip(seg[0], seg[1], rect) is not None:
+                line_hits += 1
+    return line_hits, box_hits
+
+
+def _lift_anchor(anchor, obstacles, scale, corridor=False):
+    """Raise the start of a leader line clear of the labels stacked over it.
+
+    The point a callout naturally aims at, the clip line at the spike interval,
+    is underneath the daily maximum label of that very interval, and a line
+    starting inside a label crosses it whichever way it leaves. So the start is
+    raised clear of whatever encloses it, repeatedly, since clearing one label
+    can leave the start inside the next one up. Only enclosing labels are
+    cleared, unless corridor is set, in which case labels stacked higher up the
+    same vertical are cleared too. Both are tried: sideways is usually the better
+    escape, but a wide label like the clip line annotation can sit a few pixels
+    above the marker and span a tenth of the chart, and then no angle is steep
+    enough and the line has to start above it instead. Past the cap the anchor is
+    left alone and the placement is allowed to fail into a direct label, because
+    a line that starts that high is no longer pointing at its own marker.
+    """
+    limit = anchor[1] + _CALLOUT_ANCHOR_LIFT_MAX_PT * scale
+    lifted = anchor[1]
+    for _pass in range(_CALLOUT_ANCHOR_LIFT_PASSES):
+        tops = [
+            rect[3] + _CALLOUT_COLLISION_MARGIN_PX + 1.0
+            for rect in obstacles
+            if rect[0] <= anchor[0] <= rect[2]
+            and (rect[1] <= lifted <= rect[3]
+                 or (corridor and lifted <= rect[1] <= limit))
+        ]
+        if not tops:
+            break
+        nxt = max(tops)
+        if nxt <= lifted:
+            break
+        lifted = nxt
+    if anchor[1] < lifted <= limit:
+        return (anchor[0], lifted)
+    return anchor
+
+
+def _callout_candidates(anchor, ax_rect):
+    """Offsets to try, nearest first, preferring the roomier side of the axes."""
+    prefer_right = anchor[0] - ax_rect[0] <= ax_rect[2] - anchor[0]
+    signs = (1, -1) if prefer_right else (-1, 1)
+    out = []
+    for yi, yoff in enumerate(_CALLOUT_Y_OFFSETS_PT):
+        for xi, mag in enumerate(_CALLOUT_X_OFFSETS_PT):
+            for si, sign in enumerate(signs):
+                out.append((xi + 0.6 * yi + 0.3 * si, sign * mag, yoff))
+    out.sort(key=lambda c: c[0])
+    return out
+
+
+def _plan_callout_placements(order, metrics, fixed_rects, ax_rect, scale,
+                             corridor=False):
+    """Work out where each callout goes, for one order of consideration.
+
+    Pure geometry, nothing is drawn or moved, so several orders can be costed
+    and the best one applied. Returns {index: decision}.
+    """
+    obstacles = list(fixed_rects)
+    segments: list = []
+    plan: dict = {}
+    for i in order:
+        m = metrics[i]
+        # Lifting reads only the fixed text, never the callouts placed so far,
+        # so a callout's anchor does not depend on the order.
+        anchor = _lift_anchor(m["anchor"], fixed_rects, scale,
+                              corridor=corridor)
+        width, height = m["width"], m["height"]
+        pad_x, pad_y = m["pad_x"], m["pad_y"]
+
+        def rect_for(xoff, yoff):
+            point_x = anchor[0] + xoff * scale
+            point_y = anchor[1] + yoff * scale
+            x0 = point_x - pad_x if xoff >= 0 else point_x + pad_x - width
+            y0 = point_y - pad_y
+            return (x0, y0, x0 + width, y0 + height)
+
+        def inside(rect):
+            return (ax_rect[0] <= rect[0] and rect[2] <= ax_rect[2]
+                    and ax_rect[1] <= rect[1] and rect[3] <= ax_rect[3])
+
+        chosen = None
+        # The first pass also refuses to cross another leader line. The second
+        # allows it, because a crossed line is still readable whereas a label
+        # sitting on its own tells the reader less.
+        for allow_crossing in (False, True):
+            for cost, xoff, yoff in _callout_candidates(anchor, ax_rect):
+                rect = rect_for(xoff, yoff)
+                if not inside(rect):
+                    continue
+                if any(_rects_overlap(rect, o) for o in obstacles):
+                    continue
+                # A box must also keep off the leader lines already drawn, not
+                # only their boxes. Checking one direction only left three charts
+                # in a 150 chart sweep with a later box sitting on an earlier
+                # line.
+                if any(_segment_rect_clip(s0, s1, rect) is not None
+                       for s0, s1 in segments):
+                    continue
+                centre = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+                clipped = _segment_rect_clip(anchor, centre, rect, margin=0.0)
+                t = clipped[0] if clipped is not None else 1.0
+                end = (anchor[0] + t * (centre[0] - anchor[0]),
+                       anchor[1] + t * (centre[1] - anchor[1]))
+                if any(_segment_rect_clip(anchor, end, o) is not None
+                       for o in obstacles):
+                    continue
+                if not allow_crossing and any(
+                    _segments_cross(anchor, end, s0, s1) for s0, s1 in segments
+                ):
+                    continue
+                chosen = (cost, xoff, yoff, rect, (anchor, end))
+                break
+            if chosen is not None:
+                break
+
+        if chosen is not None:
+            cost, xoff, yoff, rect, seg = chosen
+            obstacles.append(rect)
+            segments.append(seg)
+            plan[i] = dict(mode="leader", xoff=xoff, yoff=yoff, anchor=anchor,
+                           rect=rect, cost=cost)
+            continue
+
+        # Nowhere for a leader line. Put the box beside the marker with the line
+        # switched off, which says less but says nothing false.
+        direct = None
+        for xoff, yoff in _CALLOUT_DIRECT_OFFSETS_PT:
+            rect = rect_for(xoff, yoff)
+            if not inside(rect):
+                continue
+            if any(_rects_overlap(rect, o) for o in obstacles):
+                continue
+            if any(_segment_rect_clip(s0, s1, rect) is not None
+                   for s0, s1 in segments):
+                continue
+            direct = (xoff, yoff, rect)
+            break
+        if direct is not None:
+            xoff, yoff, rect = direct
+            obstacles.append(rect)
+            plan[i] = dict(mode="direct", xoff=xoff, yoff=yoff, anchor=anchor,
+                           rect=rect, cost=0.0)
+            continue
+
+        plan[i] = dict(mode="dropped", anchor=anchor, cost=0.0)
+    return plan
+
+
+def _plan_score(plan):
+    """Rank plans: most leader lines first, then fewest dropped, then tightest."""
+    leaders = sum(1 for d in plan.values() if d["mode"] == "leader")
+    dropped = sum(1 for d in plan.values() if d["mode"] == "dropped")
+    cost = sum(d["cost"] for d in plan.values())
+    return (leaders, -dropped, -cost)
+
+
+def _place_spike_callouts(fig, ax, callout_artists, other_axes=()):
+    """Put each callout where neither its box nor its leader line crosses any
+    other text on the chart.
+
+    Placement is measured, not assumed. Every other artist has been drawn and
+    the layout is final by the time this runs, so the real bounding boxes of the
+    clip line label, the daily minimum and maximum labels, the horizon notice,
+    the market notice band labels and the legend are all known. Each callout
+    tries a fan of offsets in order of increasing distance from its marker and
+    takes the first that sits inside the axes and clear of everything, including
+    the callouts placed before it.
+
+    Which callout picks first changes what is left for the others, so a few
+    orders are costed and the one that lands the most leader lines wins. A
+    callout with nowhere to go loses its line and sits beside its own marker,
+    and if even that collides it is dropped and the marker triangle speaks for
+    itself. Drawing over another label is never an option.
+
+    Returns a list of (label, mode) with mode one of "leader", "direct" or
+    "dropped", for the tests and for anyone reading a log.
+    """
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    axes_list = [ax] + [a for a in other_axes if a is not None]
+    fixed_rects = text_obstacle_rects(axes_list, renderer, exclude=callout_artists)
+    ax_rect = _as_rect(ax.get_window_extent(renderer))
+    scale = fig.dpi / 72.0
+
+    metrics = {}
+    for i, art in enumerate(callout_artists):
+        box = callout_box_rect(art, renderer)
+        if box is None:
+            continue
+        x_data = ax.xaxis.convert_units(art.xy[0])
+        y_data = ax.yaxis.convert_units(art.xy[1])
+        anchor = tuple(ax.transData.transform((x_data, y_data)))
+        ox, oy = art.xyann
+        metrics[i] = dict(
+            anchor=anchor,
+            width=box[2] - box[0],
+            height=box[3] - box[1],
+            # Gap between the offset point and the painted box border, which is
+            # the bbox pad. Measured rather than recomputed from the pad setting
+            # so it stays right if the box style changes.
+            pad_x=(anchor[0] + ox * scale) - box[0],
+            pad_y=(anchor[1] + oy * scale) - box[1],
+        )
+
+    indices = sorted(metrics)
+    orders = []
+    if indices:
+        by_x = sorted(indices, key=lambda i: metrics[i]["anchor"][0])
+        orders = [indices, list(reversed(indices)), by_x, list(reversed(by_x))]
+    best = None
+    for order in orders:
+        for corridor in (False, True):
+            plan = _plan_callout_placements(order, metrics, fixed_rects, ax_rect,
+                                            scale, corridor=corridor)
+            score = _plan_score(plan)
+            if best is None or score > best[0]:
+                best = (score, plan)
+    plan = best[1] if best is not None else {}
+
+    report = []
+    for i, art in enumerate(callout_artists):
+        decision = plan.get(i)
+        label = str(art.get_text())
+        if decision is None or decision["mode"] == "dropped":
+            report.append((label, "dropped"))
+            art.remove()
+            continue
+        anchor = decision["anchor"]
+        if anchor != metrics[i]["anchor"]:
+            art.xy = tuple(ax.transData.inverted().transform(anchor))
+        art.set_ha('left' if decision["xoff"] >= 0 else 'right')
+        art.xyann = (decision["xoff"], decision["yoff"])
+        if decision["mode"] == "direct" and getattr(art, "arrow_patch", None) is not None:
+            art.arrow_patch.set_visible(False)
+        report.append((label, decision["mode"]))
+    return report
 
 
 def render_forecast_chart(forecast_data: list, region: str, annotations: list | None = None) -> bytes:
@@ -282,10 +713,6 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
 
     # ── Grid stress annotations ──────────────────────────────────────────────
     notice_types_present: set[tuple] = set()
-    # x positions of the grid stress labels, in date2num days. The spike
-    # callout tiers below sit in the same strip of chart above the clip line as
-    # these do, so a callout placed near one has to start a tier higher.
-    notice_label_x: list[float] = []
     if annotations:
         NOTICE_COLORS = {
             ("LOR", 1): ("#F39C12", 0.15, "LOR1"),   # amber
@@ -332,7 +759,6 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                 tier += 1
             tier = min(tier, len(label_y_levels) - 1)
             placed.append((mid_num, tier))
-            notice_label_x.append(mid_num)
             ax.annotate(
                 label_text, xy=(mid, CLIP_Y),
                 xytext=(0, label_y_levels[tier]), textcoords="offset points",
@@ -444,7 +870,12 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         ax.scatter(ct, [CLIP_Y * 0.96] * len(ct),
                    color='#AAAAAA', marker='^', s=35, zorder=6, alpha=0.6)
 
-    # Build callout clusters from confirmed spikes only
+    # Build callout clusters from confirmed spikes only. Only the cluster peaks
+    # are worked out here. The labels themselves are created and placed at the
+    # very end of this function, once every other artist exists and the layout is
+    # final, because where a leader line can go depends on where the other text
+    # actually landed, and that is only knowable by measurement.
+    callout_peaks: list[tuple] = []
     pt_indices = confirmed_indices
     if pt_indices:
         clusters: list[list[int]] = []
@@ -458,20 +889,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                 current = [idx]
         clusters.append(current)
 
-        chart_start = times[0]
-        chart_end = times[-1]
-        chart_span = (chart_end - chart_start).total_seconds()
-        chart_span_days = mdates.date2num(chart_end) - mdates.date2num(chart_start)
-        # Tier assignment by horizontal proximity rather than by cluster order.
-        # The old code cycled [45, 65, 45, 65] on the cluster index, so the
-        # first and third clusters always shared a tier however close together
-        # they were: nine callouts on a synthetic run produced 21 overlapping
-        # pairs. Slots already taken by a grid stress label count as taken.
-        placed_callouts: list[tuple[float, int]] = [
-            (x, 0) for x in notice_label_x
-        ]
         for cluster in clusters:
-            c_times = [times[i] for i in cluster]
             # The peak of the cluster is its highest raw forecast, because the
             # raw forecast is what a spike callout is about. The label used to
             # report the calibrated value, so a $12.00/kWh raw spike was
@@ -479,38 +897,11 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
             # already draws and says nothing about the spike being called out.
             c_raws = [float(raws[i]) for i in cluster]
             max_raw = max(c_raws)
-            peak_time = c_times[c_raws.index(max_raw)]
-            # A one interval chart has no span, and the old fallback of 0.5
-            # sent the box left off the axes because the only point sits on
-            # the left edge. Treat a degenerate chart as being at its start.
-            frac = (peak_time - chart_start).total_seconds() / chart_span if chart_span > 0 else 0.0
-            xoff = 32 if frac < 0.5 else -32
-            peak_num = mdates.date2num(peak_time)
-            gap_days = _CALLOUT_LABEL_SPAN_FRAC * chart_span_days
-            tier = None
-            for candidate_tier in range(len(_CALLOUT_Y_OFFSETS_PT)):
-                if not any(
-                    t == candidate_tier and abs(peak_num - px) < gap_days
-                    for px, t in placed_callouts
-                ):
-                    tier = candidate_tier
-                    break
-            if tier is None:
-                # Every tier here is occupied. Drawing a fourth box on top of
-                # three others would hide all four, and the interval is already
-                # marked by its triangle, so this cluster gets no label.
-                continue
-            placed_callouts.append((peak_num, tier))
-            yoff = _CALLOUT_Y_OFFSETS_PT[tier]
-            ha = 'left' if xoff > 0 else 'right'
-            ax.annotate(
-                f'raw ${max_raw:.2f}/kWh',
-                xy=(peak_time, CLIP_Y),
-                xytext=(xoff, yoff), textcoords='offset points',
-                fontsize=7.5, color='#C62828', ha=ha, va='bottom',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
-                          edgecolor='#C62828', alpha=0.9),
-                arrowprops=dict(arrowstyle='->', color='#C62828', lw=1.2), zorder=10)
+            peak_time = [times[i] for i in cluster][c_raws.index(max_raw)]
+            callout_peaks.append((max_raw, peak_time))
+        # Biggest spike first, so on a crowded chart the most important label
+        # gets first pick of the free space.
+        callout_peaks.sort(key=lambda kv: -kv[0])
 
     # Grid
     ax.yaxis.grid(True, color='#DDDDDD', linewidth=0.5, alpha=0.7, zorder=1)
@@ -596,6 +987,35 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
 
     ax.set_xlim(times[0], times[-1] + datetime.timedelta(minutes=30))
     fig.tight_layout(pad=1.2)
+
+    # Spike callouts last. They are the only artists whose position is decided
+    # by measurement, so everything they have to keep away from must already be
+    # drawn and the axes must already be at their final size. Each is created at
+    # the first tier and then moved by _place_spike_callouts.
+    if callout_peaks:
+        callout_artists = [
+            ax.annotate(
+                f'raw ${max_raw:.2f}/kWh',
+                xy=(peak_time, CLIP_Y),
+                xytext=(_CALLOUT_X_OFFSETS_PT[0], _CALLOUT_Y_OFFSETS_PT[0]),
+                textcoords='offset points',
+                fontsize=7.5, color='#C62828', ha='left', va='bottom',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                          edgecolor='#C62828', alpha=0.9),
+                arrowprops=dict(arrowstyle='->', color='#C62828', lw=1.2),
+                zorder=10,
+            )
+            for max_raw, peak_time in callout_peaks
+        ]
+        placement = _place_spike_callouts(fig, ax, callout_artists,
+                                          other_axes=(ax2,))
+        degraded = sum(1 for _label, mode in placement if mode != "leader")
+        if degraded:
+            _LOGGER.debug(
+                "forecast chart: %d spike callout label(s) could not take a "
+                "leader line without crossing other text, so they sit beside "
+                "their marker or were dropped", degraded,
+            )
 
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=110, bbox_inches='tight', facecolor='white')

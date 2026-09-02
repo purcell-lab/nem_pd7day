@@ -293,6 +293,11 @@ def render_and_collect(data, annotations=None):
 
     ``get_window_extent`` on an Annotation covers the arrow as well as the
     text, so the label's own bounding box is taken from its bbox patch.
+
+    A callout with nowhere free to sit is removed from the axes rather than
+    painted over other text, and a removed artist still answers
+    ``get_window_extent`` with wherever it last happened to be. Those are
+    filtered out here, so what comes back is what a reader would actually see.
     """
     calls = []
     real_annotate = matplotlib.axes.Axes.annotate
@@ -311,6 +316,8 @@ def render_and_collect(data, annotations=None):
 
     boxes, labels, axes_box = [], [], None
     for ax, artist in calls:
+        if artist.axes is None:
+            continue
         # render_forecast_chart saves at dpi 110 with bbox_inches tight, which
         # leaves the artists laid out for that dpi while ax.get_window_extent
         # reports in figure dpi. Redraw on the figure's own canvas first so
@@ -734,19 +741,6 @@ def test_render_still_returns_a_png_with_callouts_present():
     print("  PASS: a chart with callouts renders to a valid PNG")
 
 
-if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn()
-            except AssertionError as exc:
-                failures += 1
-                print(f"  FAIL: {name}: {exc}")
-    print("FAILURES:", failures)
-    sys.exit(1 if failures else 0)
-
-
 def evening_spike_fixture():
     """A seven day chart shaped like the one a reviewer looked at.
 
@@ -854,3 +848,216 @@ def test_no_label_in_the_clip_line_strip_collides_across_a_y_limit_sweep():
         f"only {with_callouts} charts drew a callout, so the headroom "
         "reservation was barely exercised"
     )
+
+
+# Leader lines, issue #90 review round three
+
+
+def collect_leaders_and_text(data, annotations=None):
+    """Return the leader lines actually drawn and every other text box.
+
+    Measured from what matplotlib painted rather than from anything the
+    renderer decided, so this fails if the placement code is wrong and also if
+    the placement code is right but does not survive the final draw. A
+    FancyArrowPatch reports its path in display coordinates with an identity
+    transform, so its vertices are the polyline on the image.
+
+    Returns (leaders, texts) where leaders is a list of (label, [(x, y), ...])
+    and texts is a list of (label, box), the callouts themselves excluded.
+    """
+    callouts = []
+    axes_seen = []
+    real_annotate = matplotlib.axes.Axes.annotate
+
+    def spy(self, text, *args, **kwargs):
+        artist = real_annotate(self, text, *args, **kwargs)
+        if str(text).startswith("raw $"):
+            callouts.append(artist)
+        if self not in axes_seen:
+            axes_seen.append(self)
+        return artist
+
+    matplotlib.axes.Axes.annotate = spy
+    try:
+        fc.render_forecast_chart(data, "QLD1", annotations=annotations)
+    finally:
+        matplotlib.axes.Axes.annotate = real_annotate
+
+    if not axes_seen:
+        return [], []
+    fig = axes_seen[0].figure
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+
+    live = [a for a in callouts if a.axes is not None]
+    leaders = []
+    for art in live:
+        arrow = getattr(art, "arrow_patch", None)
+        if arrow is None or not arrow.get_visible():
+            continue
+        verts = [(float(x), float(y)) for x, y in arrow.get_path().vertices]
+        leaders.append((art.get_text(), verts))
+
+    skip = {id(a) for a in callouts}
+    texts = []
+    for ax in fig.axes:
+        artists = list(ax.texts) + [ax.title]
+        artists += list(ax.get_xticklabels()) + list(ax.get_yticklabels())
+        legend = ax.get_legend()
+        if legend is not None:
+            artists += list(legend.get_texts())
+        for art in artists:
+            if id(art) in skip or not art.get_visible():
+                continue
+            label = str(art.get_text())
+            if not label.strip():
+                continue
+            patch = art.get_bbox_patch() if hasattr(art, "get_bbox_patch") else None
+            if patch is not None:
+                box = patch.get_window_extent(renderer)
+            else:
+                box = matplotlib.text.Text.get_window_extent(art, renderer)
+            if box.width <= 0 or box.height <= 0:
+                continue
+            texts.append((label, box))
+    boxes = []
+    for art in live:
+        patch = art.get_bbox_patch()
+        if patch is not None:
+            boxes.append((art.get_text(), patch.get_window_extent(renderer)))
+    return leaders, texts, boxes
+
+
+def _segment_hits_box(p0, p1, box, margin=0.5):
+    """Liang Barsky, written out here rather than imported from the renderer.
+
+    A test that calls the code under test to decide whether the code under test
+    is right proves nothing, so the clipping is independent.
+    """
+    x0, y0 = p0
+    x1, y1 = p1
+    dx, dy = x1 - x0, y1 - y0
+    lo, hi = 0.0, 1.0
+    edges = (
+        (-dx, x0 - (box.x0 + margin)),
+        (dx, (box.x1 - margin) - x0),
+        (-dy, y0 - (box.y0 + margin)),
+        (dy, (box.y1 - margin) - y0),
+    )
+    for p, q in edges:
+        if p == 0:
+            if q < 0:
+                return False
+            continue
+        t = q / p
+        if p < 0:
+            lo = max(lo, t)
+        else:
+            hi = min(hi, t)
+        if lo > hi:
+            return False
+    return True
+
+
+def leader_text_collisions(leaders, texts):
+    bad = []
+    for label, verts in leaders:
+        for a, b in zip(verts, verts[1:]):
+            for other, box in texts:
+                if _segment_hits_box(a, b, box):
+                    bad.append((label, other))
+    return sorted(set(bad))
+
+
+def box_text_collisions(boxes, texts):
+    bad = []
+    for label, box in boxes:
+        for other, ob in texts:
+            ox = min(box.x1, ob.x1) - max(box.x0, ob.x0)
+            oy = min(box.y1, ob.y1) - max(box.y0, ob.y0)
+            if ox > 0.5 and oy > 0.5:
+                bad.append((label, other))
+    return sorted(set(bad))
+
+
+def test_a_leader_line_never_crosses_another_label():
+    """The defect a reviewer found on the rendered image, pinned.
+
+    The boxes were being kept off other labels but the lines joining them to
+    their markers were not, and on the fixture below the line from the first
+    evening spike ran straight through the clip line label and through the
+    first day's maximum. Both callouts now route around them.
+    """
+    leaders, texts, boxes = collect_leaders_and_text(evening_spike_fixture())
+    assert leaders, "the fixture drew no leader lines, so this proves nothing"
+    hits = leader_text_collisions(leaders, texts)
+    assert hits == [], f"leader lines cross text: {hits}"
+    assert box_text_collisions(boxes, texts) == []
+    print(
+        f"  PASS: {len(leaders)} leader lines clear of {len(texts)} labels "
+        "on the evening spike fixture"
+    )
+
+
+def test_leader_lines_clear_every_label_across_the_awkward_shapes():
+    """The shapes that broke the placement before, each with and without a
+    grid stress notice, since the notice labels take room in the same strip.
+
+    Synthetic data throughout. It shows the routing holds for these shapes, not
+    that the market produces them.
+    """
+    ann = types.SimpleNamespace(
+        is_cancelled=False, notice_type="LOR", level=2,
+        period_from=RUN_DT + timedelta(hours=5),
+        period_to=RUN_DT + timedelta(hours=8), notice_id="n1",
+    )
+
+    def build(n, spikes, level=0.18, floor=None):
+        data = []
+        for i in range(n):
+            data.append(chart_entry(i, 0.05 if i not in spikes else spikes[i],
+                                    calibrated=level,
+                                    p10=floor if i == 0 else None,
+                                    credible=True if i in spikes else "omit"))
+        return data
+
+    cases = {
+        "adjacent": build(96, {20: 9.0, 21: 12.0}),
+        "clustered": build(96, {20: 9.0, 21: 12.0, 22: 7.0, 23: 15.0}),
+        "left_edge": build(96, {0: 11.0, 1: 8.0}),
+        "right_edge": build(96, {94: 11.0, 95: 8.0}),
+        "both_edges": build(96, {0: 11.0, 95: 8.0}),
+        "one_interval": build(1, {0: 11.0}),
+        "deep_p10": build(96, {20: 9.0, 60: 14.0}, floor=-3.00),
+        "evening_fixture": evening_spike_fixture(),
+    }
+    checked = leader_count = 0
+    for name, data in cases.items():
+        for anns in (None, [ann]):
+            leaders, texts, boxes = collect_leaders_and_text(data, annotations=anns)
+            checked += 1
+            leader_count += len(leaders)
+            hits = leader_text_collisions(leaders, texts)
+            assert hits == [], f"{name} notices={anns is not None}: {hits}"
+            over = box_text_collisions(boxes, texts)
+            assert over == [], f"{name} notices={anns is not None}: {over}"
+    assert leader_count >= 12, (
+        f"only {leader_count} leader lines drawn across {checked} charts, so "
+        "the sweep barely exercises the routing"
+    )
+    print(
+        f"  PASS: {checked} charts, {leader_count} leader lines, none over text"
+    )
+
+
+if __name__ == "__main__":
+    failures = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+            except AssertionError as exc:
+                failures += 1
+                print(f"  FAIL: {name}: {exc}")
+    print("FAILURES:", failures)
+    sys.exit(1 if failures else 0)
