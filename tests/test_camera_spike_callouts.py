@@ -367,9 +367,14 @@ def _strip_family(text):
     Everything above the clip line competes for the same thin band: the clip
     line label, the per day extreme labels, the grid stress notice labels and
     the spike callout boxes. Axis tick labels and the day divider labels are
-    deliberately excluded. Those two collide with each other on main on most
-    charts, with or without callouts, and that is a separate pre-existing
-    defect rather than anything this change touches.
+    deliberately excluded, because they are not in this strip.
+
+    The exclusion used to be justified here by a pre-existing defect: on main
+    at the time, tick labels and day divider labels collided with each other on
+    most charts. That was issue #93 and it is fixed, and the whole figure is now
+    measured against itself in tests/test_chart_label_placement.py rather than
+    strip by strip. This function is left scoped to the strip so that the tests
+    below keep testing the callout tiering they were written for.
     """
     if text.startswith("raw $"):
         return "callout"
