@@ -942,16 +942,16 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x:.0f}'))
 
     # Title
-    ax.set_title(f'NEM PD7DAY {region} \u2014 7-Day Pre-Dispatch Spot Price Forecast',
+    ax.set_title(f'NEM PD7DAY {region}: 7-Day Pre-Dispatch Spot Price Forecast',
                  fontsize=13, fontweight='bold', pad=11, color='#1A1A1A')
 
     # Legend
     line_legend = [
         plt.Line2D([0], [0], color='#888888', linewidth=1.0, linestyle='--', alpha=0.7, label='PD7day Raw'),
-        plt.Line2D([0], [0], color='#1565C0', linewidth=2.5, label='Calibrated (0\u201324h)'),
-        plt.Line2D([0], [0], color='#1565C0', linewidth=1.6, alpha=0.65, label='Calibrated (24\u201372h)'),
+        plt.Line2D([0], [0], color='#1565C0', linewidth=2.5, label='Calibrated (0-24h)'),
+        plt.Line2D([0], [0], color='#1565C0', linewidth=1.6, alpha=0.65, label='Calibrated (24-72h)'),
         plt.Line2D([0], [0], color='#1565C0', linewidth=1.2, alpha=0.45, linestyle=':', label='Calibrated (72h+)'),
-        mpatches.Patch(color='#BBDEFB', alpha=0.6, label='p10\u2013p90 band'),
+        mpatches.Patch(color='#BBDEFB', alpha=0.6, label='p10-p90 band'),
         plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='#C62828',
                    markersize=6, label='Daily max'),
         plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='#1B5E20',
@@ -971,12 +971,12 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                                       label='24h confidence boundary'))
     # Add legend entries for any notice types actually present in this chart
     NOTICE_LEGEND = {
-        ("LOR", 1): ("#F39C12", "LOR1 \u2014 Reserve notice"),
-        ("LOR", 2): ("#E67E22", "LOR2 \u2014 Reserve notice"),
-        ("LOR", 3): ("#C0392B", "LOR3 \u2014 Reserve notice"),
-        ("MSL", 1): ("#8E44AD", "MSL1 \u2014 Min load notice"),
-        ("MSL", 2): ("#7D3C98", "MSL2 \u2014 Min load notice"),
-        ("MSL", 3): ("#6C3483", "MSL3 \u2014 Min load notice"),
+        ("LOR", 1): ("#F39C12", "LOR1: Reserve notice"),
+        ("LOR", 2): ("#E67E22", "LOR2: Reserve notice"),
+        ("LOR", 3): ("#C0392B", "LOR3: Reserve notice"),
+        ("MSL", 1): ("#8E44AD", "MSL1: Min load notice"),
+        ("MSL", 2): ("#7D3C98", "MSL2: Min load notice"),
+        ("MSL", 3): ("#6C3483", "MSL3: Min load notice"),
     }
     for key in sorted(notice_types_present):
         if key in NOTICE_LEGEND:

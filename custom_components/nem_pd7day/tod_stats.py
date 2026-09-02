@@ -257,8 +257,8 @@ def render_chart(stats: TodStats, region: str = "QLD1") -> bytes:
 
     # ── Main chart ────────────────────────────────────────────────────────────
     ax.set_facecolor(PAN)
-    ax.fill_between(x, p10, p90, color=C_P1090, alpha=0.7, label="P10–P90")
-    ax.fill_between(x, p25, p75, color=C_IQR,   alpha=0.9, label="P25–P75 (IQR)")
+    ax.fill_between(x, p10, p90, color=C_P1090, alpha=0.7, label="P10-P90")
+    ax.fill_between(x, p25, p75, color=C_IQR,   alpha=0.9, label="P25-P75 (IQR)")
     ax.plot(x, means,   color=C_MEAN, lw=2.0,       label="Mean",   zorder=5)
     ax.plot(x, medians, color=C_MED,  lw=1.8, ls="--", label="Median", zorder=5)
     ax.axhline(0, color="#999999", lw=0.8, ls="--", alpha=0.6)
@@ -278,7 +278,7 @@ def render_chart(stats: TodStats, region: str = "QLD1") -> bytes:
     ax.set_xlim(-0.5, len(slots) - 0.5)
     ax.set_title(
         f"{region} Actual Price by Time of Day\n"
-        f"{stats.date_from} – {stats.date_to}  ·  {stats.unique_intervals} unique intervals",
+        f"{stats.date_from} to {stats.date_to}  ·  {stats.unique_intervals} unique intervals",
         color="#111111", fontsize=13, fontweight="bold", pad=10,
     )
     ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
