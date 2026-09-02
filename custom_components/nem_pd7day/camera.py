@@ -20,6 +20,11 @@ from .const import (
     ATTR_CAL_SOURCE,
     DOMAIN,
 )
+from .calibration_inputs import (
+    calibrate_interval,
+    horizon_hours as _horizon_hours,
+    interval_key_for_period,
+)
 from .coordinator import PD7DayCoordinator
 from .nem_time import parse_iso, to_nem_iso
 
@@ -312,18 +317,6 @@ class NemPd7dayIsoChartCamera(
         return self._image_bytes if self._image_bytes else None
 
 
-def _horizon_hours(run_at_str: str | None, interval_time_str: str) -> float:
-    """Compute forecast horizon in hours between run_at and interval_time."""
-    if not run_at_str:
-        return 0.0
-    try:
-        run_at = parse_iso(run_at_str)
-        interval = parse_iso(interval_time_str)
-        return max(0.0, (interval - run_at).total_seconds() / 3600)
-    except (ValueError, TypeError):
-        return 0.0
-
-
 class NemPd7dayForecastChartCamera(
     _InitialRenderMixin, CoordinatorEntity[PD7DayCoordinator], Camera
 ):
@@ -393,19 +386,6 @@ class NemPd7dayForecastChartCamera(
         store = getattr(self.coordinator, "_store", None)
         run_at = price_data.forecast_generated_at
 
-        # Build per-interval covariate lookups from coordinator data
-        qni_data = self.coordinator.data.interconnectors.get("NSW1-QLD1")
-        qni_by_time: dict[str, float | None] = {}
-        if qni_data:
-            for p in qni_data.forecast:
-                qni_by_time[p.time] = p.mwflow
-
-        gas_by_date: dict[str, float | None] = {}
-        ms = self.coordinator.data.market_summary
-        if ms:
-            for g in ms.forecast:
-                gas_by_date[g.nemtime[:10]] = g.value_tj
-
         # Rec 4 (simplified): build set of intervals that were spike in prior run
         prior_spike_intervals = self._prior_spike_intervals()
 
@@ -418,7 +398,7 @@ class NemPd7dayForecastChartCamera(
             except (ValueError, TypeError):
                 hour = 0
 
-            interval_key = period.time if isinstance(period.time, str) else to_nem_iso(parse_iso(period.time))
+            interval_key = interval_key_for_period(period)
 
             entry = {
                 "nemtime": to_nem_iso(parse_iso(period.nemtime)),
@@ -429,16 +409,30 @@ class NemPd7dayForecastChartCamera(
                 "spike_first_run": interval_key not in prior_spike_intervals,
             }
 
-            if store:
-                gas_tj = gas_by_date.get(interval_key[:10])
-                qni_mw = qni_by_time.get(interval_key)
-                cal = store.apply_to_price(
-                    period.value, h, hour,
-                    gas_forecast_tj=gas_tj,
-                    qni_mwflow=qni_mw,
-                )
-
-                entry.update({
+            # Same shared entry point as sensor.py and tariff_sensor.py, so the
+            # line drawn on the chart, the band shaded around it and the source
+            # label are the ones the forecast sensor already published for this
+            # interval. This used to call store.apply_to_price directly with the
+            # gas and QNI covariates only, no stpasa_features and no
+            # run_features, and the stage-2 gate needs both, so the chart could
+            # never render isotonic+stpasa while the sensor routinely did. See
+            # issue #80, and #66 for why there is one assembly and not four.
+            #
+            # WHY this is safe to call from the executor: _render runs this in
+            # a worker thread, but calibrate_interval only reads. It touches no
+            # Home Assistant API and writes no entity state. Its one write is
+            # the STPASA index cache inside coordinator.stpasa_index, which is
+            # already reached from both the loop and the executor by the
+            # sensor's calibration warm and publishes its run key last for that
+            # reason. sensor._calibrated_forecast_values calls this same
+            # function for every interval of the run from
+            # async_add_executor_job today.
+            cal = calibrate_interval(
+                store, self.coordinator, period.value, interval_key, h, hour,
+                run_at_iso=run_at,
+            )
+            if cal is not None:
+                cal_update = {
                     ATTR_CAL_CALIBRATED: cal["calibrated"],
                     ATTR_CAL_P10: cal["p10"],
                     ATTR_CAL_P50: cal["p50"],
@@ -446,8 +440,18 @@ class NemPd7dayForecastChartCamera(
                     ATTR_CAL_MAE: cal.get("ols_mae"),
                     ATTR_CAL_SOURCE: cal["calibrated_source"],
                     ATTR_CAL_N_OBS: cal["n_obs"],
-                })
+                    # Carried through for the same reason as the rest: the
+                    # sensor publishes it, and _save_spike_intervals below
+                    # already reads it. Without it that set was always empty
+                    # and spike_first_run was always True.
+                    "spike_credible": cal.get("spike_credible"),
+                }
+                if cal.get("stpasa_run_at"):
+                    cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
+                entry.update(cal_update)
             else:
+                # No calibration store, or no raw price. Carry the raw value
+                # through rather than inventing a calibrated 0.
                 entry["value"] = period.value
 
             result.append(entry)
@@ -464,10 +468,16 @@ class NemPd7dayForecastChartCamera(
     def _save_spike_intervals(self, forecast_data: list[dict]) -> None:
         """Persist current spike interval set for next-run comparison (Rec 4)."""
         from .calibration_engine import SPIKE_THRESHOLD
+        # An absent raw price is not a spike and is not a zero. The old
+        # default of 0 compared fine only because the direct apply_to_price
+        # call above raised on a None price before ever reaching here; the
+        # shared entry point returns None instead, so this now has to say what
+        # a missing price means rather than substitute a number for it.
         self._last_spike_intervals: set[str] = {
             entry["time"]
             for entry in forecast_data
-            if entry.get("raw_value", 0) >= SPIKE_THRESHOLD
+            if entry.get("raw_value") is not None
+            and entry["raw_value"] >= SPIKE_THRESHOLD
             and entry.get("spike_credible") is True
         }
 
