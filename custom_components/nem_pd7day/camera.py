@@ -440,14 +440,14 @@ class NemPd7dayForecastChartCamera(
                     ATTR_CAL_MAE: cal.get("ols_mae"),
                     ATTR_CAL_SOURCE: cal["calibrated_source"],
                     ATTR_CAL_N_OBS: cal["n_obs"],
-                    # Carried through for the same reason as the rest: the
-                    # sensor publishes it, and _save_spike_intervals below
-                    # already reads it. Without it that set was always empty
-                    # and spike_first_run was always True.
-                    "spike_credible": cal.get("spike_credible"),
                 }
-                if cal.get("stpasa_run_at"):
-                    cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
+                # NOT carried through here: spike_credible. The sensor
+                # publishes it and _save_spike_intervals below already reads
+                # it, so the set it builds has always been empty and the chart
+                # spike callouts have never fired. Switching them on is a
+                # visible change to the rendered image and needs its own
+                # review, so it is deliberately left out of this parity fix.
+                # See issue #84.
                 entry.update(cal_update)
             else:
                 # No calibration store, or no raw price. Carry the raw value
