@@ -102,6 +102,9 @@ class _FakeCoordinatorEntity:
         return cls
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
+    # Real CoordinatorEntity defines this and every subclass in the integration
+    # chains up to it, so the stub has to provide it or the chain dies here.
+    async def async_added_to_hass(self): pass
 
 _uc_mock = MagicMock()
 _uc_mock.DataUpdateCoordinator = _FakeCoordinator

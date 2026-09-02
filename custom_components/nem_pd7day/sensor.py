@@ -102,6 +102,12 @@ PARALLEL_UPDATES = 0
 _STPASA_MIN_HORIZON_H = 22.0
 _STPASA_MAX_HORIZON_H = 120.0
 
+# How many times CalibratedWriteMixin will re-warm the calibrated forecast memo
+# when the cache key moves while the warm is in flight. See
+# CalibratedWriteMixin._async_warm_until_current for why one attempt is not
+# enough and why this is bounded.
+_MAX_CALIBRATION_WARM_ATTEMPTS = 3
+
 
 def _stpasa_features_for_interval(
     coordinator: PD7DayCoordinator,
@@ -322,8 +328,93 @@ class CalibratedWriteMixin:
                 exc_info=True,
             )
 
+    def _calibrated_cache_is_current(self) -> bool:
+        """Whether the memo already holds the value this entity's write will ask for.
+
+        Deliberately builds the key the same way ``_calibrated_forecast`` does,
+        refreshing the coordinator STPASA index, so the answer is exactly what
+        the property will compute rather than an approximation of it.
+
+        This is only sound because every caller invokes it with no ``await``
+        between the check and ``async_write_ha_state()``. ``_stpasa_index_run``
+        and ``fit_generation`` are only ever mutated from coroutines and loop
+        callbacks, so within a single loop iteration nothing can move them
+        underneath us. Introducing an await between the two would reopen the
+        race this exists to close.
+        """
+        d = self._price_data
+        if d is None:
+            # Nothing to calibrate, so the write cannot pay for a rebuild.
+            return True
+        cache = getattr(self.coordinator, "_calibrated_forecast_cache", None)
+        if not isinstance(cache, dict):
+            return False
+        entry = cache.get(self._region)
+        if not (isinstance(entry, tuple) and len(entry) == 2):
+            return False
+        cached_key, cached_val = entry
+        if cached_val is None:
+            return False
+        return cached_key == self._calibrated_forecast_key(d)
+
+    async def _async_warm_until_current(self) -> None:
+        """Warm the memo, re-warming while the key keeps moving underneath us.
+
+        A single warm is not enough. The memo key folds in the STPASA index key
+        (``run_datetime|fetched_at``) and ``CalibrationStore.fit_generation``,
+        and both can change without a coordinator refresh: any STPASA refetch
+        moves ``fetched_at``, and ``async_refit`` plus the OLS stage 2 attach
+        each bump ``fit_generation``. The warm itself takes roughly 0.4 s in the
+        executor, which is ample time for a refit triggered by the same new run
+        to land. When that happened the write missed the memo and recalibrated
+        all 357 intervals on the event loop, which is the whole thing #58 set
+        out to prevent. Measured live on v3.3.1 at a 30 minute boundary:
+
+            Updating state for sensor.nem_pd7day_tas1_price_forecast
+            (PD7DayForecastSensor) took 6.766 seconds.
+
+        Bounded rather than unbounded: if the inputs are churning faster than a
+        warm completes, three attempts is already an unusual amount of executor
+        work to spend on one state write, and falling through to the lazy path
+        costs speed, not correctness.
+        """
+        for attempt in range(1, _MAX_CALIBRATION_WARM_ATTEMPTS + 1):
+            await self._async_warm_calibrated_forecast()
+            if self._calibrated_cache_is_current():
+                return
+            _LOGGER.debug(
+                "Calibrated forecast key moved during warm attempt %s/%s for %s",
+                attempt,
+                _MAX_CALIBRATION_WARM_ATTEMPTS,
+                getattr(self, "entity_id", None),
+            )
+
+    async def async_added_to_hass(self) -> None:
+        """Warm before the platform's own first state write.
+
+        ``async_add_entities(..., update_before_add=True)`` does not route the
+        first write through ``_handle_coordinator_update``. Home Assistant's
+        ``Entity.add_to_platform_finish`` is:
+
+            await self.async_internal_added_to_hass()
+            await self.async_added_to_hass()
+            self.async_write_ha_state()
+
+        so that write is a direct call from the add flow and the mixin never saw
+        it. Every entity therefore paid for a full recalibration on the loop
+        exactly once, during setup, which is precisely the restart condition
+        #55 was reported from. This hook is the last thing awaited before that
+        write, and there is no await between it and the write, so warming here
+        covers it.
+
+        The memo is shared per region across the three sensors that use it, so
+        only the first entity of a region does real work.
+        """
+        await super().async_added_to_hass()
+        await self._async_warm_until_current()
+
     async def _async_warm_then_write(self) -> None:
-        await self._async_warm_calibrated_forecast()
+        await self._async_warm_until_current()
         self.async_write_ha_state()
 
     def _schedule_warm_state_write(self) -> None:
@@ -386,17 +477,13 @@ class PD7DayForecastSensor(
     # the full recalibration of roughly 336 intervals three times per region
     # instead of once, which is what made platform setup take 42 to 53 seconds
     # per region.
-    def _calibrated_forecast(self, d) -> list[dict]:
-        """
-        Return the calibrated forecast list for PriceData ``d``, memoised per
-        region on the PD7DAY run plus the STPASA index and calibration versions.
+    def _calibrated_forecast_key(self, d) -> tuple:
+        """Build the memo key for PriceData ``d``.
 
-        Recomputes only when an input that affects calibration changes:
-          * ``forecast_generated_at`` and interval count (new PD7DAY run),
-          * the STPASA index cache key (new/refetched STPASA run),
-          * the calibration store's fit generation (refit or OLS stage 2).
-        Otherwise the previously computed list is returned unchanged, avoiding
-        the full per-interval recalibration on every state write.
+        Split out of ``_calibrated_forecast`` so ``CalibratedWriteMixin`` can ask
+        whether the memo is current without recomputing the forecast to find
+        out. Both callers must derive the key identically or the check is
+        worthless, so there is deliberately only one implementation.
         """
         # Refresh the coordinator STPASA index so its cache key reflects the
         # latest store contents before we fold it into our cache key.
@@ -413,13 +500,27 @@ class PD7DayForecastSensor(
             # moves every calibrated price, and CPython recycles id() values for
             # freed objects. See CalibrationStore.fit_generation.
             cal_gen = getattr(self._store, "fit_generation", None)
-        key = (
+        return (
             self._region,
             d.forecast_generated_at,
             len(d.forecast),
             stpasa_key,
             cal_gen,
         )
+
+    def _calibrated_forecast(self, d) -> list[dict]:
+        """
+        Return the calibrated forecast list for PriceData ``d``, memoised per
+        region on the PD7DAY run plus the STPASA index and calibration versions.
+
+        Recomputes only when an input that affects calibration changes:
+          * ``forecast_generated_at`` and interval count (new PD7DAY run),
+          * the STPASA index cache key (new/refetched STPASA run),
+          * the calibration store's fit generation (refit or OLS stage 2).
+        Otherwise the previously computed list is returned unchanged, avoiding
+        the full per-interval recalibration on every state write.
+        """
+        key = self._calibrated_forecast_key(d)
         # PD7DayCoordinator initialises this dict. Check the type rather than
         # just checking for None, because the tests substitute a MagicMock
         # coordinator and attribute access on a mock invents an object instead of
@@ -833,7 +934,9 @@ class SpotPriceForecastDays27Sensor(
 
     # Run-keyed calibrated-forecast cache (shared implementation). Memoises the
     # per-interval calibration so unchanged runs are not recomputed on every
-    # state write.
+    # state write. The key builder must come with it, or CalibratedWriteMixin
+    # would check currency against a different key than the memo stored.
+    _calibrated_forecast_key = PD7DayForecastSensor._calibrated_forecast_key
     _calibrated_forecast = PD7DayForecastSensor._calibrated_forecast
 
     @property
@@ -1423,6 +1526,7 @@ class PD7DayDataSensor(
     # Reuse the calibration logic from PD7DayForecastSensor for a single period.
     _covariates_for_interval = PD7DayForecastSensor._covariates_for_interval
     _calibrate_period = PD7DayForecastSensor._calibrate_period
+    _calibrated_forecast_key = PD7DayForecastSensor._calibrated_forecast_key
     _calibrated_forecast = PD7DayForecastSensor._calibrated_forecast
 
 
