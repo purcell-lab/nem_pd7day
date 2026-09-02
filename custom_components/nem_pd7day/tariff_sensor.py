@@ -269,6 +269,39 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         cal = self._store.apply_to_price(period.value, h, hour)
         return cal["calibrated"]
 
+    def _tariff_windows(self, tariff_periods) -> list[tuple]:
+        """Parse the period start/end strings into ``time`` objects, once.
+
+        ``_lookup_period_info`` used to ``strptime`` both ends of every entry on
+        every interval. At 330 intervals against a tariff with several windows
+        that was thousands of redundant parses per state write, and it showed:
+        21,140 ``strptime`` calls in a five build profile, 0.316 s of 0.802 s
+        total. See #62.
+
+        Keyed on the identity of the source list rather than a plain flag, so
+        replacing ``_cached_tariff_periods`` rebuilds the windows instead of
+        silently serving stale ones. Tests do exactly that.
+
+        Parse failures are deliberately not caught here. The caller wraps this
+        in the same try/except that used to wrap the inline parsing, so a
+        malformed entry still yields (None, None) for the interval exactly as
+        before, rather than being skipped so the remaining windows can match.
+        """
+        cached = getattr(self, "_cached_tariff_windows", None)
+        if cached is not None and cached[0] is tariff_periods:
+            return cached[1]
+        windows = [
+            (
+                datetime.datetime.strptime(entry["start"], "%H:%M").time(),
+                datetime.datetime.strptime(entry["end"], "%H:%M").time(),
+                entry.get("period"),
+                entry.get("network_rate_$/kwh"),
+            )
+            for entry in tariff_periods
+        ]
+        self._cached_tariff_windows = (tariff_periods, windows)
+        return windows
+
     def _lookup_period_info(self, period) -> tuple[str | None, float | None]:
         """Find the tariff period name and network $/kWh rate for a forecast interval.
 
@@ -290,11 +323,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 return None, None
             lookup_dt = parse_iso(period.nemtime) - datetime.timedelta(minutes=5)
             t = lookup_dt.time()
-            for entry in tariff_periods:
-                start = datetime.datetime.strptime(entry["start"], "%H:%M").time()
-                end = datetime.datetime.strptime(entry["end"], "%H:%M").time()
+            for start, end, name, rate in self._tariff_windows(tariff_periods):
                 if start <= t < end or (start > end and (t >= start or t < end)):
-                    return entry.get("period"), entry.get("network_rate_$/kwh")
+                    return name, rate
             return None, None
         except Exception:
             _LOGGER.debug(
@@ -305,18 +336,27 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             )
             return None, None
 
-    def _compute_tariff(self, period) -> float | None:
+    def _compute_tariff(self, period, calibrated: float | None = None) -> float | None:
         """Compute tariff price in $/kWh for a single forecast period.
 
         The library expects AEMO nemtime (interval END) and subtracts 5 min
         internally for period lookup. Passing interval START would place a
         16:00-start interval at 15:55 -> Day rate instead of Evening rate.
+
+        ``calibrated`` lets a caller that has already computed the calibrated
+        spot price for this period hand it in. The attribute loops need the same
+        number for the ``spot`` key, and computing it here as well meant every
+        interval was calibrated twice per state write, visible in the profile as
+        3300 ``_calibrated_value`` calls against 1650 for this method. Left
+        optional so ``native_value``, which wants only the tariff, is unchanged.
         """
         if spot_to_tariff is None:
             return None
         try:
             # Pass nemtime (interval END) — library subtracts 5 min for ToU lookup
-            rrp_mwh = self._calibrated_value(period) * 1000  # calibrated spot $/kWh -> $/MWh
+            if calibrated is None:
+                calibrated = self._calibrated_value(period)
+            rrp_mwh = calibrated * 1000  # calibrated spot $/kWh -> $/MWh
             cache_key = (period.nemtime, round(rrp_mwh, 4))
             cache = getattr(self, "_period_tariff_cache", None)
             if cache is not None and cache[0] == cache_key:
@@ -507,13 +547,15 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         if d is not None:
             # Base tariff sensor always provides full day 1-7 forecast
             for period in d.forecast:
-                tariff_val = self._compute_tariff(period)
+                # Calibrate once and reuse for both the tariff and the spot key.
+                spot = self._calibrated_value(period)
+                tariff_val = self._compute_tariff(period, calibrated=spot)
                 period_name, network_rate = self._lookup_period_info(period)
                 forecast_list.append({
                     "time": period.time,           # interval START (nemtime - 30 min)
                     "nemtime": period.nemtime,     # interval END (AEMO convention)
                     "spot_raw": round(period.value, 6),  # uncalibrated spot price $/kWh
-                    "spot": round(self._calibrated_value(period), 6),  # calibrated spot price $/kWh
+                    "spot": round(spot, 6),        # calibrated spot price $/kWh
                     "value": tariff_val,           # spot + network ToU component $/kWh
                     "period": period_name,         # tariff period name for this interval
                     "network_rate": network_rate,  # network component $/kWh for this interval
@@ -598,13 +640,15 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
                 p for p in d.forecast if parse_iso(p.time) > cutoff_dt
             ]
             for period in filtered_periods:
-                tariff_val = self._compute_tariff(period)
+                # Calibrate once and reuse for both the tariff and the spot key.
+                spot = self._calibrated_value(period)
+                tariff_val = self._compute_tariff(period, calibrated=spot)
                 period_name, network_rate = self._lookup_period_info(period)
                 forecast_list.append({
                     "time": period.time,
                     "nemtime": period.nemtime,
                     "spot_raw": round(period.value, 6),
-                    "spot": round(self._calibrated_value(period), 6),
+                    "spot": round(spot, 6),
                     "value": tariff_val,
                     "period": period_name,
                     "network_rate": network_rate,
@@ -805,11 +849,20 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         """
         return None, None
 
-    def _compute_export_tariff(self, period) -> float | None:
+    def _compute_export_tariff(self, period, calibrated: float | None = None) -> float | None:
+        """Compute the feed-in tariff $/kWh for one forecast period.
+
+        ``calibrated`` mirrors ``NemPd7dayTariffSensor._compute_tariff``: the
+        attribute loop needs the same calibrated spot price for its ``spot``
+        key, so it computes it once and passes it in rather than having every
+        interval calibrated twice per state write. See #62.
+        """
         if spot_to_feed_in_tariff is None:
             return None
         try:
-            rrp_mwh = self._calibrated_value(period) * 1000  # calibrated spot $/kWh -> $/MWh
+            if calibrated is None:
+                calibrated = self._calibrated_value(period)
+            rrp_mwh = calibrated * 1000  # calibrated spot $/kWh -> $/MWh
             cache_key = (period.nemtime, round(rrp_mwh, 4))
             cache = getattr(self, "_period_export_tariff_cache", None)
             if cache is not None and cache[0] == cache_key:
@@ -892,13 +945,15 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         forecast_list: list[dict[str, Any]] = []
         if d is not None:
             for period in d.forecast:
-                tariff_val = self._compute_export_tariff(period)
+                # Calibrate once and reuse for both the tariff and the spot key.
+                spot = self._calibrated_value(period)
+                tariff_val = self._compute_export_tariff(period, calibrated=spot)
                 period_name, network_rate = self._lookup_period_info(period)
                 forecast_list.append({
                     "time": period.time,
                     "nemtime": period.nemtime,
                     "spot_raw": round(period.value, 6),  # uncalibrated spot price $/kWh
-                    "spot": round(self._calibrated_value(period), 6),  # calibrated spot price $/kWh
+                    "spot": round(spot, 6),              # calibrated spot price $/kWh
                     "value": tariff_val,
                     "period": period_name,
                     "network_rate": network_rate,
