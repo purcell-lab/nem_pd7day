@@ -44,10 +44,13 @@ from dataclasses import dataclass
 from datetime import timedelta, timezone
 from unittest.mock import MagicMock
 
+import re
+
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.axes  # noqa: E402
+import matplotlib.text  # noqa: E402
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
@@ -348,6 +351,98 @@ def outside(boxes, axes_box):
     ]
 
 
+_NOTICE_LABELS = {"LOR1", "LOR2", "LOR3", "MSL1", "MSL2", "MSL3"}
+
+
+def _strip_family(text):
+    """Name the label family, or None for text that does not share the strip.
+
+    Everything above the clip line competes for the same thin band: the clip
+    line label, the per day extreme labels, the grid stress notice labels and
+    the spike callout boxes. Axis tick labels and the day divider labels are
+    deliberately excluded. Those two collide with each other on main on most
+    charts, with or without callouts, and that is a separate pre-existing
+    defect rather than anything this change touches.
+    """
+    if text.startswith("raw $"):
+        return "callout"
+    if text.startswith("clip:"):
+        return "clip"
+    if text in _NOTICE_LABELS:
+        return "notice"
+    if re.fullmatch(r"\$\d+\.\d{3}", text):
+        return "extreme"
+    return None
+
+
+def collect_strip_text(data, annotations=None):
+    """Return (family, text, box) for every label in the above clip line strip.
+
+    Annotation.get_window_extent covers the leader arrow as well as the text,
+    which would report a collision against everything the arrow passes over, so
+    a label with a bbox patch is measured from the patch and one without is
+    measured as plain text.
+    """
+    calls = []
+    real_annotate = matplotlib.axes.Axes.annotate
+    real_text = matplotlib.axes.Axes.text
+
+    def spy_annotate(self, text, *args, **kwargs):
+        artist = real_annotate(self, text, *args, **kwargs)
+        calls.append((self, artist))
+        return artist
+
+    def spy_text(self, x, y, text, *args, **kwargs):
+        artist = real_text(self, x, y, text, *args, **kwargs)
+        calls.append((self, artist))
+        return artist
+
+    matplotlib.axes.Axes.annotate = spy_annotate
+    matplotlib.axes.Axes.text = spy_text
+    try:
+        fc.render_forecast_chart(data, "QLD1", annotations=annotations)
+    finally:
+        matplotlib.axes.Axes.annotate = real_annotate
+        matplotlib.axes.Axes.text = real_text
+
+    out = []
+    drawn = set()
+    for ax, artist in calls:
+        label = artist.get_text()
+        family = _strip_family(label)
+        if family is None:
+            continue
+        if id(ax.figure) not in drawn:
+            # One draw per figure, not per artist. render_forecast_chart saves
+            # at dpi 110 with bbox_inches tight, so the artists are left laid
+            # out for that dpi while get_window_extent reports in figure dpi;
+            # redrawing on the figure's own canvas puts every extent below into
+            # one coordinate system.
+            ax.figure.canvas.draw()
+            drawn.add(id(ax.figure))
+        renderer = ax.figure.canvas.get_renderer()
+        patch = artist.get_bbox_patch() if hasattr(artist, "get_bbox_patch") else None
+        if patch is not None:
+            box = patch.get_window_extent(renderer)
+        else:
+            box = matplotlib.text.Text.get_window_extent(artist, renderer)
+        out.append((family, label, box))
+    return out
+
+
+def strip_collisions(items):
+    """Pairs of strip labels whose boxes overlap by more than half a pixel."""
+    bad = []
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            (f1, t1, a), (f2, t2, b) = items[i], items[j]
+            ox = min(a.x1, b.x1) - max(a.x0, b.x0)
+            oy = min(a.y1, b.y1) - max(a.y0, b.y0)
+            if ox > 0.5 and oy > 0.5:
+                bad.append((f"{f1}:{t1}", f"{f2}:{t2}", round(ox, 1), round(oy, 1)))
+    return bad
+
+
 # Camera tests
 
 
@@ -536,7 +631,12 @@ def test_callout_stays_inside_the_axes_when_p10_reaches_the_market_floor():
 
 
 def test_callout_does_not_land_on_a_grid_stress_label():
-    """LOR and MSL labels sit in the same strip of chart above the clip line."""
+    """LOR and MSL labels sit in the same strip of chart above the clip line.
+
+    The notice labels now live in a band of their own below the callout tiers,
+    so the two cannot collide vertically at all. The horizontal seeding of the
+    tier search is still there as a second line of defence.
+    """
     data = [chart_entry(i, 0.05) for i in range(96)]
     data[20] = chart_entry(20, 12.0, credible=True)
     ann = types.SimpleNamespace(
@@ -550,31 +650,12 @@ def test_callout_does_not_land_on_a_grid_stress_label():
     _png, boxes, _labels, axes_box = render_and_collect(data, annotations=[ann])
     assert len(boxes) == 1
     assert outside(boxes, axes_box) == []
-    real_text = matplotlib.axes.Axes.text
-    placed = []
-
-    def spy(self, x, y, s, *args, **kwargs):
-        artist = real_text(self, x, y, s, *args, **kwargs)
-        if str(s) == "LOR2":
-            placed.append((self, artist))
-        return artist
-
-    matplotlib.axes.Axes.text = spy
-    try:
-        _png2, boxes2, _l2, _a2 = render_and_collect(data, annotations=[ann])
-    finally:
-        matplotlib.axes.Axes.text = real_text
-    assert placed, "the LOR2 label was not drawn, so this test proves nothing"
-    ax, artist = placed[-1]
-    ax.figure.canvas.draw()
-    notice_box = artist.get_window_extent(ax.figure.canvas.get_renderer())
-    for box in boxes2:
-        assert not (
-            box.x0 < notice_box.x1
-            and notice_box.x0 < box.x1
-            and box.y0 < notice_box.y1
-            and notice_box.y0 < box.y1
-        ), "the callout box landed on top of the LOR2 label"
+    items = collect_strip_text(data, annotations=[ann])
+    assert any(f == "notice" for f, _t, _b in items), (
+        "the LOR2 label was not drawn, so this test proves nothing"
+    )
+    assert any(f == "callout" for f, _t, _b in items), "no callout drawn"
+    assert strip_collisions(items) == [], strip_collisions(items)
     print("  PASS: the callout avoids a grid stress label")
 
 
@@ -664,3 +745,112 @@ if __name__ == "__main__":
                 print(f"  FAIL: {name}: {exc}")
     print("FAILURES:", failures)
     sys.exit(1 if failures else 0)
+
+
+def evening_spike_fixture():
+    """A seven day chart shaped like the one a reviewer looked at.
+
+    Synthetic. It matters that this is a full 336 interval chart with a diurnal
+    shape, because the clip line label is anchored to the third interval and so
+    only occupies the leftmost tenth of the chart width. The label it collided
+    with is the first day's maximum, which in this shape falls in the evening of
+    the first day and lands inside that tenth. A flat fixture does not reproduce
+    it.
+    """
+    import math
+
+    spikes = {}
+    for day, peak in ((0, 8.4), (1, 14.2), (3, 22.0)):
+        first = 27 + 48 * day
+        for k, mult in enumerate((0.45, 1.0, 0.7)):
+            spikes[first + k] = peak * mult
+    data = []
+    for i in range(336):
+        start = RUN_DT + timedelta(minutes=30 * (i + 1))
+        hour = start.hour + start.minute / 60.0
+        shape = (
+            0.09
+            + 0.06 * math.sin((hour - 9) / 24 * 2 * math.pi)
+            - 0.04 * math.exp(-((hour - 12) ** 2) / 8)
+        )
+        raw = spikes.get(i, max(-0.02, shape))
+        cal = min(raw, 0.22) if raw < SPIKE_THRESHOLD else 0.19
+        data.append(
+            chart_entry(
+                i, raw, calibrated=cal,
+                credible=True if raw >= SPIKE_THRESHOLD else "omit",
+            )
+        )
+    return data
+
+
+def test_the_clip_label_does_not_collide_with_a_clipped_daily_maximum():
+    """The regression the headroom reservation introduced, pinned.
+
+    Everything above the clip line used to be positioned as a fraction of
+    CLIP_Y. Reserving headroom for the callout tiers raises the axis top, which
+    squeezes those fractions toward the clip line and onto the daily extreme
+    labels, which sit at a fixed 9 pt above their marker. On main the clip
+    label and the first day's maximum clear each other by a tenth of a pixel,
+    which is luck rather than design, and the headroom reservation turned that
+    into a measured overlap of 3.4 px. The strip is now allocated in points and
+    does not move with the y limits.
+    """
+    ann = types.SimpleNamespace(
+        is_cancelled=False, notice_type="LOR", level=2,
+        period_from=RUN_DT + timedelta(hours=13),
+        period_to=RUN_DT + timedelta(hours=16), notice_id="n1",
+    )
+    items = collect_strip_text(evening_spike_fixture(), annotations=[ann])
+    families = {f for f, _t, _b in items}
+    for needed in ("clip", "extreme", "notice", "callout"):
+        assert needed in families, (
+            f"no {needed} label drawn, so this test proves nothing"
+        )
+    assert strip_collisions(items) == [], strip_collisions(items)
+    print("  PASS: nothing in the clip line strip collides")
+
+
+def test_no_label_in_the_clip_line_strip_collides_across_a_y_limit_sweep():
+    """The y limits are what move these labels, so sweep the y limits.
+
+    The point of this test is that it varies exactly the things that change the
+    axis span: the price level, the depth of the p10 floor and whether a
+    callout is present at all to trigger the headroom reservation.
+
+    Synthetic data. It shows that the strip holds together across the span, not
+    that any of these shapes occur in the market.
+    """
+    rng = random.Random(29)
+    ann = types.SimpleNamespace(
+        is_cancelled=False, notice_type="LOR", level=2,
+        period_from=RUN_DT + timedelta(hours=5),
+        period_to=RUN_DT + timedelta(hours=8), notice_id="n1",
+    )
+    checked = 0
+    with_callouts = 0
+    for level in (0.02, 0.18, 0.30, 1.00):
+        for floor in (0.02, -0.04, -1.00, -3.00):
+            for spikes in ((), (10, 11), (10, 11, 40, 41, 70)):
+                data = []
+                for i in range(96):
+                    raw = rng.uniform(0.01, max(level, 0.02))
+                    data.append(chart_entry(i, raw, calibrated=level,
+                                            p10=floor if i == 0 else None))
+                for i in spikes:
+                    data[i] = chart_entry(i, 4.0 + i, calibrated=level,
+                                          p10=floor if i == 0 else None,
+                                          credible=True)
+                items = collect_strip_text(data, annotations=[ann])
+                if any(f == "callout" for f, _t, _b in items):
+                    with_callouts += 1
+                checked += 1
+                assert strip_collisions(items) == [], (
+                    f"level={level} floor={floor} spikes={spikes}: "
+                    f"{strip_collisions(items)}"
+                )
+    assert checked >= 40, f"only {checked} charts swept"
+    assert with_callouts >= 20, (
+        f"only {with_callouts} charts drew a callout, so the headroom "
+        "reservation was barely exercised"
+    )

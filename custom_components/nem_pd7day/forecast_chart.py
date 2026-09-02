@@ -72,14 +72,43 @@ _CALLOUT_LABEL_SPAN_FRAC = 0.22
 # a single evening episode into several clusters whose boxes then landed on top
 # of each other; the triangles still mark every interval individually.
 _CALLOUT_CLUSTER_GAP_MIN = 360.0
-# Vertical tiers, in points above the clip line, tried in order.
-_CALLOUT_Y_OFFSETS_PT = (45, 65, 85)
+# Everything drawn above the clip line shares one narrow strip, and the strip
+# has to be allocated in points rather than in fractions of the price axis.
+# Anything positioned as a fraction of CLIP_Y moves whenever the y limits move,
+# and the y limits now move: the headroom reservation below raises the axis top
+# when a callout is present, which drags a data positioned label down onto
+# whatever sits at a fixed point offset beneath it. That is what happened when
+# the callouts were first switched on. The clip label sat at CLIP_Y * 1.02 and
+# the grid stress labels at CLIP_Y * 1.12, 1.20 and 1.28, and raising the axis
+# top pulled the clip label into the daily maximum label, which is drawn 9 pt
+# above its marker. On main the two clear each other by a tenth of a pixel,
+# which is luck rather than design, so both label families are now positioned
+# in points and the strip is allocated once, here, bottom to top:
+#
+#   9 pt   daily maximum and minimum labels (unchanged, set at the draw site)
+#  17 pt   the clip line label
+#  28 pt   grid stress notice labels, three tiers when notices overlap in time
+#  58 pt   spike callout boxes, three tiers
+#
+# Each entry allows about 7.5 pt for a line of text and the callout boxes about
+# 13.5 pt including their padding.
+_CLIP_LABEL_OFFSET_PT = 17
+_NOTICE_LABEL_OFFSETS_PT = (28, 38, 48)
+# Vertical tiers, in points above the clip line, tried in order. These sit
+# above the notice label tiers so a callout and a notice label cannot collide
+# vertically at all, which matters because the horizontal seeding below only
+# separates them when the notice is close enough in time to be noticed.
+_CALLOUT_Y_OFFSETS_PT = (58, 76, 94)
 # Fraction of the visible y span kept clear above the clip line when callouts
 # are present. The tier offsets are a fixed number of points but the y span is
 # not: a run whose p10 reaches the -$1000/MWh market floor stretches the axis
-# far enough that a 65 pt offset lands outside it, and the box was then painted
-# over the title. Measured overflow before this reservation: 55 px.
-_CALLOUT_HEADROOM_FRAC = 0.34
+# far enough that the top offset lands outside it, and the box was then painted
+# over the title. Measured overflow before this reservation: 55 px. The top of
+# the tallest callout box sits about 108 pt above the clip line and the axes are
+# about 371 pt tall, so 29 per cent is the minimum that fits and this leaves
+# margin for the topmost y tick label. The ratio of points to axis fraction does
+# not depend on dpi, because the axes height in points does not either.
+_CALLOUT_HEADROOM_FRAC = 0.36
 
 
 def _tod_label(hour: int) -> str:
@@ -268,7 +297,11 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         }
         # Track label positions to stagger vertically when notices overlap in time
         # key: notice_id or index, value: y offset tier (0, 1, 2...)
-        label_y_levels = [CLIP_Y * 1.28, CLIP_Y * 1.20, CLIP_Y * 1.12]
+        # Point offsets above the clip line, not fractions of it, so the tiers
+        # keep their spacing when the callout headroom raises the axis top.
+        # Ordered highest first, as before, so a lone notice sits at the top of
+        # the notice strip.
+        label_y_levels = list(reversed(_NOTICE_LABEL_OFFSETS_PT))
         # Group placed labels by approximate x-position bucket (6h windows)
         # to detect collisions and assign vertical tiers
         placed: list[tuple] = []  # (mid_num, tier)
@@ -300,9 +333,10 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
             tier = min(tier, len(label_y_levels) - 1)
             placed.append((mid_num, tier))
             notice_label_x.append(mid_num)
-            ax.text(
-                mid, label_y_levels[tier], label_text,
-                ha="center", va="top", fontsize=7, color=color,
+            ax.annotate(
+                label_text, xy=(mid, CLIP_Y),
+                xytext=(0, label_y_levels[tier]), textcoords="offset points",
+                ha="center", va="bottom", fontsize=7, color=color,
                 fontweight="bold", zorder=5,
             )
 
@@ -503,9 +537,11 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     ax.set_ylabel('$/kWh', fontsize=10, labelpad=6)
     ax.yaxis.set_tick_params(labelsize=9)
     ax.axhline(CLIP_Y, color='#C62828', linewidth=0.8, linestyle=':', alpha=0.6)
-    ax.text(times[min(2, len(times) - 1)], CLIP_Y * 1.02,
-            f'clip: p99+15% = ${CLIP_Y:.2f}/kWh',
-            fontsize=7, color='#C62828', va='bottom', alpha=0.85)
+    ax.annotate(f'clip: p99+15% = ${CLIP_Y:.2f}/kWh',
+                xy=(times[min(2, len(times) - 1)], CLIP_Y),
+                xytext=(0, _CLIP_LABEL_OFFSET_PT), textcoords='offset points',
+                fontsize=7, color='#C62828', ha='left', va='bottom',
+                alpha=0.85)
 
     # Y-axis right: $/MWh — use twinx on the figure's ax (OO API, thread-safe)
     ax2 = ax.twinx()
