@@ -95,3 +95,68 @@ def restore_sensor_module_globals():
     yield
     if original is not sentinel:
         sensor_mod._amber_express_cutoff = original
+
+
+@pytest.fixture(autouse=True)
+def real_clock_behind_stubbed_dt_util():
+    """
+    Give every stubbed ``dt_util`` a real ``utcnow`` so time arithmetic works.
+
+    The hass-aware modules read the clock through ``homeassistant.util.dt``
+    (issue #109) so a test can freeze it. Most test modules stub the whole
+    ``homeassistant`` package with MagicMock, and a MagicMock ``utcnow()``
+    returns a MagicMock that breaks datetime arithmetic and comparisons. This
+    fixture points ``utcnow`` (and ``parse_time``) at real implementations
+    unless a test has already configured them. To freeze time in a test, use
+    ``patch.object(module.dt_util, "utcnow", return_value=instant)``, which
+    replaces the attribute and so wins over this default.
+    """
+    from datetime import datetime, time as _time, timezone
+    from unittest.mock import MagicMock
+
+    def _utcnow():
+        return datetime.now(timezone.utc)
+
+    def _parse_time(value):
+        try:
+            return _time.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+
+    for mod in _integration_module_objects():
+        du = getattr(mod, "dt_util", None)
+        if not isinstance(du, MagicMock):
+            continue
+        for attr, impl in (("utcnow", _utcnow), ("parse_time", _parse_time)):
+            target = getattr(du, attr)
+            if not isinstance(target, MagicMock):
+                continue
+            if target.side_effect is None and isinstance(target.return_value, MagicMock):
+                target.side_effect = impl
+    yield
+
+
+def _integration_module_objects():
+    """Every live module object of the integration, not only the ones in sys.modules.
+
+    Test files load integration modules from file under the canonical name, so
+    a later file's load replaces the sys.modules entry while classes imported
+    by an earlier file keep referencing the earlier module object. Both must
+    get the real clock, so this walks the heap for module objects by name.
+    The walk is cached; a module loaded lazily inside a test is picked up on
+    the next call because the cache is refreshed whenever sys.modules grew.
+    """
+    import gc
+    import types
+
+    key = len(sys.modules)
+    cached = _integration_module_objects.__dict__.get("cache")
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    found = [
+        obj for obj in gc.get_objects()
+        if isinstance(obj, types.ModuleType)
+        and getattr(obj, "__name__", "").startswith("custom_components.nem_pd7day")
+    ]
+    _integration_module_objects.cache = (key, found)
+    return found

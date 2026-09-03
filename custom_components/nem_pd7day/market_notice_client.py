@@ -22,12 +22,13 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, timedelta
 from typing import Callable, Optional
 
 import aiohttp
 
 from .nemweb_retry import classify_status, fetch_with_retry
+from .const import NEM_TZ, NEMWEB_HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,7 +73,6 @@ class _NotPublished:
 
 _NOT_PUBLISHED = _NotPublished()
 
-NEM_TZ = timezone(timedelta(hours=10))
 NEMWEB_MARKET_NOTICE_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/Market_Notice/"
 
 # Only notices from the current or previous NEM day are of any use here. An LOR
@@ -529,7 +529,7 @@ class MarketNoticeClient:
         async with self._session.get(
             NEMWEB_MARKET_NOTICE_URL,
             timeout=aiohttp.ClientTimeout(total=30),
-            headers={"User-Agent": "nem_pd7day/2.3"},
+            headers=NEMWEB_HEADERS,
         ) as resp:
             classify_status(
                 resp.status,
@@ -549,7 +549,7 @@ class MarketNoticeClient:
         async with self._session.get(
             url,
             timeout=aiohttp.ClientTimeout(total=15),
-            headers={"User-Agent": "nem_pd7day/2.3"},
+            headers=NEMWEB_HEADERS,
         ) as resp:
             if resp.status in _NOTICE_NOT_PUBLISHED_STATUSES:
                 _LOGGER.debug(

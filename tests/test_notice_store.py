@@ -43,16 +43,9 @@ def test_notice_store_active_count():
     )
     assert len(active) == 2
     assert all(not n.is_cancelled for n in active)
-    # has_active_stress uses datetime.now() internally — verify via get_upcoming_stress
-    # with a patched now so the 48h window covers our test notices
-    real_datetime = datetime
-
-    class FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return now
-
-    with patch("custom_components.nem_pd7day.notice_store.datetime", FrozenDatetime):
+    # has_active_stress reads the clock through now_nem() (issue #108); pin it
+    # so the 48h window covers our test notices.
+    with patch("custom_components.nem_pd7day.notice_store.now_nem", return_value=now):
         assert store.has_active_stress("QLD1", horizon_hours=48)  # MSL2 within 48h
 
 

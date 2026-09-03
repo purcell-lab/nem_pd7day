@@ -25,6 +25,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 from .const import STORAGE_VERSION
 from .stpasa_client import StpasaInterval, StpasaResult
@@ -40,8 +41,11 @@ def _stpasa_storage_key(region: str) -> str:
     return f"nem_pd7day.stpasa.{region.lower()}"
 
 
-def _is_fresh(fetched_at: str) -> bool:
-    """Return True if fetched_at (UTC ISO-8601) is within the fresh cache TTL."""
+def _is_fresh(fetched_at: str, now: datetime | None = None) -> bool:
+    """Return True if fetched_at (UTC ISO-8601) is within the fresh cache TTL.
+
+    *now* defaults to dt_util.utcnow(), which tests can freeze (issue #109).
+    """
     if not fetched_at:
         return False
     try:
@@ -50,10 +54,10 @@ def _is_fresh(fetched_at: str) -> bool:
         return False
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - dt) <= STPASA_CACHE_TTL
+    return ((now or dt_util.utcnow()) - dt) <= STPASA_CACHE_TTL
 
 
-def _cache_status(fetched_at: str) -> str:
+def _cache_status(fetched_at: str, now: datetime | None = None) -> str:
     """Return 'fresh', 'stale', or 'expired' for a fetched_at UTC ISO-8601 string.
 
     - fresh   : age <= STPASA_CACHE_TTL (90 min) — use normally
@@ -68,7 +72,7 @@ def _cache_status(fetched_at: str) -> str:
         return "expired"
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    age = datetime.now(timezone.utc) - dt
+    age = (now or dt_util.utcnow()) - dt
     if age <= STPASA_CACHE_TTL:
         return "fresh"
     if age <= STAPASA_STALE_TTL:

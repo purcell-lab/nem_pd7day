@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
@@ -56,14 +56,48 @@ class _InitialRenderMixin:
     the same way, and setup returns immediately.
     """
 
-    def _schedule_initial_render(self) -> None:
+    # Class-level default so instances built without __init__ still work.
+    _pending_renders: set | None = None
+
+    if TYPE_CHECKING:
+        # Provided by the Camera entity this mixes into.
+        entity_id: str
+        hass: HomeAssistant
+
+        def async_on_remove(self, func: Callable[[], None]) -> None: ...
+
+    def _schedule_render(self, name: str) -> None:
+        """Run one render as a background task tied to this entity's life.
+
+        Every render, the initial one and each coordinator update, goes
+        through here so all of them are cancelled when the entity is removed.
+        The coordinator-update path used to call hass.async_create_task with
+        nothing holding the task, so a render could outlive its entity
+        (issue #106). One on-remove hook is registered, on the first render,
+        rather than one per task.
+        """
         task = self.hass.async_create_background_task(
-            self._async_refresh_image(),
-            name=f"nem_pd7day initial chart render {self.entity_id}",
+            self._async_refresh_image(), name=name
         )
-        # Cancel an in-flight render if the entity is removed first. Cancelling
-        # an already-finished task is a no-op.
-        self.async_on_remove(task.cancel)
+        if self._pending_renders is None:
+            self._pending_renders = set()
+            self.async_on_remove(self._cancel_pending_renders)
+        pending = self._pending_renders
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    def _cancel_pending_renders(self) -> None:
+        """Cancel in-flight renders. Cancelling a finished task is a no-op."""
+        pending = self._pending_renders or set()
+        self._pending_renders = set()
+        for task in list(pending):
+            task.cancel()
+
+    def _schedule_initial_render(self) -> None:
+        self._schedule_render(f"nem_pd7day initial chart render {self.entity_id}")
+
+    def _schedule_update_render(self) -> None:
+        self._schedule_render(f"nem_pd7day chart render {self.entity_id}")
 
 
 async def async_setup_entry(
@@ -127,7 +161,7 @@ class NemPd7dayTodCamera(
 
     def _handle_coordinator_update(self) -> None:
         """Called by CoordinatorEntity on every coordinator refresh."""
-        self.hass.async_create_task(self._async_refresh_image())
+        self._schedule_update_render()
         self.async_write_ha_state()
 
     def _render(self) -> bytes:
@@ -200,7 +234,7 @@ class NemPd7dayBiasChartCamera(
         self._schedule_initial_render()
 
     def _handle_coordinator_update(self) -> None:
-        self.hass.async_create_task(self._async_refresh_image())
+        self._schedule_update_render()
         self.async_write_ha_state()
 
     def _render(self) -> bytes:
@@ -280,7 +314,7 @@ class NemPd7dayIsoChartCamera(
         self._schedule_initial_render()
 
     def _handle_coordinator_update(self) -> None:
-        self.hass.async_create_task(self._async_refresh_image())
+        self._schedule_update_render()
         self.async_write_ha_state()
 
     def _render(self) -> bytes:
@@ -294,7 +328,7 @@ class NemPd7dayIsoChartCamera(
         from . import iso_chart as _ic
         return _ic.render_iso_chart(
             cal,
-            iso_history=store.iso_history.get(self._region, []),
+            iso_history=store.iso_history,
             obs_count=store.observation_count,
             region=self._region,
         )
@@ -362,7 +396,7 @@ class NemPd7dayForecastChartCamera(
         self._schedule_initial_render()
 
     def _handle_coordinator_update(self) -> None:
-        self.hass.async_create_task(self._async_refresh_image())
+        self._schedule_update_render()
         self.async_write_ha_state()
 
     def _build_forecast_data(self) -> list[dict]:

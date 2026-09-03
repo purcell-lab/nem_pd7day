@@ -195,6 +195,9 @@ All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (
 | `state` | Calibrated price for the current interval ($/kWh) |
 | `region` | NEM region code |
 | `forecast_generated_at` | ISO-8601 timestamp of the AEMO source file |
+| `data_age_hours` | Hours since the last successful PD7DAY fetch; `null` until the first fetch of the session |
+| `is_stale` | `true` while the last fetch failed and the previous result is being served |
+| `stale_reason` | The failure being served through, e.g. `403 Forbidden`; `null` when fresh |
 | `forecast` | List of all forecast periods (see below) |
 | `next_value` | Calibrated price for the next interval |
 | `min_24h_value` | Minimum calibrated price in the next 24 hours |
@@ -213,6 +216,7 @@ p50: 0.138                             # 50th percentile (median)
 p90: 0.231                             # 90th percentile (conservative)
 ols_mae: 0.038                         # mean absolute error of calibration fit
 calibrated_source: isotonic+stpasa     # "isotonic+stpasa" (h22–h120), "isotonic", "passthrough_high", "passthrough_sanity", or "passthrough"
+band_source: stage2_residual           # how p10/p90 were derived: "stage1_quantile", "stage1_quantile_unclamped", "raw_passthrough", "stage2_residual", or "stage1_quantile_reclamped"
 n_obs: 147                             # observations used for this bucket
 horizon_hours: 36.5                    # hours ahead
 value: 0.142                           # alias for calibrated (template compat)

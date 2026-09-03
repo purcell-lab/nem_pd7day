@@ -164,8 +164,16 @@ MIN_OBS = 10
 # and non-positive predictions clamped silently to 0.
 OLS_MIN_OBS = 50
 MAX_OBS = 5000
-IRLS_ITER = 15
-IRLS_EPS = 1e-8
+# Quantile regression IRLS. The weight for a row is tau / max(|r|, IRLS_EPS),
+# so IRLS_EPS floors the residual in that denominator and bounds the weight a
+# near-zero residual can take; residuals are in $/kWh, so 1e-4 is a tenth of a
+# cent. True quantile IRLS converges more slowly than the sign-only weighting
+# it replaced, so the cap is higher and the loop also stops early once the
+# pinball objective has stopped falling by more than IRLS_TOL relative
+# (issue #103).
+IRLS_ITER = 100
+IRLS_EPS = 1e-4
+IRLS_TOL = 1e-6
 QUANTILES = (0.1, 0.5, 0.9)
 HORIZON_EDGES = [0, 6, 12, 24, 48, 96]
 HORIZON_LABELS = ["h00_06", "h06_12", "h12_24", "h24_48", "h48_96", "h96plus"]
@@ -484,6 +492,13 @@ DISPATCH_KEY = "dispatch"
 # ── PRICESOLUTION sensor attributes ──────────────────────────────────────────
 ATTR_REGION = "region"
 ATTR_FORECAST_GENERATED_AT = "forecast_generated_at"
+# Staleness of the served PD7DAY data (issue #105). The coordinator keeps
+# serving the last good result through a NEMWEB outage so entities stay
+# available; these say how old that result is and whether the last fetch
+# failed, so an automation can guard on them.
+ATTR_DATA_AGE_HOURS = "data_age_hours"
+ATTR_IS_STALE = "is_stale"
+ATTR_STALE_REASON = "stale_reason"
 ATTR_INTERVAL_MINUTES = "interval_minutes"
 ATTR_NEXT_VALUE = "next_value"
 ATTR_MIN_24H = "min_24h_value"

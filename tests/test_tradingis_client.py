@@ -17,7 +17,7 @@ import importlib.util
 import time
 import zipfile
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

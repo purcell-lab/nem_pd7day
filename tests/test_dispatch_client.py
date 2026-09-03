@@ -54,11 +54,12 @@ _dispatch_mod = _load(
 )
 
 from custom_components.nem_pd7day.dispatch_client import (
-    DispatchPrice,
     _fetch_nem_summary,
     _fetch_dispatchis,
     _settlement_age_seconds,
     fetch_dispatch_prices,
+    parse_settlement,
+    settlement_iso,
 )
 
 
@@ -215,10 +216,56 @@ def test_settlement_age_stale():
     assert age > 600
 
 
-def test_settlement_age_bad_format():
-    """Bad format returns 9999."""
-    age = _settlement_age_seconds("not-a-date")
-    assert age == 9999.0
+def test_settlement_age_bad_format_raises():
+    """A string in neither source format raises rather than returning a
+    sentinel that would be read as stale data (issue #104)."""
+    import pytest
+    with pytest.raises(ValueError):
+        _settlement_age_seconds("not-a-date")
+
+
+def test_settlement_age_accepts_dispatchis_slash_form():
+    """The DispatchIS path fills interval_datetime with "YYYY/MM/DD HH:MM:SS";
+    the age helper must read that too, pinned against an injected clock."""
+    now = datetime(2026, 5, 29, 1, 10, 30, tzinfo=timezone.utc)   # 11:10:30 NEM
+    age = _settlement_age_seconds("2026/05/29 11:10:00", now=now)
+    assert age == 30.0
+
+
+def test_settlement_age_iso_form_pinned():
+    now = datetime(2026, 9, 3, 20, 50, 0, tzinfo=timezone.utc)   # 06:50 NEM
+    age = _settlement_age_seconds("2026-09-04T06:45:00", now=now)
+    assert age == 300.0
+
+
+def test_parse_settlement_both_formats_agree():
+    assert parse_settlement("2026-05-29T11:10:00") == parse_settlement("2026/05/29 11:10:00")
+    assert settlement_iso("2026/05/29 11:10:00") == "2026-05-29T11:10"
+    assert settlement_iso("2026-05-29T11:10:00") == "2026-05-29T11:10"
+
+
+def test_unparseable_summary_settlement_falls_back_with_parse_reason(caplog):
+    """A format change at AEMO must be logged as a parse failure, not as
+    "data appears stale"."""
+    import logging
+    payload = _make_nem_summary_json(settlement="29 May 2026 11:10")
+    csv = _make_dispatchis_csv()
+    fake_urlopen = _make_dispatchis_urlopen(csv)
+    calls = [0]
+
+    def routed(url_or_req, timeout=None):
+        calls[0] += 1
+        if calls[0] == 1:
+            return io.BytesIO(payload)
+        return fake_urlopen(url_or_req, timeout)
+
+    with caplog.at_level(logging.DEBUG):
+        with patch.object(_dispatch_mod.urllib.request, "urlopen", side_effect=routed):
+            results = fetch_dispatch_prices()
+
+    assert set(results) == {"QLD1", "NSW1", "VIC1", "SA1", "TAS1"}
+    assert "appears stale" not in caplog.text
+    assert "unrecognised SETTLEMENTDATE format" in caplog.text
 
 
 # ── DispatchIS fallback tests ────────────────────────────────────────────────

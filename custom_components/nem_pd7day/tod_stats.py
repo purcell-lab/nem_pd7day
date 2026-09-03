@@ -15,7 +15,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
 
@@ -107,7 +107,7 @@ class TodStats:
 
 
 def compute(
-    observations: list[dict],
+    observations: Sequence[dict],
     calibration_result: "CalibrationResult | None" = None,
 ) -> TodStats:
     """

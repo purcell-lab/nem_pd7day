@@ -23,7 +23,7 @@ Reuses the Home Assistant stub preamble already installed by test_sensor.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import test_sensor as ts
 
@@ -279,3 +279,62 @@ def test_fit_generation_advances_on_restore_refit_and_stage2():
 
     # Monotonic, so a key built from it can never collide with an earlier fit.
     assert store.fit_generation > 1
+
+
+# ── Published key set ─────────────────────────────────────────────────────────
+
+
+def test_every_builder_that_publishes_a_band_publishes_band_source():
+    """
+    Issue #100: PD7DayDataSensor builds its per-interval dict from its own
+    literal rather than the shared ATTR_CAL_* update, so band_source, added
+    to the other two builders in PR #96, never reached it. Whatever the
+    calibration returns, any builder exposing p10 and p90 must also expose
+    band_source, so the sensor carrying the full forecast array can answer
+    which band derivation produced it.
+    """
+    from custom_components.nem_pd7day.const import (
+        ATTR_CAL_BAND_SOURCE,
+        ATTR_CAL_P10,
+        ATTR_CAL_P90,
+    )
+
+    run_at = datetime(2026, 9, 3, 7, 30, tzinfo=timezone(timedelta(hours=10)))
+    price_data = _make_price_data(run_at, intervals=8)
+    coordinator = _fresh_coordinator()
+    coordinator.data = MagicMock()
+    coordinator.data.prices = {"QLD1": price_data}
+    store = MagicMock()
+    store.fit_generation = 1
+    store.observation_count = 100
+    store.active_bucket_count = 5
+    sensors = _make_region_sensors(coordinator, store)
+
+    fake_cal = {
+        "calibrated": 0.12,
+        "p10": 0.08,
+        "p50": 0.12,
+        "p90": 0.20,
+        "ols_mae": 0.01,
+        "calibrated_source": "isotonic+stpasa",
+        ATTR_CAL_BAND_SOURCE: "stage2_residual",
+        "n_obs": 100,
+    }
+
+    # Patch the globals the classes' methods actually resolve against. Other
+    # test modules reload sensor.py under the same name, so the module object
+    # in sys.modules can differ from the one SHARING_CLASSES were defined in.
+    method_globals = PD7DayForecastSensor._calibrate_period.__globals__
+    with patch.dict(method_globals, {
+        "calibrate_interval": lambda *a, **k: dict(fake_cal),
+        "_amber_express_cutoff": lambda: run_at - timedelta(days=1),
+    }):
+        for s in sensors:
+            entries = s.extra_state_attributes["forecast"]
+            assert entries, type(s).__name__
+            entry = entries[0]
+            assert ATTR_CAL_P10 in entry and ATTR_CAL_P90 in entry, type(s).__name__
+            assert entry.get(ATTR_CAL_BAND_SOURCE) == "stage2_residual", (
+                f"{type(s).__name__} publishes p10/p90 without band_source: "
+                f"{sorted(entry)}"
+            )

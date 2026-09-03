@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -45,8 +45,6 @@ from .const import (
     MAX_HORIZON_HOURS,
     MAX_TOTAL_OBS,
     NEM_TZ,
-    SPIKE_COVARIATE_CAP,
-    SPIKE_COVARIATE_RAW_FLOOR,
     SPIKE_GAS_THRESHOLD_TJ,
     SPIKE_QNI_THRESHOLD_MW,
     STORAGE_VERSION,
@@ -117,8 +115,10 @@ class CalibrationStore:
         self._actual_accum: dict[tuple[str, str], dict] = {}
 
         # Rolling history of compression_ratio per bucket across recent fit cycles.
-        # In-memory only (not persisted) — resets on HA restart.
-        self._iso_history: dict[str, list[dict]] = {}
+        # In-memory only (not persisted) — resets on HA restart. A plain list:
+        # the store is built per region, so the dict keyed by region that used
+        # to sit here could only ever hold one key (issue #110).
+        self._iso_history: list[dict] = []
 
     # ── Startup ───────────────────────────────────────────────────────────────
 
@@ -522,11 +522,10 @@ class CalibrationStore:
                 for key, bucket in summary["buckets"].items()
             },
         }
-        region_history = self._iso_history.setdefault(self._region, [])
-        region_history.append(history_record)
+        self._iso_history.append(history_record)
         # Keep at most 48 records (48 × 8h fetches ≈ 16 days).
-        if len(region_history) > 48:
-            self._iso_history[self._region] = region_history[-48:]
+        if len(self._iso_history) > 48:
+            self._iso_history = self._iso_history[-48:]
 
         return result
 
@@ -547,8 +546,14 @@ class CalibrationStore:
         return self._fit_generation
 
     @property
-    def observations(self) -> list[dict]:
-        """Read-only view of the raw observation list (for tod_stats computation)."""
+    def observations(self) -> Sequence[dict]:
+        """The raw observation list, for tod_stats computation.
+
+        This is the live list, not a copy: it can hold MAX_TOTAL_OBS entries
+        and is read on every tod_stats.compute, so copying is not free. The
+        Sequence annotation is the contract; callers must not mutate it
+        (issue #110).
+        """
         return self._observations
 
     @property
@@ -565,8 +570,8 @@ class CalibrationStore:
         )
 
     @property
-    def iso_history(self) -> dict[str, list[dict]]:
-        """Rolling compression_ratio history per region (in-memory only)."""
+    def iso_history(self) -> list[dict]:
+        """Rolling compression_ratio history for this region (in-memory only)."""
         return self._iso_history
 
     def apply_to_price(

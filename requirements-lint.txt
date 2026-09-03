@@ -1,0 +1,2 @@
+# Pinned linter for the lint job; bump deliberately (issue #107 follow-up).
+ruff==0.15.8

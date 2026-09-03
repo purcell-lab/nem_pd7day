@@ -32,7 +32,6 @@ Assistant stub preamble installed by test_sensor.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock

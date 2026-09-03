@@ -17,8 +17,9 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Callable
 
-from .const import DISPATCHIS_BASE_URL, ELEC_NEM_SUMMARY_URL
+from .const import DISPATCHIS_BASE_URL, ELEC_NEM_SUMMARY_URL, NEM_TZ, NEMWEB_HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,8 +44,43 @@ class StaleIntervalError(Exception):
 @dataclass
 class DispatchPrice:
     region: str
-    interval_datetime: str  # "2026/05/29 11:05:00" — interval END (NEM time)
+    # Interval END in NEM time, no tz suffix. The format depends on which
+    # path filled it: ELEC_NEM_SUMMARY gives ISO, "2026-09-04T06:45:00";
+    # the DispatchIS fallback gives the MMS CSV form, "2026/05/29 11:10:00".
+    # Use parse_settlement() rather than assuming either (issue #104).
+    interval_datetime: str
     rrp: float              # $/kWh (converted from $/MWh)
+
+
+_SETTLEMENT_FORMATS = ("%Y-%m-%dT%H:%M:%S", "%Y/%m/%d %H:%M:%S")
+
+# NEM time is UTC+10 with no daylight saving; derived from the canonical zone
+# rather than restated (issue #108).
+_NEM_UTC_OFFSET = NEM_TZ.utcoffset(None)
+
+
+def parse_settlement(settlement_str: str) -> datetime:
+    """Parse a SETTLEMENTDATE string from either source into a naive NEM-time datetime.
+
+    ELEC_NEM_SUMMARY returns ISO without an offset ("2026-09-04T06:45:00");
+    DispatchIS CSV returns slash-delimited ("2026/05/29 11:10:00"). Both are
+    NEM time. Raises ValueError for anything else, so a format change at AEMO
+    surfaces as a parse error rather than masquerading as stale data.
+    """
+    for fmt in _SETTLEMENT_FORMATS:
+        try:
+            return datetime.strptime(settlement_str, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"unrecognised SETTLEMENTDATE format: {settlement_str!r}")
+
+
+def settlement_iso(settlement_str: str) -> str:
+    """Render a settlement string from either source as ISO to the minute."""
+    try:
+        return parse_settlement(settlement_str).strftime("%Y-%m-%dT%H:%M")
+    except ValueError:
+        return settlement_str
 
 
 # ── Primary: ELEC_NEM_SUMMARY JSON ───────────────────────────────────────────
@@ -56,7 +92,7 @@ def _fetch_nem_summary() -> dict[str, DispatchPrice]:
     """
     req = urllib.request.Request(
         NEM_SUMMARY_URL,
-        headers={"Accept": "application/json", "User-Agent": "nem_pd7day/2.3"},
+        headers={**NEMWEB_HEADERS, "Accept": "application/json"},
     )
     raw = urllib.request.urlopen(req, timeout=15).read()
     payload = json.loads(raw)
@@ -79,7 +115,8 @@ def _fetch_nem_summary() -> dict[str, DispatchPrice]:
             rrp_mwh = float(row["PRICE"])
         except (KeyError, ValueError, TypeError):
             continue
-        # SETTLEMENTDATE is interval END in NEM time, no tz suffix: "2026/05/29 11:10:00"
+        # SETTLEMENTDATE is interval END in NEM time, ISO with no offset:
+        # "2026-09-04T06:45:00" (verified against the live API, issue #104).
         settlement = row.get("SETTLEMENTDATE", "")
         results[region] = DispatchPrice(
             region=region,
@@ -93,24 +130,24 @@ def _fetch_nem_summary() -> dict[str, DispatchPrice]:
     return results
 
 
-def _settlement_age_seconds(settlement_str: str) -> float:
+def _settlement_age_seconds(
+    settlement_str: str, now: datetime | None = None
+) -> float:
     """Return how many seconds ago the settlement interval ended.
 
-    settlement_str is NEM time without tz suffix e.g. '2026/05/29 11:10:00'.
-    Returns a large number on parse failure so stale-data checks fail safely.
+    settlement_str is NEM time without tz suffix, in either source format
+    (see parse_settlement). *now* is an aware UTC datetime; tests pass one to
+    pin the clock.
+
+    Raises ValueError when the string does not parse. This used to return a
+    9999.0 sentinel instead, which tripped the stale branch and blamed AEMO
+    for what would have been a parse bug; letting the error out means the
+    caller logs the real reason (issue #104).
     """
-    try:
-        # Parse as NEM time (UTC+10) and compare against UTC now
-        dt = datetime.strptime(settlement_str, "%Y-%m-%dT%H:%M:%S")
-        # ELEC_NEM_SUMMARY uses ISO format without offset
-        from datetime import timedelta
-        nem_utc_offset = timedelta(hours=10)
-        dt_utc = dt.replace(tzinfo=timezone.utc) - nem_utc_offset
-        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-        # dt_utc is naive UTC; compare as naive
-        return (now_utc - dt_utc.replace(tzinfo=None)).total_seconds()
-    except Exception:  # noqa: BLE001
-        return 9999.0
+    dt_nem = parse_settlement(settlement_str)
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    dt_utc = (dt_nem - _NEM_UTC_OFFSET).replace(tzinfo=timezone.utc)
+    return (now_utc - dt_utc).total_seconds()
 
 
 # ── Fallback: DispatchIS_Reports zip ─────────────────────────────────────────
@@ -121,7 +158,11 @@ def _fetch_dispatchis() -> dict[str, DispatchPrice] | None:
     Returns a dict keyed by REGIONID, or None if the zip is not yet published
     (HTTP 404).  Raises on other network or parse errors.
     """
-    index = urllib.request.urlopen(DISPATCHIS_BASE, timeout=15).read().decode(
+    # Both requests carry NEMWEB_HEADERS. Before issue #102 they carried no
+    # User-Agent at all, so they went out as Python-urllib, the exact
+    # automated pattern the browser-like UA in const.py exists to avoid.
+    index_req = urllib.request.Request(DISPATCHIS_BASE, headers=NEMWEB_HEADERS)
+    index = urllib.request.urlopen(index_req, timeout=15).read().decode(
         "utf-8", errors="ignore"
     )
     files = sorted(set(_DISPATCHIS_FILE_RE.findall(index)))
@@ -131,7 +172,8 @@ def _fetch_dispatchis() -> dict[str, DispatchPrice] | None:
     url = DISPATCHIS_BASE + files[-1]
     _LOGGER.debug("DispatchIS URL: %s", url)
     try:
-        raw = urllib.request.urlopen(url, timeout=20).read()
+        zip_req = urllib.request.Request(url, headers=NEMWEB_HEADERS)
+        raw = urllib.request.urlopen(zip_req, timeout=20).read()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             _LOGGER.warning("DispatchIS 404 — zip not yet published: %s", url)
@@ -154,7 +196,7 @@ def _fetch_dispatchis() -> dict[str, DispatchPrice] | None:
         except (ValueError, IndexError):
             continue
         region = parts[6]
-        settlement = parts[4]   # "2026/05/29 11:10:00"
+        settlement = parts[4]   # MMS CSV form, "2026/05/29 11:10:00"
         try:
             rrp_mwh = float(parts[9])
         except (ValueError, IndexError):
@@ -175,6 +217,8 @@ def _fetch_dispatchis() -> dict[str, DispatchPrice] | None:
 
 def fetch_dispatch_prices(
     expected_settlement: datetime | None = None,
+    *,
+    clock: Callable[[], datetime] | None = None,
 ) -> dict[str, DispatchPrice]:
     """Return the latest 5-minute dispatch RRP for all NEM regions.
 
@@ -185,15 +229,20 @@ def fetch_dispatch_prices(
     behind that timestamp, a StaleIntervalError is raised so the caller can
     retry before falling back to DispatchIS.
 
+    *clock* returns the current aware UTC time; it exists so tests can pin
+    the freshness check instead of racing wall-clock time (issue #109). This
+    module holds no hass reference, so it cannot use dt_util.
+
     Called synchronously via hass.async_add_executor_job.
     """
+    now_utc = clock() if clock is not None else datetime.now(timezone.utc)
     # Primary: ELEC_NEM_SUMMARY JSON
     try:
         results = _fetch_nem_summary()
         # Sanity-check freshness: settlement should be within the last 10 minutes
         sample = next(iter(results.values()), None)
         if sample:
-            age = _settlement_age_seconds(sample.interval_datetime)
+            age = _settlement_age_seconds(sample.interval_datetime, now=now_utc)
             if age > 600:
                 _LOGGER.warning(
                     "ELEC_NEM_SUMMARY data appears stale (age=%.0fs) — trying DispatchIS",
@@ -213,13 +262,9 @@ def fetch_dispatch_prices(
             # Gate: if caller expects a specific settlement, verify it
             if expected_settlement is not None:
                 actual_str = sample.interval_datetime
-                try:
-                    actual_dt = datetime.fromisoformat(actual_str)
-                except ValueError:
-                    actual_dt = datetime.strptime(actual_str, "%Y/%m/%d %H:%M:%S")
-                # Ensure both sides are tz-naive for safe comparison
-                actual_dt = actual_dt.replace(tzinfo=None)
-                if actual_dt < expected_settlement:
+                actual_dt = parse_settlement(actual_str)
+                # Both sides tz-naive NEM time
+                if actual_dt < expected_settlement.replace(tzinfo=None):
                     _LOGGER.debug(
                         "ELEC_NEM_SUMMARY: settlement=%s is behind expected %s — will retry",
                         actual_str,
@@ -251,6 +296,6 @@ def fetch_dispatch_prices(
     _LOGGER.debug(
         "Dispatch (DispatchIS fallback): %d regions fetched, settlement=%s (NEMtime)",
         len(results),
-        sample.interval_datetime.replace("/", "-").replace(" ", "T")[:16] if sample else "?",
+        settlement_iso(sample.interval_datetime) if sample else "?",
     )
     return results

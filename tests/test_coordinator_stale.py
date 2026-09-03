@@ -346,3 +346,91 @@ def test_dispatch_coordinator_returns_stale_on_error():
     assert result is stale, (
         "DispatchCoordinator must return stale data on error when stale data exists"
     )
+
+
+# ── Staleness is legible (issue #105) ────────────────────────────────────────
+
+def _coord_dt_util():
+    """The dt_util the coordinator classes in this file actually resolve.
+
+    Other test files reload coordinator.py under the same name, so the module
+    in sys.modules can be a different object from the one these classes were
+    defined in; patch the namespace the method reads.
+    """
+    return PD7DayCoordinator._async_update_data.__globals__["dt_util"]
+
+
+def test_stale_serving_is_flagged_with_reason_and_age():
+    """Serving stale data keeps the entity available, but the attributes
+    must say so: is_stale True, the failure as stale_reason, and the age of
+    the data being served, measured from the last success."""
+    from datetime import datetime
+    from unittest.mock import patch
+
+    coord = _make_pd7day_coordinator()
+    coord.data = MagicMock(name="stale_pd7day_result")
+    coord.last_success_at = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+
+    exc = _make_client_response_error(status=403, message="Forbidden")
+    mock_client = MagicMock()
+    mock_client.fetch_all = AsyncMock(side_effect=exc)
+    coord._get_client = lambda: mock_client
+
+    now = datetime(2026, 9, 3, 6, 30, tzinfo=timezone.utc)
+    with patch.object(_coord_dt_util(), "utcnow", return_value=now):
+        run_async(coord._async_update_data())
+        attrs = coord.staleness_attributes()
+
+    assert attrs["is_stale"] is True
+    assert "403" in attrs["stale_reason"]
+    assert attrs["data_age_hours"] == 6.5
+
+
+def test_success_clears_staleness_and_resets_age():
+    from datetime import datetime
+    from unittest.mock import patch
+
+    coord = _make_pd7day_coordinator()
+    coord.serving_stale = True
+    coord.stale_reason = "403 Forbidden"
+    result = MagicMock(name="fresh_result")
+    result.prices = {}
+    result.interconnectors = {}
+    result.case = None
+    result.source_file = "PUBLIC_PD7DAY.zip"
+    mock_client = MagicMock()
+    mock_client.fetch_all = AsyncMock(return_value=result)
+    coord._get_client = lambda: mock_client
+
+    now = datetime(2026, 9, 3, 7, 30, tzinfo=timezone.utc)
+    with patch.object(_coord_dt_util(), "utcnow", return_value=now):
+        run_async(coord._async_update_data())
+        attrs = coord.staleness_attributes()
+
+    assert attrs == {"data_age_hours": 0.0, "is_stale": False, "stale_reason": None}
+    assert coord.last_success_at == now
+
+
+def test_staleness_attributes_before_first_success():
+    """Restored-from-cache startup: nothing fetched yet, so no age and not
+    stale rather than a misleading zero."""
+    coord = _make_pd7day_coordinator()
+    assert coord.staleness_attributes() == {
+        "data_age_hours": None, "is_stale": False, "stale_reason": None,
+    }
+
+
+def test_staleness_helper_ignores_coordinators_that_do_not_track_it():
+    from custom_components.nem_pd7day.coordinator import staleness_attributes
+    assert staleness_attributes(MagicMock()) == {}
+    assert staleness_attributes(object()) == {}
+
+
+def test_dispatch_coordinator_flags_stale_prices():
+    coord = _make_dispatch_coordinator()
+    coord.data = MagicMock(name="stale_dispatch_prices")
+    coord.hass.async_add_executor_job = AsyncMock(side_effect=Exception("timeout"))
+    run_async(coord._async_update_data())
+    attrs = coord.staleness_attributes()
+    assert attrs["is_stale"] is True
+    assert attrs["stale_reason"] == "timeout"

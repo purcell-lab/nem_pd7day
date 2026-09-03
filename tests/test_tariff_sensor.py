@@ -130,12 +130,10 @@ _tariff_mod = _load(
 
 from custom_components.nem_pd7day.tariff_sensor import NemPd7dayTariffSensor, get_tariff_name
 from custom_components.nem_pd7day.const import (
-    DEFAULT_ENABLED_TARIFFS,
     DISTRIBUTOR_DISPLAY_NAMES,
     DISTRIBUTOR_TARIFFS,
     DOMAIN,
     REGION_DISTRIBUTORS,
-    TARIFF_NAMES,
 )
 
 NEM_TZ = timezone(timedelta(hours=10))

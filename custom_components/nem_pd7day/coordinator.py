@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable
 
 import aiohttp
@@ -12,8 +12,13 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
+    ATTR_DATA_AGE_HOURS,
+    ATTR_IS_STALE,
+    ATTR_STALE_REASON,
+    NEM_TZ,
     DOMAIN,
     NEMWEB_SEMAPHORE_KEY,
     NOTICE_FETCH_LOCK_KEY,
@@ -24,7 +29,12 @@ from .const import (
     interconnectors_for_regions,
     region_startup_index,
 )
-from .dispatch_client import DispatchPrice, StaleIntervalError, fetch_dispatch_prices
+from .dispatch_client import (
+    DispatchPrice,
+    StaleIntervalError,
+    fetch_dispatch_prices,
+    parse_settlement,
+)
 from .pd7day_client import PD7DayClient, PD7DayResult
 from . import tod_stats as _tod_stats
 from .tod_stats import TodStats
@@ -41,6 +51,45 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def staleness_attributes(coordinator: Any) -> dict[str, Any]:
+    """data_age_hours, is_stale and stale_reason for entity attributes.
+
+    Issue #105: after one successful fetch no failure ever makes an entity
+    unavailable, because the coordinator serves its last good result rather
+    than raising. That is the right default, but nothing downstream could tell
+    a fresh forecast from one served through a week-long outage. These three
+    keys make the state legible without changing availability.
+
+    Tolerant of coordinators that do not track staleness (test doubles), in
+    which case it returns an empty dict and adds nothing.
+    """
+    last_success_at = getattr(coordinator, "last_success_at", None)
+    serving_stale = getattr(coordinator, "serving_stale", None)
+    if not isinstance(serving_stale, bool):
+        return {}
+    age: float | None = None
+    if isinstance(last_success_at, datetime):
+        age = round(
+            (dt_util.utcnow() - last_success_at).total_seconds() / 3600.0, 2
+        )
+    return {
+        ATTR_DATA_AGE_HOURS: age,
+        ATTR_IS_STALE: serving_stale,
+        ATTR_STALE_REASON: getattr(coordinator, "stale_reason", None),
+    }
+
+
+def _mark_success(coordinator: Any) -> None:
+    coordinator.last_success_at = dt_util.utcnow()
+    coordinator.serving_stale = False
+    coordinator.stale_reason = None
+
+
+def _mark_stale(coordinator: Any, reason: str) -> None:
+    coordinator.serving_stale = True
+    coordinator.stale_reason = reason
+
+
 class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
     """
     Coordinator for NEM PD7DAY data.
@@ -53,6 +102,15 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
     This means the integration makes exactly 3 network requests per day
     instead of 48 (one every 30 minutes).
     """
+
+    # Staleness tracking (issue #105). Class-level defaults because tests build
+    # coordinators with __new__.
+    last_success_at: datetime | None = None
+    serving_stale: bool = False
+    stale_reason: str | None = None
+
+    def staleness_attributes(self) -> dict[str, Any]:
+        return staleness_attributes(self)
 
     def __init__(
         self,
@@ -139,7 +197,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
 
     async def _async_update_data(self) -> PD7DayResult:
         client = self._get_client()
-        t0 = datetime.now(timezone.utc)
+        t0 = dt_util.utcnow()
         try:
             # The client retries each NEMWEB request internally now, so there is
             # no retry wrapper here. The previous one re-ran the whole fetch,
@@ -158,6 +216,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                     "successful fetch",
                     describe_status(exc.status) or exc,
                 )
+                _mark_stale(self, str(describe_status(exc.status) or exc))
                 return self.data
             raise UpdateFailed(f"PD7DAY fetch failed: {exc}") from exc
         except aiohttp.ClientResponseError as exc:
@@ -167,6 +226,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                     describe_status(exc.status) or exc.status,
                     exc.message,
                 )
+                _mark_stale(self, f"{describe_status(exc.status) or exc.status} {exc.message}".strip())
                 return self.data
             raise UpdateFailed(f"PD7DAY fetch failed: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
@@ -175,10 +235,12 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                     "PD7DAY fetch failed (%s) — serving stale data from last successful fetch",
                     exc,
                 )
+                _mark_stale(self, str(exc))
                 return self.data
             raise UpdateFailed(f"PD7DAY fetch failed: {exc}") from exc
 
-        elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
+        _mark_success(self)
+        elapsed = (dt_util.utcnow() - t0).total_seconds()
         _LOGGER.debug(
             "PD7DAY fetch completed in %.3f seconds — source=%s intervention=%s regions=%s interconnectors=%s",
             elapsed,
@@ -422,6 +484,19 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
     whatever random offset existed at HA startup (observed: up to ~4 min).
     """
 
+    # Class-level defaults: the poll chain state is read by every method, and
+    # tests build instances with __new__ without running __init__.
+    _pending_cancel: Callable[[], None] | None = None
+    _refresh_task: asyncio.Task | None = None
+    _stopped: bool = False
+    # Staleness tracking (issue #105), same shape as PD7DayCoordinator.
+    last_success_at: datetime | None = None
+    serving_stale: bool = False
+    stale_reason: str | None = None
+
+    def staleness_attributes(self) -> dict[str, Any]:
+        return staleness_attributes(self)
+
     def __init__(self, hass: HomeAssistant) -> None:
         super().__init__(
             hass,
@@ -431,11 +506,16 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
         )
         self.prices: dict[str, DispatchPrice] = {}
         self.last_updated: datetime | None = None
-        self._unsub_poll: list[Callable[[], None]] = []
+        # The one pending boundary timer. A single slot rather than a list,
+        # because each poll replaces the previous timer and a list of spent
+        # cancels was never drained (issue #101).
+        self._pending_cancel: Callable[[], None] | None = None
+        self._refresh_task: asyncio.Task | None = None
+        self._stopped = False
 
     def _next_boundary_utc(self) -> datetime:
         """Return the next 5-minute boundary (UTC) plus _DISPATCH_POLL_DELAY_S."""
-        now = datetime.now(timezone.utc)
+        now = dt_util.utcnow()
         # Seconds since midnight UTC
         total_s = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
         # How many seconds until the next 5-min boundary
@@ -451,37 +531,68 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
         Call once after async_config_entry_first_refresh().  Each poll
         automatically reschedules the next one.
 
-        entry_unsub_list: optional list to append the cancel callback to, so
-        the ConfigEntry can unsubscribe on unload.  If None, uses self._unsub_poll.
+        The coordinator owns its single pending timer. Before issue #101 the
+        first cancel went into the entry's unsubscribe list and every later
+        reschedule went into a private list nothing read, so unload cancelled a
+        spent timer, the chain kept polling AEMO with no config entry behind
+        it, and every reload started another chain beside it.
+
+        entry_unsub_list: optional list to register ``async_shutdown_polling``
+        on, so the ConfigEntry can stop the whole chain on unload. Registered
+        once, on the first call; later self-reschedules pass nothing.
         """
+        if self._stopped:
+            return
         fire_at = self._next_boundary_utc()
 
         @callback
         def _on_fire(_now=None) -> None:
-            self.hass.async_create_task(self._aligned_refresh())
+            self._pending_cancel = None
+            if self._stopped:
+                return
+            self._refresh_task = self.hass.async_create_task(self._aligned_refresh())
 
-        cancel = async_track_point_in_utc_time(self.hass, _on_fire, fire_at)
-        target = entry_unsub_list if entry_unsub_list is not None else self._unsub_poll
-        target.append(cancel)
+        self._pending_cancel = async_track_point_in_utc_time(self.hass, _on_fire, fire_at)
+        if entry_unsub_list is not None:
+            entry_unsub_list.append(self.async_shutdown_polling)
         _LOGGER.debug(
             "Dispatch next boundary poll at %s UTC (+%ds delay)",
             fire_at.strftime("%H:%M:%S"),
             _DISPATCH_POLL_DELAY_S,
         )
 
+    def async_shutdown_polling(self) -> None:
+        """Stop the boundary poll chain: cancel the pending timer and any
+        in-flight refresh, and refuse to reschedule from here on."""
+        self._stopped = True
+        if self._pending_cancel is not None:
+            self._pending_cancel()
+            self._pending_cancel = None
+        task = self._refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._refresh_task = None
+
+    @property
+    def polling_active(self) -> bool:
+        """True while a boundary timer is pending and the chain is not stopped."""
+        return not self._stopped and self._pending_cancel is not None
+
     async def _aligned_refresh(self) -> None:
         """Fetch dispatch data then schedule the next boundary poll."""
         await self.async_refresh()
+        # A poll already in flight when unload ran must not resurrect the
+        # chain; schedule_next_poll checks the flag itself.
         self.schedule_next_poll()
 
     async def _async_update_data(self) -> dict[str, DispatchPrice]:
-        t0 = datetime.now(timezone.utc)
+        t0 = dt_util.utcnow()
 
         # Expected settlement = current 5-min boundary (NEM time).
         # settlement == boundary means the just-closed interval — that's fresh.
         # Only reject data older than boundary (genuinely stale).
         # Strip tzinfo so expected_settlement is tz-naive NEM time
-        nem_now = t0.replace(tzinfo=None) + timedelta(hours=10)
+        nem_now = t0.astimezone(NEM_TZ).replace(tzinfo=None)
         boundary_nem = nem_now.replace(
             minute=(nem_now.minute // 5) * 5,
             second=0,
@@ -508,10 +619,7 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
                 sample = next(iter(prices.values()), None)
                 if sample:
                     actual_str = sample.interval_datetime
-                    try:
-                        actual_dt = datetime.fromisoformat(actual_str).replace(tzinfo=None)
-                    except ValueError:
-                        actual_dt = datetime.strptime(actual_str, "%Y/%m/%d %H:%M:%S")
+                    actual_dt = parse_settlement(actual_str)
                     if actual_dt < expected_settlement:
                         _LOGGER.warning(
                             "Dispatch: settlement=%s still behind boundary=%s (NEMtime) after retry — serving anyway",
@@ -520,7 +628,8 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
                         )
 
             self.prices = prices
-            self.last_updated = datetime.now(timezone.utc)
+            self.last_updated = dt_util.utcnow()
+            _mark_success(self)
             # No success-path DEBUG line here, deliberately (issue #33).
             #
             # This block used to log a "Finished fetching ... - N regions"
@@ -540,13 +649,14 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
             # information nothing else records.
             return prices
         except Exception as exc:  # noqa: BLE001
-            elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
+            elapsed = (dt_util.utcnow() - t0).total_seconds()
             if self.data is not None:
                 _LOGGER.warning(
                     "Finished fetching NEM Dispatch data in %.3f seconds (failed: %s) — serving stale prices",
                     elapsed,
                     exc,
                 )
+                _mark_stale(self, str(exc))
                 return self.data
             _LOGGER.warning(
                 "Finished fetching NEM Dispatch data in %.3f seconds (failed, no stale data): %s",

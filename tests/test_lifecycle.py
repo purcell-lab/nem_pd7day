@@ -17,7 +17,7 @@ import asyncio
 import importlib.util
 import types
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -129,8 +129,6 @@ _coord_mod = _load(
 )
 
 from custom_components.nem_pd7day.calibration_store import CalibrationStore
-from custom_components.nem_pd7day.coordinator import PD7DayCoordinator
-from custom_components.nem_pd7day.const import CONF_REGION, COORDINATOR_KEY, DOMAIN, STORE_KEY
 
 
 def make_store(obs_count: int = 0) -> CalibrationStore:
@@ -510,3 +508,39 @@ def test_startup_always_refits_when_obs_available():
     # Ensure the unconditional refit is present
     assert "store.observation_count >= 10" in src
     assert "_do_refit" in src
+
+
+# ── Tests: lifecycle hygiene (issue #106) ───────────────────────────────────
+
+def _init_source() -> str:
+    import pathlib
+    return pathlib.Path(
+        os.path.join(_ROOT, "custom_components", "nem_pd7day", "__init__.py")
+    ).read_text()
+
+
+def test_stpasa_store_is_deregistered_per_entry():
+    """Unloading one region must pop its store so the central STPASA fetch
+    stops writing .storage for a region the user removed; before #106 the
+    dict was only dropped when the last entry unloaded."""
+    src = _init_source()
+    assert "entry.async_on_unload(lambda: stpasa_stores.pop(region, None))" in src
+
+
+def test_no_untracked_tasks_in_init():
+    """Every task __init__.py starts is tied to the config entry, so unload
+    cancels a refit or fetch still in flight rather than letting it write to
+    a torn-down store (issue #106)."""
+    src = _init_source()
+    assert "hass.async_create_task(" not in src, (
+        "__init__.py starts a task with hass.async_create_task; use "
+        "entry.async_create_background_task so it is cancelled on unload"
+    )
+
+
+def test_scheduled_fetch_registers_one_unload_hook():
+    """The publish-time scheduler registers a single cancel_all with the entry
+    rather than one cancel per timer per day."""
+    src = _init_source()
+    assert "entry.async_on_unload(fetch_scheduler.cancel_all)" in src
+    assert "entry.async_on_unload(cancel)" not in src

@@ -155,7 +155,6 @@ def test_bias_chart_renders_png_from_calibration():
     from custom_components.nem_pd7day.calibration_engine import (
         BucketModel, LinearCoeff, QuantileCoeff, CalibrationResult
     )
-    from datetime import datetime, timezone, timedelta
 
     # Build a minimal CalibrationResult with a few fitted buckets
     buckets = {

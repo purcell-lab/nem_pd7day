@@ -24,16 +24,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_ACTIVE_TARIFF,
-    CONF_FORECAST_MODE,
     DEFAULT_ADDITIONAL_FEE,
     DEFAULT_ENABLED_TARIFFS,
     DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
     EXPORT_TARIFF_NAMES,
-    EXPORT_TARIFF_PROGRAMS,
-    FORECAST_MODE_DAYS_2_7,
-    FORECAST_MODE_FULL,
     TARIFF_NAMES,
     additional_fee_entity_id,
 )
@@ -41,10 +36,9 @@ from .calibration_inputs import (
     calibrated_forecast_key,
     calibrated_spot_for_period,
     calibrated_spot_map,
-    horizon_hours as _horizon_hours,
     interval_key_for_period,
 )
-from .coordinator import PD7DayCoordinator
+from .coordinator import PD7DayCoordinator, staleness_attributes
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
@@ -654,6 +648,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         return {
             # Tariff identity
             "tariff_code": self._tariff_code,
+            **staleness_attributes(self.coordinator),
             "tariff_name": tariff_name,
             "distributor": distributor_display,
             "region": self._region,
@@ -755,6 +750,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
 
         return {
             "tariff_code": self._tariff_code,
+            **staleness_attributes(self.coordinator),
             "tariff_name": tariff_name,
             "distributor": distributor_display,
             "region": self._region,
@@ -1067,6 +1063,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
 
         return {
             "tariff_code": self._export_code,
+            **staleness_attributes(self.coordinator),
             "import_tariff_code": self._import_code,
             "tariff_name": export_name,
             "distributor": distributor_display,

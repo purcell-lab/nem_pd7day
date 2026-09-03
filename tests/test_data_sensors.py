@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 import os
 import importlib.util
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 # ── Module loader ─────────────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ def test_pd7day_data_sensor_state():
     assert entry["raw_rrp"] == 0.10
     assert set(entry.keys()) == {
         "time", "nemtime", "raw_rrp", "calibrated",
-        "p10", "p90", "calibrated_source", "horizon_hours",
+        "p10", "p90", "calibrated_source", "band_source", "horizon_hours",
     }
 
 

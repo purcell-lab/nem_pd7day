@@ -13,7 +13,7 @@ import sys
 import os
 import importlib.util
 from unittest.mock import MagicMock
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import timedelta
 from typing import Any, TYPE_CHECKING
 
 from homeassistant.components.binary_sensor import (
@@ -29,6 +29,7 @@ from .const import (
     get_region,
 )
 from .coordinator import PD7DayCoordinator
+from .nem_time import now_nem
 
 if TYPE_CHECKING:
     from .notice_store import GridNoticeStore
@@ -188,7 +189,7 @@ class NemPd7dayGridStressBinarySensor(CoordinatorEntity[PD7DayCoordinator], Bina
     def extra_state_attributes(self) -> dict[str, Any]:
         if self._notice_store is None:
             return {"region": self._region}
-        now = datetime.now(timezone(timedelta(hours=10)))
+        now = now_nem()
         upcoming = self._notice_store.get_upcoming_stress(self._region, horizon_hours=48)
         all_active = self._notice_store.get_active_notices(
             self._region,

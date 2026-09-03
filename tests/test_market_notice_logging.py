@@ -21,7 +21,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from custom_components.nem_pd7day.market_notice_client import (
     MarketNoticeClient,

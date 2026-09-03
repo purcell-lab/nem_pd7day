@@ -11,7 +11,7 @@ import sys
 import asyncio
 import importlib.util
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -28,7 +28,6 @@ def run_async(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
-NEM_TZ = timezone(timedelta(hours=10))
 
 # ── Stub HA imports ──────────────────────────────────────────────────────────
 
@@ -94,7 +93,7 @@ _service_mod = _load(
 )
 
 from custom_components.nem_pd7day.actual_price_service import ActualPriceService
-from custom_components.nem_pd7day.nem_time import NEM_TZ, to_nem_iso
+from custom_components.nem_pd7day.nem_time import NEM_TZ
 from custom_components.nem_pd7day.calibration_store import CalibrationStore
 from custom_components.nem_pd7day.calibration_engine import CalibrationEngine
 
@@ -241,7 +240,6 @@ def test_source_field_tradingis():
 
     # Set up forecast history for the interval
     interval_start_dt = datetime(2026, 4, 18, 17, 0, tzinfo=NEM_TZ)
-    interval_end_dt = interval_start_dt + timedelta(minutes=30)
     interval_iso = nem_iso(interval_start_dt)
     run_at_dt = datetime(2026, 4, 18, 13, 0, tzinfo=NEM_TZ)
     run_at_iso = nem_iso(run_at_dt)

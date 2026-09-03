@@ -29,23 +29,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import tod_stats as _tod_stats
 from .const import (
     ATTR_ATTRIBUTION,
-    ATTR_CAL_ACTIVE_BUCKETS,
     ATTR_CAL_CALIBRATED,
-    ATTR_CAL_FITTED_AT,
     ATTR_CAL_MAE,
     ATTR_CAL_BAND_SOURCE,
     ATTR_CAL_N_OBS,
-    ATTR_CAL_OBS_COUNT,
     ATTR_CAL_P10,
     ATTR_CAL_P50,
     ATTR_CAL_P90,
     ATTR_CAL_SOURCE,
     ATTR_CAL_STATUS,
-    ATTR_CAL_SUMMARY,
-    ATTR_CAL_TOTAL_BUCKETS,
     ATTR_CHEAPEST_2H,
     ATTR_EXPORTLIMIT,
     ATTR_FORECAST,
@@ -55,7 +49,6 @@ from .const import (
     ATTR_INTERCONNECTOR_ID,
     ATTR_INTERVAL_MINUTES,
     ATTR_IS_CONSTRAINED,
-    ATTR_LAST_CHANGED,
     ATTR_MARGINALVALUE,
     ATTR_MAX_24H,
     ATTR_MAX_VIOLATION_7D,
@@ -78,12 +71,9 @@ from .const import (
     DOMAIN,
     EXPORT_TARIFF_PROGRAMS,
     FORECAST_MODE_DAYS_2_7,
-    FORECAST_MODE_FULL,
     get_region,
     interconnectors_for_regions,
-    QLD1_INTERCONNECTORS,
     REGION_DISTRIBUTORS,
-    storage_keys,
 )
 from .calibration_inputs import (
     STPASA_BAND_EDGE_SLACK_H,
@@ -100,11 +90,10 @@ from .calibration_inputs import (
     stpasa_effective_min_horizon_h,
     stpasa_features_for_interval,
 )
-from .coordinator import PD7DayCoordinator
+from .coordinator import PD7DayCoordinator, staleness_attributes
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
-    from datetime import datetime
     from .notice_store import GridNoticeStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -443,9 +432,40 @@ class CalibratedWriteMixin:
         await self._async_warm_until_current()
         self.async_write_ha_state()
 
+    # Class-level default so instances built without __init__ still work.
+    _pending_warm_writes: set | None = None
+
+    if TYPE_CHECKING:
+        # Provided by the entity this mixes into.
+        entity_id: str
+        hass: HomeAssistant
+
     def _schedule_warm_state_write(self) -> None:
-        """Warm the memo then write state, without blocking the caller."""
-        self.hass.async_create_task(self._async_warm_then_write())
+        """Warm the memo then write state, without blocking the caller.
+
+        The task is held and cancelled when the entity leaves hass, so a warm
+        still running when the entry unloads does not write state for an
+        entity that is gone (issue #106).
+        """
+        task = self.hass.async_create_background_task(
+            self._async_warm_then_write(),
+            name=f"nem_pd7day warm state write {self.entity_id}",
+        )
+        if self._pending_warm_writes is None:
+            self._pending_warm_writes = set()
+        pending = self._pending_warm_writes
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    def _cancel_pending_warm_writes(self) -> None:
+        pending = self._pending_warm_writes or set()
+        self._pending_warm_writes = set()
+        for task in list(pending):
+            task.cancel()
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._cancel_pending_warm_writes()
+        await super().async_will_remove_from_hass()  # type: ignore[misc]
 
     def _handle_coordinator_update(self) -> None:
         """Replaces CoordinatorEntity's direct async_write_ha_state()."""
@@ -746,6 +766,7 @@ class PD7DayForecastSensor(
         return {
             ATTR_REGION: d.region,
             ATTR_FORECAST_GENERATED_AT: run_at,
+            **staleness_attributes(self.coordinator),
             ATTR_INTERVAL_MINUTES: d.interval_minutes,
             ATTR_NEXT_VALUE: (
                 trimmed_forecast[0].get(ATTR_CAL_CALIBRATED, trimmed_forecast[0].get("value"))
@@ -974,6 +995,7 @@ class SpotPriceForecastDays27Sensor(
         return {
             ATTR_REGION: d.region,
             ATTR_FORECAST_GENERATED_AT: run_at,
+            **staleness_attributes(self.coordinator),
             ATTR_INTERVAL_MINUTES: d.interval_minutes,
             ATTR_NEXT_VALUE: (
                 trimmed_forecast[0].get(ATTR_CAL_CALIBRATED, trimmed_forecast[0].get("value"))
@@ -1400,8 +1422,8 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
         """Count of active non-cancelled notices within next 7 days."""
         if self._notice_store is None:
             return 0
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone(timedelta(hours=10)))
+        from datetime import timedelta
+        now = now_nem()
         horizon = now + timedelta(days=7)
         return len(self._notice_store.get_active_notices(
             self._region, from_dt=now, to_dt=horizon
@@ -1411,8 +1433,8 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     def extra_state_attributes(self) -> dict:
         if self._notice_store is None:
             return {"region": self._region}
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone(timedelta(hours=10)))
+        from datetime import timedelta
+        now = now_nem()
         horizon = now + timedelta(days=7)
         active = self._notice_store.get_active_notices(
             self._region, from_dt=now, to_dt=horizon
@@ -1508,6 +1530,10 @@ class PD7DayDataSensor(
                 "p10": cal.get(ATTR_CAL_P10),
                 "p90": cal.get(ATTR_CAL_P90),
                 "calibrated_source": cal.get(ATTR_CAL_SOURCE),
+                # Which band derivation produced p10/p90. Added to the other
+                # two builders in PR #96 and missed here because this literal
+                # spells its own key names (issue #100).
+                ATTR_CAL_BAND_SOURCE: cal.get(ATTR_CAL_BAND_SOURCE),
                 "horizon_hours": cal.get("horizon_hours"),
             }
             for cal in self._calibrated_forecast(d)
@@ -1516,6 +1542,7 @@ class PD7DayDataSensor(
         return {
             ATTR_RUN_DATETIME: run_at,
             ATTR_REGION: self._region,
+            **staleness_attributes(self.coordinator),
             "interval_count": len(forecast),
             ATTR_FORECAST: forecast,
         }

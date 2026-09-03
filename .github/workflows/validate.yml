@@ -15,20 +15,56 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          # The version Home Assistant itself requires, and the one the
+          # pinned homeassistant-stubs target.
+          python-version: "3.13"
 
       - name: Install test dependencies
-        run: pip install pytest pytest-asyncio "astral>=2.2" "numpy>=1.24.0" "matplotlib>=3.10.5" pyyaml
+        run: pip install -r requirements-test.txt
 
       - name: Run tests
-        run: pytest tests/ -v
+        run: pytest -v
 
-      - name: Install mypy
-        run: pip install mypy homeassistant-stubs
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
 
-      - name: Type check (mypy)
-        run: mypy custom_components/nem_pd7day/ --ignore-missing-imports
-        continue-on-error: true
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install lint dependencies
+        run: pip install -r requirements-lint.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # manifest.json and the newest README version row must agree; the
+      # release workflow checks the tag against them too.
+      - name: Version lockstep
+        run: python scripts/version_lockstep.py
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # Separate job: homeassistant-stubs installs Home Assistant, whose own
+      # pins conflict with the test toolchain.
+      - name: Install type-check dependencies
+        run: pip install -r requirements-typecheck.txt
+
+      # Fails when the error count rises above mypy_baseline.txt. Lower the
+      # baseline as errors are fixed; see scripts/mypy_ratchet.py.
+      - name: Type check (mypy ratchet)
+        run: python scripts/mypy_ratchet.py
 
   hacs:
     runs-on: ubuntu-latest

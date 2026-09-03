@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import functools
 import logging
 import re
 import zipfile
@@ -34,7 +35,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin
 
 import aiohttp
@@ -156,15 +157,20 @@ def _extract_csv_bytes(raw: bytes) -> bytes:
     return data
 
 
-def _extract_and_parse_all_regions(raw: bytes) -> dict[str, StpasaResult]:
+def _extract_and_parse_all_regions(
+    raw: bytes, now: datetime | None = None
+) -> dict[str, StpasaResult]:
     """Unwrap the nested STPASA archive and parse every region.
 
-    Runs in the executor as a single unit — see executor.py.
+    Runs in the executor as a single unit — see executor.py. *now* is the
+    aware UTC instant stamped into fetched_at; defaults to the wall clock.
     """
-    return _parse_all_regions(_extract_csv_bytes(raw))
+    return _parse_all_regions(_extract_csv_bytes(raw), now=now)
 
 
-def _parse_regionsolution(raw_csv: bytes, region: str) -> StpasaResult | None:
+def _parse_regionsolution(
+    raw_csv: bytes, region: str, now: datetime | None = None
+) -> StpasaResult | None:
     """
     Parse REGIONSOLUTION rows for *region* from an AEMO STPASA CSV.
 
@@ -237,11 +243,13 @@ def _parse_regionsolution(raw_csv: bytes, region: str) -> StpasaResult | None:
         region=region,
         run_datetime=run_dt_iso or "",
         intervals=intervals,
-        fetched_at=datetime.now(timezone.utc).isoformat(),
+        fetched_at=(now or datetime.now(timezone.utc)).isoformat(),
     )
 
 
-def _parse_all_regions(raw_csv: bytes) -> dict[str, StpasaResult]:
+def _parse_all_regions(
+    raw_csv: bytes, now: datetime | None = None
+) -> dict[str, StpasaResult]:
     """
     Single-pass parse of an STPASA CSV → dict[region, StpasaResult].
 
@@ -306,7 +314,7 @@ def _parse_all_regions(raw_csv: bytes) -> dict[str, StpasaResult]:
             )
         )
 
-    fetched_at = datetime.now(timezone.utc).isoformat()
+    fetched_at = (now or datetime.now(timezone.utc)).isoformat()
     results: dict[str, StpasaResult] = {}
     for region, intervals in buckets.items():
         if not intervals:
@@ -333,8 +341,12 @@ class StpasaClient:
         session: aiohttp.ClientSession,
         semaphore: Any | None = None,
         executor_job: ExecutorJob | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._session = session
+        # Injected clock for fetched_at, the pattern market_notice_client uses;
+        # this module holds no hass reference so it cannot use dt_util (#109).
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         # hass.async_add_executor_job — see executor.py.
         self._executor_job = executor_job
         # Shared across all region coordinators to cap concurrent NEMWEB
@@ -449,7 +461,8 @@ class StpasaClient:
             # regions is ~350 ms of CPU. Both steps go to the executor in one
             # hand-off so the loop is never held.
             results = await run_in_executor(
-                self._executor_job, _extract_and_parse_all_regions, raw
+                self._executor_job,
+                functools.partial(_extract_and_parse_all_regions, raw, now=self._clock()),
             )
             if not results:
                 _LOGGER.warning(

@@ -99,6 +99,21 @@ if TYPE_CHECKING:
 
 from astral import LocationInfo
 from astral.sun import elevation as solar_elevation
+
+from .const import (
+    NEM_TZ,
+    ATTR_CAL_BAND_SOURCE,
+    HORIZON_EDGES,
+    HORIZON_LABELS,
+    IRLS_EPS,
+    IRLS_ITER,
+    IRLS_TOL,
+    MAX_OBS,
+    MIN_OBS,
+    OLS_MIN_OBS,
+    QUANTILES,
+    TOD_LABELS,
+)
 # ── Pure-numpy isotonic regression ───────────────────────────────────────────
 # Replaces sklearn.isotonic.IsotonicRegression to avoid a heavy optional
 # dependency that HA's pip installer cannot resolve in all environments.
@@ -188,18 +203,6 @@ class IsotonicRegression:
             right=y_thresholds[-1],
         )
 
-from .const import (
-    ATTR_CAL_BAND_SOURCE,
-    HORIZON_EDGES,
-    HORIZON_LABELS,
-    IRLS_EPS,
-    IRLS_ITER,
-    MAX_OBS,
-    MIN_OBS,
-    OLS_MIN_OBS,
-    QUANTILES,
-    TOD_LABELS,
-)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -319,9 +322,6 @@ OBSERVATION_WINDOW_DAYS = 90
 # λ = 0.033 → half-life ≈ 21 days (ln2 / 0.033 ≈ 21).
 # Applied to both isotonic and quantile regression fitting.
 DECAY_LAMBDA = 0.033
-
-# NEM timezone for weight calculations
-_NEM_TZ = timezone(timedelta(hours=10))
 
 # ── Region capital coordinates (latitude, longitude) ─────────────────────────
 REGION_COORDS: dict[str, tuple[float, float]] = {
@@ -1035,8 +1035,11 @@ def _ols(
     """
     Fit actual = a * forecast + b using ordinary least squares.
 
-    If *weights* is provided, performs weighted OLS using the sqrt-scaling
-    trick: multiply both sides of the design matrix by sqrt(w).
+    If *weights* is provided, performs weighted OLS by accumulating the
+    weighted normal equations directly: each row's contribution to the sums
+    is scaled by its weight w_i. (The sqrt(w) scaling trick applies when a
+    design matrix is handed to a least-squares solver; here the sums are
+    formed by hand, so the weights go in as-is, issue #110.)
 
     Returns (a, b).  Falls back to (1, 0) if degenerate.
     """
@@ -1045,12 +1048,10 @@ def _ols(
         return 1.0, 0.0
 
     if weights is not None:
-        # Weighted OLS via sqrt-scaling
-        sw = [math.sqrt(w) for w in weights]
-        sx = sum(sw[i] * sw[i] * pairs[i][0] for i in range(n))
-        sy = sum(sw[i] * sw[i] * pairs[i][1] for i in range(n))
-        sxx = sum(sw[i] * sw[i] * pairs[i][0] * pairs[i][0] for i in range(n))
-        sxy = sum(sw[i] * sw[i] * pairs[i][0] * pairs[i][1] for i in range(n))
+        sx = sum(weights[i] * pairs[i][0] for i in range(n))
+        sy = sum(weights[i] * pairs[i][1] for i in range(n))
+        sxx = sum(weights[i] * pairs[i][0] * pairs[i][0] for i in range(n))
+        sxy = sum(weights[i] * pairs[i][0] * pairs[i][1] for i in range(n))
         wsum = sum(w for w in weights)
         denom = wsum * sxx - sx * sx
         if abs(denom) < 1e-12:
@@ -1088,70 +1089,88 @@ def _quantile_regression(
     pairs: list[tuple[float, float]],
     quantile: float,
     n_iter: int = IRLS_ITER,
+    weights: list[float] | None = None,
 ) -> tuple[float, float, float]:
     """
     Fit quantile regression for the given quantile level using IRLS.
 
-    Algorithm:
-      1. Initialise with OLS solution.
-      2. For each iteration:
-         a. Compute residuals r_i = y_i - (a*x_i + b)
-         b. Assign pinball weights:
-               w_i = quantile     if r_i >= 0
-               w_i = 1 - quantile if r_i <  0
-            (floor at IRLS_EPS to avoid zero weights)
-         c. Fit weighted OLS using the current weights.
-      3. Return final (a, b) and mean pinball loss.
+    Minimises the pinball (check) loss
 
-    Returns (a, b, pinball_loss).
+        sum_i w_i * rho_tau(r_i),   rho_tau(r) = r * (tau - 1[r < 0])
+
+    by iteratively reweighted least squares. At each step row i enters the
+    weighted OLS with
+
+        v_i = w_i * (tau if r_i >= 0 else 1 - tau) / max(|r_i|, IRLS_EPS)
+
+    so that v_i * r_i^2 equals w_i * rho_tau(r_i) at the current residuals.
+
+    The 1/|r_i| divisor is what makes this a quantile fit. Without it the
+    weights depend only on the sign of the residual, which is asymmetric
+    least squares and converges to the tau-expectile instead. On right-skewed
+    price data that put the fitted P10 line far too high: about a quarter of
+    actuals fell below a line published as the 10th percentile (issue #103).
+
+    IRLS_EPS floors the residual in the denominator, bounding the weight a
+    near-zero residual can take. IRLS_ITER caps the iterations and the loop
+    also stops once the objective has stopped falling by more than IRLS_TOL
+    relative, which is the convergence test that matters; a coefficient
+    tolerance alone stopped the old loop long before the quantile was reached.
+
+    *weights* are optional per-pair sample weights, the exponential decay
+    weights the OLS and isotonic fits use, so all three fits see the same
+    effective sample.
+
+    Returns (a, b, pinball_loss). Falls back to (1, 0, inf) below MIN_OBS.
     """
     n = len(pairs)
     if n < MIN_OBS:
         return 1.0, 0.0, float("inf")
 
-    xs = [x for x, _ in pairs]
-    ys = [y for _, y in pairs]
+    xs = np.array([p[0] for p in pairs], dtype=float)
+    ys = np.array([p[1] for p in pairs], dtype=float)
+    sw = np.array(weights, dtype=float) if weights else np.ones(n)
+    sw_sum = float(sw.sum())
+    if sw_sum <= 0.0:
+        return 1.0, 0.0, float("inf")
 
-    # Initialise with OLS
-    a, b = _ols(pairs)
+    def _objective(a_: float, b_: float) -> float:
+        r = ys - (a_ * xs + b_)
+        rho = np.where(r >= 0, quantile * r, (quantile - 1.0) * r)
+        return float((sw * rho).sum() / sw_sum)
+
+    # Initialise with (weighted) OLS
+    a, b = _ols(pairs, weights=weights if weights else None)
+    obj = _objective(a, b)
 
     for _ in range(n_iter):
-        # Compute residuals
-        residuals = [ys[i] - (a * xs[i] + b) for i in range(n)]
+        r = ys - (a * xs + b)
+        tau_w = np.where(r >= 0, quantile, 1.0 - quantile)
+        v = sw * tau_w / np.maximum(np.abs(r), IRLS_EPS)
 
-        # Assign pinball weights
-        weights = [
-            max(quantile if r >= 0 else (1.0 - quantile), IRLS_EPS)
-            for r in residuals
-        ]
+        s = float(v.sum())
+        sx = float((v * xs).sum())
+        sy = float((v * ys).sum())
+        sxx = float((v * xs * xs).sum())
+        sxy = float((v * xs * ys).sum())
 
-        # Weighted OLS: minimise sum(w_i * (y_i - a*x_i - b)^2)
-        sw = sum(weights)
-        swx = sum(weights[i] * xs[i] for i in range(n))
-        swy = sum(weights[i] * ys[i] for i in range(n))
-        swxx = sum(weights[i] * xs[i] * xs[i] for i in range(n))
-        swxy = sum(weights[i] * xs[i] * ys[i] for i in range(n))
-
-        denom = sw * swxx - swx * swx
-        if abs(denom) < 1e-12:
+        denom = s * sxx - sx * sx
+        # Cauchy-Schwarz gives denom >= 0, with equality only when every x is
+        # the same; scale the degeneracy test to the sums rather than testing
+        # against an absolute 1e-12 that the 1/|r| weights would dwarf.
+        if denom <= 1e-12 * max(s * sxx, 1e-300):
             break
-        a_new = (sw * swxy - swx * swy) / denom
-        b_new = (swy - a_new * swx) / sw
-
-        # Check convergence
-        if abs(a_new - a) < 1e-9 and abs(b_new - b) < 1e-9:
-            a, b = a_new, b_new
-            break
+        a_new = (s * sxy - sx * sy) / denom
+        b_new = (sy - a_new * sx) / s
+        obj_new = _objective(a_new, b_new)
         a, b = a_new, b_new
+        converged = abs(obj - obj_new) <= IRLS_TOL * max(obj, 1e-12)
+        obj = obj_new
+        if converged:
+            break
 
-    # Pinball loss
-    residuals = [ys[i] - (a * xs[i] + b) for i in range(n)]
-    pinball = sum(
-        quantile * r if r >= 0 else (quantile - 1) * r
-        for r in residuals
-    ) / n
-
-    return round(a, 6), round(b, 6), round(pinball, 6)
+    pinball = _objective(a, b)
+    return round(float(a), 6), round(float(b), 6), round(pinball, 6)
 
 
 # ── Stage-2 residual quantiles ────────────────────────────────────────────────
@@ -1320,10 +1339,15 @@ class CalibrationEngine:
         self,
         observations: list[Observation],
         region: str = "QLD1",
+        now: datetime | None = None,
     ) -> CalibrationResult:
         """
         Partition observations into buckets, fit all models.
         Returns a CalibrationResult ready to apply to new forecasts.
+
+        *now* is the aware UTC instant the rolling window and decay weights
+        are measured from; it defaults to the wall clock and exists so tests
+        can pin it (issue #109). This module holds no hass reference.
 
         Only observations within the last OBSERVATION_WINDOW_DAYS are used
         for fitting.  All observations remain in storage (the window is a
@@ -1333,8 +1357,8 @@ class CalibrationEngine:
           weight = exp(-DECAY_LAMBDA * days_ago)
         Region is used for solar elevation ToD classification.
         """
-        now_utc = datetime.now(timezone.utc)
-        now_nem_dt = now_utc.astimezone(_NEM_TZ)
+        now_utc = now or datetime.now(timezone.utc)
+        now_nem_dt = now_utc.astimezone(NEM_TZ)
         # ── Rolling window filter ────────────────────────────────────────────
         cutoff = now_utc - timedelta(days=OBSERVATION_WINDOW_DAYS)
         windowed: list[tuple[Observation, datetime]] = []
@@ -1343,7 +1367,7 @@ class CalibrationEngine:
                 obs_dt = datetime.fromisoformat(obs.interval_time)
                 if obs_dt.tzinfo is None:
                     # Legacy naive timestamp — assume NEM time (UTC+10)
-                    obs_dt = obs_dt.replace(tzinfo=_NEM_TZ)
+                    obs_dt = obs_dt.replace(tzinfo=NEM_TZ)
                 if obs_dt >= cutoff:
                     windowed.append((obs, obs_dt))
             except (ValueError, TypeError):
@@ -1370,7 +1394,7 @@ class CalibrationEngine:
                 # that collapse the OLS slope even when actual_rrp is bounded.
                 continue
             # Solar elevation ToD classification
-            obs_nem = obs_dt.astimezone(_NEM_TZ)
+            obs_nem = obs_dt.astimezone(NEM_TZ)
             key = _bucket_key_solar(obs.horizon_hours, obs_nem, region)
             if key in buckets:
                 # Cap per-bucket to avoid memory bloat; keep most recent
@@ -1417,7 +1441,9 @@ class CalibrationEngine:
             # Quantile regression (P10, P50, P90)
             q_results: dict[str, tuple[float, float, float]] = {}
             for q, attr in zip(QUANTILES, ("q10", "q50", "q90")):
-                a_q, b_q, pl = _quantile_regression(pairs, q)
+                a_q, b_q, pl = _quantile_regression(
+                    pairs, q, weights=weights if weights else None
+                )
                 q_results[attr] = (a_q, b_q, pl)
 
             # Enforce monotonic ordering of quantile slopes: q10_a <= q50_a <= q90_a

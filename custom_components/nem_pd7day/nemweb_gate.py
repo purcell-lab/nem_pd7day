@@ -35,6 +35,17 @@ the 403 in the first place.
 The pacing lock is held across the wait deliberately. Releasing it before
 sleeping would let every waiting task compute the same target time and wake
 together, which is the thundering herd the gap exists to prevent.
+
+What the gate does not cover
+----------------------------
+The DispatchIS fallback in ``dispatch_client._fetch_dispatchis`` fetches a
+NEMWEB directory listing and a zip through ``urllib`` on an executor thread,
+because that module has no aiohttp and runs synchronously. It cannot take an
+async context manager, so it sits outside this gate and outside the request
+gap. It is meant to be rare, a fallback for when ELEC_NEM_SUMMARY is down or
+stale, so in normal operation it adds nothing to the rate; but anyone
+auditing the NEMWEB request budget should not read this gate as covering
+every path (issue #110).
 """
 
 from __future__ import annotations

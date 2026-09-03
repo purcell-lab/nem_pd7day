@@ -292,7 +292,6 @@ def test_chart_with_forecast_run_at_renders_zones():
 def test_zone_boundaries_split_data_correctly():
     """Verify that zone_a/zone_b/zone_c partition covers all forecast data."""
     from datetime import datetime, timezone, timedelta
-    import numpy as np
 
     NEM_TZ = timezone(timedelta(hours=10))
     run_at = datetime(2026, 5, 15, 7, 30, tzinfo=NEM_TZ)

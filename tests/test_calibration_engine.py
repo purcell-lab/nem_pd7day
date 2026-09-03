@@ -10,6 +10,8 @@ import math
 import sys
 import os
 import random
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
 # ── Fixture date anchoring ────────────────────────────────────────────────────
@@ -67,10 +69,7 @@ _engine_mod = _load(
 from custom_components.nem_pd7day.calibration_engine import (
     DECAY_LAMBDA,
     MIN_OBS,
-    OBSERVATION_WINDOW_DAYS,
-    NEGATIVE_PASSTHROUGH_THRESHOLD,
     REGION_COORDS,
-    SPIKE_THRESHOLD,
     BucketModel,
     CalibrationEngine,
     LinearCoeff,
@@ -80,7 +79,6 @@ from custom_components.nem_pd7day.calibration_engine import (
     RunFeatures,
     StpasaFeatures,
     _bucket_key,
-    _bucket_key_solar,
     _horizon_label,
     _tod_label,
     _tod_label_solar,
@@ -281,6 +279,92 @@ def test_quantile_passthrough():
     assert a == 1.0 and b == 0.0
     assert math.isinf(pl)
     print(f"  PASS: quantile passthrough with n={MIN_OBS - 1}")
+
+
+def _right_skewed_pairs(n: int = 400, seed: int = 103) -> list[tuple[float, float]]:
+    """y = x plus gaussian noise, with a lognormal spike on 15% of rows.
+
+    A crude stand-in for the NEM price regime: heavy right tail, nothing on
+    the left. This is the shape on which an expectile fit and a quantile fit
+    disagree most.
+    """
+    rng = random.Random(seed)
+    pairs = []
+    for _ in range(n):
+        x = rng.uniform(0.0, 0.3)
+        noise = rng.gauss(0, 0.02)
+        if rng.random() < 0.15:
+            noise += rng.lognormvariate(-3, 1)
+        pairs.append((x, x + noise))
+    return pairs
+
+
+def _fraction_below(pairs, a, b) -> float:
+    return sum(1 for x, y in pairs if y < a * x + b) / len(pairs)
+
+
+@pytest.mark.parametrize("quantile", [0.1, 0.5, 0.9])
+def test_quantile_regression_coverage_matches_nominal_level(quantile):
+    """
+    Issue #103: the fitted line for level tau must have about tau of the
+    observations below it. The sign-only IRLS weights this replaced converged
+    to the expectile instead, and on this fixture put ~23% of points under
+    the P10 line and ~60% under the P50 line.
+    """
+    pairs = _right_skewed_pairs()
+    a, b, _ = _quantile_regression(pairs, quantile)
+    below = _fraction_below(pairs, a, b)
+    assert abs(below - quantile) < 0.04, (
+        f"tau={quantile}: {below:.3f} of observations fall below the fitted "
+        f"line, expected about {quantile}"
+    )
+
+
+def test_quantile_regression_expectile_weights_would_fail_coverage():
+    """
+    Guard that the coverage test above is testing something real: rerun the
+    pre-#103 weighting (sign-only, no 1/|r| divisor) and confirm it misses
+    the nominal level by far more than the tolerance.
+    """
+    pairs = _right_skewed_pairs()
+    xs = [x for x, _ in pairs]
+    ys = [y for _, y in pairs]
+    a, b = _ols(pairs)
+    for _ in range(15):
+        w = [0.1 if ys[i] - (a * xs[i] + b) >= 0 else 0.9 for i in range(len(pairs))]
+        sw = sum(w)
+        swx = sum(w[i] * xs[i] for i in range(len(pairs)))
+        swy = sum(w[i] * ys[i] for i in range(len(pairs)))
+        swxx = sum(w[i] * xs[i] * xs[i] for i in range(len(pairs)))
+        swxy = sum(w[i] * xs[i] * ys[i] for i in range(len(pairs)))
+        denom = sw * swxx - swx * swx
+        a = (sw * swxy - swx * swy) / denom
+        b = (swy - a * swx) / sw
+    below = _fraction_below(pairs, a, b)
+    assert below > 0.18, f"expectile weighting unexpectedly covered {below:.3f}"
+
+
+def test_quantile_regression_uniform_weights_match_unweighted():
+    """Sample weights all equal must reproduce the unweighted fit."""
+    pairs = _right_skewed_pairs(n=200, seed=7)
+    a0, b0, pl0 = _quantile_regression(pairs, 0.9)
+    a1, b1, pl1 = _quantile_regression(pairs, 0.9, weights=[0.37] * len(pairs))
+    assert abs(a0 - a1) < 1e-6 and abs(b0 - b1) < 1e-6
+    assert abs(pl0 - pl1) < 1e-6
+
+
+def test_quantile_regression_weights_shift_the_fit():
+    """Weighting one half of the sample heavily must move the fitted line
+    towards that half; otherwise the weights are not reaching the solver."""
+    rng = random.Random(11)
+    low = [(x, x + 0.00 + rng.gauss(0, 0.003)) for x in (rng.uniform(0.05, 0.25) for _ in range(150))]
+    high = [(x, x + 0.05 + rng.gauss(0, 0.003)) for x in (rng.uniform(0.05, 0.25) for _ in range(150))]
+    pairs = low + high
+    w_low = [1.0] * 150 + [0.01] * 150
+    w_high = [0.01] * 150 + [1.0] * 150
+    _, b_low, _ = _quantile_regression(pairs, 0.5, weights=w_low)
+    _, b_high, _ = _quantile_regression(pairs, 0.5, weights=w_high)
+    assert b_high - b_low > 0.03, f"weights did not move the median line ({b_low=}, {b_high=})"
 
 
 # ── Engine integration tests ──────────────────────────────────────────────────
@@ -633,7 +717,7 @@ def test_threshold_boundary_exact():
     result = model.apply_all(-0.10)
     assert result["calibrated"] == round(-0.10, 6)
     assert result["calibrated_source"] == "passthrough_negative"
-    print(f"  PASS: threshold boundary exact passthrough (raw=-0.10)")
+    print("  PASS: threshold boundary exact passthrough (raw=-0.10)")
 
 
 # ── Spike passthrough tests ──────────────────────────────────────────────────
@@ -659,7 +743,7 @@ def test_spike_input_no_iso_model_returns_passthrough():
         f"Spike raw with no iso_model should pass through unchanged, got {result['calibrated']}"
     )
     assert result["calibrated_source"] == "passthrough"
-    print(f"  PASS: spike input no iso_model returns passthrough (raw=3.50)")
+    print("  PASS: spike input no iso_model returns passthrough (raw=3.50)")
 
 
 def test_spike_input_with_iso_model_returns_isotonic():
@@ -704,7 +788,7 @@ def test_spike_input_no_iso_model_passthrough():
 
     result = model.apply_all(8.999)
     assert result["calibrated_source"] == "passthrough"
-    print(f"  PASS: spike input without iso_model (passthrough)")
+    print("  PASS: spike input without iso_model (passthrough)")
 
 
 def test_below_spike_threshold_uses_ols():
@@ -1267,7 +1351,7 @@ def test_p10_p90_never_outside_calibrated():
                 violations.append(f"{key} x={x_test}: p90={p90} < cal={cal}")
 
     assert not violations, f"P10/P90 violations: {violations}"
-    print(f"  PASS: P10 <= calibrated <= P90 for all buckets and test inputs")
+    print("  PASS: P10 <= calibrated <= P90 for all buckets and test inputs")
 
 
 def test_p50_within_confidence_band():
@@ -1362,7 +1446,7 @@ def test_spike_input_quantiles_none_when_isotonic():
     assert result["p90"] is not None, "p90 should be present for fitted bucket"
     assert "n_obs" in result, "n_obs must be in result"
     assert result["n_obs"] >= 60, f"n_obs should reflect training count, got {result['n_obs']}"
-    print(f"  PASS: spike input isotonic result has full structure")
+    print("  PASS: spike input isotonic result has full structure")
 
 
 # ── STPASA OLS stage2 tests ─────────────────────────────────────────────────

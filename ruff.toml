@@ -1,0 +1,13 @@
+# Lint only; formatting is not enforced. The rule set is ruff's default (pyflakes
+# plus the pycodestyle error classes that are bugs rather than style), stated
+# explicitly so a ruff upgrade cannot widen it silently.
+target-version = "py313"
+line-length = 120
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# Test modules install MagicMock stand-ins for homeassistant in sys.modules and
+# only then import the integration, so imports genuinely cannot sit at the top.
+"tests/*" = ["E402"]
