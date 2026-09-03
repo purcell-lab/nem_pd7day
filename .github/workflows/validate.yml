@@ -25,6 +25,21 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # Separate job: homeassistant-stubs installs Home Assistant, whose own
+      # pins conflict with the test toolchain.
+      - name: Install type-check dependencies
+        run: pip install -r requirements-typecheck.txt
+
       # Fails when the error count rises above mypy_baseline.txt. Lower the
       # baseline as errors are fixed; see scripts/mypy_ratchet.py.
       - name: Type check (mypy ratchet)

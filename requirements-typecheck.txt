@@ -1,0 +1,5 @@
+# Pinned mypy toolchain for scripts/mypy_ratchet.py (issue #107). The stubs
+# pull in Home Assistant at the same version; mypy_baseline.txt was measured
+# with exactly these pins on Python 3.13.
+mypy==2.3.1
+homeassistant-stubs==2026.2.3

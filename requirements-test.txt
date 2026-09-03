@@ -1,11 +1,13 @@
-# Pinned test and type-check toolchain for CI (issue #107). Floating versions
-# turned a matplotlib text-metrics change into a surprise chart-placement
-# failure; bump these deliberately.
+# Pinned test toolchain for CI (issue #107). Floating versions turned a
+# matplotlib text-metrics change into a surprise chart-placement failure;
+# bump these deliberately. astral is pinned to the version Home Assistant
+# itself ships, so the suite runs against what the integration sees in
+# production. The type-check toolchain lives in requirements-typecheck.txt
+# because homeassistant-stubs installs Home Assistant, whose own pins would
+# fight this file.
 pytest==9.1.1
 pytest-asyncio==1.4.0
-astral==3.2
+astral==2.2
 numpy==2.4.6
 matplotlib==3.11.1
 PyYAML==6.0.1
-mypy==2.3.1
-homeassistant-stubs==2026.2.3
