@@ -1,9 +1,30 @@
 name: "Release"
 
+# Three ways in, one outcome: a published GitHub release with nem_pd7day.zip
+# attached, which is what HACS installs from.
+#
+#   * Push a tag vX.Y.Z: the release is created here from docs/releases/vX.Y.Z.md
+#     (falls back to GitHub's generated notes when that file is absent).
+#   * Run this workflow by hand with the tag as input: the tag is created at the
+#     checked-out commit along with the release. For releasing from a session
+#     that can push branches but not tags.
+#   * Publish a release by hand: the zip is attached to it.
+#
+# Every way the version lockstep check runs first and refuses to publish a
+# zip whose manifest.json disagrees with the tag.
 on:
+  push:
+    tags:
+      - "v*"
   release:
     types:
       - "published"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create, vX.Y.Z; must match manifest.json"
+        required: true
+        type: string
 
 permissions: {}
 
@@ -17,12 +38,22 @@ jobs:
       - name: "Checkout the repository"
         uses: "actions/checkout@v6"
 
+      - name: "Resolve the tag"
+        id: tag
+        shell: "bash"
+        run: |
+          tag="${{ inputs.tag || github.event.release.tag_name || github.ref_name }}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if [ -f "docs/releases/${tag}.md" ]; then
+            echo "notes=docs/releases/${tag}.md" >> "$GITHUB_OUTPUT"
+          fi
+
       # A release cut from a manifest that still says the previous version
       # installs as that previous version. Refuse to publish the zip unless
       # the tag, manifest.json and the README version table agree.
       - name: "Version lockstep"
         shell: "bash"
-        run: python3 scripts/version_lockstep.py --tag "${{ github.event.release.tag_name }}"
+        run: python3 scripts/version_lockstep.py --tag "${{ steps.tag.outputs.tag }}"
 
       - name: "ZIP the integration directory"
         shell: "bash"
@@ -30,7 +61,13 @@ jobs:
           cd "${{ github.workspace }}/custom_components/nem_pd7day"
           zip nem_pd7day.zip -r ./
 
-      - name: "Upload the ZIP file to the release"
+      - name: "Create or update the release and upload the ZIP"
         uses: "softprops/action-gh-release@v2.3.2"
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          # Where a tag that does not exist yet is created (the dispatch path).
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.tag.outputs.tag }}
+          body_path: ${{ steps.tag.outputs.notes }}
+          generate_release_notes: ${{ steps.tag.outputs.notes == '' }}
           files: ${{ github.workspace }}/custom_components/nem_pd7day/nem_pd7day.zip
