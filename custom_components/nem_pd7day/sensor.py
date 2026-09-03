@@ -1508,6 +1508,10 @@ class PD7DayDataSensor(
                 "p10": cal.get(ATTR_CAL_P10),
                 "p90": cal.get(ATTR_CAL_P90),
                 "calibrated_source": cal.get(ATTR_CAL_SOURCE),
+                # Which band derivation produced p10/p90. Added to the other
+                # two builders in PR #96 and missed here because this literal
+                # spells its own key names (issue #100).
+                ATTR_CAL_BAND_SOURCE: cal.get(ATTR_CAL_BAND_SOURCE),
                 "horizon_hours": cal.get("horizon_hours"),
             }
             for cal in self._calibrated_forecast(d)

@@ -213,6 +213,7 @@ p50: 0.138                             # 50th percentile (median)
 p90: 0.231                             # 90th percentile (conservative)
 ols_mae: 0.038                         # mean absolute error of calibration fit
 calibrated_source: isotonic+stpasa     # "isotonic+stpasa" (h22–h120), "isotonic", "passthrough_high", "passthrough_sanity", or "passthrough"
+band_source: stage2_residual           # how p10/p90 were derived: "stage1_quantile", "stage1_quantile_unclamped", "raw_passthrough", "stage2_residual", or "stage1_quantile_reclamped"
 n_obs: 147                             # observations used for this bucket
 horizon_hours: 36.5                    # hours ahead
 value: 0.142                           # alias for calibrated (template compat)
