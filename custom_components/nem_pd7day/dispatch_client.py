@@ -18,7 +18,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from .const import DISPATCHIS_BASE_URL, ELEC_NEM_SUMMARY_URL
+from .const import DISPATCHIS_BASE_URL, ELEC_NEM_SUMMARY_URL, NEMWEB_HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def _fetch_nem_summary() -> dict[str, DispatchPrice]:
     """
     req = urllib.request.Request(
         NEM_SUMMARY_URL,
-        headers={"Accept": "application/json", "User-Agent": "nem_pd7day/2.3"},
+        headers={**NEMWEB_HEADERS, "Accept": "application/json"},
     )
     raw = urllib.request.urlopen(req, timeout=15).read()
     payload = json.loads(raw)
@@ -121,7 +121,11 @@ def _fetch_dispatchis() -> dict[str, DispatchPrice] | None:
     Returns a dict keyed by REGIONID, or None if the zip is not yet published
     (HTTP 404).  Raises on other network or parse errors.
     """
-    index = urllib.request.urlopen(DISPATCHIS_BASE, timeout=15).read().decode(
+    # Both requests carry NEMWEB_HEADERS. Before issue #102 they carried no
+    # User-Agent at all, so they went out as Python-urllib, the exact
+    # automated pattern the browser-like UA in const.py exists to avoid.
+    index_req = urllib.request.Request(DISPATCHIS_BASE, headers=NEMWEB_HEADERS)
+    index = urllib.request.urlopen(index_req, timeout=15).read().decode(
         "utf-8", errors="ignore"
     )
     files = sorted(set(_DISPATCHIS_FILE_RE.findall(index)))
@@ -131,7 +135,8 @@ def _fetch_dispatchis() -> dict[str, DispatchPrice] | None:
     url = DISPATCHIS_BASE + files[-1]
     _LOGGER.debug("DispatchIS URL: %s", url)
     try:
-        raw = urllib.request.urlopen(url, timeout=20).read()
+        zip_req = urllib.request.Request(url, headers=NEMWEB_HEADERS)
+        raw = urllib.request.urlopen(zip_req, timeout=20).read()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             _LOGGER.warning("DispatchIS 404 — zip not yet published: %s", url)
