@@ -294,7 +294,7 @@ class NemPd7dayIsoChartCamera(
         from . import iso_chart as _ic
         return _ic.render_iso_chart(
             cal,
-            iso_history=store.iso_history.get(self._region, []),
+            iso_history=store.iso_history,
             obs_count=store.observation_count,
             region=self._region,
         )

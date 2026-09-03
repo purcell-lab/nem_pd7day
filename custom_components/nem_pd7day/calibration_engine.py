@@ -1036,8 +1036,11 @@ def _ols(
     """
     Fit actual = a * forecast + b using ordinary least squares.
 
-    If *weights* is provided, performs weighted OLS using the sqrt-scaling
-    trick: multiply both sides of the design matrix by sqrt(w).
+    If *weights* is provided, performs weighted OLS by accumulating the
+    weighted normal equations directly: each row's contribution to the sums
+    is scaled by its weight w_i. (The sqrt(w) scaling trick applies when a
+    design matrix is handed to a least-squares solver; here the sums are
+    formed by hand, so the weights go in as-is, issue #110.)
 
     Returns (a, b).  Falls back to (1, 0) if degenerate.
     """
@@ -1046,12 +1049,10 @@ def _ols(
         return 1.0, 0.0
 
     if weights is not None:
-        # Weighted OLS via sqrt-scaling
-        sw = [math.sqrt(w) for w in weights]
-        sx = sum(sw[i] * sw[i] * pairs[i][0] for i in range(n))
-        sy = sum(sw[i] * sw[i] * pairs[i][1] for i in range(n))
-        sxx = sum(sw[i] * sw[i] * pairs[i][0] * pairs[i][0] for i in range(n))
-        sxy = sum(sw[i] * sw[i] * pairs[i][0] * pairs[i][1] for i in range(n))
+        sx = sum(weights[i] * pairs[i][0] for i in range(n))
+        sy = sum(weights[i] * pairs[i][1] for i in range(n))
+        sxx = sum(weights[i] * pairs[i][0] * pairs[i][0] for i in range(n))
+        sxy = sum(weights[i] * pairs[i][0] * pairs[i][1] for i in range(n))
         wsum = sum(w for w in weights)
         denom = wsum * sxx - sx * sx
         if abs(denom) < 1e-12:
