@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
@@ -58,6 +58,13 @@ class _InitialRenderMixin:
 
     # Class-level default so instances built without __init__ still work.
     _pending_renders: set | None = None
+
+    if TYPE_CHECKING:
+        # Provided by the Camera entity this mixes into.
+        entity_id: str
+        hass: HomeAssistant
+
+        def async_on_remove(self, func: Callable[[], None]) -> None: ...
 
     def _schedule_render(self, name: str) -> None:
         """Run one render as a background task tied to this entity's life.

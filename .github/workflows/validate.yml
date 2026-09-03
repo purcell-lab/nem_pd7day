@@ -15,20 +15,20 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          # The version Home Assistant itself requires, and the one the
+          # pinned homeassistant-stubs target.
+          python-version: "3.13"
 
       - name: Install test dependencies
-        run: pip install pytest pytest-asyncio "astral>=2.2" "numpy>=1.24.0" "matplotlib>=3.10.5" pyyaml
+        run: pip install -r requirements-test.txt
 
       - name: Run tests
-        run: pytest tests/ -v
+        run: pytest -v
 
-      - name: Install mypy
-        run: pip install mypy homeassistant-stubs
-
-      - name: Type check (mypy)
-        run: mypy custom_components/nem_pd7day/ --ignore-missing-imports
-        continue-on-error: true
+      # Fails when the error count rises above mypy_baseline.txt. Lower the
+      # baseline as errors are fixed; see scripts/mypy_ratchet.py.
+      - name: Type check (mypy ratchet)
+        run: python scripts/mypy_ratchet.py
 
   hacs:
     runs-on: ubuntu-latest
