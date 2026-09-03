@@ -95,13 +95,27 @@ Wait for checks to go green again on the bump commit.
 
 ### 5. Tag and publish
 
+Put the notes in `docs/releases/vX.Y.Z.md` in the release commit, then tag it.
+Pushing the tag is the publish step: `.github/workflows/release.yml` runs the
+version lockstep check, creates the release from that file, and attaches the
+zip. No `gh` needed, which matters when releasing from a session that has git
+but no GitHub CLI.
+
 ```bash
 git tag -a vX.Y.Z -m "vX.Y.Z — <one-line summary>"
 git push origin vX.Y.Z
-gh release create vX.Y.Z --verify-tag --title "..." --notes-file notes.md
 ```
 
-`--verify-tag` refuses to invent a tag if the push silently failed.
+From a session that can push branches but not tags (the Claude Code cloud
+git proxy is one), run the workflow by hand instead: **Actions > Release >
+Run workflow** on `main` with the tag as the input, or trigger the
+`workflow_dispatch` through the API. The workflow creates the tag at the
+`main` commit it checks out, so merge the release commit first.
+
+Creating the release by hand with `gh release create` still works; the same
+workflow attaches the zip when the release is published. If
+`docs/releases/vX.Y.Z.md` is missing, the workflow falls back to GitHub's
+generated notes, so write the file.
 
 ### 6. Verify the artifact
 
