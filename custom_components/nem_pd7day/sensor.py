@@ -443,9 +443,33 @@ class CalibratedWriteMixin:
         await self._async_warm_until_current()
         self.async_write_ha_state()
 
+    # Class-level default so instances built without __init__ still work.
+    _pending_warm_writes: set | None = None
+
     def _schedule_warm_state_write(self) -> None:
-        """Warm the memo then write state, without blocking the caller."""
-        self.hass.async_create_task(self._async_warm_then_write())
+        """Warm the memo then write state, without blocking the caller.
+
+        The task is held and cancelled on entity removal, so a warm still
+        running when the entry unloads does not write state for an entity
+        that is gone (issue #106). One on-remove hook, registered on the
+        first call.
+        """
+        task = self.hass.async_create_background_task(
+            self._async_warm_then_write(),
+            name=f"nem_pd7day warm state write {self.entity_id}",
+        )
+        if self._pending_warm_writes is None:
+            self._pending_warm_writes = set()
+            self.async_on_remove(self._cancel_pending_warm_writes)
+        pending = self._pending_warm_writes
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    def _cancel_pending_warm_writes(self) -> None:
+        pending = self._pending_warm_writes or set()
+        self._pending_warm_writes = set()
+        for task in list(pending):
+            task.cancel()
 
     def _handle_coordinator_update(self) -> None:
         """Replaces CoordinatorEntity's direct async_write_ha_state()."""

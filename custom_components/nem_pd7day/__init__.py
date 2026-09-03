@@ -35,6 +35,7 @@ from .const import (
     SHARED_FETCH_KEY,
 )
 from .coordinator import DispatchCoordinator, PD7DayCoordinator
+from .fetch_scheduler import DailyFetchScheduler
 from .forecast_store import ForecastStore
 from .market_notice_client import MarketNoticeClient
 from .nemweb_gate import NemwebGate
@@ -148,6 +149,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # ZIP holds every NEM region, so one download (below) populates them all.
     stpasa_stores = hass.data[DOMAIN].setdefault("stpasa_stores", {})
     stpasa_stores[region] = stpasa_store
+    # De-register when this entry unloads, not only when the last one does.
+    # Otherwise the central STPASA fetch keeps writing .storage for a region
+    # the user has removed (issue #106). The trigger for that fetch is
+    # registered on any loaded region (#37), so popping here does not stop
+    # STPASA refreshes for the regions that remain.
+    entry.async_on_unload(lambda: stpasa_stores.pop(region, None))
 
     # ── Shared market notice store + client ──────────────────────────────────
     # All five region coordinators share ONE notice store + client so the
@@ -383,46 +390,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
 
     # ── Scheduled fetches at AEMO publish times ──────────────────────────────
 
-    def _next_utc_fire(hour: int, minute: int) -> datetime:
-        """Return the next UTC datetime for the given UTC hour:minute."""
-        from datetime import timezone as _tz
-        now_utc = datetime.now(_tz.utc)
-        candidate = now_utc.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate <= now_utc:
-            candidate += timedelta(days=1)
-        return candidate
+    def _on_publish_time(hour: int, minute: int) -> None:
+        _LOGGER.info(
+            "PD7DAY scheduled fetch triggered — NEM time: %s",
+            now_nem().strftime("%Y-%m-%dT%H:%M:%S+10:00"),
+        )
 
-    def _schedule_fetch(hour: int, minute: int) -> None:
-        """Schedule (or re-schedule) a single fetch point 24 h apart."""
-        fire_at = _next_utc_fire(hour, minute)
+        async def _fetch_then_refit():
+            await coordinator.async_refresh()
+            await _do_refit()
 
-        @callback
-        def _on_fire(_now=None):
-            _LOGGER.info(
-                "PD7DAY scheduled fetch triggered — NEM time: %s",
-                now_nem().strftime("%Y-%m-%dT%H:%M:%S+10:00"),
-            )
-            async def _fetch_then_refit():
-                await coordinator.async_refresh()
-                await _do_refit()
-            hass.async_create_task(_fetch_then_refit())
-            _schedule_fetch(hour, minute)
-
-        cancel = async_track_point_in_utc_time(hass, _on_fire, fire_at)
-        entry.async_on_unload(cancel)
-        _LOGGER.debug(
-            "PD7DAY next fetch at %s UTC (NEM %02d:%02d)",
-            fire_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            (hour + 10) % 24,
-            minute,
+        # Tied to the entry so an unload cancels a fetch still in flight rather
+        # than letting it write to a torn-down store (issue #106).
+        entry.async_create_background_task(
+            hass,
+            _fetch_then_refit(),
+            name=f"nem_pd7day_{region}_scheduled_fetch_{hour:02d}{minute:02d}",
         )
 
     utc_times = fetch_times_as_utc()  # ["21:30:00", "03:00:00", "08:00:00"]
+    slots: list[tuple[int, int]] = []
     for utc_time_str in utc_times:
         t = dt_util.parse_time(utc_time_str)
         if t is None:
             continue
-        _schedule_fetch(t.hour, t.minute)
+        slots.append((t.hour, t.minute))
+
+    # One pending timer per publish slot, replaced on every re-arm, and one
+    # unload hook for the lot. The closure this replaces appended every
+    # timer's cancel to entry.async_on_unload, three a day, never removed.
+    fetch_scheduler = DailyFetchScheduler(hass, slots, _on_publish_time)
+    fetch_scheduler.start()
+    entry.async_on_unload(fetch_scheduler.cancel_all)
+    for slot in slots:
+        _LOGGER.debug(
+            "PD7DAY next fetch at %s UTC (NEM %02d:%02d)",
+            fetch_scheduler.next_fire_at(slot).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            (slot[0] + 10) % 24,
+            slot[1],
+        )
 
     _LOGGER.info(
         "PD7DAY scheduled fetches registered at %s NEM time (%s UTC)",
@@ -443,7 +449,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     @callback
     def _refit(_now=None):
         """Refit calibration models and refresh sensors (24-hour timer)."""
-        hass.async_create_task(_do_refit())
+        entry.async_create_background_task(
+            hass, _do_refit(), name=f"nem_pd7day_{region}_daily_refit"
+        )
 
     # Always refit on startup to populate iso_model (not persisted to storage).
     # Run as a background task so integration setup completes immediately.
@@ -480,13 +488,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
                         REFIT_WAIT_TIMEOUT_S,
                     )
 
-            hass.async_create_task(
+            entry.async_create_background_task(
+                hass,
                 run_refit_when_stpasa_ready(
                     stpasa_refresh,
                     _do_refit,
                     timeout=REFIT_WAIT_TIMEOUT_S,
                     on_outcome=_log_refit_gate,
-                )
+                ),
+                name=f"nem_pd7day_{region}_startup_refit_gated",
             )
             _LOGGER.info(
                 "[STARTUP] %s: STPASA cache was stale, so the calibration "
@@ -497,7 +507,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
                 store.observation_count,
             )
         else:
-            hass.async_create_task(_do_refit())
+            entry.async_create_background_task(
+                hass, _do_refit(), name=f"nem_pd7day_{region}_startup_refit"
+            )
             _LOGGER.debug(
                 "[STARTUP] %s: calibration refit queued as a background task "
                 "(%d observations)",
