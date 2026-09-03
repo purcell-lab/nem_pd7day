@@ -7,7 +7,7 @@ real scheduler with an injected timer registry and clock.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from custom_components.nem_pd7day.fetch_scheduler import (
     DailyFetchScheduler,

@@ -118,7 +118,6 @@ from custom_components.nem_pd7day.calibration_store import CalibrationStore
 from custom_components.nem_pd7day.coordinator import PD7DayCoordinator
 from custom_components.nem_pd7day.pd7day_client import (
     PD7DayResult, PD7DayData, CaseSolutionData, PricePeriod,
-    MarketSummaryData, InterconnectorData,
 )
 
 NEM_TZ = timezone(timedelta(hours=10))
@@ -263,7 +262,7 @@ def test_coordinator_ingest_with_real_store_populates_history():
     After one fetch, _forecast_history must have entries for each period.
     """
     store = make_store()
-    coord = make_coordinator(store=store)
+    make_coordinator(store=store)
 
     run_at_dt = datetime(2026, 4, 15, 7, 30, tzinfo=NEM_TZ)
     period_end_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
@@ -614,7 +613,7 @@ def test_no_reset_when_notices_exist():
     """
     from custom_components.nem_pd7day.notice_store import GridNoticeStore
     from custom_components.nem_pd7day.market_notice_client import (
-        MarketNoticeClient, GridNoticeAnnotation,
+        GridNoticeAnnotation,
     )
 
     now = datetime(2026, 5, 14, 12, 0, tzinfo=NEM_TZ)

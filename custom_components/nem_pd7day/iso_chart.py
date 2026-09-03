@@ -86,7 +86,6 @@ def render_iso_chart(
         import matplotlib.figure as mplfig
         import matplotlib.gridspec as gridspec
         from matplotlib.backends.backend_agg import FigureCanvasAgg
-        from matplotlib.colors import TwoSlopeNorm
     except ImportError:
         _LOGGER.warning("matplotlib not available, returning placeholder image for iso chart")
         return _placeholder_png(
@@ -220,7 +219,7 @@ def _render_panel_b(ax, buckets: dict) -> None:
             is_grey.append(False)
 
     x = np.arange(len(labels))
-    bars = ax.bar(x, values, color=colors, edgecolor="white", linewidth=0.5)
+    ax.bar(x, values, color=colors, edgecolor="white", linewidth=0.5)
 
     # Label grey bars
     for i, grey in enumerate(is_grey):

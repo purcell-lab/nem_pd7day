@@ -99,6 +99,21 @@ if TYPE_CHECKING:
 
 from astral import LocationInfo
 from astral.sun import elevation as solar_elevation
+
+from .const import (
+    NEM_TZ,
+    ATTR_CAL_BAND_SOURCE,
+    HORIZON_EDGES,
+    HORIZON_LABELS,
+    IRLS_EPS,
+    IRLS_ITER,
+    IRLS_TOL,
+    MAX_OBS,
+    MIN_OBS,
+    OLS_MIN_OBS,
+    QUANTILES,
+    TOD_LABELS,
+)
 # ── Pure-numpy isotonic regression ───────────────────────────────────────────
 # Replaces sklearn.isotonic.IsotonicRegression to avoid a heavy optional
 # dependency that HA's pip installer cannot resolve in all environments.
@@ -188,20 +203,6 @@ class IsotonicRegression:
             right=y_thresholds[-1],
         )
 
-from .const import (
-    NEM_TZ,
-    ATTR_CAL_BAND_SOURCE,
-    HORIZON_EDGES,
-    HORIZON_LABELS,
-    IRLS_EPS,
-    IRLS_ITER,
-    IRLS_TOL,
-    MAX_OBS,
-    MIN_OBS,
-    OLS_MIN_OBS,
-    QUANTILES,
-    TOD_LABELS,
-)
 
 _LOGGER = logging.getLogger(__name__)
 

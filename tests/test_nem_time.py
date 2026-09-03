@@ -20,7 +20,7 @@ _nt = _load(
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
 )
 from custom_components.nem_pd7day.nem_time import (
-    NEM_TZ, now_nem, parse_nem_csv, to_nem_iso, parse_iso,
+    NEM_TZ, parse_nem_csv, to_nem_iso, parse_iso,
     current_nem_interval, fetch_times_as_utc, interval_start,
     INTERVAL_DURATION, _amber_express_cutoff,
 )

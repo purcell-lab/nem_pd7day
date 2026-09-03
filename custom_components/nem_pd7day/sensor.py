@@ -12,7 +12,7 @@ NemPd7dayGridNoticesSensor    -- active MSL/LOR market notice count + structured
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso, to_nem_iso
 
@@ -29,23 +29,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import tod_stats as _tod_stats
 from .const import (
     ATTR_ATTRIBUTION,
-    ATTR_CAL_ACTIVE_BUCKETS,
     ATTR_CAL_CALIBRATED,
-    ATTR_CAL_FITTED_AT,
     ATTR_CAL_MAE,
     ATTR_CAL_BAND_SOURCE,
     ATTR_CAL_N_OBS,
-    ATTR_CAL_OBS_COUNT,
     ATTR_CAL_P10,
     ATTR_CAL_P50,
     ATTR_CAL_P90,
     ATTR_CAL_SOURCE,
     ATTR_CAL_STATUS,
-    ATTR_CAL_SUMMARY,
-    ATTR_CAL_TOTAL_BUCKETS,
     ATTR_CHEAPEST_2H,
     ATTR_EXPORTLIMIT,
     ATTR_FORECAST,
@@ -55,7 +49,6 @@ from .const import (
     ATTR_INTERCONNECTOR_ID,
     ATTR_INTERVAL_MINUTES,
     ATTR_IS_CONSTRAINED,
-    ATTR_LAST_CHANGED,
     ATTR_MARGINALVALUE,
     ATTR_MAX_24H,
     ATTR_MAX_VIOLATION_7D,
@@ -78,12 +71,9 @@ from .const import (
     DOMAIN,
     EXPORT_TARIFF_PROGRAMS,
     FORECAST_MODE_DAYS_2_7,
-    FORECAST_MODE_FULL,
     get_region,
     interconnectors_for_regions,
-    QLD1_INTERCONNECTORS,
     REGION_DISTRIBUTORS,
-    storage_keys,
 )
 from .calibration_inputs import (
     STPASA_BAND_EDGE_SLACK_H,
@@ -104,7 +94,6 @@ from .coordinator import PD7DayCoordinator, staleness_attributes
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
-    from datetime import datetime
     from .notice_store import GridNoticeStore
 
 _LOGGER = logging.getLogger(__name__)

@@ -25,13 +25,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from test_tariff_sensor import (  # noqa: E402
-    DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
     NEM_TZ,
     _tariff_mod,
     make_price_period,
     make_tariff_sensor,
-    nem_iso,
 )
 
 from custom_components.nem_pd7day.nem_time import parse_iso  # noqa: E402

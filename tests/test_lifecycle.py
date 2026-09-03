@@ -17,7 +17,7 @@ import asyncio
 import importlib.util
 import types
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -129,8 +129,6 @@ _coord_mod = _load(
 )
 
 from custom_components.nem_pd7day.calibration_store import CalibrationStore
-from custom_components.nem_pd7day.coordinator import PD7DayCoordinator
-from custom_components.nem_pd7day.const import CONF_REGION, COORDINATOR_KEY, DOMAIN, STORE_KEY
 
 
 def make_store(obs_count: int = 0) -> CalibrationStore:

@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Callable
 
 from .const import DISPATCHIS_BASE_URL, ELEC_NEM_SUMMARY_URL, NEM_TZ, NEMWEB_HEADERS

@@ -69,10 +69,7 @@ _engine_mod = _load(
 from custom_components.nem_pd7day.calibration_engine import (
     DECAY_LAMBDA,
     MIN_OBS,
-    OBSERVATION_WINDOW_DAYS,
-    NEGATIVE_PASSTHROUGH_THRESHOLD,
     REGION_COORDS,
-    SPIKE_THRESHOLD,
     BucketModel,
     CalibrationEngine,
     LinearCoeff,
@@ -82,7 +79,6 @@ from custom_components.nem_pd7day.calibration_engine import (
     RunFeatures,
     StpasaFeatures,
     _bucket_key,
-    _bucket_key_solar,
     _horizon_label,
     _tod_label,
     _tod_label_solar,
@@ -721,7 +717,7 @@ def test_threshold_boundary_exact():
     result = model.apply_all(-0.10)
     assert result["calibrated"] == round(-0.10, 6)
     assert result["calibrated_source"] == "passthrough_negative"
-    print(f"  PASS: threshold boundary exact passthrough (raw=-0.10)")
+    print("  PASS: threshold boundary exact passthrough (raw=-0.10)")
 
 
 # ── Spike passthrough tests ──────────────────────────────────────────────────
@@ -747,7 +743,7 @@ def test_spike_input_no_iso_model_returns_passthrough():
         f"Spike raw with no iso_model should pass through unchanged, got {result['calibrated']}"
     )
     assert result["calibrated_source"] == "passthrough"
-    print(f"  PASS: spike input no iso_model returns passthrough (raw=3.50)")
+    print("  PASS: spike input no iso_model returns passthrough (raw=3.50)")
 
 
 def test_spike_input_with_iso_model_returns_isotonic():
@@ -792,7 +788,7 @@ def test_spike_input_no_iso_model_passthrough():
 
     result = model.apply_all(8.999)
     assert result["calibrated_source"] == "passthrough"
-    print(f"  PASS: spike input without iso_model (passthrough)")
+    print("  PASS: spike input without iso_model (passthrough)")
 
 
 def test_below_spike_threshold_uses_ols():
@@ -1355,7 +1351,7 @@ def test_p10_p90_never_outside_calibrated():
                 violations.append(f"{key} x={x_test}: p90={p90} < cal={cal}")
 
     assert not violations, f"P10/P90 violations: {violations}"
-    print(f"  PASS: P10 <= calibrated <= P90 for all buckets and test inputs")
+    print("  PASS: P10 <= calibrated <= P90 for all buckets and test inputs")
 
 
 def test_p50_within_confidence_band():
@@ -1450,7 +1446,7 @@ def test_spike_input_quantiles_none_when_isotonic():
     assert result["p90"] is not None, "p90 should be present for fitted bucket"
     assert "n_obs" in result, "n_obs must be in result"
     assert result["n_obs"] >= 60, f"n_obs should reflect training count, got {result['n_obs']}"
-    print(f"  PASS: spike input isotonic result has full structure")
+    print("  PASS: spike input isotonic result has full structure")
 
 
 # ── STPASA OLS stage2 tests ─────────────────────────────────────────────────

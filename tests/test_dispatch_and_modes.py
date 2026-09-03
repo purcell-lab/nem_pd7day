@@ -158,20 +158,15 @@ from custom_components.nem_pd7day.const import (
     CONF_ACTIVE_TARIFF,
     CONF_FORECAST_MODE,
     CONF_REGION,
-    COORDINATOR_KEY,
-    DEFAULT_ENABLED_TARIFFS,
-    DISPATCH_KEY,
     DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
     FORECAST_MODE_DAYS_2_7,
     FORECAST_MODE_FULL,
-    STORE_KEY,
 )
 from custom_components.nem_pd7day.dispatch_client import DispatchPrice
 from custom_components.nem_pd7day.coordinator import DispatchCoordinator
-from custom_components.nem_pd7day.sensor import PD7DayForecastSensor, SpotPriceForecastDays27Sensor
+from custom_components.nem_pd7day.sensor import PD7DayForecastSensor
 from custom_components.nem_pd7day.tariff_sensor import NemPd7dayTariffSensor, get_tariff_name
-from custom_components.nem_pd7day.nem_time import _amber_express_cutoff
 
 NEM_TZ = timezone(timedelta(hours=10))
 
@@ -295,7 +290,7 @@ def test_dispatch_coordinator_stores_prices():
     coord.prices = {}
     coord.last_updated = None
 
-    result = run_async(coord._async_update_data())
+    run_async(coord._async_update_data())
     assert coord.prices["QLD1"].rrp == 0.085
     assert coord.last_updated is not None
 
@@ -713,7 +708,6 @@ def test_async_setup_entry_days_1_7_no_day27_sensors():
 def test_async_setup_entry_days_2_7_registers_day27_tariff_sensor():
     """In days_2_7 mode, Day 2-7 tariff sensor is registered for active tariff only."""
     from custom_components.nem_pd7day.sensor import async_setup_entry as sensor_async_setup_entry
-    from custom_components.nem_pd7day.tariff_sensor import TariffForecastDays27Sensor
 
     coordinator = MagicMock()
     coordinator.data = None
@@ -837,7 +831,7 @@ def test_spot_dispatch_listener_registered():
 def test_next_boundary_utc_always_in_future():
     """_next_boundary_utc() should always return a time strictly in the future."""
     from datetime import datetime, timezone
-    from custom_components.nem_pd7day.coordinator import DispatchCoordinator, _DISPATCH_POLL_DELAY_S
+    from custom_components.nem_pd7day.coordinator import DispatchCoordinator
 
     coord = DispatchCoordinator.__new__(DispatchCoordinator)
     fire_at = coord._next_boundary_utc()
@@ -847,7 +841,7 @@ def test_next_boundary_utc_always_in_future():
 
 def test_next_boundary_utc_aligns_to_5_min():
     """_next_boundary_utc() target (minus delay) should be a 5-minute boundary."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import timedelta
     from custom_components.nem_pd7day.coordinator import DispatchCoordinator, _DISPATCH_POLL_DELAY_S
 
     coord = DispatchCoordinator.__new__(DispatchCoordinator)
@@ -863,7 +857,7 @@ def test_next_boundary_utc_aligns_to_5_min():
 
 def test_next_boundary_utc_at_most_5_min_away():
     """Fire time should be at most 5 minutes + delay ahead."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timezone
     from custom_components.nem_pd7day.coordinator import DispatchCoordinator, _DISPATCH_POLL_DELAY_S
 
     coord = DispatchCoordinator.__new__(DispatchCoordinator)
@@ -1026,7 +1020,6 @@ def test_dispatch_coordinator_update_interval_is_none():
     hass = MagicMock()
     hass.data = {}
     # Can't call __init__ without full HA, so check class definition via __new__ + init
-    coord = DispatchCoordinator.__new__(DispatchCoordinator)
     # Directly check what update_interval is set to after __init__ via introspection
     import inspect
     src = inspect.getsource(DispatchCoordinator.__init__)

@@ -141,14 +141,11 @@ _sensor_mod = _load(
 )
 
 from custom_components.nem_pd7day.nem_time import NEM_TZ
-from custom_components.nem_pd7day.calibration_engine import CalibrationEngine, Observation
 from custom_components.nem_pd7day.const import (
     CONF_REGION,
-    COORDINATOR_KEY,
     DOMAIN,
     NSW1_INTERCONNECTORS,
     REGION_INTERCONNECTORS,
-    STORE_KEY,
     VIC1_INTERCONNECTORS,
 )
 from collections import Counter
@@ -163,7 +160,6 @@ from custom_components.nem_pd7day.sensor import (
     async_setup_entry as sensor_async_setup_entry,
 )
 
-NEM_TZ = timezone(timedelta(hours=10))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -494,10 +490,6 @@ def test_calibrate_period_with_active_calibration():
     calibrated, p10, p50, p90, mae, calibrated_source, n_obs keys.
     """
     # Build a calibration store with enough observations to activate a bucket
-    from custom_components.nem_pd7day.calibration_engine import (
-        CalibrationEngine, Observation, CalibrationResult, BucketModel,
-        LinearCoeff, QuantileCoeff
-    )
 
     # Create a mock store that returns a fixed apply_to_price result
     mock_store = MagicMock()
@@ -550,7 +542,6 @@ def test_calibrate_period_horizon_used_for_store_lookup():
 
     # Check what horizon was passed to apply_to_price
     call_args = mock_store.apply_to_price.call_args
-    horizon_arg = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("h")
     # apply_to_price(raw_price, h, hour) — positional
     h_passed = call_args[0][1]
     assert abs(h_passed - 5.5) < 0.1, (
@@ -601,7 +592,6 @@ def test_bucket_routing_consistent_at_h06_12_boundary():
 
 def test_bucket_routing_consistent_at_h12_24_boundary():
     """Same consistency check at the 12h horizon boundary."""
-    from custom_components.nem_pd7day.calibration_engine import _bucket_key
 
     run_at_dt = datetime(2026, 4, 15, 7, 30, tzinfo=NEM_TZ)
     # interval_start exactly at 19:30 → horizon = 12.0h
@@ -654,11 +644,10 @@ def test_tod_sensor_device_info_includes_region():
 
 def test_native_value_returns_raw_when_no_store():
     """Without a store, native_value must return the value of the current period."""
-    from unittest.mock import patch
     sensor = make_sensor(store=None)
 
     # Build a real-looking period covering now
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     NEM_TZ = timezone(timedelta(hours=10))
     now = datetime.now(NEM_TZ)
     interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
@@ -729,7 +718,7 @@ def test_sensor_reads_capped_value():
     sensor = make_sensor(store=mock_store)
 
     # Build period covering now
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     NEM_TZ_local = timezone(timedelta(hours=10))
     now = datetime.now(NEM_TZ_local)
     interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
@@ -842,7 +831,6 @@ def test_amber_express_cutoff_boundary_1230pm():
 
 def test_base_sensor_forecast_contains_all_intervals():
     """Base sensor ATTR_FORECAST returns full day 1-7 forecast (no trim)."""
-    from unittest.mock import patch
 
     sensor = make_sensor(store=None)
 
@@ -1002,7 +990,6 @@ def test_cheapest_2h_window_computed_over_full_forecast():
 
 def test_native_value_unaffected_by_trim():
     """native_value returns the current-interval calibrated price regardless of trim."""
-    from unittest.mock import patch
     sensor = make_sensor(store=None)
 
     now = datetime.now(NEM_TZ)

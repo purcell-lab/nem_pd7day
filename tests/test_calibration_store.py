@@ -16,7 +16,7 @@ import sys
 import os
 import importlib.util
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timedelta, timezone
 
 # ── Module loader (avoids HA import chain) ────────────────────────────────────
@@ -69,7 +69,7 @@ _store_mod = _load(
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_store.py"),
 )
 
-from custom_components.nem_pd7day.nem_time import NEM_TZ, to_nem_iso, current_nem_interval
+from custom_components.nem_pd7day.nem_time import NEM_TZ
 from custom_components.nem_pd7day.calibration_engine import (
     CalibrationEngine, Observation,
 )
@@ -77,7 +77,6 @@ from custom_components.nem_pd7day.calibration_store import CalibrationStore
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-NEM_TZ = timezone(timedelta(hours=10))
 
 def nem_iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
@@ -1126,7 +1125,6 @@ def test_ingest_with_stpasa():
     forecast_history entry with stpasa_* fields. The STPASA interval is keyed
     by interval END (AEMO convention); the join uses interval START.
     """
-    import math
     store = make_store()
     run_dt = BASE_DT
     interval_end_dt = BASE_DT + timedelta(hours=24)        # nemtime / STPASA END

@@ -17,6 +17,13 @@ jobs:
       - name: "Checkout the repository"
         uses: "actions/checkout@v6"
 
+      # A release cut from a manifest that still says the previous version
+      # installs as that previous version. Refuse to publish the zip unless
+      # the tag, manifest.json and the README version table agree.
+      - name: "Version lockstep"
+        shell: "bash"
+        run: python3 scripts/version_lockstep.py --tag "${{ github.event.release.tag_name }}"
+
       - name: "ZIP the integration directory"
         shell: "bash"
         run: |

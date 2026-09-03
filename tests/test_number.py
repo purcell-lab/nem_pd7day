@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 import os
 import importlib.util
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 # ── Module loader ─────────────────────────────────────────────────────────────
 

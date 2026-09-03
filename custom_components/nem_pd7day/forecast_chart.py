@@ -20,7 +20,6 @@ import io
 import logging
 import struct
 import zlib
-from datetime import datetime
 
 from .const import NEM_TZ
 

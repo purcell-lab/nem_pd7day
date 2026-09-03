@@ -41,7 +41,6 @@ _client_mod = _load(
 
 from custom_components.nem_pd7day.stpasa_client import (  # noqa: E402
     StpasaClient,
-    StpasaResult,
     _extract_csv_bytes,
     _parse_all_regions,
     _parse_regionsolution,

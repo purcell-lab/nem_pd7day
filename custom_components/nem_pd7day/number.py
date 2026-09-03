@@ -7,9 +7,8 @@ Lives on the regional device so it is grouped alongside the tariff sensors.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from homeassistant.components.number import NumberEntity, NumberMode, RestoreNumber
+from homeassistant.components.number import NumberMode, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
 

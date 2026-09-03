@@ -4,22 +4,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
-from homeassistant.helpers.event import (
-    async_track_time_interval,
-    async_track_point_in_utc_time,
-)
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .calibration_store import CalibrationStore
 from .const import (
     CONF_FORECAST_MODE,
-    DEFAULT_REGION,
     DISPATCH_UNSUBS_KEY,
     DOMAIN,
     FORECAST_MODE_DAYS_2_7,

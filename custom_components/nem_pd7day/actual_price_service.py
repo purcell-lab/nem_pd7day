@@ -18,7 +18,7 @@ import aiohttp
 
 from .calibration_store import CalibrationStore
 from .const import TRADINGIS_FETCH_MINUTES
-from .nem_time import NEM_TZ, to_nem_iso, current_nem_interval
+from .nem_time import NEM_TZ, to_nem_iso
 from .tradingis_client import TradingISClient
 
 _LOGGER = logging.getLogger(__name__)

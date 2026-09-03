@@ -54,7 +54,6 @@ _dispatch_mod = _load(
 )
 
 from custom_components.nem_pd7day.dispatch_client import (
-    DispatchPrice,
     _fetch_nem_summary,
     _fetch_dispatchis,
     _settlement_age_seconds,

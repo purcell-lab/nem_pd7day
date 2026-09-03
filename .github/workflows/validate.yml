@@ -25,6 +25,27 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install lint dependencies
+        run: pip install -r requirements-lint.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # manifest.json and the newest README version row must agree; the
+      # release workflow checks the tag against them too.
+      - name: Version lockstep
+        run: python scripts/version_lockstep.py
+
   typecheck:
     runs-on: ubuntu-latest
     steps:

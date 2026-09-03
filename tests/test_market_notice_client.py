@@ -452,7 +452,7 @@ async def test_incremental_fetch_skips_old_notices():
 
     # _fetch_and_parse will be called for 133910 only
     with patch.object(client, '_fetch_and_parse', new=AsyncMock(return_value=None)) as mock_fetch:
-        result = await client.fetch_new_notices()
+        await client.fetch_new_notices()
         assert mock_fetch.call_count == 1
         assert mock_fetch.call_args[0][0] == 133910
 

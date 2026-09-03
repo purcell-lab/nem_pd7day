@@ -31,7 +31,6 @@ import test_calibration_memo as tcm
 import test_sensor as ts  # noqa: F401 - installs the HA stubs
 
 from custom_components.nem_pd7day.sensor import (
-    CalibratedWriteMixin,
     PD7DayDataSensor,
     PD7DayForecastSensor,
     SpotPriceForecastDays27Sensor,
