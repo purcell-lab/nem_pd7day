@@ -123,9 +123,7 @@ def real_clock_behind_stubbed_dt_util():
         except (TypeError, ValueError):
             return None
 
-    for name, mod in list(sys.modules.items()):
-        if not name.startswith("custom_components.nem_pd7day"):
-            continue
+    for mod in _integration_module_objects():
         du = getattr(mod, "dt_util", None)
         if not isinstance(du, MagicMock):
             continue
@@ -136,3 +134,29 @@ def real_clock_behind_stubbed_dt_util():
             if target.side_effect is None and isinstance(target.return_value, MagicMock):
                 target.side_effect = impl
     yield
+
+
+def _integration_module_objects():
+    """Every live module object of the integration, not only the ones in sys.modules.
+
+    Test files load integration modules from file under the canonical name, so
+    a later file's load replaces the sys.modules entry while classes imported
+    by an earlier file keep referencing the earlier module object. Both must
+    get the real clock, so this walks the heap for module objects by name.
+    The walk is cached; a module loaded lazily inside a test is picked up on
+    the next call because the cache is refreshed whenever sys.modules grew.
+    """
+    import gc
+    import types
+
+    key = len(sys.modules)
+    cached = _integration_module_objects.__dict__.get("cache")
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    found = [
+        obj for obj in gc.get_objects()
+        if isinstance(obj, types.ModuleType)
+        and getattr(obj, "__name__", "").startswith("custom_components.nem_pd7day")
+    ]
+    _integration_module_objects.cache = (key, found)
+    return found

@@ -350,8 +350,14 @@ def test_dispatch_coordinator_returns_stale_on_error():
 
 # ── Staleness is legible (issue #105) ────────────────────────────────────────
 
-def _coord_module():
-    return sys.modules["custom_components.nem_pd7day.coordinator"]
+def _coord_dt_util():
+    """The dt_util the coordinator classes in this file actually resolve.
+
+    Other test files reload coordinator.py under the same name, so the module
+    in sys.modules can be a different object from the one these classes were
+    defined in; patch the namespace the method reads.
+    """
+    return PD7DayCoordinator._async_update_data.__globals__["dt_util"]
 
 
 def test_stale_serving_is_flagged_with_reason_and_age():
@@ -371,7 +377,7 @@ def test_stale_serving_is_flagged_with_reason_and_age():
     coord._get_client = lambda: mock_client
 
     now = datetime(2026, 9, 3, 6, 30, tzinfo=timezone.utc)
-    with patch.object(_coord_module().dt_util, "utcnow", return_value=now):
+    with patch.object(_coord_dt_util(), "utcnow", return_value=now):
         run_async(coord._async_update_data())
         attrs = coord.staleness_attributes()
 
@@ -397,7 +403,7 @@ def test_success_clears_staleness_and_resets_age():
     coord._get_client = lambda: mock_client
 
     now = datetime(2026, 9, 3, 7, 30, tzinfo=timezone.utc)
-    with patch.object(_coord_module().dt_util, "utcnow", return_value=now):
+    with patch.object(_coord_dt_util(), "utcnow", return_value=now):
         run_async(coord._async_update_data())
         attrs = coord.staleness_attributes()
 
