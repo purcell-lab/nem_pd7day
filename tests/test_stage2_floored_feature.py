@@ -1,5 +1,5 @@
 """
-The stage-2 OLS feature is unfloored, the published stage-1 price is not.
+The stage-2 OLS feature and the published stage-1 price are the same unfloored value.
 
 Issue #85: the first stage-2 feature was taken from
 ``BucketModel.apply_all(x)["calibrated"]``, which floors the isotonic
@@ -132,26 +132,30 @@ _GOLDEN_XS = [
     0.32, 0.75, 3.50,
 ]
 
-# Captured by running _capture() against main at 0b35e55, that is BEFORE the
-# production change. Every field a caller publishes is pinned: sensor.py maps
-# calibrated, p10, p50, p90 and calibrated_source onto the forecast attributes
-# and the sensor state, and tariff_sensor.py publishes calibrated as the spot
-# price. If the feature split moved any of them, this table would fail.
+# Captured by running _capture() against the engine after issue #114 removed
+# the published zero floor. Rows from -0.0999 to -0.0055 used to publish a
+# calibrated value of 0.0 with a collapsed band; they now publish the fitted
+# isotonic value and the fitted quantile lines. Rows at 0.02 and above are
+# identical to the table captured before #85 at 0b35e55, so the positive region
+# is pinned across both changes. Every field a caller publishes is pinned:
+# sensor.py maps calibrated, p10, p50, p90 and calibrated_source onto the
+# forecast attributes and the sensor state, and tariff_sensor.py publishes
+# calibrated as the spot price.
 _GOLDEN_PUBLISHED = {
     -0.5: (-0.5, -0.5, -0.5, -0.5, 'passthrough_negative'),
     -0.3: (-0.3, -0.3, -0.3, -0.3, 'passthrough_negative'),
     -0.15: (-0.15, -0.15, -0.15, -0.15, 'passthrough_negative'),
     -0.1: (-0.1, -0.1, -0.1, -0.1, 'passthrough_negative'),
-    -0.0999: (0.0, 0.0, 0.0, 0.0, 'isotonic'),
-    -0.09: (0.0, 0.0, 0.0, 0.0, 'isotonic'),
-    -0.0864: (0.0, 0.0, 0.0, 0.0, 'isotonic'),
-    -0.05: (0.0, 0.0, 0.0, 0.0, 'isotonic'),
-    -0.02: (0.0, 0.0, 0.0, 0.0, 'isotonic'),
-    -0.0055: (0.0, 0.0, 0.0, 0.01395, 'isotonic'),
-    -0.0054: (6e-05, 0.0, 0.0, 0.01406, 'isotonic'),
-    -0.001: (0.0049, 0.0, 0.0, 0.0189, 'isotonic'),
-    0.0: (0.006, 0.0, 0.0, 0.02, 'isotonic'),
-    0.001: (0.0071, 0.0, 0.00105, 0.0211, 'isotonic'),
+    -0.0999: (-0.082, -0.1099, -0.104895, -0.082, 'isotonic'),
+    -0.09: (-0.082, -0.1, -0.0945, -0.079, 'isotonic'),
+    -0.0864: (-0.082, -0.0964, -0.09072, -0.07504, 'isotonic'),
+    -0.05: (-0.049, -0.06, -0.0525, -0.035, 'isotonic'),
+    -0.02: (-0.016, -0.03, -0.021, -0.002, 'isotonic'),
+    -0.0055: (-5e-05, -0.0155, -0.005775, 0.01395, 'isotonic'),
+    -0.0054: (6e-05, -0.0154, -0.00567, 0.01406, 'isotonic'),
+    -0.001: (0.0049, -0.011, -0.00105, 0.0189, 'isotonic'),
+    0.0: (0.006, -0.01, 0.0, 0.02, 'isotonic'),
+    0.001: (0.0071, -0.009, 0.00105, 0.0211, 'isotonic'),
     0.02: (0.028, 0.01, 0.021, 0.042, 'isotonic'),
     0.05: (0.061, 0.04, 0.0525, 0.075, 'isotonic'),
     0.08: (0.094, 0.07, 0.084, 0.108, 'isotonic'),
@@ -182,14 +186,13 @@ def _capture() -> None:
 
 # ── The load bearing guarantee: no published price moves ─────────────────────
 
-def test_published_stage_one_output_is_identical_before_and_after():
-    """Every published stage-1 field matches the values captured on main.
+def test_published_stage_one_output_matches_the_golden_table():
+    """Every published stage-1 field matches the captured values.
 
-    This is the deliverable of issue #85. A user's displayed price moving
-    because of an internal feature change would be a worse regression than the
-    bias being fixed, so the published triple and its source label are pinned
-    against numbers recorded before the change, across the passthrough region,
-    the floored region and ordinary positive intervals.
+    Issue #85 pinned this table so an internal feature change could not move a
+    displayed price. Issue #114 then moved the negative region on purpose, so
+    the table was recaptured; the rows at 0.02 and above are unchanged from the
+    pre-#85 capture, which pins the positive region across both changes.
     """
     bucket = _fixture_bucket()
     for x in _GOLDEN_XS:
@@ -198,22 +201,25 @@ def test_published_stage_one_output_is_identical_before_and_after():
             f"{_published(bucket, x)} against golden {_GOLDEN_PUBLISHED[x]}"
         )
     print(
-        f"  PASS: published stage-1 output identical to main at "
+        f"  PASS: published stage-1 output matches the golden table at "
         f"{len(_GOLDEN_XS)} forecast values"
     )
 
 
-def test_published_price_sweep_still_floored_at_zero():
-    """Sweep: the published price is the floored isotonic value, everywhere.
+def test_published_price_sweep_is_the_unfloored_isotonic_value():
+    """Sweep: the published price is the isotonic value, negative or not.
 
     The golden table is a set of points; this is the invariant behind it,
     checked at 1601 forecast values from -0.400 to +0.400 $/kWh. Above the
     passthrough boundary the published value is exactly
-    round(max(iso.predict(x), 0.0), 6) and is never negative. At or below the
-    boundary it is the raw forecast, untouched.
+    round(max(iso.predict(x), MARKET_PRICE_FLOOR), 6); the only floor is the
+    market floor, which this fixture never reaches. At or below the boundary
+    it is the raw forecast, untouched.
     """
+    from custom_components.nem_pd7day.const import MARKET_PRICE_FLOOR
     bucket = _fixture_bucket()
     n = 0
+    negatives = 0
     for i in range(1601):
         x = round(-0.400 + i * 0.0005, 6)
         out = bucket.apply_all(x)
@@ -221,24 +227,24 @@ def test_published_price_sweep_still_floored_at_zero():
             assert out["calibrated"] == round(x, 6)
             assert out["calibrated_source"] == "passthrough_negative"
         else:
-            expected = round(max(_raw_iso(bucket, x), 0.0), 6)
+            expected = round(max(_raw_iso(bucket, x), MARKET_PRICE_FLOOR), 6)
             assert out["calibrated"] == expected, (
                 f"published price at {x} is {out['calibrated']}, "
-                f"expected the floored isotonic value {expected}"
+                f"expected the isotonic value {expected}"
             )
-            assert out["calibrated"] >= 0.0, (
-                f"published price at {x} went negative: {out['calibrated']}"
-            )
+            if out["calibrated"] < 0.0:
+                negatives += 1
         n += 1
-    print(f"  PASS: published price is the floored isotonic value at {n} sweep points")
+    assert negatives > 80, "the sweep must exercise the negative region"
+    print(f"  PASS: published price is the isotonic value at {n} sweep points, {negatives} negative")
 
 
-def test_published_price_ignores_the_unfloored_feature():
-    """Where the floor binds, the feature is negative and the price is 0.0.
+def test_published_price_equals_the_feature_where_the_floor_used_to_bind():
+    """Where the old floor bound, price and feature are now the same negative.
 
-    The two values are deliberately different on this path. That difference is
-    the whole fix, and the test states it as a property rather than trusting
-    the golden numbers alone.
+    Under #85 the two values were deliberately different here: the feature
+    carried the negative prediction and the price was floored to 0.0. Since
+    #114 the price carries it too.
     """
     bucket = _fixture_bucket()
     checked = 0
@@ -247,28 +253,17 @@ def test_published_price_ignores_the_unfloored_feature():
         if x >= -0.0055:
             continue
         out = bucket.apply_all(x)
-        assert out["calibrated"] == 0.0, (
-            f"the published floor stopped binding at {x}: {out['calibrated']}"
+        assert out["calibrated"] < 0.0, (
+            f"the published price at {x} should be negative, got {out['calibrated']}"
         )
-        assert out[ISO_FEATURE_KEY] < 0.0, (
-            f"the stage-2 feature at {x} is {out[ISO_FEATURE_KEY]}, "
-            "it should carry the negative isotonic prediction"
-        )
-        assert out[ISO_FEATURE_KEY] == round(_raw_iso(bucket, x), 6)
+        assert out[ISO_FEATURE_KEY] == out["calibrated"] == round(_raw_iso(bucket, x), 6)
         checked += 1
     assert checked > 80
-    print(
-        f"  PASS: at {checked} floored forecasts the price is 0.0 and the "
-        f"feature is negative"
-    )
+    print(f"  PASS: at {checked} formerly floored forecasts price and feature agree")
 
 
 def test_feature_equals_published_price_where_the_floor_does_not_bind():
-    """Outside the floored band the feature and the published price agree.
-
-    Stage 2 correcting stage 1 is still the mental model for every ordinary
-    interval; only the floored band splits the two.
-    """
+    """Outside the formerly floored band the feature and price agree too."""
     bucket = _fixture_bucket()
     for i in range(801):
         x = round(i * 0.0005, 6)  # 0.0 to 0.40
@@ -628,7 +623,10 @@ def test_serve_path_feeds_the_unfloored_feature_to_the_ols_model():
     value, which is what makes the fit and serve paths consistent.
     """
     bucket = _fixture_bucket()
-    coef = [0.20] + [1.0] + [0.0] * 8
+    # A negative intercept keeps the stage-2 prediction on the same side of
+    # zero as the negative isotonic value, so the sign-agreement rule of
+    # issue #114 serves it rather than falling back.
+    coef = [-0.02] + [1.0] + [0.0] * 8
     result = CalibrationResult(
         fitted_at=_ANCHOR.isoformat(),
         total_observations=500,
@@ -645,20 +643,20 @@ def test_serve_path_feeds_the_unfloored_feature_to_the_ols_model():
     for x in (-0.09, -0.05, -0.02):
         out = result.apply(x, TARGET_H, TARGET_HOUR, stpasa=stpasa, run_features=rf)
         assert out["calibrated_source"] == "isotonic+stpasa"
-        want = round(0.20 + round(_raw_iso(bucket, x), 6), 6)
+        want = round(-0.02 + round(_raw_iso(bucket, x), 6), 6)
         assert abs(out["calibrated"] - want) < 1e-6, (
             f"stage 2 at {x} published {out['calibrated']}, an unfloored "
             f"feature gives {want}"
         )
-        # Sanity: main's floored feature would have produced exactly 0.20.
-        assert abs(out["calibrated"] - 0.20) > 1e-4
+        # Sanity: a floored feature would have produced exactly -0.02.
+        assert abs(out["calibrated"] - (-0.02)) > 1e-4
     print("  PASS: the serve path predicts a floored interval from the unfloored feature")
 
 
 _TESTS = [
-    test_published_stage_one_output_is_identical_before_and_after,
-    test_published_price_sweep_still_floored_at_zero,
-    test_published_price_ignores_the_unfloored_feature,
+    test_published_stage_one_output_matches_the_golden_table,
+    test_published_price_sweep_is_the_unfloored_isotonic_value,
+    test_published_price_equals_the_feature_where_the_floor_used_to_bind,
     test_feature_equals_published_price_where_the_floor_does_not_bind,
     test_feature_key_present_on_every_apply_all_path,
     test_stage2_iso_feature_helper_is_the_single_definition,

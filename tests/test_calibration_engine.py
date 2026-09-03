@@ -1714,8 +1714,15 @@ def test_apply_stpasa_negative_ols_falls_back_to_isotonic():
     )
 
 
-def test_apply_stpasa_zero_ols_falls_back_to_isotonic():
-    """An OLS prediction of exactly 0.0 must also trigger the isotonic fallback."""
+def test_apply_stpasa_sign_flip_falls_back_to_isotonic():
+    """A stage-2 prediction on the other side of zero from stage 1 falls back.
+
+    Before issue #114 the rule was ``prediction <= 0.0``, which also stopped
+    stage 2 ever publishing a negative. The rule is now sign disagreement: a
+    positive isotonic value is not flipped negative, and a negative one is not
+    flipped positive (#73). Here the isotonic value at 0.15 is positive and a
+    constant negative OLS prediction must be refused.
+    """
     from custom_components.nem_pd7day.calibration_engine import (
         OlsModel,
         RunFeatures,
@@ -1728,14 +1735,14 @@ def test_apply_stpasa_zero_ols_falls_back_to_isotonic():
     result = engine.fit(obs)
 
     key = _bucket_key(36.0, 10)
-    # All-zero coefs: predict() returns exactly 0.0 regardless of features.
-    zero_ols = OlsModel(
+    # Constant negative prediction regardless of features.
+    negative_ols = OlsModel(
         bucket_key=key,
-        coef=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        coef=[-0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         n_train=60,
         r2=0.0,
     )
-    result.ols_models[key] = zero_ols
+    result.ols_models[key] = negative_ols
 
     rf = RunFeatures(run_max_h6_rrp=0.0, run_mean_rrp=0.0, run_spread=0.0)
     sf = StpasaFeatures(
@@ -1750,12 +1757,12 @@ def test_apply_stpasa_zero_ols_falls_back_to_isotonic():
         0.15, horizon_hours=36.0, hour_of_day=10, stpasa=sf, run_features=rf
     )
 
-    assert out["calibrated"] != 0.0, (
-        f"exact-zero OLS must fall back to isotonic; got calibrated={out['calibrated']}"
+    assert out["calibrated"] > 0.0, (
+        f"a sign-flipping OLS must fall back to isotonic; got calibrated={out['calibrated']}"
     )
-    assert out["calibrated_source"] != "isotonic+stpasa"
+    assert out["calibrated_source"] == "isotonic"
     print(
-        f"  PASS: zero OLS falls back to isotonic "
+        f"  PASS: sign-flipping OLS falls back to isotonic "
         f"(calibrated={out['calibrated']:.4f}, source={out['calibrated_source']})"
     )
 
@@ -1865,7 +1872,7 @@ TESTS = [
     test_from_storage_missing_ols_key,
     # OLS stage2 negative-prediction fallback
     test_apply_stpasa_negative_ols_falls_back_to_isotonic,
-    test_apply_stpasa_zero_ols_falls_back_to_isotonic,
+    test_apply_stpasa_sign_flip_falls_back_to_isotonic,
     test_min_obs_is_fifty,
     test_ols_stage2_requires_min_obs_for_fit,
 ]

@@ -101,6 +101,7 @@ from astral import LocationInfo
 from astral.sun import elevation as solar_elevation
 
 from .const import (
+    MARKET_PRICE_FLOOR,
     NEM_TZ,
     ATTR_CAL_BAND_SOURCE,
     HORIZON_EDGES,
@@ -282,24 +283,22 @@ def stage2_iso_feature(calibrated: dict, forecast: float) -> float:
     class, which is why this is a helper rather than a dict lookup written out
     twice.
 
-    WHY this is not the published "calibrated" price: apply_all floors the
-    isotonic prediction at 0.0, because a published negative calibrated price
-    is not credible above the negative passthrough boundary. For a raw forecast
-    in the open interval (-0.10, 0.0), which is above the boundary and so is
-    genuinely served by stage 2, that floor set the feature to exactly 0.0
-    while the settled actual for the same interval was negative. The regression
-    was then asked to explain a negative actual from a feature pinned at zero,
-    and the fitted iso_cal coefficient absorbed the error: measured +8.1 per
-    cent from one such row in a 78 row bucket and +87.5 per cent from sixteen,
-    monotone in the count and the same sign in every seed. Those rows are also
-    LESS leveraged than an average row, about 0.55x the bucket mean, so no
-    leverage or influence diagnostic would ever surface them. See issue #85.
+    History: apply_all used to floor the published isotonic prediction at
+    0.0. For a raw forecast in the open interval (-0.10, 0.0), above the
+    passthrough boundary and so genuinely served by stage 2, that floor set the
+    feature to exactly 0.0 while the settled actual was negative, and the
+    fitted iso_cal coefficient absorbed the error: +8.1 per cent from one such
+    row in a 78 row bucket, +87.5 per cent from sixteen. Issue #85 unfloored
+    the feature and kept the floor on the published price. Issue #114 then
+    removed the published floor as well: the isotonic model is fitted on
+    negative actuals like any other, so a negative prediction is a fitted
+    value, and publishing 0.0 in its place turned "paid to consume" into
+    "free" on about one interval in nine on the live install.
 
-    The floor stays on the published price. Only the feature is unfloored, so
-    nothing a user sees moves. The isotonic model is already fitted on every
-    (forecast, actual) pair including negative forecasts, so the unfloored
-    prediction is a genuine fitted value rather than an extrapolation, and it
-    closes the gap the feature used to have between the boundary and zero.
+    The feature and the published price are now the same number on the
+    isotonic path. The separate key is kept so a store or caller from before
+    the split keeps working, and so the two cannot drift apart again if a
+    floor is ever reintroduced on one side.
 
     The dict fallbacks are for a caller holding a result dict built before this
     split existed, which degrades to the previous behaviour instead of raising.
@@ -578,12 +577,12 @@ def _clamp_band(
     published triple satisfies ``p10 <= calibrated <= p90`` and
     ``p10 <= p50 <= p90``.
 
-    A fitted p10 is first floored at 0.0, because a quantile line extrapolated
-    below zero is not a credible price, and then clamped down to
-    ``calibrated``.  Both callers pass a non-negative point estimate, for which
-    that order is equivalent to flooring last; it is written this way so a
-    future caller passing a negative estimate cannot end up with a lower bound
-    above the value it is meant to bracket.
+    A fitted p10 is first floored at MARKET_PRICE_FLOOR, -$1000/MWh, the only
+    price the market cannot go below, and then clamped down to ``calibrated``.
+    The floor used to be 0.0, which clamped every lower bound up onto a
+    negative point estimate and hid mild negative prices (issue #114). The
+    order matters: flooring first and clamping second means a negative point
+    estimate below the floor still gets a lower bound no higher than itself.
 
     A ``None`` quantile means that level was not fitted (fewer than MIN_OBS
     observations) and stays ``None`` rather than being invented.
@@ -594,12 +593,12 @@ def _clamp_band(
     outside its own band on roughly one interval in six (issue #69).
     """
     if p10 is not None:
-        p10 = min(max(0.0, p10), calibrated)
+        p10 = min(max(MARKET_PRICE_FLOOR, p10), calibrated)
     if p90 is not None:
         p90 = max(calibrated, p90)
     if p50 is not None:
         # Same floor reasoning as p10 when there is no fitted p10 to bound by.
-        p50_lo = p10 if p10 is not None else min(0.0, calibrated)
+        p50_lo = p10 if p10 is not None else min(MARKET_PRICE_FLOOR, calibrated)
         p50_hi = p90 if p90 is not None else float("inf")
         p50 = max(p50_lo, min(p50_hi, p50))
     return p10, p50, p90
@@ -645,7 +644,7 @@ class BucketModel:
           1. Negative passthrough  — deeply negative forecasts bypass calibration.
           2. Insufficient data     — raw forecast returned if iso_model is None
                                      (bucket has < MIN_OBS training observations).
-          3. Isotonic calibration  — IsotonicRegression.predict([x]), clipped >= 0.
+          3. Isotonic calibration  — IsotonicRegression.predict([x]), unfloored.
                                      Spike inputs (>= SPIKE_THRESHOLD) are handled by
                                      out_of_bounds='clip', returning the training-range
                                      maximum — a clean normal-market estimate.
@@ -697,19 +696,24 @@ class BucketModel:
         # ── Isotonic calibration ────────────────────────────────────────────
         # IsotonicRegression.predict() with out_of_bounds='clip': forecasts
         # outside the training x-range are clipped to the nearest boundary.
-        # Result floored at 0.0 — calibrated prices cannot be physically
-        # negative (negative forecasts are caught by passthrough_negative).
+        # The prediction is published as fitted, negative or not. It used to
+        # be floored at 0.0 on the claim that a calibrated price cannot be
+        # negative; in the NEM it can, mild negatives are the normal solar
+        # trough state, and the model is fitted on negative actuals like any
+        # other. The floor published 0.0 on about one interval in nine on the
+        # live install and hid the sign (issue #114). The one floor that
+        # remains is the market price floor, -$1000/MWh, which a corrupt
+        # observation batch can drag a fitted step below and no price can be.
         iso_raw = float(self.iso_model.predict(np.asarray([x], dtype=float))[0])
-        calibrated = max(iso_raw, 0.0)
+        calibrated = max(iso_raw, MARKET_PRICE_FLOOR)
 
         # Clamp the band so it contains calibrated and stays ordered.
         p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(x))
 
         return {
             "calibrated": round(calibrated, 6),
-            # The unfloored prediction, for stage 2 only. Published fields are
-            # all derived from the floored value above and are unchanged by
-            # this key existing. See stage2_iso_feature and issue #85.
+            # Same number as "calibrated" since issue #114; kept as its own
+            # key for stage 2 and older callers. See stage2_iso_feature.
             ISO_FEATURE_KEY: round(iso_raw, 6),
             "p10": round(p10, 6) if p10 is not None else None,
             "p50": round(p50, 6) if p50 is not None else None,
@@ -749,12 +753,10 @@ class CalibrationResult:
         # 2a. Gate: never override the deliberate negative bypass.
         #
         #     WHY: the stage-2 OLS is fitted in fit_ols_stage2 whose first
-        #     feature is the stage-1 output, and apply_all floors that output at
-        #     0.0 for every raw forecast above NEGATIVE_PASSTHROUGH_THRESHOLD
-        #     while returning the raw value below it. The training set therefore
-        #     holds no row whatever between the threshold and zero, and below the
-        #     threshold only the deeply negative rows the observation store
-        #     happened to accumulate. Those are rare: NEM negative prices are
+        #     feature is the stage-1 output. Rows at or below
+        #     NEGATIVE_PASSTHROUGH_THRESHOLD are excluded from that fit (PR #83),
+        #     so below the threshold the model has only whatever deeply negative
+        #     rows it never saw. Those are rare: NEM negative prices are
         #     common but shallow, with the large majority of negative intervals
         #     sitting above -$30/MWh against a -$100/MWh threshold here, and a
         #     bucket needs OLS_MIN_OBS rows before it is fitted at all. A
@@ -762,9 +764,9 @@ class CalibrationResult:
         #     It also carries an asymmetric cost: a positive prediction over a
         #     negative raw forecast flips the published sign, turning "paid to
         #     consume" into "pay to consume", which is the one error a battery or
-        #     controllable load schedule cannot absorb. The later
-        #     `prediction <= 0.0` guard blocks that only by accident, and only
-        #     when the prediction happens to be non-positive itself. See #73.
+        #     controllable load schedule cannot absorb. The sign-disagreement
+        #     fallback in step 6 protects the served region; this gate protects
+        #     the region the fit never covered. See #73 and #114.
         if result.get("calibrated_source") == "passthrough_negative":
             return result
 
@@ -804,11 +806,21 @@ class CalibrationResult:
         # 5. Predict.
         prediction = ols.predict(feature_vec)
 
-        # 6. If OLS yields a non-positive value fall back to the isotonic result
-        #    rather than clamping to 0.  A clamped-zero calibrated price is
-        #    indistinguishable from a genuine zero-forecast and silently discards
-        #    the isotonic correction that was already applied in step 1.
-        if prediction <= 0.0:
+        # 6. Fall back to the isotonic result when stage 2 disagrees with it on
+        #    sign. Before issue #114 this was `prediction <= 0.0`, which existed
+        #    to stop a positive stage-1 value being flipped negative and, as a
+        #    side effect, made stage 2 unable to publish a negative at all. Now
+        #    that stage 1 publishes negatives, the protection is symmetric: a
+        #    negative stage-1 value is not flipped positive, which is the error
+        #    #73 called out ("paid to consume" becoming "pay to consume"), and
+        #    a non-negative one is not flipped negative. Where both agree on
+        #    sign, including both negative, the stage-2 value is served.
+        iso_value = float(result["calibrated"])
+        if (prediction < 0.0) != (iso_value < 0.0):
+            return result
+        #    Below the market floor is not a price; treat it like the sign
+        #    disagreement rather than publishing it.
+        if prediction < MARKET_PRICE_FLOOR:
             return result
 
         # 7. Replace the point estimate, then re-clamp the band around it.
@@ -844,11 +856,12 @@ class CalibrationResult:
         #    without any clamping and cannot collapse.
         #
         #    _clamp_band is still applied on top, for two reasons that are not
-        #    about containment: it floors p10 at 0.0, which is the same floor
-        #    every other published lower bound carries, and it is the one place
-        #    the ordering and containment invariants are enforced, so leaving it
-        #    out would make this the only published triple not passing through
-        #    them.  On the residual path it is a no-op except for that floor.
+        #    about containment: it floors p10 at the market price floor, the
+        #    same floor every other published lower bound carries, and it is
+        #    the one place the ordering and containment invariants are enforced,
+        #    so leaving it out would make this the only published triple not
+        #    passing through them.  On the residual path it is a no-op except
+        #    for that floor.
         out = dict(result)
         out["calibrated"] = round(prediction, 6)
         out["calibrated_source"] = "isotonic+stpasa"
