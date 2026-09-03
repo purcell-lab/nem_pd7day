@@ -24,7 +24,12 @@ from .const import (
     interconnectors_for_regions,
     region_startup_index,
 )
-from .dispatch_client import DispatchPrice, StaleIntervalError, fetch_dispatch_prices
+from .dispatch_client import (
+    DispatchPrice,
+    StaleIntervalError,
+    fetch_dispatch_prices,
+    parse_settlement,
+)
 from .pd7day_client import PD7DayClient, PD7DayResult
 from . import tod_stats as _tod_stats
 from .tod_stats import TodStats
@@ -550,10 +555,7 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
                 sample = next(iter(prices.values()), None)
                 if sample:
                     actual_str = sample.interval_datetime
-                    try:
-                        actual_dt = datetime.fromisoformat(actual_str).replace(tzinfo=None)
-                    except ValueError:
-                        actual_dt = datetime.strptime(actual_str, "%Y/%m/%d %H:%M:%S")
+                    actual_dt = parse_settlement(actual_str)
                     if actual_dt < expected_settlement:
                         _LOGGER.warning(
                             "Dispatch: settlement=%s still behind boundary=%s (NEMtime) after retry — serving anyway",
