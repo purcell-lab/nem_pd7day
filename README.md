@@ -210,8 +210,8 @@ Each entry in `forecast` contains:
 nemtime: "2026-04-15T17:30:00+10:00"   # interval END (AEMO convention)
 time:    "2026-04-15T17:00:00+10:00"   # interval START
 raw_value: 0.084                        # raw AEMO forecast ($/kWh)
-calibrated: 0.142                       # isotonic-calibrated value
-p10: 0.091                             # 10th percentile (optimistic)
+calibrated: 0.142                       # isotonic-calibrated value; can be negative (NEM prices go below zero, and the model is fitted on those actuals)
+p10: 0.091                             # 10th percentile (optimistic); floored at the -1.0 $/kWh market floor, not at zero
 p50: 0.138                             # 50th percentile (median)
 p90: 0.231                             # 90th percentile (conservative)
 ols_mae: 0.038                         # mean absolute error of calibration fit

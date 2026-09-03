@@ -266,20 +266,27 @@ def test_stage2_band_never_collapses_onto_the_point_estimate():
     print("  PASS: no collapsed bound anywhere in the prediction sweep")
 
 
-def test_lower_bound_is_still_floored_at_zero():
-    """A residual band reaching below zero is floored, as every other band is.
+def test_lower_bound_reaching_below_zero_is_published():
+    """A residual band reaching below zero is published, not floored at zero.
 
-    The floor is the one thing that can still put p10 at a fixed distance from
-    the market rather than from the model, and it is deliberate: the rest of the
-    engine does not publish a negative lower bound above the negative
-    passthrough boundary.  It cannot produce an exact collapse because stage 2
-    only publishes a strictly positive prediction.
+    Before issue #114 the lower bound was floored at 0.0, which put p10 at a
+    fixed distance from the market rather than from the model. Negative prices
+    are a normal NEM state, so the band keeps the model's own lower bound.
     """
     out = _apply(_result(_bucket(), 0.004, _resid(-0.02, -0.001, 0.03)), 0.2)
-    assert out["p10"] == 0.0, f"expected the zero floor, got {out['p10']}"
+    assert out["p10"] == -0.016, f"expected the residual lower bound, got {out['p10']}"
     assert out["p90"] == 0.034
+    assert out["p10"] < out["calibrated"] < out["p90"]
+    print("  PASS: the residual lower bound below zero is published as fitted")
+
+
+def test_lower_bound_is_floored_at_the_market_floor():
+    """The one floor that remains is -$1000/MWh, which no price can go below."""
+    from custom_components.nem_pd7day.const import MARKET_PRICE_FLOOR
+    out = _apply(_result(_bucket(), 0.004, _resid(-1.2, -0.001, 0.03)), 0.2)
+    assert out["p10"] == MARKET_PRICE_FLOOR, f"expected the market floor, got {out['p10']}"
     assert out["p10"] < out["calibrated"], "the floor must not collapse the bound"
-    print("  PASS: the residual lower bound is floored at zero, not collapsed")
+    print("  PASS: the residual lower bound is floored at the market floor")
 
 
 def test_a_wide_residual_band_is_published_in_full():

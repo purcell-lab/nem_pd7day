@@ -270,12 +270,15 @@ def test_override_band_is_derived_from_the_fits_not_the_clamped_stage1_band():
 
 
 def test_qld1_collapsed_zero_band_regression():
-    """The live QLD1 case: a band collapsed to [0, 0] and a positive override.
+    """The live QLD1 case: a band that used to collapse to [0, 0].
 
     Observed on 2026-09-02 at h65.0, forecast -0.07591 $/kWh.  The isotonic
-    value clips and floors to 0.0, and both quantile lines are negative at a
-    negative forecast, so stage 1 published p10 = p90 = 0.0.  The stage-2
-    prediction of 0.00182 was then published above a p90 of exactly zero.
+    value clips to 0.0 (this fixture's training range starts at 0.0), and both
+    quantile lines are negative at a negative forecast.  Before issue #114 the
+    zero floor on p10 collapsed the stage-1 band to p10 = p90 = 0.0 and the
+    stage-2 prediction of 0.00182 was then published above a p90 of exactly
+    zero.  Now the fitted negative p10 line survives, so the band has width,
+    and p90 still rises to contain the override.
     """
     forecast = -0.07591
     assert forecast > NEGATIVE_PASSTHROUGH_THRESHOLD, "must not hit negative passthrough"
@@ -283,9 +286,11 @@ def test_qld1_collapsed_zero_band_regression():
     bucket = _bucket()
     stage1 = bucket.apply_all(forecast)
     assert stage1["calibrated"] == 0.0, stage1
-    assert stage1["p10"] == 0.0 and stage1["p90"] == 0.0, (
-        f"expected the stage-1 band to collapse to zero width, got {stage1}"
+    assert stage1["p10"] == round(0.4 * forecast, 6), (
+        f"expected the fitted negative p10 line to survive, got {stage1}"
     )
+    assert stage1["p90"] == 0.0, f"p90 must rise to contain the point estimate, got {stage1}"
+    assert stage1["p10"] < stage1["p90"], "the band must no longer collapse"
 
     out = _result(bucket, prediction=0.00182).apply(
         forecast,
@@ -299,9 +304,9 @@ def test_qld1_collapsed_zero_band_regression():
     assert out["p90"] == 0.00182, (
         f"p90 must rise to contain the override, got {out['p90']}"
     )
-    assert out["p10"] == 0.0, f"p10 must stay floored at zero, got {out['p10']}"
+    assert out["p10"] == round(0.4 * forecast, 6), f"p10 must keep the fitted line, got {out['p10']}"
     _assert_consistent(out, "qld1 collapsed band")
-    print("  PASS: QLD1 collapsed zero-width band regression")
+    print("  PASS: QLD1 formerly collapsed band now has width")
 
 
 # ── Unfitted quantiles ───────────────────────────────────────────────────────

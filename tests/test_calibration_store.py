@@ -376,9 +376,11 @@ def _make_obs(forecast, actual, horizon=3.0, hour=21):
 
 def test_isotonic_handles_large_negative_actuals():
     """
-    Isotonic regression handles corrupt training data (large negative actuals)
-    correctly: the step function maps low forecasts to ~0 (floored at 0.0).
+    Isotonic regression handles corrupt training data (actuals far below the
+    market floor): the fitted step lands at about -3.15 and the published
+    value is floored at MARKET_PRICE_FLOOR, the only floor left after #114.
     """
+    from custom_components.nem_pd7day.const import MARKET_PRICE_FLOOR
     import random
     rng = random.Random(42)
     # Near-constant forecast (~0.003), actual = -3.15 → isotonic floors at 0.0
@@ -390,15 +392,17 @@ def test_isotonic_handles_large_negative_actuals():
     result = engine.fit(obs)
     out = result.apply(0.003, horizon_hours=3.0, hour_of_day=21)
 
-    # Isotonic regression clips the large-negative actuals correctly:
-    # the step function maps low forecasts (~0.003) to ~0 (floored).
     assert out["calibrated_source"] in ("passthrough", "isotonic"), (
         f"Unexpected calibration source for corrupt bucket: {out['calibrated_source']} "
         f"with calibrated={out['calibrated']:.4f}"
     )
-    assert out["calibrated"] >= 0.0, (
-        f"Calibrated value must be non-negative, got {out['calibrated']:.4f}"
+    assert out["calibrated"] >= MARKET_PRICE_FLOOR, (
+        f"Calibrated value must not go below the market floor, got {out['calibrated']:.4f}"
     )
+    if out["calibrated_source"] == "isotonic":
+        assert out["calibrated"] == MARKET_PRICE_FLOOR, (
+            f"a step below the market floor must publish the floor, got {out['calibrated']:.4f}"
+        )
 
 
 def test_high_ratio_isotonic_flows_through():

@@ -175,6 +175,11 @@ IRLS_ITER = 100
 IRLS_EPS = 1e-4
 IRLS_TOL = 1e-6
 QUANTILES = (0.1, 0.5, 0.9)
+# The NEM market price floor, -$1000/MWh, in $/kWh. The only floor a published
+# price or band bound carries: calibrated prices are not clamped at zero,
+# because negative prices are a normal NEM state and the isotonic model is
+# fitted on negative actuals like any other (issue #114).
+MARKET_PRICE_FLOOR = -1.0
 HORIZON_EDGES = [0, 6, 12, 24, 48, 96]
 HORIZON_LABELS = ["h00_06", "h06_12", "h12_24", "h24_48", "h48_96", "h96plus"]
 TOD_LABELS = ["shoulder", "morning_ramp", "solar", "peak"]
