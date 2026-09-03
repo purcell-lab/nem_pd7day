@@ -293,7 +293,6 @@ def test_every_builder_that_publishes_a_band_publishes_band_source():
     band_source, so the sensor carrying the full forecast array can answer
     which band derivation produced it.
     """
-    from custom_components.nem_pd7day import sensor as sensor_mod
     from custom_components.nem_pd7day.const import (
         ATTR_CAL_BAND_SOURCE,
         ATTR_CAL_P10,
@@ -322,8 +321,14 @@ def test_every_builder_that_publishes_a_band_publishes_band_source():
         "n_obs": 100,
     }
 
-    with patch.object(sensor_mod, "calibrate_interval", return_value=dict(fake_cal)), \
-         patch.object(sensor_mod, "_amber_express_cutoff", return_value=run_at - timedelta(days=1)):
+    # Patch the globals the classes' methods actually resolve against. Other
+    # test modules reload sensor.py under the same name, so the module object
+    # in sys.modules can differ from the one SHARING_CLASSES were defined in.
+    method_globals = PD7DayForecastSensor._calibrate_period.__globals__
+    with patch.dict(method_globals, {
+        "calibrate_interval": lambda *a, **k: dict(fake_cal),
+        "_amber_express_cutoff": lambda: run_at - timedelta(days=1),
+    }):
         for s in sensors:
             entries = s.extra_state_attributes["forecast"]
             assert entries, type(s).__name__

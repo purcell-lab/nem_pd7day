@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from .const import DISPATCHIS_BASE_URL, ELEC_NEM_SUMMARY_URL, NEMWEB_HEADERS
+from .const import DISPATCHIS_BASE_URL, ELEC_NEM_SUMMARY_URL, NEM_TZ, NEMWEB_HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,8 +54,9 @@ class DispatchPrice:
 
 _SETTLEMENT_FORMATS = ("%Y-%m-%dT%H:%M:%S", "%Y/%m/%d %H:%M:%S")
 
-# NEM time is UTC+10 with no daylight saving.
-_NEM_UTC_OFFSET = timedelta(hours=10)
+# NEM time is UTC+10 with no daylight saving; derived from the canonical zone
+# rather than restated (issue #108).
+_NEM_UTC_OFFSET = NEM_TZ.utcoffset(None)
 
 
 def parse_settlement(settlement_str: str) -> datetime:

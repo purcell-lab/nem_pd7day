@@ -9,12 +9,13 @@ Retention: notices whose period_to < now - 7 days are pruned on each write.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.helpers.storage import Store
 
 from .market_notice_client import GridNoticeAnnotation
+from .nem_time import now_nem
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -97,7 +98,7 @@ class GridNoticeStore:
            period_from date — handles AEMO cancellation notices that don't
            reference a specific notice ID.
         """
-        self.last_fetched_at = datetime.now(timezone(timedelta(hours=10)))
+        self.last_fetched_at = now_nem()
         for notice in notices:
             region = notice.region
             if region not in self._notices:
@@ -170,7 +171,7 @@ class GridNoticeStore:
         Return active non-cancelled LOR2+/MSL2+ notices within the next horizon_hours.
         Used by the binary sensor.
         """
-        now = datetime.now(timezone(timedelta(hours=10)))
+        now = now_nem()
         cutoff = now + timedelta(hours=horizon_hours)
         return [
             n for n in self.get_active_notices(region, from_dt=now, to_dt=cutoff)
@@ -204,7 +205,7 @@ class GridNoticeStore:
 
     def _prune(self) -> None:
         """Remove notices older than NOTICE_RETENTION_DAYS past their period_to."""
-        cutoff = datetime.now(timezone(timedelta(hours=10))) - timedelta(days=NOTICE_RETENTION_DAYS)
+        cutoff = now_nem() - timedelta(days=NOTICE_RETENTION_DAYS)
         for region in list(self._notices.keys()):
             self._notices[region] = [
                 n for n in self._notices[region]

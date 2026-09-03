@@ -22,6 +22,8 @@ import struct
 import zlib
 from datetime import datetime
 
+from .const import NEM_TZ
+
 _LOGGER = logging.getLogger(__name__)
 
 def _placeholder_png(message: str = "") -> bytes:
@@ -1067,8 +1069,6 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         return _placeholder_png(
             "Forecast chart unavailable\n(matplotlib not installed)"
         )
-
-    NEM_TZ = datetime.timezone(datetime.timedelta(hours=10))
 
     if not forecast_data:
         return b""

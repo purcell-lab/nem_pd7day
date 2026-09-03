@@ -279,9 +279,9 @@ def test_stpasa_extract_and_parse_run_off_the_loop():
     seen: dict[str, int] = {}
     real = stpasa_mod._extract_and_parse_all_regions
 
-    def spy(raw):
+    def spy(raw, **kwargs):
         seen["work"] = threading.get_ident()
-        return real(raw)
+        return real(raw, **kwargs)
 
     inner = _make_zip(b"C,NEMP.WORLD,STPASA,AEMO\n", "PUBLIC_STPASA_X.CSV")
     payload = _make_zip(inner, "PUBLIC_STPASA_X.zip")

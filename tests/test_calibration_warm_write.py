@@ -57,6 +57,9 @@ class _FakeHass:
         self.executor_calls += 1
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)
 
+    def async_create_background_task(self, coro, name=None, eager_start=False):
+        return self.async_create_task(coro, name=name)
+
     def async_create_task(self, coro, name=None):
         task = asyncio.get_running_loop().create_task(coro, name=name)
         self.tasks.append(task)

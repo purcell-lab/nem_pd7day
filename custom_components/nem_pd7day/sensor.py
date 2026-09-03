@@ -12,7 +12,7 @@ NemPd7dayGridNoticesSensor    -- active MSL/LOR market notice count + structured
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso, to_nem_iso
 
@@ -100,7 +100,7 @@ from .calibration_inputs import (
     stpasa_effective_min_horizon_h,
     stpasa_features_for_interval,
 )
-from .coordinator import PD7DayCoordinator
+from .coordinator import PD7DayCoordinator, staleness_attributes
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
@@ -446,13 +446,17 @@ class CalibratedWriteMixin:
     # Class-level default so instances built without __init__ still work.
     _pending_warm_writes: set | None = None
 
+    if TYPE_CHECKING:
+        # Provided by the entity this mixes into.
+        entity_id: str
+        hass: HomeAssistant
+
     def _schedule_warm_state_write(self) -> None:
         """Warm the memo then write state, without blocking the caller.
 
-        The task is held and cancelled on entity removal, so a warm still
-        running when the entry unloads does not write state for an entity
-        that is gone (issue #106). One on-remove hook, registered on the
-        first call.
+        The task is held and cancelled when the entity leaves hass, so a warm
+        still running when the entry unloads does not write state for an
+        entity that is gone (issue #106).
         """
         task = self.hass.async_create_background_task(
             self._async_warm_then_write(),
@@ -460,7 +464,6 @@ class CalibratedWriteMixin:
         )
         if self._pending_warm_writes is None:
             self._pending_warm_writes = set()
-            self.async_on_remove(self._cancel_pending_warm_writes)
         pending = self._pending_warm_writes
         pending.add(task)
         task.add_done_callback(pending.discard)
@@ -470,6 +473,10 @@ class CalibratedWriteMixin:
         self._pending_warm_writes = set()
         for task in list(pending):
             task.cancel()
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._cancel_pending_warm_writes()
+        await super().async_will_remove_from_hass()  # type: ignore[misc]
 
     def _handle_coordinator_update(self) -> None:
         """Replaces CoordinatorEntity's direct async_write_ha_state()."""
@@ -770,6 +777,7 @@ class PD7DayForecastSensor(
         return {
             ATTR_REGION: d.region,
             ATTR_FORECAST_GENERATED_AT: run_at,
+            **staleness_attributes(self.coordinator),
             ATTR_INTERVAL_MINUTES: d.interval_minutes,
             ATTR_NEXT_VALUE: (
                 trimmed_forecast[0].get(ATTR_CAL_CALIBRATED, trimmed_forecast[0].get("value"))
@@ -998,6 +1006,7 @@ class SpotPriceForecastDays27Sensor(
         return {
             ATTR_REGION: d.region,
             ATTR_FORECAST_GENERATED_AT: run_at,
+            **staleness_attributes(self.coordinator),
             ATTR_INTERVAL_MINUTES: d.interval_minutes,
             ATTR_NEXT_VALUE: (
                 trimmed_forecast[0].get(ATTR_CAL_CALIBRATED, trimmed_forecast[0].get("value"))
@@ -1424,8 +1433,8 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
         """Count of active non-cancelled notices within next 7 days."""
         if self._notice_store is None:
             return 0
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone(timedelta(hours=10)))
+        from datetime import timedelta
+        now = now_nem()
         horizon = now + timedelta(days=7)
         return len(self._notice_store.get_active_notices(
             self._region, from_dt=now, to_dt=horizon
@@ -1435,8 +1444,8 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
     def extra_state_attributes(self) -> dict:
         if self._notice_store is None:
             return {"region": self._region}
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone(timedelta(hours=10)))
+        from datetime import timedelta
+        now = now_nem()
         horizon = now + timedelta(days=7)
         active = self._notice_store.get_active_notices(
             self._region, from_dt=now, to_dt=horizon
@@ -1544,6 +1553,7 @@ class PD7DayDataSensor(
         return {
             ATTR_RUN_DATETIME: run_at,
             ATTR_REGION: self._region,
+            **staleness_attributes(self.coordinator),
             "interval_count": len(forecast),
             ATTR_FORECAST: forecast,
         }

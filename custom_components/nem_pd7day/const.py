@@ -492,6 +492,13 @@ DISPATCH_KEY = "dispatch"
 # ── PRICESOLUTION sensor attributes ──────────────────────────────────────────
 ATTR_REGION = "region"
 ATTR_FORECAST_GENERATED_AT = "forecast_generated_at"
+# Staleness of the served PD7DAY data (issue #105). The coordinator keeps
+# serving the last good result through a NEMWEB outage so entities stay
+# available; these say how old that result is and whether the last fetch
+# failed, so an automation can guard on them.
+ATTR_DATA_AGE_HOURS = "data_age_hours"
+ATTR_IS_STALE = "is_stale"
+ATTR_STALE_REASON = "stale_reason"
 ATTR_INTERVAL_MINUTES = "interval_minutes"
 ATTR_NEXT_VALUE = "next_value"
 ATTR_MIN_24H = "min_24h_value"

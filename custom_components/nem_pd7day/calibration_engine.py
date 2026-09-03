@@ -189,6 +189,7 @@ class IsotonicRegression:
         )
 
 from .const import (
+    NEM_TZ,
     ATTR_CAL_BAND_SOURCE,
     HORIZON_EDGES,
     HORIZON_LABELS,
@@ -320,9 +321,6 @@ OBSERVATION_WINDOW_DAYS = 90
 # λ = 0.033 → half-life ≈ 21 days (ln2 / 0.033 ≈ 21).
 # Applied to both isotonic and quantile regression fitting.
 DECAY_LAMBDA = 0.033
-
-# NEM timezone for weight calculations
-_NEM_TZ = timezone(timedelta(hours=10))
 
 # ── Region capital coordinates (latitude, longitude) ─────────────────────────
 REGION_COORDS: dict[str, tuple[float, float]] = {
@@ -1340,10 +1338,15 @@ class CalibrationEngine:
         self,
         observations: list[Observation],
         region: str = "QLD1",
+        now: datetime | None = None,
     ) -> CalibrationResult:
         """
         Partition observations into buckets, fit all models.
         Returns a CalibrationResult ready to apply to new forecasts.
+
+        *now* is the aware UTC instant the rolling window and decay weights
+        are measured from; it defaults to the wall clock and exists so tests
+        can pin it (issue #109). This module holds no hass reference.
 
         Only observations within the last OBSERVATION_WINDOW_DAYS are used
         for fitting.  All observations remain in storage (the window is a
@@ -1353,8 +1356,8 @@ class CalibrationEngine:
           weight = exp(-DECAY_LAMBDA * days_ago)
         Region is used for solar elevation ToD classification.
         """
-        now_utc = datetime.now(timezone.utc)
-        now_nem_dt = now_utc.astimezone(_NEM_TZ)
+        now_utc = now or datetime.now(timezone.utc)
+        now_nem_dt = now_utc.astimezone(NEM_TZ)
         # ── Rolling window filter ────────────────────────────────────────────
         cutoff = now_utc - timedelta(days=OBSERVATION_WINDOW_DAYS)
         windowed: list[tuple[Observation, datetime]] = []
@@ -1363,7 +1366,7 @@ class CalibrationEngine:
                 obs_dt = datetime.fromisoformat(obs.interval_time)
                 if obs_dt.tzinfo is None:
                     # Legacy naive timestamp — assume NEM time (UTC+10)
-                    obs_dt = obs_dt.replace(tzinfo=_NEM_TZ)
+                    obs_dt = obs_dt.replace(tzinfo=NEM_TZ)
                 if obs_dt >= cutoff:
                     windowed.append((obs, obs_dt))
             except (ValueError, TypeError):
@@ -1390,7 +1393,7 @@ class CalibrationEngine:
                 # that collapse the OLS slope even when actual_rrp is bounded.
                 continue
             # Solar elevation ToD classification
-            obs_nem = obs_dt.astimezone(_NEM_TZ)
+            obs_nem = obs_dt.astimezone(NEM_TZ)
             key = _bucket_key_solar(obs.horizon_hours, obs_nem, region)
             if key in buckets:
                 # Cap per-bucket to avoid memory bloat; keep most recent
