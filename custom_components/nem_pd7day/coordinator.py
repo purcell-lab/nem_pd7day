@@ -422,6 +422,12 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
     whatever random offset existed at HA startup (observed: up to ~4 min).
     """
 
+    # Class-level defaults: the poll chain state is read by every method, and
+    # tests build instances with __new__ without running __init__.
+    _pending_cancel: Callable[[], None] | None = None
+    _refresh_task: asyncio.Task | None = None
+    _stopped: bool = False
+
     def __init__(self, hass: HomeAssistant) -> None:
         super().__init__(
             hass,
@@ -431,7 +437,12 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
         )
         self.prices: dict[str, DispatchPrice] = {}
         self.last_updated: datetime | None = None
-        self._unsub_poll: list[Callable[[], None]] = []
+        # The one pending boundary timer. A single slot rather than a list,
+        # because each poll replaces the previous timer and a list of spent
+        # cancels was never drained (issue #101).
+        self._pending_cancel: Callable[[], None] | None = None
+        self._refresh_task: asyncio.Task | None = None
+        self._stopped = False
 
     def _next_boundary_utc(self) -> datetime:
         """Return the next 5-minute boundary (UTC) plus _DISPATCH_POLL_DELAY_S."""
@@ -451,27 +462,58 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
         Call once after async_config_entry_first_refresh().  Each poll
         automatically reschedules the next one.
 
-        entry_unsub_list: optional list to append the cancel callback to, so
-        the ConfigEntry can unsubscribe on unload.  If None, uses self._unsub_poll.
+        The coordinator owns its single pending timer. Before issue #101 the
+        first cancel went into the entry's unsubscribe list and every later
+        reschedule went into a private list nothing read, so unload cancelled a
+        spent timer, the chain kept polling AEMO with no config entry behind
+        it, and every reload started another chain beside it.
+
+        entry_unsub_list: optional list to register ``async_shutdown_polling``
+        on, so the ConfigEntry can stop the whole chain on unload. Registered
+        once, on the first call; later self-reschedules pass nothing.
         """
+        if self._stopped:
+            return
         fire_at = self._next_boundary_utc()
 
         @callback
         def _on_fire(_now=None) -> None:
-            self.hass.async_create_task(self._aligned_refresh())
+            self._pending_cancel = None
+            if self._stopped:
+                return
+            self._refresh_task = self.hass.async_create_task(self._aligned_refresh())
 
-        cancel = async_track_point_in_utc_time(self.hass, _on_fire, fire_at)
-        target = entry_unsub_list if entry_unsub_list is not None else self._unsub_poll
-        target.append(cancel)
+        self._pending_cancel = async_track_point_in_utc_time(self.hass, _on_fire, fire_at)
+        if entry_unsub_list is not None:
+            entry_unsub_list.append(self.async_shutdown_polling)
         _LOGGER.debug(
             "Dispatch next boundary poll at %s UTC (+%ds delay)",
             fire_at.strftime("%H:%M:%S"),
             _DISPATCH_POLL_DELAY_S,
         )
 
+    def async_shutdown_polling(self) -> None:
+        """Stop the boundary poll chain: cancel the pending timer and any
+        in-flight refresh, and refuse to reschedule from here on."""
+        self._stopped = True
+        if self._pending_cancel is not None:
+            self._pending_cancel()
+            self._pending_cancel = None
+        task = self._refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._refresh_task = None
+
+    @property
+    def polling_active(self) -> bool:
+        """True while a boundary timer is pending and the chain is not stopped."""
+        return not self._stopped and self._pending_cancel is not None
+
     async def _aligned_refresh(self) -> None:
         """Fetch dispatch data then schedule the next boundary poll."""
         await self.async_refresh()
+        # A poll already in flight when unload ran must not resurrect the
+        # chain; schedule_next_poll checks the flag itself.
         self.schedule_next_poll()
 
     async def _async_update_data(self) -> dict[str, DispatchPrice]:

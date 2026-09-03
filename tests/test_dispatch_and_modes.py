@@ -20,7 +20,7 @@ import os
 import importlib.util
 import types
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # ── Module loader ─────────────────────────────────────────────────────────────
 
@@ -893,8 +893,130 @@ def test_schedule_next_poll_registers_cancel():
     ):
         coord.schedule_next_poll(entry_unsub_list=unsub_list)
 
+    # The entry list gets the coordinator's shutdown hook, not the raw cancel
+    # of the first timer: the first timer is spent by the time unload runs
+    # (issue #101). The pending cancel is held on the coordinator instead.
     assert len(unsub_list) == 1
-    assert unsub_list[0] is cancel_fn
+    assert unsub_list[0] == coord.async_shutdown_polling
+    assert coord._pending_cancel is cancel_fn
+    assert coord.polling_active
+
+
+class _TimerRegistry:
+    """Stand-in for async_track_point_in_utc_time that tracks live timers."""
+
+    def __init__(self) -> None:
+        self.fired: list = []
+        self.live: list = []
+
+    def __call__(self, hass, action, when):
+        cancel = MagicMock(name="cancel")
+        entry = {"action": action, "cancel": cancel}
+        self.live.append(entry)
+        cancel.side_effect = lambda: self.live.remove(entry)
+        return cancel
+
+    def fire_all(self) -> None:
+        for entry in list(self.live):
+            self.live.remove(entry)
+            entry["action"](None)
+
+
+class _chain_patches:
+    """Patch the timer helper and make HA's ``callback`` decorator a no-op.
+
+    This module stubs ``homeassistant.core`` with a MagicMock, so ``callback``
+    would otherwise swallow the timer action and nothing could fire.
+    """
+
+    def __init__(self, timers: _TimerRegistry) -> None:
+        from custom_components.nem_pd7day import coordinator as _cm
+
+        self._patches = [
+            patch.object(_cm, "async_track_point_in_utc_time", timers),
+            patch.object(_cm, "callback", lambda fn: fn),
+        ]
+
+    def __enter__(self):
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.stop()
+        return False
+
+
+def _chain_coordinator(timers: _TimerRegistry):
+    from custom_components.nem_pd7day.coordinator import DispatchCoordinator
+
+    coord = DispatchCoordinator.__new__(DispatchCoordinator)
+    coord.hass = MagicMock()
+    coord.hass.async_create_task = MagicMock(side_effect=lambda coro: (coro.close(), MagicMock(done=lambda: True))[1])
+    coord.async_refresh = AsyncMock()
+    return coord
+
+
+def test_unload_after_reschedule_cancels_the_live_timer():
+    """Issue #101: the timer registered by a self-reschedule must be the one
+    unload cancels, not the spent first one."""
+    timers = _TimerRegistry()
+    coord = _chain_coordinator(timers)
+    unsub_list: list = []
+
+    with _chain_patches(timers):
+        coord.schedule_next_poll(entry_unsub_list=unsub_list)
+        assert len(timers.live) == 1
+        # First boundary fires; the coordinator reschedules itself.
+        timers.fire_all()
+        run_async(coord._aligned_refresh())
+        assert len(timers.live) == 1, "reschedule must replace, not stack"
+        # Unload runs whatever was registered at setup.
+        for unsub in unsub_list:
+            unsub()
+
+    assert timers.live == [], "the rescheduled timer survived unload"
+    assert not coord.polling_active
+
+
+def test_refresh_in_flight_at_unload_does_not_resurrect_the_chain():
+    timers = _TimerRegistry()
+    coord = _chain_coordinator(timers)
+    unsub_list: list = []
+
+    with _chain_patches(timers):
+        coord.schedule_next_poll(entry_unsub_list=unsub_list)
+        timers.fire_all()
+        # Unload lands while the refresh for that boundary is still running.
+        for unsub in unsub_list:
+            unsub()
+        run_async(coord._aligned_refresh())
+
+    assert timers.live == []
+    assert coord._pending_cancel is None
+
+
+def test_reload_leaves_exactly_one_live_timer():
+    """Unload then reload: one coordinator, one timer, no orphaned chain."""
+    timers = _TimerRegistry()
+    with _chain_patches(timers):
+        first = _chain_coordinator(timers)
+        unsubs: list = []
+        first.schedule_next_poll(entry_unsub_list=unsubs)
+        timers.fire_all()
+        run_async(first._aligned_refresh())
+        for unsub in unsubs:
+            unsub()
+
+        second = _chain_coordinator(timers)
+        unsubs2: list = []
+        second.schedule_next_poll(entry_unsub_list=unsubs2)
+        timers.fire_all()
+        run_async(second._aligned_refresh())
+
+    assert len(timers.live) == 1
+    assert timers.live[0]["cancel"] is second._pending_cancel
 
 
 def test_dispatch_coordinator_update_interval_is_none():

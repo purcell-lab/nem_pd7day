@@ -156,7 +156,6 @@ def _make_coordinator() -> DispatchCoordinator:
     coord.prices = {}
     coord.last_updated = None
     coord.data = None
-    coord._unsub_poll = []
     return coord
 
 
