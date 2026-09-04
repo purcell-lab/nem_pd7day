@@ -393,7 +393,7 @@ def test_parity_sweep_over_a_full_run():
         start_dt = run_dt + timedelta(minutes=30 * (i + 1))
         # A spread of prices including mild negatives served by stage 2, a
         # deep negative below the fitted domain, which takes the
-        # passthrough_below_domain branch, and a spike well above SPIKE_THRESHOLD.
+        # isotonic_below_domain branch, and a spike well above SPIKE_THRESHOLD.
         value = rng.choice([-0.30, -0.05, -0.00757, 0.0, 0.03, 0.12093, 0.52396, 3.4])
         periods.append(make_period(start_dt, value))
         # Leave a gap in the middle of the band so some in band intervals have

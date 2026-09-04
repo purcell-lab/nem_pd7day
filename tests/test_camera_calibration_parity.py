@@ -380,7 +380,7 @@ def full_run_periods() -> tuple[list[FakePeriod], list[StpasaInterval]]:
     for i in range(336):
         start_dt = run_dt + timedelta(minutes=30 * (i + 1))
         # A spread including mild negatives served by stage 2, a deep negative
-        # below the fitted domain, which takes the passthrough_below_domain
+        # below the fitted domain, which takes the isotonic_below_domain
         # branch, and a spike well above SPIKE_THRESHOLD.
         value = rng.choice([-0.30, -0.05, -0.00757, 0.0, 0.03, 0.12093, 0.52396, 3.4])
         periods.append(make_period(start_dt, value))

@@ -13,7 +13,7 @@ threads ``run_at_iso`` through it, so both paths use the same model and the same
 per run stage-2 band floor. That is the assumption these tests are here to
 police. The central assertion is not that the memo is faster: it is that every
 published number is byte for byte what the unmemoised code published, over a
-full seven day run that crosses the passthrough, passthrough_below_domain,
+full seven day run that crosses the passthrough, isotonic_below_domain,
 isotonic and isotonic+stpasa branches.
 
 Which of these fail without the production change: the two call counting tests
@@ -54,7 +54,7 @@ def full_run(n_intervals: int = 336):
     """A seven day run spanning every branch of the calibration pipeline.
 
     The price choices include values below the fitted domain, which
-    take passthrough_below_domain, and a spike above SPIKE_THRESHOLD. The STPASA gap
+    take isotonic_below_domain, and a spike above SPIKE_THRESHOLD. The STPASA gap
     leaves in band intervals with no features, which must degrade to isotonic
     only on both the memoised and the unmemoised path alike.
     """
@@ -151,7 +151,7 @@ def test_sweep_reaches_every_calibration_branch():
     _periods, forecast, _tariff, _export, coord, _store = build()
     counts = sources_over_run(forecast)
     clear_memos(coord)
-    for branch in ("passthrough", "passthrough_below_domain", "isotonic", "isotonic+stpasa"):
+    for branch in ("passthrough", "isotonic_below_domain", "isotonic", "isotonic+stpasa"):
         assert counts.get(branch, 0) > 0, (
             f"the sweep never reached {branch}, so pinning tariff output over "
             f"it would be vacuous: {counts}"

@@ -66,7 +66,7 @@ BucketModel = _ce.BucketModel
 Observation = _ce.Observation
 RunFeatures = _ce.RunFeatures
 StpasaFeatures = _ce.StpasaFeatures
-SOURCE_PASSTHROUGH_BELOW_DOMAIN = _ce.SOURCE_PASSTHROUGH_BELOW_DOMAIN
+SOURCE_ISOTONIC_BELOW_DOMAIN = _ce.SOURCE_ISOTONIC_BELOW_DOMAIN
 OLS_MIN_HORIZON_H = _ce.OLS_MIN_HORIZON_H
 OLS_MAX_HORIZON_H = _ce.OLS_MAX_HORIZON_H
 OLS_MIN_OBS = _ce.OLS_MIN_OBS
@@ -234,7 +234,7 @@ def test_serve_path_agrees_with_the_shared_predicate():
     for i in range(-400, 401):
         x = i / 1000.0  # -0.400 to +0.400 $/kWh in 0.001 steps
         is_bypass = (
-            bucket.apply_all(x)["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+            bucket.apply_all(x)["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
         )
         assert is_bypass == bucket.is_below_domain(x), (
             f"serve path and predicate disagree at raw {x} $/kWh: "
