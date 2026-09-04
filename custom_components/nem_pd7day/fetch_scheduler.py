@@ -30,9 +30,29 @@ TrackFn = Callable[[Any, Callable[..., None], datetime], CancelFn]
 
 
 def _default_track(hass: Any, action: Callable[..., None], when: datetime) -> CancelFn:
+    """Register ``action`` with Home Assistant's point-in-time tracker.
+
+    The action is handed over as a callback-typed HassJob, explicitly. Home
+    Assistant classifies a timer action by inspecting it: a coroutine
+    function runs on the loop, a function marked ``@callback`` runs on the
+    loop, and any other plain function is run in the executor thread pool.
+    ``_arm`` passes ``partial(self._on_fire, slot)``, a plain method, which
+    HA unwrapped and classified as an executor job, so the publish-time
+    action ran on a worker thread; ``entry.async_create_background_task``
+    called from that thread produced a task that was destroyed while pending
+    and no scheduled PD7DAY fetch ran from v3.6.0 until this was found
+    (issue #126). The closure this scheduler replaced was decorated
+    ``@callback``. Declaring the job type here, next to the only HA import,
+    keeps the module importable without Home Assistant in the tests and
+    makes the requirement visible rather than implied by a decorator.
+    """
+    from homeassistant.core import HassJob, HassJobType
     from homeassistant.helpers.event import async_track_point_in_utc_time
 
-    return async_track_point_in_utc_time(hass, action, when)
+    job = HassJob(
+        action, "nem_pd7day scheduled fetch", job_type=HassJobType.Callback
+    )
+    return async_track_point_in_utc_time(hass, job, when)
 
 
 def _default_now() -> datetime:
@@ -52,7 +72,8 @@ def next_utc_fire(hour: int, minute: int, now: datetime) -> datetime:
 class DailyFetchScheduler:
     """Fire ``action(hour, minute)`` once a day at each UTC slot.
 
-    ``action`` is called on the event loop from the timer callback; it must
+    ``action`` is called on the event loop from the timer callback (see
+    ``_default_track`` for why that is declared rather than assumed); it must
     not block. Scheduling the fetch itself as a task is the caller's job, so
     the caller decides which lifecycle the task is tied to.
     """
