@@ -274,24 +274,24 @@ def test_qld1_collapsed_zero_band_regression():
 
     Observed on 2026-09-02 at h65.0, forecast -0.07591 $/kWh.  This fixture's
     isotonic domain starts at 0.0, so the forecast is below it: since issue
-    #117 that is a below-domain extrapolation, AEMO's value shifted by the
-    edge correction (zero here, iso(0.0) = 0.0) with a band from the quantile
-    lines clamped to contain it, and stage 2 is never consulted.
+    #117 (as refined by #123) that is a below-domain clip: the bucket's value
+    at its floor, iso(0.0) = 0.0, with the quantile band at the floor, and
+    stage 2 is never consulted.
     Before #114 and #117 the isotonic value clipped and floored to 0.0, the
     zero floor collapsed the band to p10 = p90 = 0.0, and a stage-2 prediction
     of 0.00182 was published above a p90 of exactly zero.
     """
     forecast = -0.07591
-    bucket = _bucket()
+    # Lines with intercepts, as fitted lines have; through the origin they
+    # would meet at the floor of 0.0 and the band there would be a point.
+    bucket = _bucket(q10_b=-0.01, q90_b=0.01)
     assert bucket.is_below_domain(forecast)
 
     stage1 = bucket.apply_all(forecast)
     assert stage1["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
-    assert stage1["calibrated"] == round(forecast, 6), stage1
-    # q10 line 0.4x = -0.0304 sits above the point estimate and is clamped
-    # down onto it; q90 line 0.7x = -0.0531 stays as the upper bound.
-    assert stage1["p10"] == round(forecast, 6), stage1
-    assert stage1["p90"] == round(0.7 * forecast, 6), stage1
+    # The bucket answers at its floor: iso(0.0) = 0.0 and the lines at 0.0.
+    assert stage1["calibrated"] == 0.0, stage1
+    assert stage1["p10"] == -0.01 and stage1["p90"] == 0.01, stage1
     assert stage1["p10"] < stage1["p90"], "the band must no longer collapse"
     _assert_consistent(stage1, "qld1 stage 1")
 
@@ -303,10 +303,10 @@ def test_qld1_collapsed_zero_band_regression():
         run_features=RUN_FEATURES,
     )
     assert out["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
-    assert out["calibrated"] == round(forecast, 6)
+    assert out["calibrated"] == 0.0
     assert out["p10"] == stage1["p10"] and out["p90"] == stage1["p90"]
     _assert_consistent(out, "qld1 collapsed band")
-    print("  PASS: QLD1 formerly collapsed band is a banded extrapolation")
+    print("  PASS: QLD1 formerly collapsed band is the floor band")
 
 
 # ── Unfitted quantiles ───────────────────────────────────────────────────────
