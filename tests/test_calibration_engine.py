@@ -650,22 +650,40 @@ def _domain_bucket(x_lo: float = 0.05, x_hi: float = 0.25) -> BucketModel:
     )
 
 
-def test_below_domain_raw_passthrough():
+def test_below_domain_extrapolates_from_the_edge():
     """
-    A raw forecast below every forecast the bucket was fitted on passes
-    through as AEMO's value with a band from the quantile lines (issue #117).
+    A raw forecast below every forecast the bucket was fitted on is AEMO's
+    value shifted by the correction at the domain edge, with a band from the
+    quantile lines (issues #117 and #120). Here iso(0.05) = 0.06, so the
+    offset is +0.01 and -0.15 is published as -0.14.
     """
-    from custom_components.nem_pd7day.calibration_engine import SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    from custom_components.nem_pd7day.calibration_engine import SOURCE_ISOTONIC_BELOW_DOMAIN
     model = _domain_bucket()
+    assert abs(model.edge_offset - 0.01) < 1e-9
     result = model.apply_all(-0.15)
-    assert result["calibrated"] == round(-0.15, 6), (
-        f"Below-domain raw should pass through unchanged, got {result['calibrated']}"
+    assert result["calibrated"] == -0.14, (
+        f"Below-domain raw should carry the edge correction, got {result['calibrated']}"
     )
-    assert result["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
-    # q10 line 0.6x + 0.01 = -0.08 is above the raw and clamps onto it;
+    assert result["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
+    # q10 line 0.6x + 0.01 = -0.08 is above the point and clamps onto it;
     # q90 line 1.0x + 0.03 = -0.12 is the upper bound.
-    assert result["p10"] == -0.15 and result["p90"] == -0.12, result
-    print(f"  PASS: below-domain raw passthrough (calibrated={result['calibrated']})")
+    assert result["p10"] == -0.14 and result["p90"] == -0.12, result
+    print(f"  PASS: below-domain edge extrapolation (calibrated={result['calibrated']})")
+
+
+def test_below_domain_is_continuous_at_the_floor():
+    """
+    No step at the domain floor: just below it the published value meets the
+    isotonic curve, and further below it falls at AEMO's slope (issue #120,
+    where a raw passthrough put a step on every QLD1 morning ramp).
+    """
+    model = _domain_bucket(x_lo=-0.10)
+    at_floor = model.apply_all(-0.10)["calibrated"]
+    just_below = model.apply_all(-0.10 - 1e-6)["calibrated"]
+    assert abs(just_below - at_floor) < 1e-5, (at_floor, just_below)
+    further = model.apply_all(-0.20)["calibrated"]
+    assert abs((at_floor - further) - 0.10) < 1e-9, (at_floor, further)
+    print("  PASS: below-domain extrapolation is continuous at the floor")
 
 
 def test_mild_negative_inside_domain_is_calibrated():
@@ -673,11 +691,11 @@ def test_mild_negative_inside_domain_is_calibrated():
     A mildly negative forecast inside the fitted domain is calibrated like any
     other. This is the solar-window case where AEMO over-corrects the trough.
     """
-    from custom_components.nem_pd7day.calibration_engine import SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    from custom_components.nem_pd7day.calibration_engine import SOURCE_ISOTONIC_BELOW_DOMAIN
     model = _domain_bucket(x_lo=-0.06)
     result = model.apply_all(-0.03)
     assert result["calibrated_source"] == "isotonic", result
-    assert result["calibrated_source"] != SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    assert result["calibrated_source"] != SOURCE_ISOTONIC_BELOW_DOMAIN
     print(f"  PASS: mild negative inside the domain is calibrated (source={result['calibrated_source']})")
 
 
@@ -705,11 +723,11 @@ def test_domain_boundary_is_inclusive():
     The smallest training forecast is inside the domain; anything below it
     is not. The boundary is the data, not a constant.
     """
-    from custom_components.nem_pd7day.calibration_engine import SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    from custom_components.nem_pd7day.calibration_engine import SOURCE_ISOTONIC_BELOW_DOMAIN
     model = _domain_bucket(x_lo=-0.10)
     assert model.domain_min == -0.10
     assert model.apply_all(-0.10)["calibrated_source"] == "isotonic"
-    assert model.apply_all(-0.10 - 1e-6)["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    assert model.apply_all(-0.10 - 1e-6)["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
     print("  PASS: domain boundary is inclusive at the smallest training forecast")
 
 
@@ -1817,7 +1835,8 @@ TESTS = [
     test_negative_ols_slope_clamped,
     test_quantile_slopes_ordered_after_irls,
     test_quantile_slopes_clamped_to_zero,
-    test_below_domain_raw_passthrough,
+    test_below_domain_extrapolates_from_the_edge,
+    test_below_domain_is_continuous_at_the_floor,
     test_mild_negative_inside_domain_is_calibrated,
     test_no_iso_model_is_plain_passthrough_even_when_negative,
     test_domain_boundary_is_inclusive,

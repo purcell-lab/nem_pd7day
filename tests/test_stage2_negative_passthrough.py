@@ -1,5 +1,5 @@
 """
-Stage-2 STPASA override must not fire on top of a passthrough_below_domain result.
+Stage-2 STPASA override must not fire on top of a isotonic_below_domain result.
 
 Issue #73: the step-2 gate in CalibrationResult.apply never inspected
 calibrated_source, so a deeply negative raw forecast that reached the
@@ -54,7 +54,7 @@ Observation = _ce.Observation
 OlsModel = _ce.OlsModel
 RunFeatures = _ce.RunFeatures
 StpasaFeatures = _ce.StpasaFeatures
-SOURCE_PASSTHROUGH_BELOW_DOMAIN = _ce.SOURCE_PASSTHROUGH_BELOW_DOMAIN
+SOURCE_ISOTONIC_BELOW_DOMAIN = _ce.SOURCE_ISOTONIC_BELOW_DOMAIN
 MARKET_PRICE_FLOOR = _ce.MARKET_PRICE_FLOOR
 OLS_MIN_HORIZON_H = _ce.OLS_MIN_HORIZON_H
 OLS_MAX_HORIZON_H = _ce.OLS_MAX_HORIZON_H
@@ -160,17 +160,19 @@ def test_positive_prediction_does_not_override_negative_passthrough():
         raw, horizon_hours=36.0, hour_of_day=12, stpasa=_SF, run_features=_RF
     )
 
-    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN, (
+    assert out["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN, (
         f"expected the negative bypass to survive, got {out['calibrated_source']}"
     )
-    assert out["calibrated"] == round(raw, 6), (
-        f"expected raw {raw} published untouched, got {out['calibrated']}"
+    stage1 = result.get_bucket(36.0, 12).apply_all(raw)["calibrated"]
+    assert out["calibrated"] == stage1, (
+        f"expected the stage-1 value {stage1} published untouched, got {out['calibrated']}"
     )
+    assert out["calibrated"] < 0.0
     assert "stpasa_run_at" not in out, (
         "stpasa_run_at must be absent when the override is skipped"
     )
     print(
-        "  PASS: positive OLS prediction does not override passthrough_below_domain "
+        "  PASS: positive OLS prediction does not override isotonic_below_domain "
         f"(raw={raw}, blocked prediction={prediction:+.4f})"
     )
 
@@ -178,9 +180,9 @@ def test_positive_prediction_does_not_override_negative_passthrough():
 def test_no_sign_flip_sweep():
     """Sweep raw forecasts, horizons, hours and coefficient sets for sign flips.
 
-    The invariant: whenever stage 1 returns passthrough_below_domain, apply must
-    republish the raw value with that source and must never publish a value of
-    the opposite sign.
+    The invariant: whenever stage 1 returns isotonic_below_domain, apply must
+    republish that stage-1 value with that source and must never publish a
+    value of the opposite sign.
     """
     coef_sets = [
         _SIGN_FLIP_COEF,
@@ -209,13 +211,15 @@ def test_no_sign_flip_sweep():
                         stpasa=_SF,
                         run_features=_RF,
                     )
-                    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN, (
+                    assert out["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN, (
                         f"raw={raw} h={horizon} hour={hour} coef={coef[:2]}: "
                         f"source {out['calibrated_source']}"
                     )
-                    # The raw value is republished, clamped only by the
-                    # market price floor (#114), never by the OLS prediction.
-                    assert out["calibrated"] == round(max(raw, MARKET_PRICE_FLOOR), 6), (
+                    # The raw value shifted by the edge correction (#120),
+                    # clamped only by the market price floor (#114), never
+                    # touched by the OLS prediction.
+                    offset = result.get_bucket(horizon, hour).edge_offset
+                    assert out["calibrated"] == round(max(raw + offset, MARKET_PRICE_FLOOR), 6), (
                         f"raw={raw} h={horizon} hour={hour}: "
                         f"published {out['calibrated']}"
                     )
@@ -258,7 +262,7 @@ def test_mild_negative_inside_the_domain_is_still_calibrated():
     out = result.apply(
         raw, horizon_hours=36.0, hour_of_day=12, stpasa=_SF, run_features=_RF
     )
-    assert out["calibrated_source"] != SOURCE_PASSTHROUGH_BELOW_DOMAIN, (
+    assert out["calibrated_source"] != SOURCE_ISOTONIC_BELOW_DOMAIN, (
         "a mild negative inside the domain must not reach the bypass"
     )
     assert out["calibrated_source"] in ("isotonic", "isotonic+stpasa"), out
@@ -384,10 +388,11 @@ def test_fitted_model_without_negative_training_rows_would_flip():
     out = result.apply(
         raw, horizon_hours=36.0, hour_of_day=12, stpasa=_SF, run_features=_RF
     )
-    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN, (
+    assert out["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN, (
         f"expected the bypass to hold, got {out['calibrated_source']}"
     )
-    assert out["calibrated"] == round(raw, 6)
+    assert out["calibrated"] == result.get_bucket(36.0, 12).apply_all(raw)["calibrated"]
+    assert out["calibrated"] < 0.0
     print(
         "  PASS: fitted model with no negative training rows extrapolates to "
         f"{prediction:+.4f} and is correctly refused"

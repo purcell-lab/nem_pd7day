@@ -231,22 +231,32 @@ _LOGGER = logging.getLogger(__name__)
 # $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
 SPIKE_THRESHOLD = 3.00  # $/kWh
 
-# ── Below-domain passthrough ─────────────────────────────────────────────────
+# ── Below-domain extrapolation ───────────────────────────────────────────────
 # A raw forecast below the smallest forecast a bucket was fitted on is outside
 # the isotonic model's domain: predict() would clip it to the first step, which
-# is a boundary value rather than a fit. Such a forecast passes through as
-# AEMO's value, labelled SOURCE_PASSTHROUGH_BELOW_DOMAIN, with a band from the
-# stage-1 quantile lines, which are linear and do extrapolate.
+# is a boundary value rather than a fit. Such a forecast is published as AEMO's
+# value shifted by the correction measured at the edge of the domain,
 #
-# This replaced a fixed NEGATIVE_PASSTHROUGH_THRESHOLD of -0.10 $/kWh. That
-# constant had no basis in the data: on the live install the SA1 h24_48__solar
-# bucket had been fitted on forecasts down to -0.31 $/kWh from 814 pairs, yet
-# every forecast below -0.10 was sent straight through with a zero-width band
-# while forecasts just above it were corrected by about 30 per cent, a step in
-# the published curve at an arbitrary number (issue #117). The bucket itself
-# is the only honest boundary: inside its domain the model has evidence,
-# outside it does not.
-SOURCE_PASSTHROUGH_BELOW_DOMAIN = "passthrough_below_domain"
+#     calibrated(x) = x + (iso(x_min) - x_min)        for x < x_min
+#
+# labelled SOURCE_ISOTONIC_BELOW_DOMAIN, with a band from the stage-1 quantile
+# lines, which are linear and do extrapolate. Continuous at the floor, keeps
+# AEMO's slope below it, and uses the same first-step level that clip already
+# relies on, so it introduces no new estimate.
+#
+# History. A fixed NEGATIVE_PASSTHROUGH_THRESHOLD of -0.10 $/kWh sent every
+# forecast at or below it straight through with a zero-width band while
+# forecasts just above were corrected by about 30 per cent, a step at a number
+# with no basis in the data (issue #117: SA1 h24_48__solar had been fitted
+# down to -0.31 $/kWh). v3.8.0 replaced it with a raw passthrough below the
+# bucket's domain, which moved the step to the domain floor. That floor is a
+# sample minimum sitting at the dense edge of the data, so on QLD1 it landed
+# on every morning ramp of the week: 38 of 330 intervals with raw forecasts
+# between -0.07 and +0.04 $/kWh were published raw because their buckets had
+# never seen a forecast that low, while a forecast a few tenths of a cent
+# higher in the same bucket was calibrated (issue #120). Extrapolating from
+# the edge removes the step without a constant.
+SOURCE_ISOTONIC_BELOW_DOMAIN = "isotonic_below_domain"
 
 
 # Key under which BucketModel.apply_all publishes the stage-1 value that stage 2
@@ -628,6 +638,20 @@ class BucketModel:
         """Lower edge of the isotonic model's fitted domain, or None."""
         return self.iso_model.x_min if self.iso_model is not None else None
 
+    @property
+    def edge_offset(self) -> float:
+        """Correction at the lower edge of the domain, ``iso(x_min) - x_min``.
+
+        Applied to a forecast below the domain so the published value meets
+        the isotonic curve at the floor instead of stepping there. Zero when
+        there is no fitted model.
+        """
+        lo = self.domain_min
+        if lo is None or self.iso_model is None:
+            return 0.0
+        edge = float(self.iso_model.predict(np.asarray([lo], dtype=float))[0])
+        return edge - lo
+
     def is_below_domain(self, x: float) -> bool:
         """True when ``x`` is below every forecast this bucket was fitted on.
 
@@ -665,8 +689,9 @@ class BucketModel:
           1. Insufficient data     — raw forecast returned if iso_model is None
                                      (bucket has < MIN_OBS training observations).
           2. Below the fitted domain — a forecast below the smallest training
-                                     forecast passes through as AEMO's value,
-                                     with a band from the quantile lines.
+                                     forecast is AEMO's value shifted by the
+                                     correction at the domain edge, with a
+                                     band from the quantile lines.
           3. Isotonic calibration  — IsotonicRegression.predict([x]), unfloored.
                                      Spike inputs (>= SPIKE_THRESHOLD) are handled by
                                      out_of_bounds='clip', returning the training-range
@@ -702,11 +727,14 @@ class BucketModel:
 
         if self.is_below_domain(x):
             # Extrapolation, not calibration: predict() would clip to the
-            # first step. Publish AEMO's value, floored only at the market
-            # floor, and let the quantile lines, which are linear, supply the
-            # band. Clamped to contain the point estimate like every other
-            # published triple; the band is None only when no line is fitted.
-            calibrated = max(x, MARKET_PRICE_FLOOR)
+            # first step. Shift AEMO's value by the correction at the domain
+            # edge, so the published curve is continuous at the floor and
+            # keeps the raw slope below it (see SOURCE_ISOTONIC_BELOW_DOMAIN).
+            # Floored only at the market floor; the quantile lines, which are
+            # linear, supply the band, clamped to contain the point estimate
+            # like every other published triple and None only when no line
+            # is fitted.
+            calibrated = max(x + self.edge_offset, MARKET_PRICE_FLOOR)
             p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(x))
             fitted = any(v is not None for v in (p10, p50, p90))
             return {
@@ -714,11 +742,11 @@ class BucketModel:
                 "p10": round(p10, 6) if p10 is not None else None,
                 "p50": round(p50, 6) if p50 is not None else None,
                 "p90": round(p90, 6) if p90 is not None else None,
-                # The raw forecast is the feature too, as on the no-iso path;
-                # stage 2 never consults this result (see apply, gate 2a).
+                # The published value is the feature too; stage 2 never
+                # consults this result (see apply, gate 2a).
                 ISO_FEATURE_KEY: round(calibrated, 6),
                 BAND_SOURCE_KEY: BAND_SOURCE_STAGE1 if fitted else BAND_SOURCE_PASSTHROUGH,
-                "calibrated_source": SOURCE_PASSTHROUGH_BELOW_DOMAIN,
+                "calibrated_source": SOURCE_ISOTONIC_BELOW_DOMAIN,
                 "n_obs": self.ols.n,
             }
 
@@ -780,19 +808,19 @@ class CalibrationResult:
         bucket = self.get_bucket(horizon_hours, hour_of_day)
         result = bucket.apply_all(forecast)
 
-        # 2a. Gate: never override a below-domain passthrough.
+        # 2a. Gate: never override a below-domain extrapolation.
         #
         #     WHY: below the bucket's fitted domain the stage-1 value is AEMO's
-        #     raw forecast, not a fit, and the stage-2 OLS was fitted on rows
-        #     inside that domain, so a prediction there is extrapolation on
-        #     both features. It also carries an asymmetric cost: a positive
+        #     raw forecast shifted by the edge correction, not a fit, and the
+        #     stage-2 OLS was fitted on rows inside that domain, so a
+        #     prediction there is extrapolation on both features. It also carries an asymmetric cost: a positive
         #     prediction over a deeply negative raw forecast flips the
         #     published sign, turning "paid to consume" into "pay to consume",
         #     which is the one error a battery or controllable load schedule
         #     cannot absorb. The sign-disagreement fallback in step 6 protects
         #     the served region; this gate protects the region the fit never
         #     covered. See #73, #114 and #117.
-        if result.get("calibrated_source") == SOURCE_PASSTHROUGH_BELOW_DOMAIN:
+        if result.get("calibrated_source") == SOURCE_ISOTONIC_BELOW_DOMAIN:
             return result
 
         # 2b. Gate: STPASA correction only inside the OLS horizon band, and only
@@ -1608,8 +1636,8 @@ class CalibrationEngine:
             # Drop rows that the serving path never asks this model about.
             #
             # WHY: below the bucket's fitted domain the serving path publishes
-            # AEMO's raw value and never consults stage 2 (apply, gate 2a), so
-            # a row there would be fitted for a region that is never served.
+            # an edge extrapolation and never consults stage 2 (apply, gate
+            # 2a), so a row there would be fitted for a region never served.
             # Both paths read the boundary from BucketModel.is_below_domain so
             # they cannot drift apart (#68, #79, #117). In practice a bucket's
             # own training rows define its domain, so this excludes nothing

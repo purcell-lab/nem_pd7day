@@ -70,7 +70,7 @@ from custom_components.nem_pd7day.calibration_engine import (  # noqa: E402
     BAND_SOURCE_STAGE2,
     BAND_SOURCE_STAGE2_FALLBACK,
     MIN_OBS,
-    SOURCE_PASSTHROUGH_BELOW_DOMAIN,
+    SOURCE_ISOTONIC_BELOW_DOMAIN,
     OLS_MIN_OBS,
     BucketModel,
     CalibrationEngine,
@@ -413,7 +413,7 @@ def test_stage1_publications_are_byte_for_byte_unchanged():
         if forecast < 0.0:
             c = _apply(with_resid, forecast)
             assert c["calibrated"] == round(forecast, 6)
-            assert c["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+            assert c["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
     print("  PASS: stage-1 published values and bands are unchanged")
 
 
