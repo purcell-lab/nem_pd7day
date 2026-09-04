@@ -13,7 +13,7 @@ threads ``run_at_iso`` through it, so both paths use the same model and the same
 per run stage-2 band floor. That is the assumption these tests are here to
 police. The central assertion is not that the memo is faster: it is that every
 published number is byte for byte what the unmemoised code published, over a
-full seven day run that crosses the passthrough, passthrough_negative,
+full seven day run that crosses the passthrough, passthrough_below_domain,
 isotonic and isotonic+stpasa branches.
 
 Which of these fail without the production change: the two call counting tests
@@ -53,8 +53,8 @@ from custom_components.nem_pd7day.nem_time import parse_iso  # noqa: E402
 def full_run(n_intervals: int = 336):
     """A seven day run spanning every branch of the calibration pipeline.
 
-    The price choices include values below NEGATIVE_PASSTHROUGH_THRESHOLD, which
-    take passthrough_negative, and a spike above SPIKE_THRESHOLD. The STPASA gap
+    The price choices include values below the fitted domain, which
+    take passthrough_below_domain, and a spike above SPIKE_THRESHOLD. The STPASA gap
     leaves in band intervals with no features, which must degrade to isotonic
     only on both the memoised and the unmemoised path alike.
     """
@@ -64,7 +64,7 @@ def full_run(n_intervals: int = 336):
     stpasa = []
     for i in range(n_intervals):
         start_dt = run_dt + timedelta(minutes=30 * (i + 1))
-        # -0.15 is below NEGATIVE_PASSTHROUGH_THRESHOLD (-0.10) and 3.4 is above
+        # -0.15 is below the fitted domain of every bucket and 3.4 is above
         # SPIKE_THRESHOLD, so the sweep reaches both ends of the pipeline.
         value = rng.choice([-0.15, -0.05, -0.00757, 0.0, 0.03, 0.12093, 0.52396, 3.4])
         periods.append(make_period(start_dt, value))
@@ -151,7 +151,7 @@ def test_sweep_reaches_every_calibration_branch():
     _periods, forecast, _tariff, _export, coord, _store = build()
     counts = sources_over_run(forecast)
     clear_memos(coord)
-    for branch in ("passthrough", "passthrough_negative", "isotonic", "isotonic+stpasa"):
+    for branch in ("passthrough", "passthrough_below_domain", "isotonic", "isotonic+stpasa"):
         assert counts.get(branch, 0) > 0, (
             f"the sweep never reached {branch}, so pinning tariff output over "
             f"it would be vacuous: {counts}"

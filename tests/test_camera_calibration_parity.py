@@ -268,7 +268,9 @@ def fitted_store(region: str = "QLD1") -> CalibrationStore:
             )
             if horizon_hours > 48:
                 interval_dt = interval_dt - timedelta(days=20)
-            forecast = rng.uniform(0.04, 0.26)
+            # Spans the mild negatives the sweep below serves through stage 2,
+            # so they sit inside the fitted domain (#117).
+            forecast = rng.uniform(-0.08, 0.26)
             surplus = rng.uniform(500.0, 5000.0)
             solar = rng.uniform(0.0, 4000.0)
             demand50 = rng.uniform(5000.0, 9000.0)
@@ -377,9 +379,10 @@ def full_run_periods() -> tuple[list[FakePeriod], list[StpasaInterval]]:
     stpasa: list[StpasaInterval] = []
     for i in range(336):
         start_dt = run_dt + timedelta(minutes=30 * (i + 1))
-        # A spread including negatives, which take the passthrough_negative
+        # A spread including mild negatives served by stage 2, a deep negative
+        # below the fitted domain, which takes the passthrough_below_domain
         # branch, and a spike well above SPIKE_THRESHOLD.
-        value = rng.choice([-0.05, -0.00757, 0.0, 0.03, 0.12093, 0.52396, 3.4])
+        value = rng.choice([-0.30, -0.05, -0.00757, 0.0, 0.03, 0.12093, 0.52396, 3.4])
         periods.append(make_period(start_dt, value))
         # Leave a gap in the middle of the band so some in band intervals have
         # no STPASA row and must degrade to isotonic on both paths alike.

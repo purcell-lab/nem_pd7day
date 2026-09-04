@@ -55,7 +55,7 @@ _load(
 
 from custom_components.nem_pd7day.calibration_engine import (  # noqa: E402
     MIN_OBS,
-    NEGATIVE_PASSTHROUGH_THRESHOLD,
+    SOURCE_PASSTHROUGH_BELOW_DOMAIN,
     BucketModel,
     CalibrationResult,
     IsotonicRegression,
@@ -272,25 +272,27 @@ def test_override_band_is_derived_from_the_fits_not_the_clamped_stage1_band():
 def test_qld1_collapsed_zero_band_regression():
     """The live QLD1 case: a band that used to collapse to [0, 0].
 
-    Observed on 2026-09-02 at h65.0, forecast -0.07591 $/kWh.  The isotonic
-    value clips to 0.0 (this fixture's training range starts at 0.0), and both
-    quantile lines are negative at a negative forecast.  Before issue #114 the
-    zero floor on p10 collapsed the stage-1 band to p10 = p90 = 0.0 and the
-    stage-2 prediction of 0.00182 was then published above a p90 of exactly
-    zero.  Now the fitted negative p10 line survives, so the band has width,
-    and p90 still rises to contain the override.
+    Observed on 2026-09-02 at h65.0, forecast -0.07591 $/kWh.  This fixture's
+    isotonic domain starts at 0.0, so the forecast is below it: since issue
+    #117 that is a below-domain passthrough, AEMO's value with a band from the
+    quantile lines clamped to contain it, and stage 2 is never consulted.
+    Before #114 and #117 the isotonic value clipped and floored to 0.0, the
+    zero floor collapsed the band to p10 = p90 = 0.0, and a stage-2 prediction
+    of 0.00182 was published above a p90 of exactly zero.
     """
     forecast = -0.07591
-    assert forecast > NEGATIVE_PASSTHROUGH_THRESHOLD, "must not hit negative passthrough"
-
     bucket = _bucket()
+    assert bucket.is_below_domain(forecast)
+
     stage1 = bucket.apply_all(forecast)
-    assert stage1["calibrated"] == 0.0, stage1
-    assert stage1["p10"] == round(0.4 * forecast, 6), (
-        f"expected the fitted negative p10 line to survive, got {stage1}"
-    )
-    assert stage1["p90"] == 0.0, f"p90 must rise to contain the point estimate, got {stage1}"
+    assert stage1["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    assert stage1["calibrated"] == round(forecast, 6), stage1
+    # q10 line 0.4x = -0.0304 sits above the point estimate and is clamped
+    # down onto it; q90 line 0.7x = -0.0531 stays as the upper bound.
+    assert stage1["p10"] == round(forecast, 6), stage1
+    assert stage1["p90"] == round(0.7 * forecast, 6), stage1
     assert stage1["p10"] < stage1["p90"], "the band must no longer collapse"
+    _assert_consistent(stage1, "qld1 stage 1")
 
     out = _result(bucket, prediction=0.00182).apply(
         forecast,
@@ -299,14 +301,11 @@ def test_qld1_collapsed_zero_band_regression():
         stpasa=STPASA,
         run_features=RUN_FEATURES,
     )
-    assert out["calibrated_source"] == "isotonic+stpasa"
-    assert out["calibrated"] == 0.00182
-    assert out["p90"] == 0.00182, (
-        f"p90 must rise to contain the override, got {out['p90']}"
-    )
-    assert out["p10"] == round(0.4 * forecast, 6), f"p10 must keep the fitted line, got {out['p10']}"
+    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    assert out["calibrated"] == round(forecast, 6)
+    assert out["p10"] == stage1["p10"] and out["p90"] == stage1["p90"]
     _assert_consistent(out, "qld1 collapsed band")
-    print("  PASS: QLD1 formerly collapsed band now has width")
+    print("  PASS: QLD1 formerly collapsed band is a banded passthrough")
 
 
 # ── Unfitted quantiles ───────────────────────────────────────────────────────
@@ -405,7 +404,7 @@ def test_override_on_top_of_a_passthrough_bucket_is_still_consistent():
 def test_invariant_holds_across_every_source_and_horizon():
     """Sweep the paths and horizons and assert the invariant everywhere.
 
-    Covers passthrough_negative, isotonic and isotonic+stpasa, inside and
+    Covers passthrough_below_domain, isotonic and isotonic+stpasa, inside and
     outside the OLS horizon band, with quantile lines steep enough to cross
     the isotonic curve in both directions.
 
@@ -453,7 +452,7 @@ def test_invariant_holds_across_every_source_and_horizon():
                                     _assert_consistent(out, label)
                                 checks += 1
 
-    expected = {"passthrough_negative", "passthrough", "isotonic", "isotonic+stpasa"}
+    expected = {SOURCE_PASSTHROUGH_BELOW_DOMAIN, "passthrough", "isotonic", "isotonic+stpasa"}
     assert expected <= seen, f"sweep missed a calibration path: {expected - seen}"
     print(f"  PASS: invariant holds over {checks} combinations, sources {sorted(seen)}")
 
