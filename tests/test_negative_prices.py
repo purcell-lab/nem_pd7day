@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from custom_components.nem_pd7day.calibration_engine import (
-    NEGATIVE_PASSTHROUGH_THRESHOLD,
+    SOURCE_PASSTHROUGH_BELOW_DOMAIN,
     BucketModel,
     CalibrationResult,
     IsotonicRegression,
@@ -76,8 +76,8 @@ def _apply(res: CalibrationResult, forecast: float) -> dict:
 
 def test_mildly_negative_forecast_publishes_a_negative_calibrated_price():
     bucket = _bucket()
-    for x in (-0.09, -0.05, -0.02):
-        assert x > NEGATIVE_PASSTHROUGH_THRESHOLD
+    for x in (-0.07, -0.05, -0.02):
+        assert not bucket.is_below_domain(x)
         out = bucket.apply_all(x)
         assert out["calibrated_source"] == "isotonic"
         assert out["calibrated"] == round(_iso(bucket, x), 6)
@@ -111,10 +111,21 @@ def test_point_estimate_is_floored_at_the_market_floor():
     assert out["p10"] is None or out["p10"] <= out["calibrated"]
 
 
-def test_deep_negative_passthrough_is_unchanged():
-    out = _bucket().apply_all(-0.25)
-    assert out["calibrated_source"] == "passthrough_negative"
-    assert out["calibrated"] == out["p10"] == out["p90"] == -0.25
+def test_below_domain_passes_through_with_a_band():
+    """A forecast below every training forecast is extrapolation: AEMO's value
+    is published, and the quantile lines, which are linear, supply a band
+    clamped to contain it (issue #117). The fixture's domain starts at -0.08."""
+    bucket = _bucket()
+    assert bucket.domain_min == -0.08
+    assert bucket.is_below_domain(-0.25) and not bucket.is_below_domain(-0.08)
+    out = bucket.apply_all(-0.25)
+    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    assert out["calibrated"] == -0.25
+    # q10 line: 1.00x - 0.010 = -0.26; q90 line: 1.10x + 0.020 = -0.255,
+    # below the point estimate and so raised onto it.
+    assert out["p10"] == -0.26 and out["p90"] == -0.25, out
+    assert out["p10"] <= out["p50"] <= out["p90"]
+    assert out["band_source"] == "stage1_quantile"
 
 
 # ── Stage 2 ──────────────────────────────────────────────────────────────────
@@ -154,3 +165,10 @@ def test_stage_two_refuses_a_prediction_below_the_market_floor():
     x = -0.05
     out = _apply(_result(bucket, -1.5), x)
     assert out["calibrated_source"] == "isotonic"
+
+
+def test_stage_two_never_overrides_a_below_domain_passthrough():
+    bucket = _bucket()
+    out = _apply(_result(bucket, +0.05), -0.25)
+    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    assert out["calibrated"] == -0.25

@@ -163,6 +163,14 @@ MIN_OBS = 10
 # (r²≈0.99 with n=10–25) that produced destructive negative coefficients
 # and non-positive predictions clamped silently to 0.
 OLS_MIN_OBS = 50
+# Stage-2 rows whose hat-matrix leverage exceeds this multiple of the mean
+# leverage p/n are dropped and the bucket refitted once. The textbook screen
+# for influential points in OLS: one isolated row far from the cluster can
+# otherwise fit itself (issue #79 measured leverage 0.92 to 0.98 for a single
+# deep negative row against a bucket mean of 0.13, and it flipped the iso_cal
+# sign). The fixed price threshold that used to hide that hazard is gone
+# (issue #117); this screen is data-driven and applies at either end.
+STAGE2_LEVERAGE_MULTIPLE = 3.0
 MAX_OBS = 5000
 # Quantile regression IRLS. The weight for a row is tau / max(|r|, IRLS_EPS),
 # so IRLS_EPS floors the residual in that denominator and bounds the weight a

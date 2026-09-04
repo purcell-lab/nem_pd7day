@@ -1,23 +1,24 @@
 """
-Stage-2 OLS must not be fitted on rows the serving path never asks it about.
+Stage-2 OLS training rows agree with the serve path, and an isolated row
+cannot steer the fit.
 
-Issue #79: the first stage-2 feature is the stage-1 isotonic output, and
-``BucketModel.apply_all`` floors that output at 0.0 for every raw forecast
-above ``NEGATIVE_PASSTHROUGH_THRESHOLD`` while returning the raw value at or
-below it. No value in the open interval (-0.10, 0.0) is attainable, so a
-sub-threshold training row lands on the far side of a gap with nothing between
-it and the rest of the cluster. In ordinary least squares that makes it a high
-leverage point: measured hat leverage for a single such row is 0.92 to 0.98
-against a bucket mean near 0.13. One mis-joined deep negative observation was
-measured moving the fitted iso_cal coefficient from +1.13 to -0.15, a sign
-flip, in a 78 row bucket.
+Issue #79: the first stage-2 feature is the stage-1 isotonic output, and at
+the time ``BucketModel.apply_all`` returned the raw value for any forecast at
+or below a fixed -0.10 $/kWh boundary. Such a row sat on the far side of a gap
+with nothing between it and the rest of the cluster, so in ordinary least
+squares it was a high leverage point: measured hat leverage for a single such
+row was 0.92 to 0.98 against a bucket mean near 0.13, and one mis-joined deep
+negative observation moved the fitted iso_cal coefficient from +1.13 to -0.15,
+a sign flip, in a 78 row bucket. PR #80 dropped those rows from the fit.
 
-PR #74 stopped the model being consulted below the boundary but left those
-rows in the fit. This module pins that they are now dropped from the stage-2
-design matrix, that the boundary is one shared definition across the fit and
-serve paths, and that the OLS_MIN_OBS floor is counted after exclusion so a
-bucket thinned by the filter falls back cleanly instead of fitting a nine
-feature model on too few points.
+Issue #117 replaced the fixed boundary with the bucket's fitted domain: a
+forecast below the lowest training forecast is passed through, and a row the
+serving path would pass through is dropped from the stage-2 design matrix by
+the same ``BucketModel.is_below_domain`` predicate. The leverage protection
+the fixed boundary gave by accident is now explicit: rows whose hat leverage
+exceeds ``STAGE2_LEVERAGE_MULTIPLE`` times the mean p/n are dropped and the
+bucket refitted once, whatever their price. This module pins both halves and
+that ``OLS_MIN_OBS`` is counted after both filters.
 
 Run with:  python -m pytest tests/test_stage2_negative_row_exclusion.py -v
 or simply: python tests/test_stage2_negative_row_exclusion.py
@@ -61,14 +62,14 @@ _ce = _load(
 )
 
 CalibrationEngine = _ce.CalibrationEngine
+BucketModel = _ce.BucketModel
 Observation = _ce.Observation
 RunFeatures = _ce.RunFeatures
 StpasaFeatures = _ce.StpasaFeatures
-NEGATIVE_PASSTHROUGH_THRESHOLD = _ce.NEGATIVE_PASSTHROUGH_THRESHOLD
+SOURCE_PASSTHROUGH_BELOW_DOMAIN = _ce.SOURCE_PASSTHROUGH_BELOW_DOMAIN
 OLS_MIN_HORIZON_H = _ce.OLS_MIN_HORIZON_H
 OLS_MAX_HORIZON_H = _ce.OLS_MAX_HORIZON_H
 OLS_MIN_OBS = _ce.OLS_MIN_OBS
-is_negative_passthrough = _ce.is_negative_passthrough
 _bucket_key = _ce._bucket_key
 
 # The bucket every test below targets: 36 h ahead, midday, so inside the OLS
@@ -83,6 +84,10 @@ TARGET = _bucket_key(TARGET_H, TARGET_HOUR)
 _TRUE_SLOPE = 1.10
 _TRUE_INTERCEPT = 0.006
 
+# The fixture clips every forecast at this value, so it is the lowest training
+# forecast in every bucket and therefore each bucket's domain floor.
+_FIXTURE_FLOOR = -0.02
+
 
 def _hourly_base(hour: int) -> float:
     if 16 <= hour <= 21:
@@ -93,7 +98,7 @@ def _hourly_base(hour: int) -> float:
 
 
 def _build(n_runs: int = 26, seed: int = 7):
-    """Return (observations, stpasa_by_key) with no sub-threshold rows.
+    """Return (observations, stpasa_by_key) with no forecast below -0.02.
 
     Each run carries near-term rows as well as in-band ones, because
     ``_compute_run_features`` only produces a RunFeatures entry for a run that
@@ -112,7 +117,7 @@ def _build(n_runs: int = 26, seed: int = 7):
             interval_dt = run_dt + timedelta(hours=h_int)
             hour = interval_dt.hour
             solar = 10 <= hour < 16
-            fc = max(-0.02, _hourly_base(hour) + rng.gauss(0, 0.02))
+            fc = max(_FIXTURE_FLOOR, _hourly_base(hour) + rng.gauss(0, 0.02))
             interval_iso = interval_dt.isoformat()
             obs.append(Observation(
                 interval_time=interval_iso,
@@ -148,7 +153,7 @@ def _in_target(o: Observation) -> bool:
 
 
 def _promote(obs, k, depth, actual=None):
-    """Move the first k in-band target-bucket rows to a sub-threshold forecast."""
+    """Move the first k target-bucket rows to a forecast of ``depth``."""
     out, taken = [], 0
     for o in obs:
         if taken < k and _in_target(o):
@@ -164,6 +169,23 @@ def _promote(obs, k, depth, actual=None):
     return out
 
 
+def _fit_stage2_with_domain_from(reference_obs, promoted, sp):
+    """Fit stage 2 on ``promoted`` with stage 1 fitted on ``reference_obs``.
+
+    ``fit_ols_stage2`` refits stage 1 on the rows it is given, so a promoted
+    row widens the bucket's domain and is never below it. Real data can
+    disagree between the two stages: stage 1 is fitted on the full
+    observation window, stage 2 only on rows with STPASA and run features,
+    and the store can hold a row whose forecast was never seen by the
+    stage-1 fit that is current at serve time. Pinning the stage-1 result
+    to the reference rows reproduces that case deterministically.
+    """
+    engine = CalibrationEngine()
+    reference = CalibrationEngine().fit(reference_obs)
+    engine.fit = lambda observations, region=None: reference
+    return engine.fit_ols_stage2(promoted, sp)
+
+
 def _coef1(models):
     m = models.get(TARGET)
     if m is None or len(m.coef) < 2:
@@ -173,73 +195,85 @@ def _coef1(models):
 
 # ── The boundary is one definition, shared by both paths ──────────────────────
 
-def test_is_negative_passthrough_boundary():
-    """The boundary is inclusive at the threshold and exclusive just above."""
-    assert is_negative_passthrough(NEGATIVE_PASSTHROUGH_THRESHOLD), (
-        "a forecast exactly at the threshold must bypass calibration"
+def test_is_below_domain_boundary():
+    """The domain floor is inclusive: at the lowest training forecast the
+    bucket is calibrated, just below it the forecast is passed through."""
+    obs, _sp = _build()
+    bucket = CalibrationEngine().fit(obs).get_bucket(TARGET_H, TARGET_HOUR)
+    assert bucket.domain_min == _FIXTURE_FLOOR, (
+        f"the fixture clips forecasts at {_FIXTURE_FLOOR}, so that must be the "
+        f"domain floor; got {bucket.domain_min}"
     )
-    assert is_negative_passthrough(NEGATIVE_PASSTHROUGH_THRESHOLD - 1e-9)
-    assert not is_negative_passthrough(NEGATIVE_PASSTHROUGH_THRESHOLD + 1e-9)
-    assert not is_negative_passthrough(0.0)
-    assert not is_negative_passthrough(-0.09)
-    print("  PASS: is_negative_passthrough boundary is inclusive at the threshold")
+    assert not bucket.is_below_domain(_FIXTURE_FLOOR), (
+        "a forecast exactly at the lowest training forecast is inside the domain"
+    )
+    assert bucket.is_below_domain(_FIXTURE_FLOOR - 1e-9)
+    assert not bucket.is_below_domain(_FIXTURE_FLOOR + 1e-9)
+    assert not bucket.is_below_domain(0.0)
+    assert bucket.is_below_domain(-0.09)
+    assert bucket.is_below_domain(-5.0)
+
+    empty = BucketModel(bucket_key=TARGET)
+    assert empty.domain_min is None
+    assert not empty.is_below_domain(-5.0), (
+        "a bucket with no isotonic model has no domain and never reports below it"
+    )
+    print(f"  PASS: is_below_domain boundary is inclusive at {_FIXTURE_FLOOR}")
 
 
 def test_serve_path_agrees_with_the_shared_predicate():
-    """apply_all's source must agree with is_negative_passthrough everywhere.
+    """apply_all's source must agree with is_below_domain everywhere.
 
-    Sweep rather than point cases: the whole point of the shared helper is
+    Sweep rather than point cases: the whole point of the shared predicate is
     that the fit filter and the serve bypass cannot drift apart, so the
     agreement is checked across the range instead of at hand-picked values.
     """
-    engine = CalibrationEngine()
     obs, _sp = _build()
-    result = engine.fit(obs)
-    bucket = result.get_bucket(TARGET_H, TARGET_HOUR)
+    bucket = CalibrationEngine().fit(obs).get_bucket(TARGET_H, TARGET_HOUR)
     checked = 0
     for i in range(-400, 401):
         x = i / 1000.0  # -0.400 to +0.400 $/kWh in 0.001 steps
-        is_bypass = bucket.apply_all(x)["calibrated_source"] == "passthrough_negative"
-        assert is_bypass == is_negative_passthrough(x), (
+        is_bypass = (
+            bucket.apply_all(x)["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+        )
+        assert is_bypass == bucket.is_below_domain(x), (
             f"serve path and predicate disagree at raw {x} $/kWh: "
-            f"apply_all bypass={is_bypass}, predicate={is_negative_passthrough(x)}"
+            f"apply_all bypass={is_bypass}, predicate={bucket.is_below_domain(x)}"
         )
         checked += 1
     print(f"  PASS: serve path agrees with the shared predicate over {checked} values")
 
 
-# ── Rows below the boundary do not enter the stage-2 design matrix ────────────
+# ── Rows below the domain do not enter the stage-2 design matrix ──────────────
 
-def test_sub_threshold_rows_are_excluded_from_the_fit():
-    """n_train must count only the rows above the boundary."""
+def test_below_domain_rows_are_excluded_from_the_fit():
+    """n_train must count only the rows inside the stage-1 domain."""
     obs, sp = _build()
-    base_n = _coef1(CalibrationEngine().fit_ols_stage2(obs, sp))
-    assert base_n is not None, "target bucket must be fitted in the baseline"
     n_before = CalibrationEngine().fit_ols_stage2(obs, sp)[TARGET].n_train
+    assert n_before >= OLS_MIN_OBS, "target bucket must be fitted in the baseline"
 
     k = 6
-    promoted = _promote(obs, k, -0.30)
-    m = CalibrationEngine().fit_ols_stage2(promoted, sp)[TARGET]
+    m = _fit_stage2_with_domain_from(obs, _promote(obs, k, -0.30), sp)[TARGET]
     assert m.n_train == n_before - k, (
         f"expected {n_before - k} training rows after excluding {k} "
-        f"sub-threshold rows; got {m.n_train}"
+        f"below-domain rows; got {m.n_train}"
     )
-    print(f"  PASS: {k} sub-threshold rows excluded, n_train {n_before} -> "
+    print(f"  PASS: {k} below-domain rows excluded, n_train {n_before} -> "
           f"{m.n_train}")
 
 
 def test_exclusion_count_sweep_over_depth_and_count():
-    """Invariant sweep: n_train falls by exactly the sub-threshold row count.
+    """Invariant sweep: n_train falls by exactly the below-domain row count.
 
     Swept over depth as well as count because the filter must key off the
-    boundary alone, not off how far below it a row sits.
+    domain floor alone, not off how far below it a row sits.
     """
     obs, sp = _build()
     n_before = CalibrationEngine().fit_ols_stage2(obs, sp)[TARGET].n_train
     cases = 0
-    for depth in (-0.10, -0.11, -0.15, -0.30, -0.60, -1.00, -5.00):
+    for depth in (-0.021, -0.05, -0.10, -0.30, -1.00, -5.00):
         for k in (1, 2, 5, 11):
-            m = CalibrationEngine().fit_ols_stage2(_promote(obs, k, depth), sp)[TARGET]
+            m = _fit_stage2_with_domain_from(obs, _promote(obs, k, depth), sp)[TARGET]
             assert m.n_train == n_before - k, (
                 f"depth {depth} $/kWh, k={k}: expected n_train "
                 f"{n_before - k}, got {m.n_train}"
@@ -248,38 +282,74 @@ def test_exclusion_count_sweep_over_depth_and_count():
     print(f"  PASS: n_train falls by exactly the excluded count across {cases} cases")
 
 
-def test_rows_just_above_the_boundary_are_still_fitted():
-    """A mildly negative forecast is served by stage 2, so it must be fitted.
+def test_rows_inside_the_domain_are_still_fitted():
+    """A mildly negative forecast inside the domain is served by stage 2, so
+    it must be fitted.
 
     This is the other half of train and serve consistency. Excluding these
     rows as well would be the skew issue #68 was about: apply() does run the
-    stage-2 override for a raw forecast of -0.09 $/kWh, so the fit has to see
-    rows like it.
+    stage-2 override for a raw forecast of -0.01 $/kWh in this fixture, so
+    the fit has to see rows like it. Under the old fixed boundary this held
+    at -0.09; under the domain rule it holds at any forecast the bucket was
+    trained on, including a cluster of deep negatives.
     """
     obs, sp = _build()
     n_before = CalibrationEngine().fit_ols_stage2(obs, sp)[TARGET].n_train
-    just_above = NEGATIVE_PASSTHROUGH_THRESHOLD + 0.01  # -0.09 $/kWh
-    m = CalibrationEngine().fit_ols_stage2(_promote(obs, 6, just_above), sp)[TARGET]
-    assert m.n_train == n_before, (
-        f"rows at {just_above} $/kWh are served by stage 2 and must stay in the "
-        f"fit; n_train moved from {n_before} to {m.n_train}"
-    )
-    print(f"  PASS: rows at {just_above:.2f} $/kWh remain in the fit (n_train "
-          f"{m.n_train})")
+    for depth, k in ((-0.01, 6), (-0.10, 11), (-0.30, 11), (-1.00, 11)):
+        m = CalibrationEngine().fit_ols_stage2(_promote(obs, k, depth), sp)[TARGET]
+        assert m.n_train == n_before, (
+            f"{k} rows at {depth} $/kWh are inside the domain and must stay in "
+            f"the fit; n_train moved from {n_before} to {m.n_train}"
+        )
+    print(f"  PASS: in-domain negative rows remain in the fit (n_train {n_before})")
 
 
 # ── The leverage this was all about ──────────────────────────────────────────
 
-def test_mis_joined_deep_negative_row_cannot_flip_the_coefficient():
-    """A single corrupt sub-threshold row must not invert the iso_cal slope.
+def test_isolated_row_is_screened_by_leverage_whatever_its_price():
+    """One or two rows far from the cluster are dropped; a cluster is kept.
 
-    Regression case from issue #79. Before the exclusion filter, one row whose
-    actual price was mis-joined onto a deep negative forecast took the fitted
-    coefficient from about +1.13 to about -0.15 across five independent seeds,
-    because its hat leverage was near 1. A negative iso_cal coefficient of
-    -1.879 was observed in the wild on h24_48__shoulder and is pinned by
-    test_apply_stpasa_negative_ols_falls_back_to_isotonic in
-    tests/test_calibration_engine.py, which is the same failure mode.
+    The fixed -0.10 boundary protected the fit from a lone deep negative row
+    only by accident, and not at all from a lone spike. The hat-leverage
+    screen (#117) is keyed on where a row sits in the design, so it drops an
+    isolated row at either end and keeps a group of rows that support each
+    other, which is exactly the case the old boundary got wrong (an
+    oversupplied SA1 solar afternoon is many rows near -0.19 $/kWh, all
+    genuine).
+    """
+    obs, sp = _build()
+    n_before = CalibrationEngine().fit_ols_stage2(obs, sp)[TARGET].n_train
+    cases = 0
+    for depth in (-0.30, -1.00, -5.00, 0.60, 0.90):
+        for k in (1, 2):
+            m = CalibrationEngine().fit_ols_stage2(_promote(obs, k, depth), sp)[TARGET]
+            assert m.n_train == n_before - k, (
+                f"{k} isolated row(s) at {depth} $/kWh should be screened; "
+                f"n_train {m.n_train}, expected {n_before - k}"
+            )
+            cases += 1
+        for k in (5, 11):
+            m = CalibrationEngine().fit_ols_stage2(_promote(obs, k, depth), sp)[TARGET]
+            assert m.n_train == n_before, (
+                f"a cluster of {k} rows at {depth} $/kWh supports itself and "
+                f"must be kept; n_train {m.n_train}, expected {n_before}"
+            )
+            cases += 1
+    print(f"  PASS: isolated rows screened, clusters kept, across {cases} cases")
+
+
+def test_mis_joined_deep_negative_row_cannot_flip_the_coefficient():
+    """A single corrupt deep negative row must not invert the iso_cal slope.
+
+    Regression case from issue #79. Before any filter, one row whose actual
+    price was mis-joined onto a deep negative forecast took the fitted
+    coefficient from about +1.13 to about -0.15 across five independent
+    seeds, because its hat leverage was near 1. A negative iso_cal
+    coefficient of -1.879 was observed in the wild on h24_48__shoulder and is
+    pinned by test_apply_stpasa_negative_ols_falls_back_to_isotonic in
+    tests/test_calibration_engine.py, which is the same failure mode. The row
+    now widens the domain rather than falling outside it, so the leverage
+    screen is what carries this guarantee.
     """
     checked = 0
     for seed in (7, 11, 23, 42, 101):
@@ -294,7 +364,7 @@ def test_mis_joined_deep_negative_row_cannot_flip_the_coefficient():
         got = _coef1(CalibrationEngine().fit_ols_stage2(corrupt, sp))
         assert got is not None, f"seed {seed}: bucket must still be fitted"
         assert got > 0.0, (
-            f"seed {seed}: one mis-joined sub-threshold row inverted the iso_cal "
+            f"seed {seed}: one mis-joined deep negative row inverted the iso_cal "
             f"coefficient, {ref:.4f} -> {got:.4f}"
         )
         checked += 1
@@ -302,25 +372,24 @@ def test_mis_joined_deep_negative_row_cannot_flip_the_coefficient():
           f"({checked} seeds)")
 
 
-def test_corrupt_sub_threshold_row_keeps_the_slope_positive():
-    """Sweeping a sub-threshold row's actual price must never invert the slope.
+def test_corrupt_deep_negative_row_keeps_the_slope_positive():
+    """Sweeping an isolated row's actual price must never invert the slope.
 
     The sign is the property that protects the published value: a negative
     iso_cal coefficient drives the stage-2 prediction non-positive for
     ordinary forecasts, which is the -1.879 failure already pinned in
-    tests/test_calibration_engine.py. Before the exclusion filter this sweep
-    crossed zero, reaching -0.45 at the top of the range.
+    tests/test_calibration_engine.py. Before any filter this sweep crossed
+    zero, reaching -0.45 at the top of the range.
 
-    The magnitude is deliberately NOT pinned. Excluding the row from the
+    The magnitude is deliberately NOT pinned. Screening the row out of the
     stage-2 design matrix does not remove it from the stage-1 isotonic fit,
     which still sees every observation, and a corrupt actual above its
     neighbours propagates through the pool adjacent violators pooling and
-    shifts iso_cal for other rows. That residual channel is measured here at a
-    spread of about 3.0 across this sweep, most of it from the extreme 1.20
-    $/kWh case alone. It is a real remaining exposure,
+    shifts the stage-1 feature of other rows. That residual channel is
+    measured here at a spread of about 0.85 across this sweep, most of it
+    from the extreme 1.20 $/kWh case alone. It is a real remaining exposure,
     reported rather than asserted away, and narrowing it would mean changing
-    the stage-1 training set, which also changes published stage-1 values and
-    is out of scope for issue #79.
+    the stage-1 training set, which also changes published stage-1 values.
     """
     obs, sp = _build()
     coefs = {}
@@ -332,7 +401,7 @@ def test_corrupt_sub_threshold_row_keeps_the_slope_positive():
         coefs[bad_actual] = c
     inverted = {k: v for k, v in coefs.items() if v <= 0.0}
     assert not inverted, (
-        f"a corrupt sub-threshold row inverted the iso_cal slope at these "
+        f"a corrupt deep negative row inverted the iso_cal slope at these "
         f"actual prices: {inverted}"
     )
     spread = max(coefs.values()) - min(coefs.values())
@@ -354,8 +423,7 @@ def test_bucket_thinned_below_ols_min_obs_falls_back_cleanly():
     )
     # Promote just enough rows to drop the survivors one below the floor.
     k = n_before - OLS_MIN_OBS + 1
-    thinned = _promote(obs, k, -0.30)
-    models = CalibrationEngine().fit_ols_stage2(thinned, sp)
+    models = _fit_stage2_with_domain_from(obs, _promote(obs, k, -0.30), sp)
     assert TARGET in models, (
         "a thinned bucket must still appear in the result for diagnostics"
     )
@@ -367,7 +435,7 @@ def test_bucket_thinned_below_ols_min_obs_falls_back_cleanly():
     assert m.n_train == 0, f"unfitted bucket must report n_train 0, got {m.n_train}"
 
     # One fewer exclusion leaves it exactly at the floor, which must still fit.
-    at_floor = CalibrationEngine().fit_ols_stage2(_promote(obs, k - 1, -0.30), sp)
+    at_floor = _fit_stage2_with_domain_from(obs, _promote(obs, k - 1, -0.30), sp)
     assert len(at_floor[TARGET].coef) >= 2, (
         f"bucket sitting exactly at OLS_MIN_OBS={OLS_MIN_OBS} must still fit"
     )
@@ -375,16 +443,45 @@ def test_bucket_thinned_below_ols_min_obs_falls_back_cleanly():
     print(f"  PASS: {n_before - k} rows falls back, {OLS_MIN_OBS} rows fits")
 
 
+def test_leverage_screen_counts_ols_min_obs_after_dropping_rows():
+    """A bucket exactly at the floor that loses a screened row falls back."""
+    obs, sp = _build()
+    n_before = CalibrationEngine().fit_ols_stage2(obs, sp)[TARGET].n_train
+    k = n_before - OLS_MIN_OBS
+    # k rows below the pinned domain leave exactly OLS_MIN_OBS survivors; one
+    # of those is then moved to an isolated spike, which survives the domain
+    # filter but not the leverage screen, so the refit has too few rows. At
+    # n = 50 and p = 10 the screen fires above a leverage of 0.6, so the spike
+    # sits just under SPIKE_THRESHOLD to be far enough from the cluster.
+    thinned = _promote(obs, k, -0.30)
+    spiked, taken = [], 0
+    for o in thinned:
+        if taken < 1 and _in_target(o) and o.pd7day_forecast > -0.30:
+            spiked.append(o._replace(
+                pd7day_forecast=2.90,
+                actual_rrp=_TRUE_SLOPE * 2.90 + _TRUE_INTERCEPT,
+            ))
+            taken += 1
+        else:
+            spiked.append(o)
+    assert taken == 1
+    m = _fit_stage2_with_domain_from(obs, spiked, sp)[TARGET]
+    assert m.coef == [] and m.n_train == 0, (
+        f"a bucket left with {OLS_MIN_OBS - 1} rows after the leverage screen "
+        f"must fall back; got n_train {m.n_train}"
+    )
+    print("  PASS: OLS_MIN_OBS is counted after the leverage screen")
+
+
 def test_thinned_bucket_serves_the_stage_one_result():
     """A bucket that fell back must not publish an isotonic+stpasa value."""
     obs, sp = _build()
-    engine = CalibrationEngine()
-    n_before = engine.fit_ols_stage2(obs, sp)[TARGET].n_train
+    n_before = CalibrationEngine().fit_ols_stage2(obs, sp)[TARGET].n_train
     k = n_before - OLS_MIN_OBS + 1
     thinned = _promote(obs, k, -0.30)
 
-    result = CalibrationEngine().fit(thinned)
-    result.ols_models = CalibrationEngine().fit_ols_stage2(thinned, sp)
+    result = CalibrationEngine().fit(obs)
+    result.ols_models = _fit_stage2_with_domain_from(obs, thinned, sp)
 
     rf = RunFeatures(run_max_h6_rrp=0.18, run_mean_rrp=0.12, run_spread=0.04)
     sf = StpasaFeatures(
@@ -409,7 +506,7 @@ def test_thinned_bucket_serves_the_stage_one_result():
           f"'isotonic+stpasa'")
 
 
-def test_bucket_of_only_sub_threshold_rows_still_appears():
+def test_bucket_of_only_below_domain_rows_still_appears():
     """A bucket whose every candidate row is excluded must not vanish.
 
     apply() treats a missing key and an empty coef list identically, but the
@@ -419,8 +516,8 @@ def test_bucket_of_only_sub_threshold_rows_still_appears():
     obs, sp = _build()
     n_before = CalibrationEngine().fit_ols_stage2(obs, sp)[TARGET].n_train
     total_in_target = sum(1 for o in obs if _in_target(o))
-    models = CalibrationEngine().fit_ols_stage2(
-        _promote(obs, total_in_target, -0.30), sp
+    models = _fit_stage2_with_domain_from(
+        obs, _promote(obs, total_in_target, -0.30), sp
     )
     assert TARGET in models, (
         f"bucket {TARGET} disappeared when all {total_in_target} of its "
@@ -432,44 +529,54 @@ def test_bucket_of_only_sub_threshold_rows_still_appears():
 
 
 def test_other_buckets_are_untouched():
-    """Excluding rows in one bucket must not disturb the others.
+    """Screening a row in one bucket must not disturb the others.
 
-    The filter is per row, so a bucket with no sub-threshold rows must fit
-    identically. Guards against the exclusion accidentally being applied at
-    bucket granularity.
+    Both filters are per row, so a bucket with no excluded or screened rows
+    must fit identically. Guards against either being applied at bucket
+    granularity.
     """
     obs, sp = _build()
     before = CalibrationEngine().fit_ols_stage2(obs, sp)
-    after = CalibrationEngine().fit_ols_stage2(_promote(obs, 6, -0.30), sp)
+    after = CalibrationEngine().fit_ols_stage2(_promote(obs, 1, -0.30), sp)
     others = [k for k in before if k != TARGET]
     assert others, "fixture must populate more than one bucket"
+    assert after[TARGET].n_train == before[TARGET].n_train - 1, (
+        "the promoted row should have been screened from the target bucket"
+    )
     for key in others:
         assert after[key].n_train == before[key].n_train, (
             f"bucket {key} row count changed from {before[key].n_train} to "
             f"{after[key].n_train}"
         )
         assert after[key].coef == before[key].coef, (
-            f"bucket {key} coefficients moved despite having no excluded rows"
+            f"bucket {key} coefficients moved despite having no screened rows"
         )
     print(f"  PASS: {len(others)} other buckets fitted identically")
 
 
 _TESTS = [
-    test_is_negative_passthrough_boundary,
+    test_is_below_domain_boundary,
     test_serve_path_agrees_with_the_shared_predicate,
-    test_sub_threshold_rows_are_excluded_from_the_fit,
+    test_below_domain_rows_are_excluded_from_the_fit,
     test_exclusion_count_sweep_over_depth_and_count,
-    test_rows_just_above_the_boundary_are_still_fitted,
+    test_rows_inside_the_domain_are_still_fitted,
+    test_isolated_row_is_screened_by_leverage_whatever_its_price,
     test_mis_joined_deep_negative_row_cannot_flip_the_coefficient,
-    test_corrupt_sub_threshold_row_keeps_the_slope_positive,
+    test_corrupt_deep_negative_row_keeps_the_slope_positive,
     test_bucket_thinned_below_ols_min_obs_falls_back_cleanly,
+    test_leverage_screen_counts_ols_min_obs_after_dropping_rows,
     test_thinned_bucket_serves_the_stage_one_result,
-    test_bucket_of_only_sub_threshold_rows_still_appears,
+    test_bucket_of_only_below_domain_rows_still_appears,
     test_other_buckets_are_untouched,
 ]
 
-
 if __name__ == "__main__":
+    failed = 0
     for fn in _TESTS:
-        fn()
-    print(f"\n{len(_TESTS)} tests passed")
+        print(f"{fn.__name__}:")
+        try:
+            fn()
+        except AssertionError as exc:
+            failed += 1
+            print(f"  FAIL: {exc}")
+    sys.exit(1 if failed else 0)

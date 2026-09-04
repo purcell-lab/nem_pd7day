@@ -633,56 +633,58 @@ def test_quantile_slopes_clamped_to_zero():
     )
 
 
-def test_negative_raw_passthrough():
-    """
-    When raw forecast is <= NEGATIVE_PASSTHROUGH_THRESHOLD (-0.10 $/kWh),
-    calibration must return the raw value unchanged — genuine negative-price event.
-    """
-    model = BucketModel(
+def _domain_bucket(x_lo: float = 0.05, x_hi: float = 0.25) -> BucketModel:
+    """A bucket whose isotonic model was fitted on forecasts in [x_lo, x_hi]."""
+    import numpy as np
+    from custom_components.nem_pd7day.calibration_engine import IsotonicRegression
+    xs = np.linspace(x_lo, x_hi, 9)
+    iso = IsotonicRegression(increasing=True, out_of_bounds="clip")
+    iso.fit(xs, 0.8 * xs + 0.02)
+    return BucketModel(
         bucket_key="h24_48__shoulder",
         ols=LinearCoeff(a=0.8, b=0.02, n=100, mae=0.01, rmse=0.02),
         q10=QuantileCoeff(quantile=0.1, a=0.6, b=0.01, n=100),
         q50=QuantileCoeff(quantile=0.5, a=0.8, b=0.02, n=100),
         q90=QuantileCoeff(quantile=0.9, a=1.0, b=0.03, n=100),
+        iso_model=iso,
     )
 
+
+def test_below_domain_raw_passthrough():
+    """
+    A raw forecast below every forecast the bucket was fitted on passes
+    through as AEMO's value with a band from the quantile lines (issue #117).
+    """
+    from custom_components.nem_pd7day.calibration_engine import SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    model = _domain_bucket()
     result = model.apply_all(-0.15)
     assert result["calibrated"] == round(-0.15, 6), (
-        f"Deeply negative raw should pass through unchanged, got {result['calibrated']}"
+        f"Below-domain raw should pass through unchanged, got {result['calibrated']}"
     )
-    assert result["calibrated_source"] == "passthrough_negative"
-    print(f"  PASS: negative raw passthrough (calibrated={result['calibrated']})")
+    assert result["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    # q10 line 0.6x + 0.01 = -0.08 is above the raw and clamps onto it;
+    # q90 line 1.0x + 0.03 = -0.12 is the upper bound.
+    assert result["p10"] == -0.15 and result["p90"] == -0.12, result
+    print(f"  PASS: below-domain raw passthrough (calibrated={result['calibrated']})")
 
 
-def test_mild_negative_raw_uses_ols():
+def test_mild_negative_inside_domain_is_calibrated():
     """
-    When raw forecast is mildly negative (> NEGATIVE_PASSTHROUGH_THRESHOLD,
-    e.g. -0.03 $/kWh), calibration should apply OLS correction.
-    This is common in the solar window where AEMO over-corrects the trough
-    but actual prices are near zero.
+    A mildly negative forecast inside the fitted domain is calibrated like any
+    other. This is the solar-window case where AEMO over-corrects the trough.
     """
-    model = BucketModel(
-        bucket_key="h12_24__solar",
-        ols=LinearCoeff(a=0.928, b=0.012, n=70, mae=0.010, rmse=0.012),
-        q10=QuantileCoeff(quantile=0.1, a=0.920, b=0.012, n=70),
-        q50=QuantileCoeff(quantile=0.5, a=0.928, b=0.012, n=70),
-        q90=QuantileCoeff(quantile=0.9, a=0.931, b=0.012, n=70),
-    )
-
+    from custom_components.nem_pd7day.calibration_engine import SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    model = _domain_bucket(x_lo=-0.06)
     result = model.apply_all(-0.03)
-    # Mild negative (> NEGATIVE_PASSTHROUGH_THRESHOLD) must NOT use passthrough_negative.
-    # With no iso_model set, a manually-constructed BucketModel returns "passthrough"
-    # (insufficient data path); in production engine.fit() would populate iso_model.
-    assert result["calibrated_source"] != "passthrough_negative", (
-        f"Mild negative should not use negative passthrough, got {result['calibrated_source']}"
-    )
-    print(f"  PASS: mild negative raw bypasses passthrough_negative (raw=-0.03, source={result['calibrated_source']})")
+    assert result["calibrated_source"] == "isotonic", result
+    assert result["calibrated_source"] != SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    print(f"  PASS: mild negative inside the domain is calibrated (source={result['calibrated_source']})")
 
 
-def test_zero_raw_uses_ols():
+def test_no_iso_model_is_plain_passthrough_even_when_negative():
     """
-    When raw forecast is exactly 0.0, calibration should apply OLS
-    (above the -0.10 passthrough threshold).
+    Without an isotonic model there is no domain, so a negative raw takes the
+    ordinary insufficient-data passthrough, not the below-domain one.
     """
     model = BucketModel(
         bucket_key="h24_48__shoulder",
@@ -691,33 +693,24 @@ def test_zero_raw_uses_ols():
         q50=QuantileCoeff(quantile=0.5, a=0.8, b=0.02, n=100),
         q90=QuantileCoeff(quantile=0.9, a=1.0, b=0.03, n=100),
     )
-
-    result = model.apply_all(0.0)
-    # Zero raw (above NEGATIVE_PASSTHROUGH_THRESHOLD=-0.10) must NOT passthrough_negative.
-    # Without iso_model in a manually-constructed bucket, returns "passthrough";
-    # in production engine.fit() populates iso_model and returns "isotonic".
-    assert result["calibrated_source"] != "passthrough_negative", (
-        f"Zero raw should not use negative passthrough, got {result['calibrated_source']}"
-    )
-    print(f"  PASS: zero raw bypasses passthrough_negative (calibrated={result['calibrated']}, source={result['calibrated_source']})")
+    assert model.domain_min is None
+    for x in (-0.15, 0.0):
+        result = model.apply_all(x)
+        assert result["calibrated_source"] == "passthrough", result
+    print("  PASS: no isotonic model means plain passthrough")
 
 
-def test_threshold_boundary_exact():
+def test_domain_boundary_is_inclusive():
     """
-    Raw exactly at NEGATIVE_PASSTHROUGH_THRESHOLD (-0.10) must pass through.
+    The smallest training forecast is inside the domain; anything below it
+    is not. The boundary is the data, not a constant.
     """
-    model = BucketModel(
-        bucket_key="h12_24__solar",
-        ols=LinearCoeff(a=0.928, b=0.012, n=70, mae=0.010, rmse=0.012),
-        q10=QuantileCoeff(quantile=0.1, a=0.920, b=0.012, n=70),
-        q50=QuantileCoeff(quantile=0.5, a=0.928, b=0.012, n=70),
-        q90=QuantileCoeff(quantile=0.9, a=0.931, b=0.012, n=70),
-    )
-
-    result = model.apply_all(-0.10)
-    assert result["calibrated"] == round(-0.10, 6)
-    assert result["calibrated_source"] == "passthrough_negative"
-    print("  PASS: threshold boundary exact passthrough (raw=-0.10)")
+    from custom_components.nem_pd7day.calibration_engine import SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    model = _domain_bucket(x_lo=-0.10)
+    assert model.domain_min == -0.10
+    assert model.apply_all(-0.10)["calibrated_source"] == "isotonic"
+    assert model.apply_all(-0.10 - 1e-6)["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
+    print("  PASS: domain boundary is inclusive at the smallest training forecast")
 
 
 # ── Spike passthrough tests ──────────────────────────────────────────────────
@@ -1824,10 +1817,10 @@ TESTS = [
     test_negative_ols_slope_clamped,
     test_quantile_slopes_ordered_after_irls,
     test_quantile_slopes_clamped_to_zero,
-    test_negative_raw_passthrough,
-    test_mild_negative_raw_uses_ols,
-    test_zero_raw_uses_ols,
-    test_threshold_boundary_exact,
+    test_below_domain_raw_passthrough,
+    test_mild_negative_inside_domain_is_calibrated,
+    test_no_iso_model_is_plain_passthrough_even_when_negative,
+    test_domain_boundary_is_inclusive,
     # Spike input (isotonic, no more passthrough_high)
     test_spike_input_no_iso_model_returns_passthrough,
     test_spike_input_with_iso_model_returns_isotonic,

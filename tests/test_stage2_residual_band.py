@@ -70,7 +70,7 @@ from custom_components.nem_pd7day.calibration_engine import (  # noqa: E402
     BAND_SOURCE_STAGE2,
     BAND_SOURCE_STAGE2_FALLBACK,
     MIN_OBS,
-    NEGATIVE_PASSTHROUGH_THRESHOLD,
+    SOURCE_PASSTHROUGH_BELOW_DOMAIN,
     OLS_MIN_OBS,
     BucketModel,
     CalibrationEngine,
@@ -369,9 +369,12 @@ def test_the_old_collapse_side_follows_the_displacement_sign():
 
 def test_band_source_is_published_on_every_path():
     """Every published triple says which model produced it."""
-    deep_negative = NEGATIVE_PASSTHROUGH_THRESHOLD - 0.05
+    # Below this fixture's isotonic domain (0.0 to 0.3) with fitted quantile
+    # lines, so the passthrough carries a stage-1 band (issue #117).
+    deep_negative = -0.15
     cases = [
-        (_result(_bucket(), None), deep_negative, BAND_SOURCE_PASSTHROUGH),
+        (_result(_bucket(), None), deep_negative, BAND_SOURCE_STAGE1),
+        (_result(_bucket(fitted_quantiles=False), None), deep_negative, BAND_SOURCE_PASSTHROUGH),
         (_result(_bucket(with_iso=False), None), 0.2, BAND_SOURCE_STAGE1_RAW),
         (_result(_bucket(), None), 0.2, BAND_SOURCE_STAGE1),
         (_result(_bucket(), 0.12, _resid()), 0.2, BAND_SOURCE_STAGE2),
@@ -385,7 +388,7 @@ def test_band_source_is_published_on_every_path():
     # The engine key and the sensor attribute name are one string, so they
     # cannot drift the way the calibration inputs did in issue #66.
     assert BAND_SOURCE_KEY == ATTR_CAL_BAND_SOURCE == "band_source"
-    print("  PASS: band_source is published on all five paths")
+    print("  PASS: band_source is published on every path")
 
 
 def test_stage1_publications_are_byte_for_byte_unchanged():
@@ -406,11 +409,11 @@ def test_stage1_publications_are_byte_for_byte_unchanged():
         b = without.apply(forecast, horizon_hours=4.0, hour_of_day=HOUR)
         for f in fields:
             assert a[f] == b[f], f"forecast {forecast}: {f} moved, {a[f]} vs {b[f]}"
-        # And the deep-negative bypass, which is gated inside the OLS band too.
-        if forecast <= NEGATIVE_PASSTHROUGH_THRESHOLD:
+        # And the below-domain bypass, which is gated inside the OLS band too.
+        if forecast < 0.0:
             c = _apply(with_resid, forecast)
             assert c["calibrated"] == round(forecast, 6)
-            assert c["calibrated_source"] == "passthrough_negative"
+            assert c["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
     print("  PASS: stage-1 published values and bands are unchanged")
 
 

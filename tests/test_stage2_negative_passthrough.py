@@ -1,5 +1,5 @@
 """
-Stage-2 STPASA override must not fire on top of a passthrough_negative result.
+Stage-2 STPASA override must not fire on top of a passthrough_below_domain result.
 
 Issue #73: the step-2 gate in CalibrationResult.apply never inspected
 calibrated_source, so a deeply negative raw forecast that reached the
@@ -54,7 +54,8 @@ Observation = _ce.Observation
 OlsModel = _ce.OlsModel
 RunFeatures = _ce.RunFeatures
 StpasaFeatures = _ce.StpasaFeatures
-NEGATIVE_PASSTHROUGH_THRESHOLD = _ce.NEGATIVE_PASSTHROUGH_THRESHOLD
+SOURCE_PASSTHROUGH_BELOW_DOMAIN = _ce.SOURCE_PASSTHROUGH_BELOW_DOMAIN
+MARKET_PRICE_FLOOR = _ce.MARKET_PRICE_FLOOR
 OLS_MIN_HORIZON_H = _ce.OLS_MIN_HORIZON_H
 OLS_MAX_HORIZON_H = _ce.OLS_MAX_HORIZON_H
 _bucket_key = _ce._bucket_key
@@ -71,10 +72,12 @@ _SF = StpasaFeatures(
 
 
 def _obs_batch(n, horizon_hours, hour_of_day, seed=3):
-    """Observations at one horizon and hour, all positive raw forecasts.
+    """Observations at one horizon and hour, raw forecasts from -0.06 to 0.25.
 
     Enough rows for the isotonic fit in the target bucket; the OLS model is
-    injected by the caller so the test controls the coefficients exactly.
+    injected by the caller so the test controls the coefficients exactly. The
+    range reaches mildly negative so the bucket's fitted domain does, which is
+    what makes the sweep's deep negatives below-domain and -0.03 inside it.
     """
     rng = random.Random(seed)
     run_at = (_ANCHOR - timedelta(days=1)).replace(
@@ -85,7 +88,7 @@ def _obs_batch(n, horizon_hours, hour_of_day, seed=3):
         interval = (_ANCHOR - timedelta(days=i % 30)).replace(
             hour=hour_of_day, minute=(i % 2) * 30, second=(i % 55), microsecond=0
         )
-        fc = rng.uniform(0.03, 0.25)
+        fc = rng.uniform(-0.06, 0.25)
         obs.append(
             Observation(
                 interval_time=interval.isoformat(),
@@ -157,7 +160,7 @@ def test_positive_prediction_does_not_override_negative_passthrough():
         raw, horizon_hours=36.0, hour_of_day=12, stpasa=_SF, run_features=_RF
     )
 
-    assert out["calibrated_source"] == "passthrough_negative", (
+    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN, (
         f"expected the negative bypass to survive, got {out['calibrated_source']}"
     )
     assert out["calibrated"] == round(raw, 6), (
@@ -167,7 +170,7 @@ def test_positive_prediction_does_not_override_negative_passthrough():
         "stpasa_run_at must be absent when the override is skipped"
     )
     print(
-        "  PASS: positive OLS prediction does not override passthrough_negative "
+        "  PASS: positive OLS prediction does not override passthrough_below_domain "
         f"(raw={raw}, blocked prediction={prediction:+.4f})"
     )
 
@@ -175,7 +178,7 @@ def test_positive_prediction_does_not_override_negative_passthrough():
 def test_no_sign_flip_sweep():
     """Sweep raw forecasts, horizons, hours and coefficient sets for sign flips.
 
-    The invariant: whenever stage 1 returns passthrough_negative, apply must
+    The invariant: whenever stage 1 returns passthrough_below_domain, apply must
     republish the raw value with that source and must never publish a value of
     the opposite sign.
     """
@@ -206,11 +209,13 @@ def test_no_sign_flip_sweep():
                         stpasa=_SF,
                         run_features=_RF,
                     )
-                    assert out["calibrated_source"] == "passthrough_negative", (
+                    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN, (
                         f"raw={raw} h={horizon} hour={hour} coef={coef[:2]}: "
                         f"source {out['calibrated_source']}"
                     )
-                    assert out["calibrated"] == round(raw, 6), (
+                    # The raw value is republished, clamped only by the
+                    # market price floor (#114), never by the OLS prediction.
+                    assert out["calibrated"] == round(max(raw, MARKET_PRICE_FLOOR), 6), (
                         f"raw={raw} h={horizon} hour={hour}: "
                         f"published {out['calibrated']}"
                     )
@@ -222,7 +227,7 @@ def test_no_sign_flip_sweep():
     print(f"  PASS: no sign flip across {checked} negative bypass combinations")
 
 
-def test_override_still_fires_above_the_threshold():
+def test_override_still_fires_inside_the_domain():
     """The fix must not disturb the normal in-band override path."""
     result = _result_with_ols([0.02, 1.10, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     out = result.apply(
@@ -239,25 +244,24 @@ def test_override_still_fires_above_the_threshold():
     )
 
 
-def test_mild_negative_above_threshold_is_still_calibrated():
-    """Mild negatives above the threshold keep going through stage 1 and stage 2.
+def test_mild_negative_inside_the_domain_is_still_calibrated():
+    """Mild negatives inside the fitted domain go through stage 1 and stage 2.
 
-    The threshold comment records that AEMO often forecasts mild negatives
-    during the solar window and that the isotonic step maps those usefully
-    toward zero. That path must be untouched: only the deep bypass is protected.
+    AEMO often forecasts mild negatives during the solar window and the
+    isotonic step maps those usefully; since issue #117 the boundary is the
+    bucket's own training range rather than a constant, so a -0.03 forecast
+    in a bucket fitted down to -0.06 is calibrated, not bypassed.
     """
     result = _result_with_ols([0.02, 1.10, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     raw = -0.03
-    assert raw > NEGATIVE_PASSTHROUGH_THRESHOLD
+    assert not result.get_bucket(36.0, 12).is_below_domain(raw)
     out = result.apply(
         raw, horizon_hours=36.0, hour_of_day=12, stpasa=_SF, run_features=_RF
     )
-    assert out["calibrated_source"] != "passthrough_negative", (
-        "a mild negative must not reach the deep bypass"
+    assert out["calibrated_source"] != SOURCE_PASSTHROUGH_BELOW_DOMAIN, (
+        "a mild negative inside the domain must not reach the bypass"
     )
-    assert out["calibrated"] >= 0.0, (
-        f"stage 1 floors its output at zero, got {out['calibrated']}"
-    )
+    assert out["calibrated_source"] in ("isotonic", "isotonic+stpasa"), out
     print(
         "  PASS: mild negative above the threshold still calibrated "
         f"(source={out['calibrated_source']}, calibrated={out['calibrated']:.4f})"
@@ -347,10 +351,10 @@ def test_fitted_model_without_negative_training_rows_would_flip():
 
     deep = [
         o for o in obs
-        if o.pd7day_forecast <= NEGATIVE_PASSTHROUGH_THRESHOLD
+        if o.pd7day_forecast <= -0.10
         and OLS_MIN_HORIZON_H <= o.horizon_hours <= OLS_MAX_HORIZON_H
     ]
-    assert not deep, "fixture should contain no deep negative in-band rows"
+    assert not deep, "fixture should contain no in-band rows at or below -0.10"
 
     engine = CalibrationEngine()
     result = engine.fit(obs)
@@ -380,7 +384,7 @@ def test_fitted_model_without_negative_training_rows_would_flip():
     out = result.apply(
         raw, horizon_hours=36.0, hour_of_day=12, stpasa=_SF, run_features=_RF
     )
-    assert out["calibrated_source"] == "passthrough_negative", (
+    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN, (
         f"expected the bypass to hold, got {out['calibrated_source']}"
     )
     assert out["calibrated"] == round(raw, 6)
@@ -393,7 +397,7 @@ def test_fitted_model_without_negative_training_rows_would_flip():
 if __name__ == "__main__":
     test_positive_prediction_does_not_override_negative_passthrough()
     test_no_sign_flip_sweep()
-    test_override_still_fires_above_the_threshold()
-    test_mild_negative_above_threshold_is_still_calibrated()
+    test_override_still_fires_inside_the_domain()
+    test_mild_negative_inside_the_domain_is_still_calibrated()
     test_fitted_model_without_negative_training_rows_would_flip()
     print("\nAll stage-2 negative passthrough tests passed.")

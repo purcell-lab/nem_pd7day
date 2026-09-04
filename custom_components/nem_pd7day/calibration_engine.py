@@ -112,6 +112,7 @@ from .const import (
     MAX_OBS,
     MIN_OBS,
     OLS_MIN_OBS,
+    STAGE2_LEVERAGE_MULTIPLE,
     QUANTILES,
     TOD_LABELS,
 )
@@ -186,6 +187,18 @@ class IsotonicRegression:
         self._y_thresholds = _pav(y_arr[order], w_arr[order])
         return self
 
+    @property
+    def x_min(self) -> float | None:
+        """Smallest training forecast, the lower edge of the fitted domain.
+
+        Below it the step function is clipped to its first level, which is
+        not a fit but a boundary value; callers use this to tell the two
+        apart (issue #117).
+        """
+        if self._x_thresholds is None or len(self._x_thresholds) == 0:
+            return None
+        return float(self._x_thresholds[0])
+
     def predict(self, x: np.ndarray) -> np.ndarray:
         """Calibrate new forecast values.
 
@@ -218,30 +231,22 @@ _LOGGER = logging.getLogger(__name__)
 # $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
 SPIKE_THRESHOLD = 3.00  # $/kWh
 
-# ── Negative passthrough threshold ───────────────────────────────────────────
-# When raw <= this value, pass through unchanged without calibration.
-# During the solar window AEMO often forecasts mild negatives (~−$0.03/kWh)
-# while actuals are near zero — the isotonic model can correct these usefully
-# (the step function maps mild negatives toward zero).
-# Only deeply negative raws (genuine negative-price events) should bypass
-# calibration.  Set to −0.10 $/kWh (−$100/MWh) as the passthrough boundary.
-NEGATIVE_PASSTHROUGH_THRESHOLD = -0.10  # $/kWh
-
-
-def is_negative_passthrough(forecast: float) -> bool:
-    """True when a raw forecast bypasses calibration entirely.
-
-    One definition of the boundary, shared by the serving path
-    (BucketModel.apply_all, which returns the raw value and the
-    "passthrough_negative" source) and by the stage-2 training path
-    (CalibrationEngine.fit_ols_stage2, which drops these rows).
-
-    WHY a helper rather than the comparison inlined twice: the two paths have
-    to agree, or stage 2 is fitted on a region it is never asked about, or
-    worse is asked about a region it never saw. Issue #68 was that class of
-    train and serve drift, and the boundary is now a single place to change.
-    """
-    return forecast <= NEGATIVE_PASSTHROUGH_THRESHOLD
+# ── Below-domain passthrough ─────────────────────────────────────────────────
+# A raw forecast below the smallest forecast a bucket was fitted on is outside
+# the isotonic model's domain: predict() would clip it to the first step, which
+# is a boundary value rather than a fit. Such a forecast passes through as
+# AEMO's value, labelled SOURCE_PASSTHROUGH_BELOW_DOMAIN, with a band from the
+# stage-1 quantile lines, which are linear and do extrapolate.
+#
+# This replaced a fixed NEGATIVE_PASSTHROUGH_THRESHOLD of -0.10 $/kWh. That
+# constant had no basis in the data: on the live install the SA1 h24_48__solar
+# bucket had been fitted on forecasts down to -0.31 $/kWh from 814 pairs, yet
+# every forecast below -0.10 was sent straight through with a zero-width band
+# while forecasts just above it were corrected by about 30 per cent, a step in
+# the published curve at an arbitrary number (issue #117). The bucket itself
+# is the only honest boundary: inside its domain the model has evidence,
+# outside it does not.
+SOURCE_PASSTHROUGH_BELOW_DOMAIN = "passthrough_below_domain"
 
 
 # Key under which BucketModel.apply_all publishes the stage-1 value that stage 2
@@ -262,7 +267,7 @@ BAND_SOURCE_KEY = ATTR_CAL_BAND_SOURCE
 BAND_SOURCE_STAGE1 = "stage1_quantile"
 # Same lines, unclamped, on the passthrough path. See apply_all.
 BAND_SOURCE_STAGE1_RAW = "stage1_quantile_unclamped"
-# The raw forecast repeated on all three levels: the deep negative bypass.
+# No fitted quantile line to build a band from on the below-domain path.
 BAND_SOURCE_PASSTHROUGH = "raw_passthrough"
 # Stage-2 leave-one-out residual quantiles added to the stage-2 prediction.
 BAND_SOURCE_STAGE2 = "stage2_residual"
@@ -284,8 +289,8 @@ def stage2_iso_feature(calibrated: dict, forecast: float) -> float:
     twice.
 
     History: apply_all used to floor the published isotonic prediction at
-    0.0. For a raw forecast in the open interval (-0.10, 0.0), above the
-    passthrough boundary and so genuinely served by stage 2, that floor set the
+    0.0. For a mildly negative raw forecast, inside the fitted domain and so
+    genuinely served by stage 2, that floor set the
     feature to exactly 0.0 while the settled actual was negative, and the
     fitted iso_cal coefficient absorbed the error: +8.1 per cent from one such
     row in a 78 row bucket, +87.5 per cent from sixteen. Issue #85 unfloored
@@ -618,6 +623,22 @@ class BucketModel:
     # clipped to the nearest boundary rather than extrapolated.
     iso_model: IsotonicRegression | None = None
 
+    @property
+    def domain_min(self) -> float | None:
+        """Lower edge of the isotonic model's fitted domain, or None."""
+        return self.iso_model.x_min if self.iso_model is not None else None
+
+    def is_below_domain(self, x: float) -> bool:
+        """True when ``x`` is below every forecast this bucket was fitted on.
+
+        One definition, read by the serving path (apply_all) and the stage-2
+        training path (CalibrationEngine.fit_ols_stage2), so the two cannot
+        drift apart (issue #68 was that class of bug). Inclusive at the edge:
+        the smallest training forecast is inside the domain.
+        """
+        lo = self.domain_min
+        return lo is not None and x < lo
+
     def raw_band(
         self, x: float
     ) -> tuple[float | None, float | None, float | None]:
@@ -641,30 +662,16 @@ class BucketModel:
         """Return calibrated point estimate + confidence interval.
 
         Calibration path (evaluated in order):
-          1. Negative passthrough  — deeply negative forecasts bypass calibration.
-          2. Insufficient data     — raw forecast returned if iso_model is None
+          1. Insufficient data     — raw forecast returned if iso_model is None
                                      (bucket has < MIN_OBS training observations).
+          2. Below the fitted domain — a forecast below the smallest training
+                                     forecast passes through as AEMO's value,
+                                     with a band from the quantile lines.
           3. Isotonic calibration  — IsotonicRegression.predict([x]), unfloored.
                                      Spike inputs (>= SPIKE_THRESHOLD) are handled by
                                      out_of_bounds='clip', returning the training-range
                                      maximum — a clean normal-market estimate.
         """
-        if is_negative_passthrough(x):
-            return {
-                "calibrated": round(x, 6),
-                "p10": round(x, 6),
-                "p50": round(x, 6),
-                "p90": round(x, 6),
-                # Nothing is floored on this path, so the feature is the same
-                # raw value. Stage 2 is gated off here anyway (PR #74) and
-                # these rows are out of the fit (PR #83); the key is present so
-                # no caller has to fall back to the published value.
-                ISO_FEATURE_KEY: round(x, 6),
-                BAND_SOURCE_KEY: BAND_SOURCE_PASSTHROUGH,
-                "calibrated_source": "passthrough_negative",
-                "n_obs": self.ols.n,
-            }
-
         if self.iso_model is None:
             # Isotonic model not available (< MIN_OBS or not persisted) —
             # pass raw forecast through but still compute quantile intervals
@@ -693,9 +700,32 @@ class BucketModel:
                 "n_obs": self.ols.n,
             }
 
+        if self.is_below_domain(x):
+            # Extrapolation, not calibration: predict() would clip to the
+            # first step. Publish AEMO's value, floored only at the market
+            # floor, and let the quantile lines, which are linear, supply the
+            # band. Clamped to contain the point estimate like every other
+            # published triple; the band is None only when no line is fitted.
+            calibrated = max(x, MARKET_PRICE_FLOOR)
+            p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(x))
+            fitted = any(v is not None for v in (p10, p50, p90))
+            return {
+                "calibrated": round(calibrated, 6),
+                "p10": round(p10, 6) if p10 is not None else None,
+                "p50": round(p50, 6) if p50 is not None else None,
+                "p90": round(p90, 6) if p90 is not None else None,
+                # The raw forecast is the feature too, as on the no-iso path;
+                # stage 2 never consults this result (see apply, gate 2a).
+                ISO_FEATURE_KEY: round(calibrated, 6),
+                BAND_SOURCE_KEY: BAND_SOURCE_STAGE1 if fitted else BAND_SOURCE_PASSTHROUGH,
+                "calibrated_source": SOURCE_PASSTHROUGH_BELOW_DOMAIN,
+                "n_obs": self.ols.n,
+            }
+
         # ── Isotonic calibration ────────────────────────────────────────────
         # IsotonicRegression.predict() with out_of_bounds='clip': forecasts
-        # outside the training x-range are clipped to the nearest boundary.
+        # above the training x-range are clipped to the last step, a clean
+        # normal-market estimate for a spike input; below it is handled above.
         # The prediction is published as fitted, negative or not. It used to
         # be floored at 0.0 on the claim that a calibrated price cannot be
         # negative; in the NEM it can, mild negatives are the normal solar
@@ -750,24 +780,19 @@ class CalibrationResult:
         bucket = self.get_bucket(horizon_hours, hour_of_day)
         result = bucket.apply_all(forecast)
 
-        # 2a. Gate: never override the deliberate negative bypass.
+        # 2a. Gate: never override a below-domain passthrough.
         #
-        #     WHY: the stage-2 OLS is fitted in fit_ols_stage2 whose first
-        #     feature is the stage-1 output. Rows at or below
-        #     NEGATIVE_PASSTHROUGH_THRESHOLD are excluded from that fit (PR #83),
-        #     so below the threshold the model has only whatever deeply negative
-        #     rows it never saw. Those are rare: NEM negative prices are
-        #     common but shallow, with the large majority of negative intervals
-        #     sitting above -$30/MWh against a -$100/MWh threshold here, and a
-        #     bucket needs OLS_MIN_OBS rows before it is fitted at all. A
-        #     prediction at a deeply negative forecast is extrapolation, not fit.
-        #     It also carries an asymmetric cost: a positive prediction over a
-        #     negative raw forecast flips the published sign, turning "paid to
-        #     consume" into "pay to consume", which is the one error a battery or
-        #     controllable load schedule cannot absorb. The sign-disagreement
-        #     fallback in step 6 protects the served region; this gate protects
-        #     the region the fit never covered. See #73 and #114.
-        if result.get("calibrated_source") == "passthrough_negative":
+        #     WHY: below the bucket's fitted domain the stage-1 value is AEMO's
+        #     raw forecast, not a fit, and the stage-2 OLS was fitted on rows
+        #     inside that domain, so a prediction there is extrapolation on
+        #     both features. It also carries an asymmetric cost: a positive
+        #     prediction over a deeply negative raw forecast flips the
+        #     published sign, turning "paid to consume" into "pay to consume",
+        #     which is the one error a battery or controllable load schedule
+        #     cannot absorb. The sign-disagreement fallback in step 6 protects
+        #     the served region; this gate protects the region the fit never
+        #     covered. See #73, #114 and #117.
+        if result.get("calibrated_source") == SOURCE_PASSTHROUGH_BELOW_DOMAIN:
             return result
 
         # 2b. Gate: STPASA correction only inside the OLS horizon band, and only
@@ -1220,13 +1245,28 @@ def _loo_residuals(X: Any, y: Any, coef: Any) -> Any:
     costs one matrix inverse.
     """
     resid = y - X @ coef
-    # h = diag(X (X'X)^+ X'), computed row-wise so the n x n hat matrix is
-    # never materialised. pinv, not inv: a rank-deficient design must degrade
-    # rather than raise, the same way the lstsq call above tolerates it.
-    gram_inv = np.linalg.pinv(X.T @ X)
-    leverage = np.einsum("ij,jk,ik->i", X, gram_inv, X)
-    divisor = np.clip(1.0 - leverage, _LOO_DIVISOR_FLOOR, 1.0)
+    divisor = np.clip(1.0 - _hat_leverage(X), _LOO_DIVISOR_FLOOR, 1.0)
     return resid / divisor
+
+
+def _per_bucket_counts(counts: dict[str, int]) -> str:
+    """Format per-bucket counts for the stage-2 summary log, empty when zero."""
+    if not counts:
+        return ""
+    return " (" + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) + ")"
+
+
+def _hat_leverage(X: Any) -> Any:
+    """Hat-matrix diagonal, ``diag(X (X'X)^+ X')``, one value per row.
+
+    Computed row-wise so the n x n hat matrix is never materialised. pinv,
+    not inv: a rank-deficient design must degrade rather than raise, the same
+    way the lstsq calls tolerate it. Shared by the leave-one-out residuals
+    and the stage-2 leverage screen so the two agree on what a leveraged row
+    is.
+    """
+    gram_inv = np.linalg.pinv(X.T @ X)
+    return np.einsum("ij,jk,ik->i", X, gram_inv, X)
 
 
 def _conformal_index(n: int, level: float) -> int:
@@ -1523,8 +1563,10 @@ class CalibrationEngine:
         OLS_MIN_OBS observations carrying valid STPASA data.  Under-populated buckets
         get an empty OlsModel (coef=[]).
 
-        Rows whose raw forecast reaches the negative passthrough boundary are
-        dropped before fitting; see the comment on the filter below.
+        Rows whose raw forecast lies below the bucket's fitted stage-1 domain
+        are dropped before fitting, and rows with hat leverage above
+        STAGE2_LEVERAGE_MULTIPLE times the mean are screened out and the bucket
+        refitted once; see the comments on both filters below.
 
         Feature order (after a leading 1.0 intercept term):
           [iso_calibrated, run_max_h6_rrp, run_mean_rrp, run_spread,
@@ -1537,12 +1579,14 @@ class CalibrationEngine:
         # exact isotonic output it will see at apply() time.
         iso_result = self.fit(observations, region=region)
 
-        # Group rows by bucket.  ``bucket_excluded`` counts the rows dropped by
-        # the negative passthrough filter, per bucket, so the exposure is
-        # visible in the log rather than merely assumed to be zero (issue #79
-        # noted the count was unknown).
+        # Group rows by bucket.  ``bucket_excluded`` counts the rows dropped
+        # below the stage-1 domain and ``bucket_high_leverage`` the rows the
+        # leverage screen removed, per bucket, so the exposure is visible in
+        # the log rather than merely assumed to be zero (issue #79 noted the
+        # count was unknown).
         bucket_rows: dict[str, list[tuple[list[float], float]]] = {}
         bucket_excluded: dict[str, int] = {}
+        bucket_high_leverage: dict[str, int] = {}
         for obs in observations:
             if obs.is_intervention:
                 continue
@@ -1563,40 +1607,24 @@ class CalibrationEngine:
 
             # Drop rows that the serving path never asks this model about.
             #
-            # WHY: the first feature below is the stage-1 output, and
-            # apply_all floors that output at 0.0 for every raw forecast above
-            # NEGATIVE_PASSTHROUGH_THRESHOLD while returning the raw value at
-            # or below it. The feature therefore has no attainable value in the
-            # open interval (-0.10, 0.0), and a sub-threshold row lands on the
-            # far side of that gap with nothing between it and the cluster. In
-            # ordinary least squares leverage grows with squared distance from
-            # the feature mean, so such a row is fitted largely by itself:
-            # measured hat leverage for a single one is 0.92 to 0.98 against a
-            # bucket mean of 0.13, that is roughly 7x. One mis-joined deep
-            # negative observation moved the fitted iso_cal coefficient from
-            # +1.13 to -0.15 in a 78 row bucket, a sign flip, while the same
-            # corruption on an ordinary row moved it by 6 percent. A negative
-            # iso_cal coefficient of -1.879 was observed in the wild on
-            # h24_48__shoulder and is pinned by
-            # test_apply_stpasa_negative_ols_falls_back_to_isotonic.
+            # WHY: below the bucket's fitted domain the serving path publishes
+            # AEMO's raw value and never consults stage 2 (apply, gate 2a), so
+            # a row there would be fitted for a region that is never served.
+            # Both paths read the boundary from BucketModel.is_below_domain so
+            # they cannot drift apart (#68, #79, #117). In practice a bucket's
+            # own training rows define its domain, so this excludes nothing
+            # unless a row's forecast changed after the stage-1 fit; it stays
+            # as the train and serve invariant.
             #
-            # Dropping them also removes train and serve skew rather than
-            # creating it: PR #74 made CalibrationResult.apply return early on
-            # a "passthrough_negative" result, so stage 2 is never consulted
-            # below the boundary. Training on a region that is never served
-            # only lets it distort the coefficient used for every ordinary
-            # in-band interval. Both paths now read the boundary from
-            # is_negative_passthrough so they cannot drift apart. See #79.
-            #
-            # Deliberately narrow: the stage-1 isotonic fit above and the run
-            # level features still see these rows, because the serving path
-            # computes both the same way from the live run. Only the stage-2
-            # design matrix changes.
-            if is_negative_passthrough(obs.pd7day_forecast):
+            # The leverage hazard that the old fixed threshold happened to
+            # cover (#79: one mis-joined deep negative row, isolated far from
+            # the cluster, took the iso_cal coefficient from +1.13 to -0.15) is
+            # handled below by a hat-leverage screen rather than by a price.
+            bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
+            if bucket.is_below_domain(obs.pd7day_forecast):
                 bucket_excluded[bucket_key] = bucket_excluded.get(bucket_key, 0) + 1
                 continue
 
-            bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
             # The unfloored stage-1 value, through the same helper the serving
             # path reads, so a row is fitted from the number the same interval
             # would be served from. A floored feature paired with a genuinely
@@ -1645,6 +1673,30 @@ class CalibrationEngine:
             except np.linalg.LinAlgError:
                 ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
                 continue
+
+            # Leverage screen. A row far from the rest of the design has a
+            # hat-matrix diagonal near 1 and is fitted largely by itself, so a
+            # single mis-joined actual there can invert a coefficient (#79).
+            # Rows above STAGE2_LEVERAGE_MULTIPLE times the mean leverage p/n
+            # are dropped and the bucket refitted once; if that leaves fewer
+            # than OLS_MIN_OBS rows the bucket falls back like any thin one.
+            # Data-driven and two-sided, unlike the price threshold it
+            # replaces (#117): a deep negative row among many is ordinary, an
+            # isolated one is not, and the same holds for a lone spike.
+            high = _hat_leverage(X) > STAGE2_LEVERAGE_MULTIPLE * X.shape[1] / X.shape[0]
+            n_high = int(high.sum())
+            if n_high:
+                bucket_high_leverage[bucket_key] = n_high
+                X = X[~high]
+                y = y[~high]
+                if X.shape[0] < OLS_MIN_OBS:
+                    ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
+                    continue
+                try:
+                    coef, _resid, _rank, _sv = np.linalg.lstsq(X, y, rcond=None)
+                except np.linalg.LinAlgError:
+                    ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
+                    continue
             # R² for diagnostics.
             y_hat = X @ coef
             ss_res = float(np.sum((y - y_hat) ** 2))
@@ -1653,7 +1705,7 @@ class CalibrationEngine:
             ols_models[bucket_key] = OlsModel(
                 bucket_key=bucket_key,
                 coef=[round(float(c), 8) for c in coef],
-                n_train=len(rows),
+                n_train=int(X.shape[0]),
                 r2=round(r2, 6),
                 # Fitted from the same X, y and coef, so the residual quantiles
                 # can never describe a different fit than the one they ship
@@ -1689,19 +1741,19 @@ class CalibrationEngine:
             )
 
         n_excluded = sum(bucket_excluded.values())
+        n_high_leverage = sum(bucket_high_leverage.values())
         _LOGGER.info(
             "OLS stage2 fit: %d buckets evaluated (%d with sufficient STPASA obs, "
             "%d with stage-2 residual quantiles), "
-            "%d rows excluded at or below the negative passthrough boundary%s",
+            "%d rows excluded below the stage-1 domain%s, "
+            "%d high-leverage rows screened%s",
             len(ols_models),
             sum(1 for m in ols_models.values() if len(m.coef) >= 2),
             n_resid_fitted,
             n_excluded,
-            (
-                " (" + ", ".join(
-                    f"{k}: {v}" for k, v in sorted(bucket_excluded.items())
-                ) + ")"
-            ) if n_excluded else "",
+            _per_bucket_counts(bucket_excluded),
+            n_high_leverage,
+            _per_bucket_counts(bucket_high_leverage),
         )
         return ols_models
 

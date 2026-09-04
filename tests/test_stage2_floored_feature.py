@@ -4,7 +4,7 @@ The stage-2 OLS feature and the published stage-1 price are the same unfloored v
 Issue #85: the first stage-2 feature was taken from
 ``BucketModel.apply_all(x)["calibrated"]``, which floors the isotonic
 prediction at 0.0. For a raw forecast in the open interval (-0.10, 0.0), that
-is above ``NEGATIVE_PASSTHROUGH_THRESHOLD`` and therefore genuinely served by
+is inside the bucket's fitted domain and therefore genuinely served by
 stage 2, the feature read exactly 0.0 while the settled actual was negative.
 The regression was asked to explain a negative actual from a feature pinned at
 zero, and the fitted iso_cal coefficient absorbed the error. Measured on the
@@ -73,12 +73,11 @@ OlsModel = _ce.OlsModel
 QuantileCoeff = _ce.QuantileCoeff
 RunFeatures = _ce.RunFeatures
 StpasaFeatures = _ce.StpasaFeatures
-NEGATIVE_PASSTHROUGH_THRESHOLD = _ce.NEGATIVE_PASSTHROUGH_THRESHOLD
+SOURCE_PASSTHROUGH_BELOW_DOMAIN = _ce.SOURCE_PASSTHROUGH_BELOW_DOMAIN
 OLS_MIN_HORIZON_H = _ce.OLS_MIN_HORIZON_H
 OLS_MAX_HORIZON_H = _ce.OLS_MAX_HORIZON_H
 OLS_MIN_OBS = _ce.OLS_MIN_OBS
 SPIKE_THRESHOLD = _ce.SPIKE_THRESHOLD
-is_negative_passthrough = _ce.is_negative_passthrough
 _bucket_key = _ce._bucket_key
 _compute_run_features = _ce._compute_run_features
 # Resolved with getattr so this module still imports against a tree that does
@@ -102,7 +101,7 @@ def _fixture_bucket(bucket_key: str = "h24_48__solar") -> BucketModel:
 
     The actual price relation is 1.10 * forecast + 0.006, so the isotonic
     prediction crosses zero at a forecast of about -0.00545 $/kWh. Every
-    forecast between NEGATIVE_PASSTHROUGH_THRESHOLD and that crossing is a
+    forecast between the domain floor of -0.08 and that crossing is a
     forecast where the published 0.0 floor binds, which is the region issue
     #85 is about.
     """
@@ -123,8 +122,8 @@ def _raw_iso(bucket: BucketModel, x: float) -> float:
     return float(bucket.iso_model.predict(np.asarray([x], dtype=float))[0])
 
 
-# Forecast values spanning the three regions that matter: at or below the
-# negative passthrough boundary, inside the floored band, and ordinary
+# Forecast values spanning the three regions that matter: below the fitted
+# domain, inside the formerly floored band, and ordinary
 # positive intervals including a spike well past the training range.
 _GOLDEN_XS = [
     -0.5, -0.30, -0.1500, -0.1000, -0.0999, -0.09, -0.0864, -0.05, -0.02,
@@ -132,23 +131,24 @@ _GOLDEN_XS = [
     0.32, 0.75, 3.50,
 ]
 
-# Captured by running _capture() against the engine after issue #114 removed
-# the published zero floor. Rows from -0.0999 to -0.0055 used to publish a
-# calibrated value of 0.0 with a collapsed band; they now publish the fitted
-# isotonic value and the fitted quantile lines. Rows at 0.02 and above are
-# identical to the table captured before #85 at 0b35e55, so the positive region
-# is pinned across both changes. Every field a caller publishes is pinned:
+# Captured by running _capture() against the engine after issue #117 replaced
+# the fixed -0.10 passthrough boundary with the bucket's fitted domain, whose
+# floor in this fixture is -0.08. Rows below -0.08 are passed through with the
+# raw value and the fitted quantile band; rows from -0.08 to -0.0055 publish
+# the fitted isotonic value (they published 0.0 with a collapsed band before
+# #114). Rows at 0.02 and above are identical to the table captured before #85
+# at 0b35e55, so the positive region is pinned across all three changes. Every field a caller publishes is pinned:
 # sensor.py maps calibrated, p10, p50, p90 and calibrated_source onto the
 # forecast attributes and the sensor state, and tariff_sensor.py publishes
 # calibrated as the spot price.
 _GOLDEN_PUBLISHED = {
-    -0.5: (-0.5, -0.5, -0.5, -0.5, 'passthrough_negative'),
-    -0.3: (-0.3, -0.3, -0.3, -0.3, 'passthrough_negative'),
-    -0.15: (-0.15, -0.15, -0.15, -0.15, 'passthrough_negative'),
-    -0.1: (-0.1, -0.1, -0.1, -0.1, 'passthrough_negative'),
-    -0.0999: (-0.082, -0.1099, -0.104895, -0.082, 'isotonic'),
-    -0.09: (-0.082, -0.1, -0.0945, -0.079, 'isotonic'),
-    -0.0864: (-0.082, -0.0964, -0.09072, -0.07504, 'isotonic'),
+    -0.5: (-0.5, -0.51, -0.51, -0.5, 'passthrough_below_domain'),
+    -0.3: (-0.3, -0.31, -0.31, -0.3, 'passthrough_below_domain'),
+    -0.15: (-0.15, -0.16, -0.1575, -0.145, 'passthrough_below_domain'),
+    -0.1: (-0.1, -0.11, -0.105, -0.09, 'passthrough_below_domain'),
+    -0.0999: (-0.0999, -0.1099, -0.104895, -0.08989, 'passthrough_below_domain'),
+    -0.09: (-0.09, -0.1, -0.0945, -0.079, 'passthrough_below_domain'),
+    -0.0864: (-0.0864, -0.0964, -0.09072, -0.07504, 'passthrough_below_domain'),
     -0.05: (-0.049, -0.06, -0.0525, -0.035, 'isotonic'),
     -0.02: (-0.016, -0.03, -0.021, -0.002, 'isotonic'),
     -0.0055: (-5e-05, -0.0155, -0.005775, 0.01395, 'isotonic'),
@@ -223,9 +223,9 @@ def test_published_price_sweep_is_the_unfloored_isotonic_value():
     for i in range(1601):
         x = round(-0.400 + i * 0.0005, 6)
         out = bucket.apply_all(x)
-        if is_negative_passthrough(x):
+        if bucket.is_below_domain(x):
             assert out["calibrated"] == round(x, 6)
-            assert out["calibrated_source"] == "passthrough_negative"
+            assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
         else:
             expected = round(max(_raw_iso(bucket, x), MARKET_PRICE_FLOOR), 6)
             assert out["calibrated"] == expected, (
@@ -249,7 +249,7 @@ def test_published_price_equals_the_feature_where_the_floor_used_to_bind():
     bucket = _fixture_bucket()
     checked = 0
     for i in range(1, 100):
-        x = round(NEGATIVE_PASSTHROUGH_THRESHOLD + i * 0.001, 6)
+        x = round(bucket.domain_min + i * 0.001, 6)
         if x >= -0.0055:
             continue
         out = bucket.apply_all(x)
@@ -258,7 +258,7 @@ def test_published_price_equals_the_feature_where_the_floor_used_to_bind():
         )
         assert out[ISO_FEATURE_KEY] == out["calibrated"] == round(_raw_iso(bucket, x), 6)
         checked += 1
-    assert checked > 80
+    assert checked > 70
     print(f"  PASS: at {checked} formerly floored forecasts price and feature agree")
 
 
@@ -283,7 +283,7 @@ def test_feature_key_present_on_every_apply_all_path():
     """
     bucket = _fixture_bucket()
     out = bucket.apply_all(-0.15)
-    assert out["calibrated_source"] == "passthrough_negative"
+    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
     assert out[ISO_FEATURE_KEY] == round(-0.15, 6)
 
     no_iso = _fixture_bucket()
@@ -307,19 +307,25 @@ def test_stage2_iso_feature_helper_is_the_single_definition():
     """
     assert stage2_iso_feature is not None, "stage2_iso_feature is missing"
     bucket = _fixture_bucket()
+    # Monotone within each region. Below the domain the feature is the raw
+    # forecast, inside it the isotonic prediction; the two may step at the
+    # domain floor (here the raw -0.0805 against a fitted -0.082 at -0.08),
+    # which is the passthrough seam, not a fault in either function.
     previous = None
+    was_below = None
     for i in range(1601):
         x = round(-0.400 + i * 0.0005, 6)
         got = stage2_iso_feature(bucket.apply_all(x), x)
-        if is_negative_passthrough(x):
+        below = bucket.is_below_domain(x)
+        if below:
             assert got == round(x, 6)
         else:
             assert got == round(_raw_iso(bucket, x), 6)
-        if previous is not None:
+        if previous is not None and below == was_below:
             assert got >= previous - 1e-9, (
                 f"the feature decreased between {x - 0.0005} and {x}"
             )
-        previous = got
+        previous, was_below = got, below
     # No gap: the feature now takes values inside the old (-0.10, 0.0) hole.
     attained = [
         stage2_iso_feature(bucket.apply_all(round(-0.0999 + i * 0.001, 6)),
@@ -347,8 +353,8 @@ def test_stage2_iso_feature_falls_back_to_the_published_value():
 
 # ── Deliberate behaviours from earlier work, confirmed still in place ────────
 
-def test_passthrough_negative_still_returns_early_from_apply():
-    """PR #74's gate is untouched: stage 2 never overrides a deep negative.
+def test_below_domain_passthrough_still_returns_early_from_apply():
+    """PR #74's gate is untouched: stage 2 never overrides a below-domain passthrough.
 
     The feature is present on that path too, so the guard has to be the source
     check and not an accident of a missing key.
@@ -373,9 +379,9 @@ def test_passthrough_negative_still_returns_early_from_apply():
     )
     rf = RunFeatures(run_max_h6_rrp=0.2, run_mean_rrp=0.08, run_spread=0.3)
     out = result.apply(-0.15, 36.0, 12, stpasa=stpasa, run_features=rf)
-    assert out["calibrated_source"] == "passthrough_negative"
+    assert out["calibrated_source"] == SOURCE_PASSTHROUGH_BELOW_DOMAIN
     assert out["calibrated"] == round(-0.15, 6)
-    print("  PASS: apply still returns early on passthrough_negative")
+    print("  PASS: apply still returns early on a below-domain passthrough")
 
 
 def test_passthrough_band_is_still_left_unclamped():
@@ -576,10 +582,10 @@ def test_fit_path_uses_the_same_unfloored_feature_as_serving():
             continue
         if _bucket_key(obs.horizon_hours, obs.hour_of_day) != TARGET:
             continue
-        if is_negative_passthrough(obs.pd7day_forecast):
+        bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
+        if bucket.is_below_domain(obs.pd7day_forecast):
             continue
         sf = stpasa_by_key[f"{obs.interval_time}|{obs.forecast_run_at}"]
-        bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
         feature = round(_raw_iso(bucket, obs.pd7day_forecast), 6)
         rows.append((
             [1.0, feature, rf.run_max_h6_rrp, rf.run_mean_rrp, rf.run_spread,
@@ -640,7 +646,7 @@ def test_serve_path_feeds_the_unfloored_feature_to_the_ols_model():
         poe_spread_n=0.0, stpasa_run_at=_ANCHOR.isoformat(),
     )
     rf = RunFeatures(run_max_h6_rrp=0.0, run_mean_rrp=0.0, run_spread=0.0)
-    for x in (-0.09, -0.05, -0.02):
+    for x in (-0.07, -0.05, -0.02):
         out = result.apply(x, TARGET_H, TARGET_HOUR, stpasa=stpasa, run_features=rf)
         assert out["calibrated_source"] == "isotonic+stpasa"
         want = round(-0.02 + round(_raw_iso(bucket, x), 6), 6)
@@ -661,7 +667,7 @@ _TESTS = [
     test_feature_key_present_on_every_apply_all_path,
     test_stage2_iso_feature_helper_is_the_single_definition,
     test_stage2_iso_feature_falls_back_to_the_published_value,
-    test_passthrough_negative_still_returns_early_from_apply,
+    test_below_domain_passthrough_still_returns_early_from_apply,
     test_passthrough_band_is_still_left_unclamped,
     test_floored_rows_no_longer_bias_the_fitted_coefficient,
     test_floored_rows_do_not_inflate_the_coefficient_monotonically,
