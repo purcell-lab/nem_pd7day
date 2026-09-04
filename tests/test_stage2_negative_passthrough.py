@@ -167,7 +167,7 @@ def test_positive_prediction_does_not_override_negative_passthrough():
     assert out["calibrated"] == stage1, (
         f"expected the stage-1 value {stage1} published untouched, got {out['calibrated']}"
     )
-    assert out["calibrated"] < 0.0
+    assert out["calibrated"] <= 0.0
     assert "stpasa_run_at" not in out, (
         "stpasa_run_at must be absent when the override is skipped"
     )
@@ -215,15 +215,15 @@ def test_no_sign_flip_sweep():
                         f"raw={raw} h={horizon} hour={hour} coef={coef[:2]}: "
                         f"source {out['calibrated_source']}"
                     )
-                    # The raw value shifted by the edge correction (#120),
-                    # clamped only by the market price floor (#114), never
-                    # touched by the OLS prediction.
-                    offset = result.get_bucket(horizon, hour).edge_offset
-                    assert out["calibrated"] == round(max(raw + offset, MARKET_PRICE_FLOOR), 6), (
+                    # The bucket's edge level (#123), clamped only by the
+                    # market price floor (#114), never touched by the OLS
+                    # prediction.
+                    edge = result.get_bucket(horizon, hour).edge_value
+                    assert out["calibrated"] == round(max(edge, MARKET_PRICE_FLOOR), 6), (
                         f"raw={raw} h={horizon} hour={hour}: "
                         f"published {out['calibrated']}"
                     )
-                    assert out["calibrated"] < 0.0, (
+                    assert out["calibrated"] <= 0.0, (
                         f"raw={raw} h={horizon} hour={hour}: sign flipped to "
                         f"{out['calibrated']}"
                     )
@@ -392,7 +392,7 @@ def test_fitted_model_without_negative_training_rows_would_flip():
         f"expected the bypass to hold, got {out['calibrated_source']}"
     )
     assert out["calibrated"] == result.get_bucket(36.0, 12).apply_all(raw)["calibrated"]
-    assert out["calibrated"] < 0.0
+    assert out["calibrated"] <= 0.0
     print(
         "  PASS: fitted model with no negative training rows extrapolates to "
         f"{prediction:+.4f} and is correctly refused"

@@ -650,40 +650,42 @@ def _domain_bucket(x_lo: float = 0.05, x_hi: float = 0.25) -> BucketModel:
     )
 
 
-def test_below_domain_extrapolates_from_the_edge():
+def test_below_domain_clips_to_the_edge():
     """
-    A raw forecast below every forecast the bucket was fitted on is AEMO's
-    value shifted by the correction at the domain edge, with a band from the
-    quantile lines (issues #117 and #120). Here iso(0.05) = 0.06, so the
-    offset is +0.01 and -0.15 is published as -0.14.
+    A raw forecast below every forecast the bucket was fitted on has no
+    settled actual near it, so the raw value is not relied on: the bucket
+    answers as if the forecast were at its floor, point and band (issues
+    #117, #120, #123). Here iso(0.05) = 0.06.
     """
     from custom_components.nem_pd7day.calibration_engine import SOURCE_ISOTONIC_BELOW_DOMAIN
     model = _domain_bucket()
-    assert abs(model.edge_offset - 0.01) < 1e-9
+    assert abs(model.edge_value - 0.06) < 1e-9
     result = model.apply_all(-0.15)
-    assert result["calibrated"] == -0.14, (
-        f"Below-domain raw should carry the edge correction, got {result['calibrated']}"
+    assert result["calibrated"] == 0.06, (
+        f"Below-domain raw should publish the edge level, got {result['calibrated']}"
     )
     assert result["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
-    # q10 line 0.6x + 0.01 = -0.08 is above the point and clamps onto it;
-    # q90 line 1.0x + 0.03 = -0.12 is the upper bound.
-    assert result["p10"] == -0.14 and result["p90"] == -0.12, result
-    print(f"  PASS: below-domain edge extrapolation (calibrated={result['calibrated']})")
+    # The band is the quantile lines at the floor: q10 0.6*0.05 + 0.01 =
+    # 0.04, q90 1.0*0.05 + 0.03 = 0.08. Nothing depends on the raw -0.15.
+    assert result["p10"] == 0.04 and result["p90"] == 0.08, result
+    assert result == model.apply_all(-5.0) | {"calibrated_source": SOURCE_ISOTONIC_BELOW_DOMAIN}
+    print(f"  PASS: below-domain clip to the edge (calibrated={result['calibrated']})")
 
 
 def test_below_domain_is_continuous_at_the_floor():
     """
     No step at the domain floor: just below it the published value meets the
-    isotonic curve, and further below it falls at AEMO's slope (issue #120,
-    where a raw passthrough put a step on every QLD1 morning ramp).
+    isotonic curve, and however far below, it stays there (issues #120, #123).
     """
     model = _domain_bucket(x_lo=-0.10)
-    at_floor = model.apply_all(-0.10)["calibrated"]
-    just_below = model.apply_all(-0.10 - 1e-6)["calibrated"]
-    assert abs(just_below - at_floor) < 1e-5, (at_floor, just_below)
-    further = model.apply_all(-0.20)["calibrated"]
-    assert abs((at_floor - further) - 0.10) < 1e-9, (at_floor, further)
-    print("  PASS: below-domain extrapolation is continuous at the floor")
+    at_floor = model.apply_all(-0.10)
+    just_below = model.apply_all(-0.10 - 1e-6)
+    far_below = model.apply_all(-0.90)
+    for key in ("calibrated", "p10", "p50", "p90"):
+        assert at_floor[key] == just_below[key] == far_below[key], (
+            key, at_floor[key], just_below[key], far_below[key]
+        )
+    print("  PASS: below-domain clip is continuous at the floor and flat below it")
 
 
 def test_mild_negative_inside_domain_is_calibrated():
@@ -1835,7 +1837,7 @@ TESTS = [
     test_negative_ols_slope_clamped,
     test_quantile_slopes_ordered_after_irls,
     test_quantile_slopes_clamped_to_zero,
-    test_below_domain_extrapolates_from_the_edge,
+    test_below_domain_clips_to_the_edge,
     test_below_domain_is_continuous_at_the_floor,
     test_mild_negative_inside_domain_is_calibrated,
     test_no_iso_model_is_plain_passthrough_even_when_negative,

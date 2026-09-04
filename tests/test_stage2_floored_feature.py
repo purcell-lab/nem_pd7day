@@ -131,25 +131,22 @@ _GOLDEN_XS = [
     0.32, 0.75, 3.50,
 ]
 
-# Captured by running _capture() against the engine after issue #120 made the
-# below-domain path an extrapolation from the domain edge (#117 had made it a
-# raw passthrough). The fixture's floor is -0.08 where iso is -0.082, so rows
-# below -0.08 publish the raw value minus 0.002 with the fitted quantile band;
-# rows from -0.08 to -0.0055 publish the fitted isotonic value (they published
-# 0.0 with a collapsed band before #114). Rows at 0.02 and above are identical
-# to the table captured before #85 at 0b35e55, so the positive region is
-# pinned across all four changes. Every field a caller publishes is pinned:
-# sensor.py maps calibrated, p10, p50, p90 and calibrated_source onto the
-# forecast attributes and the sensor state, and tariff_sensor.py publishes
-# calibrated as the spot price.
+# Captured by running _capture() against the engine after issue #123 made the
+# below-domain path a clip to the domain edge (#117 had made it a raw
+# passthrough, #120 an edge-shifted raw value). The fixture's floor is -0.08
+# where iso is -0.082, so every row below -0.08 publishes the floor's triple:
+# -0.082 with the quantile lines at -0.08; rows from -0.08 to -0.0055 publish
+# the fitted isotonic value (they published 0.0 with a collapsed band before
+# #114). Rows at 0.02 and above are identical to the table captured before
+# #85 at 0b35e55, so the positive region is pinned across all five changes.
 _GOLDEN_PUBLISHED = {
-    -0.5: (-0.502, -0.51, -0.51, -0.502, 'isotonic_below_domain'),
-    -0.3: (-0.302, -0.31, -0.31, -0.302, 'isotonic_below_domain'),
-    -0.15: (-0.152, -0.16, -0.1575, -0.145, 'isotonic_below_domain'),
-    -0.1: (-0.102, -0.11, -0.105, -0.09, 'isotonic_below_domain'),
-    -0.0999: (-0.1019, -0.1099, -0.104895, -0.08989, 'isotonic_below_domain'),
-    -0.09: (-0.092, -0.1, -0.0945, -0.079, 'isotonic_below_domain'),
-    -0.0864: (-0.0884, -0.0964, -0.09072, -0.07504, 'isotonic_below_domain'),
+    -0.5: (-0.082, -0.09, -0.084, -0.068, 'isotonic_below_domain'),
+    -0.3: (-0.082, -0.09, -0.084, -0.068, 'isotonic_below_domain'),
+    -0.15: (-0.082, -0.09, -0.084, -0.068, 'isotonic_below_domain'),
+    -0.1: (-0.082, -0.09, -0.084, -0.068, 'isotonic_below_domain'),
+    -0.0999: (-0.082, -0.09, -0.084, -0.068, 'isotonic_below_domain'),
+    -0.09: (-0.082, -0.09, -0.084, -0.068, 'isotonic_below_domain'),
+    -0.0864: (-0.082, -0.09, -0.084, -0.068, 'isotonic_below_domain'),
     -0.05: (-0.049, -0.06, -0.0525, -0.035, 'isotonic'),
     -0.02: (-0.016, -0.03, -0.021, -0.002, 'isotonic'),
     -0.0055: (-5e-05, -0.0155, -0.005775, 0.01395, 'isotonic'),
@@ -225,7 +222,7 @@ def test_published_price_sweep_is_the_unfloored_isotonic_value():
         x = round(-0.400 + i * 0.0005, 6)
         out = bucket.apply_all(x)
         if bucket.is_below_domain(x):
-            expected = round(max(x + bucket.edge_offset, MARKET_PRICE_FLOOR), 6)
+            expected = round(max(bucket.edge_value, MARKET_PRICE_FLOOR), 6)
             assert out["calibrated"] == expected
             assert out["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
         else:
@@ -286,7 +283,7 @@ def test_feature_key_present_on_every_apply_all_path():
     bucket = _fixture_bucket()
     out = bucket.apply_all(-0.15)
     assert out["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
-    assert out[ISO_FEATURE_KEY] == out["calibrated"] == round(-0.15 + bucket.edge_offset, 6)
+    assert out[ISO_FEATURE_KEY] == out["calibrated"] == round(bucket.edge_value, 6)
 
     no_iso = _fixture_bucket()
     no_iso.iso_model = None
@@ -310,14 +307,14 @@ def test_stage2_iso_feature_helper_is_the_single_definition():
     assert stage2_iso_feature is not None, "stage2_iso_feature is missing"
     bucket = _fixture_bucket()
     # Monotone across the whole range. Below the domain the feature is the
-    # raw forecast shifted by the edge correction, which meets the isotonic
-    # curve at the floor (#120), so there is no seam to special-case.
+    # edge level, which is where the isotonic curve starts (#123), so there
+    # is no seam to special-case.
     previous = None
     for i in range(1601):
         x = round(-0.400 + i * 0.0005, 6)
         got = stage2_iso_feature(bucket.apply_all(x), x)
         if bucket.is_below_domain(x):
-            assert got == round(x + bucket.edge_offset, 6)
+            assert got == round(bucket.edge_value, 6)
         else:
             assert got == round(_raw_iso(bucket, x), 6)
         if previous is not None:
@@ -352,8 +349,8 @@ def test_stage2_iso_feature_falls_back_to_the_published_value():
 
 # ── Deliberate behaviours from earlier work, confirmed still in place ────────
 
-def test_below_domain_extrapolation_still_returns_early_from_apply():
-    """PR #74's gate is untouched: stage 2 never overrides a below-domain extrapolation.
+def test_below_domain_clip_still_returns_early_from_apply():
+    """PR #74's gate is untouched: stage 2 never overrides a below-domain clip.
 
     The feature is present on that path too, so the guard has to be the source
     check and not an accident of a missing key.
@@ -379,8 +376,8 @@ def test_below_domain_extrapolation_still_returns_early_from_apply():
     rf = RunFeatures(run_max_h6_rrp=0.2, run_mean_rrp=0.08, run_spread=0.3)
     out = result.apply(-0.15, 36.0, 12, stpasa=stpasa, run_features=rf)
     assert out["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
-    assert out["calibrated"] == round(-0.15 + bucket.edge_offset, 6)
-    print("  PASS: apply still returns early on a below-domain extrapolation")
+    assert out["calibrated"] == round(bucket.edge_value, 6)
+    print("  PASS: apply still returns early on a below-domain clip")
 
 
 def test_passthrough_band_is_still_left_unclamped():
@@ -666,7 +663,7 @@ _TESTS = [
     test_feature_key_present_on_every_apply_all_path,
     test_stage2_iso_feature_helper_is_the_single_definition,
     test_stage2_iso_feature_falls_back_to_the_published_value,
-    test_below_domain_extrapolation_still_returns_early_from_apply,
+    test_below_domain_clip_still_returns_early_from_apply,
     test_passthrough_band_is_still_left_unclamped,
     test_floored_rows_no_longer_bias_the_fitted_coefficient,
     test_floored_rows_do_not_inflate_the_coefficient_monotonically,

@@ -231,31 +231,29 @@ _LOGGER = logging.getLogger(__name__)
 # $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
 SPIKE_THRESHOLD = 3.00  # $/kWh
 
-# ── Below-domain extrapolation ───────────────────────────────────────────────
+# ── Below-domain clip ────────────────────────────────────────────────────────
 # A raw forecast below the smallest forecast a bucket was fitted on is outside
-# the isotonic model's domain: predict() would clip it to the first step, which
-# is a boundary value rather than a fit. Such a forecast is published as AEMO's
-# value shifted by the correction measured at the edge of the domain,
+# the isotonic model's domain, and there is no settled actual in the window
+# near it, so the raw value is not relied on. The bucket answers as if the
+# forecast were at its floor:
 #
-#     calibrated(x) = x + (iso(x_min) - x_min)        for x < x_min
+#     calibrated(x) = iso(x_min)                             for x < x_min
+#     band(x)       = quantile lines at x_min, clamped to contain it
 #
-# labelled SOURCE_ISOTONIC_BELOW_DOMAIN, with a band from the stage-1 quantile
-# lines, which are linear and do extrapolate. Continuous at the floor, keeps
-# AEMO's slope below it, and uses the same first-step level that clip already
-# relies on, so it introduces no new estimate.
+# labelled SOURCE_ISOTONIC_BELOW_DOMAIN. This is out_of_bounds="clip", the
+# isotonic model's own behaviour, applied to the band as well as the point, so
+# the published triple below the floor is the published triple at the floor.
+# Continuous, monotone, no constant, and independent of how deep AEMO went.
+# The raw value stays available as raw_rrp on every forecast entry.
 #
 # History. A fixed NEGATIVE_PASSTHROUGH_THRESHOLD of -0.10 $/kWh sent every
-# forecast at or below it straight through with a zero-width band while
-# forecasts just above were corrected by about 30 per cent, a step at a number
-# with no basis in the data (issue #117: SA1 h24_48__solar had been fitted
-# down to -0.31 $/kWh). v3.8.0 replaced it with a raw passthrough below the
-# bucket's domain, which moved the step to the domain floor. That floor is a
-# sample minimum sitting at the dense edge of the data, so on QLD1 it landed
-# on every morning ramp of the week: 38 of 330 intervals with raw forecasts
-# between -0.07 and +0.04 $/kWh were published raw because their buckets had
-# never seen a forecast that low, while a forecast a few tenths of a cent
-# higher in the same bucket was calibrated (issue #120). Extrapolating from
-# the edge removes the step without a constant.
+# forecast at or below it straight through with a zero-width band (issue
+# #117). v3.8.0 replaced it with a raw passthrough below the bucket's domain,
+# which put a step at the domain floor on every QLD1 morning ramp (issue
+# #120). v3.8.1 shifted the raw value by the edge correction, which removed
+# the step but kept AEMO's depth: a -0.667 $/kWh PD7DAY value six days out,
+# in a bucket with evidence down to -0.10, was published as -0.639 (issue
+# #123). Below the evidence, publish the evidence.
 SOURCE_ISOTONIC_BELOW_DOMAIN = "isotonic_below_domain"
 
 
@@ -639,18 +637,25 @@ class BucketModel:
         return self.iso_model.x_min if self.iso_model is not None else None
 
     @property
-    def edge_offset(self) -> float:
-        """Correction at the lower edge of the domain, ``iso(x_min) - x_min``.
+    def edge_value(self) -> float:
+        """The isotonic prediction at the lower edge of the domain, ``iso(x_min)``.
 
-        Applied to a forecast below the domain so the published value meets
-        the isotonic curve at the floor instead of stepping there. Zero when
-        there is no fitted model.
+        What the bucket publishes for any forecast below its domain (issue
+        #123): the deepest value the evidence supports. Falls back to 0.0
+        when there is no fitted model; callers check ``domain_min`` first.
         """
         lo = self.domain_min
         if lo is None or self.iso_model is None:
             return 0.0
-        edge = float(self.iso_model.predict(np.asarray([lo], dtype=float))[0])
-        return edge - lo
+        return float(self.iso_model.predict(np.asarray([lo], dtype=float))[0])
+
+    @property
+    def edge_offset(self) -> float:
+        """Correction at the lower edge of the domain, ``iso(x_min) - x_min``."""
+        lo = self.domain_min
+        if lo is None:
+            return 0.0
+        return self.edge_value - lo
 
     def is_below_domain(self, x: float) -> bool:
         """True when ``x`` is below every forecast this bucket was fitted on.
@@ -689,9 +694,9 @@ class BucketModel:
           1. Insufficient data     — raw forecast returned if iso_model is None
                                      (bucket has < MIN_OBS training observations).
           2. Below the fitted domain — a forecast below the smallest training
-                                     forecast is AEMO's value shifted by the
-                                     correction at the domain edge, with a
-                                     band from the quantile lines.
+                                     forecast is answered as if it were at
+                                     the floor: iso(x_min) and the quantile
+                                     band at x_min.
           3. Isotonic calibration  — IsotonicRegression.predict([x]), unfloored.
                                      Spike inputs (>= SPIKE_THRESHOLD) are handled by
                                      out_of_bounds='clip', returning the training-range
@@ -726,16 +731,15 @@ class BucketModel:
             }
 
         if self.is_below_domain(x):
-            # Extrapolation, not calibration: predict() would clip to the
-            # first step. Shift AEMO's value by the correction at the domain
-            # edge, so the published curve is continuous at the floor and
-            # keeps the raw slope below it (see SOURCE_ISOTONIC_BELOW_DOMAIN).
-            # Floored only at the market floor; the quantile lines, which are
-            # linear, supply the band, clamped to contain the point estimate
-            # like every other published triple and None only when no line
-            # is fitted.
-            calibrated = max(x + self.edge_offset, MARKET_PRICE_FLOOR)
-            p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(x))
+            # No evidence below the floor, so the raw value is not relied on:
+            # the point and the band are the bucket's answer at its floor
+            # (see SOURCE_ISOTONIC_BELOW_DOMAIN). Clamped to contain the point
+            # like every other published triple; None only when no line is
+            # fitted.
+            lo = self.domain_min
+            assert lo is not None
+            calibrated = max(self.edge_value, MARKET_PRICE_FLOOR)
+            p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(lo))
             fitted = any(v is not None for v in (p10, p50, p90))
             return {
                 "calibrated": round(calibrated, 6),
@@ -808,12 +812,12 @@ class CalibrationResult:
         bucket = self.get_bucket(horizon_hours, hour_of_day)
         result = bucket.apply_all(forecast)
 
-        # 2a. Gate: never override a below-domain extrapolation.
+        # 2a. Gate: never override a below-domain clip.
         #
-        #     WHY: below the bucket's fitted domain the stage-1 value is AEMO's
-        #     raw forecast shifted by the edge correction, not a fit, and the
-        #     stage-2 OLS was fitted on rows inside that domain, so a
-        #     prediction there is extrapolation on both features. It also carries an asymmetric cost: a positive
+        #     WHY: below the bucket's fitted domain the stage-1 value is the
+        #     edge level, not a fit at this forecast, and the stage-2 OLS was
+        #     fitted on rows inside that domain, so a prediction there is
+        #     extrapolation on both features. It also carries an asymmetric cost: a positive
         #     prediction over a deeply negative raw forecast flips the
         #     published sign, turning "paid to consume" into "pay to consume",
         #     which is the one error a battery or controllable load schedule
@@ -1636,8 +1640,8 @@ class CalibrationEngine:
             # Drop rows that the serving path never asks this model about.
             #
             # WHY: below the bucket's fitted domain the serving path publishes
-            # an edge extrapolation and never consults stage 2 (apply, gate
-            # 2a), so a row there would be fitted for a region never served.
+            # the edge level and never consults stage 2 (apply, gate 2a), so
+            # a row there would be fitted for a region that is never served.
             # Both paths read the boundary from BucketModel.is_below_domain so
             # they cannot drift apart (#68, #79, #117). In practice a bucket's
             # own training rows define its domain, so this excludes nothing

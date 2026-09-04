@@ -412,7 +412,7 @@ def test_stage1_publications_are_byte_for_byte_unchanged():
         # And the below-domain bypass, which is gated inside the OLS band too.
         if forecast < 0.0:
             c = _apply(with_resid, forecast)
-            assert c["calibrated"] == round(forecast, 6)
+            assert c["calibrated"] == round(_bucket().edge_value, 6)
             assert c["calibrated_source"] == SOURCE_ISOTONIC_BELOW_DOMAIN
     print("  PASS: stage-1 published values and bands are unchanged")
 
