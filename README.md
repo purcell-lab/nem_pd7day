@@ -195,9 +195,10 @@ All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (
 | `state` | Calibrated price for the current interval ($/kWh) |
 | `region` | NEM region code |
 | `forecast_generated_at` | ISO-8601 timestamp of the AEMO source file |
-| `data_age_hours` | Hours since the last successful PD7DAY fetch; `null` until the first fetch of the session |
-| `is_stale` | `true` while the last fetch failed and the previous result is being served |
-| `stale_reason` | The failure being served through, e.g. `403 Forbidden`; `null` when fresh |
+| `data_age_hours` | Hours since the last successful PD7DAY fetch at the time the entity last wrote state; `null` until the first fetch of the session. Diagnostic sensors rewrite on the half hour so this moves during an outage |
+| `last_success_at` | NEM-time ISO-8601 timestamp of the last successful PD7DAY fetch; stays true between state writes, unlike an age |
+| `is_stale` | `true` while the last fetch failed and the previous result is being served, or while a publish slot (07:30, 13:00, 18:00 NEM) is more than 30 minutes past and the run being served is older than it |
+| `stale_reason` | The failure being served through, e.g. `403 Forbidden`, or `missed 07:30 run` when a slot passed without its file; `null` when fresh |
 | `forecast` | List of all forecast periods (see below) |
 | `next_value` | Calibrated price for the next interval |
 | `min_24h_value` | Minimum calibrated price in the next 24 hours |
@@ -266,6 +267,9 @@ Default interconnectors per region:
 | `active_buckets` | Buckets with ≥ 20 observations (max 24) |
 | `total_buckets` | 24 (6 horizons × 4 time-of-day labels) |
 | `fitted_at` | ISO-8601 timestamp of last model refit |
+| `observation_window_days` | The configured training window, 90 days |
+| `oldest_observation` | Interval time of the oldest observation still in the store |
+| `effective_window_days` | Days from the oldest retained observation to now; shorter than the configured window when the store cap (100,000 observations, about 93 days) binds |
 | `summary` | Per-bucket isotonic diagnostics: n, iso_n_steps, compression_ratio, iso_mae, x_min, x_max, q10_a, q90_a |
 
 #### Forecast history attributes

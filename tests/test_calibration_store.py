@@ -1339,3 +1339,67 @@ def test_a_genuine_zero_still_contributes_to_the_fit():
     map_key = f"{interval_start_str}|{nem_iso(run_dt)}"
     assert map_key in fmap, "a genuine zero must not be treated as missing"
     assert fmap[map_key].log_solar == 0.0
+
+
+# ── Window reporting and paced saves (issue #127) ────────────────────────────
+
+def test_summary_reports_the_effective_window_from_the_oldest_observation():
+    """observation_window_days is the constant; the fit only ever sees the
+    retained observations, so the attributes also say how old the oldest one
+    is. With MAX_TOTAL_OBS at 20,000 that was about 19 days against a claimed
+    90 (issue #127)."""
+    store = make_store()
+    assert store.oldest_observation is None
+    assert store.effective_window_days is None
+    from unittest.mock import patch
+    now = datetime(2026, 9, 5, 8, 0, tzinfo=NEM_TZ)
+    store._observations = [
+        {"interval_time": nem_iso(now - timedelta(days=19, hours=12)), "pd7day_forecast": 0.1},
+        {"interval_time": nem_iso(now - timedelta(days=2)), "pd7day_forecast": 0.1},
+    ]
+    assert store.oldest_observation == nem_iso(now - timedelta(days=19, hours=12))
+    with patch.object(_store_mod, "_now_nem", return_value=now):
+        assert store.effective_window_days == 19.5
+        store._calibration = MagicMock(fitted_at="x", observations_in_window=2)
+        store._calibration.summary.return_value = {}
+        attrs = store.summary_attributes()
+    assert attrs["effective_window_days"] == 19.5
+    assert attrs["oldest_observation"] == store.oldest_observation
+    assert attrs["observation_window_days"] == 90
+
+
+def test_observation_log_is_saved_through_a_delayed_save_when_the_store_offers_one():
+    """A real HA Store folds a burst of writes into one; a double without
+    async_delay_save on its class is saved immediately."""
+    class _DelayStore:
+        def __init__(self):
+            self.delayed = []
+            self.saved = []
+        def async_delay_save(self, data_func, delay):
+            self.delayed.append((data_func, delay))
+        async def async_save(self, data):
+            self.saved.append(data)
+
+    store = make_store()
+    store._observations = [{"interval_time": "2026-09-05T07:30:00+10:00"}]
+    delayed = _DelayStore()
+    store._obs_store = delayed
+    asyncio.run(store._save_observations())
+    assert delayed.saved == []
+    assert len(delayed.delayed) == 1
+    data_func, delay = delayed.delayed[0]
+    assert delay == 300
+    assert data_func() == {"observations": store._observations}
+
+    plain = make_store()
+    plain._observations = [{"interval_time": "2026-09-05T07:30:00+10:00"}]
+    asyncio.run(plain._save_observations())
+    plain._obs_store.async_save.assert_awaited_once_with({"observations": plain._observations})
+
+
+def test_observation_log_is_pruned_to_max_total_obs():
+    from custom_components.nem_pd7day.const import MAX_TOTAL_OBS
+    assert MAX_TOTAL_OBS == 100_000, (
+        "100,000 observations is about 93 days at three runs a day; the "
+        "previous 20,000 was 19 days and the 90 day window never bound (#127)"
+    )

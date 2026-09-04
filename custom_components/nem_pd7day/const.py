@@ -145,6 +145,11 @@ def get_region(entry) -> str:
 # AEMO PD7DAY publish times (NEM local, hour, minute)
 # Fetches are scheduled 25-55 min after each publish to allow NEMWeb to settle.
 FETCH_TIMES_NEM = [(7, 30), (13, 0), (18, 0)]
+# Minutes after a publish slot before a run that has not arrived counts as
+# stale. AEMO usually has the file up within a minute of the slot and the
+# scheduled fetch lands it seconds later (07:30:08 on 4 Sep 2026), but the
+# client's retry budget can take several minutes on a bad day. See #128.
+STALE_RUN_GRACE_MIN = 30
 
 # NEM time constants
 NEM_TZ = timezone(timedelta(hours=10), name="AEST")
@@ -216,7 +221,19 @@ def storage_keys(region: str) -> tuple[str, str, str]:
 _LEGACY_OBS_KEY = "nem_pd7day.observation_log"
 _LEGACY_COEFF_KEY = "nem_pd7day.calibration_coefficients"
 _LEGACY_FH_KEY = "nem_pd7day.forecast_history"
-MAX_TOTAL_OBS = 20_000
+# Store-wide cap on logged observations, oldest dropped first. A region logs
+# one observation per settled interval per run it appeared in: up to 357 per
+# run, three runs a day, about 1,070 a day. The previous cap of 20,000 was
+# therefore about 19 days, and OBSERVATION_WINDOW_DAYS (90) never bound: the
+# fit, the domain floors and the leverage screen all saw three weeks (issue
+# #127). 100,000 is about 93 days, so the window is the constant again. At
+# roughly 500 bytes per observation the store is about 50 MB per region on
+# disk; see calibration_store._save_observations for how writes are paced.
+MAX_TOTAL_OBS = 100_000
+# Seconds to hold observation-log writes so a burst of settling intervals
+# becomes one file rewrite. Home Assistant still flushes a pending delayed
+# save on shutdown.
+OBS_SAVE_DELAY_S = 300
 MAX_FORECAST_AGE_DAYS = 14
 MAX_HORIZON_HOURS = 168
 
@@ -512,6 +529,11 @@ ATTR_FORECAST_GENERATED_AT = "forecast_generated_at"
 ATTR_DATA_AGE_HOURS = "data_age_hours"
 ATTR_IS_STALE = "is_stale"
 ATTR_STALE_REASON = "stale_reason"
+# When the last successful fetch finished, as a NEM-time ISO timestamp. A
+# timestamp stays true between state writes; ``data_age_hours`` is a snapshot
+# taken at the write and reads 0.0 right through a stale period otherwise
+# (issue #128).
+ATTR_LAST_SUCCESS_AT = "last_success_at"
 ATTR_INTERVAL_MINUTES = "interval_minutes"
 ATTR_NEXT_VALUE = "next_value"
 ATTR_MIN_24H = "min_24h_value"

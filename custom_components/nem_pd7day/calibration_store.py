@@ -45,6 +45,7 @@ from .const import (
     MAX_HORIZON_HOURS,
     MAX_TOTAL_OBS,
     NEM_TZ,
+    OBS_SAVE_DELAY_S,
     SPIKE_GAS_THRESHOLD_TJ,
     SPIKE_QNI_THRESHOLD_MW,
     STORAGE_VERSION,
@@ -428,6 +429,25 @@ class CalibrationStore:
         return new_count
 
     async def _save_observations(self) -> None:
+        """Persist the observation log, coalescing bursts of writes.
+
+        Every save rewrites the whole file, about 500 bytes per observation,
+        so at MAX_TOTAL_OBS that is roughly 50 MB per region. Observations
+        arrive as dispatch prices settle, several times per half hour, and an
+        immediate write each time is gigabytes a day across five regions on
+        whatever the config directory lives on (issue #127 raised the cap;
+        the write pattern is tracked separately). ``async_delay_save`` folds
+        a burst into one write OBS_SAVE_DELAY_S after the first change and
+        still flushes on Home Assistant stop. The check is on the store's
+        class, not the instance: the AsyncMock doubles in the tests answer
+        any attribute on the instance, and an immediate save is the right
+        thing for them.
+        """
+        if hasattr(type(self._obs_store), "async_delay_save"):
+            self._obs_store.async_delay_save(
+                lambda: {"observations": self._observations}, OBS_SAVE_DELAY_S
+            )
+            return
         await self._obs_store.async_save({"observations": self._observations})
 
     # ── STPASA feature map ─────────────────────────────────────────────────────
@@ -646,6 +666,29 @@ class CalibrationStore:
             run_features=run_features,
         )
 
+    @property
+    def oldest_observation(self) -> str | None:
+        """Interval time of the oldest retained observation, or None."""
+        for obs in self._observations:
+            value = obs.get("interval_time")
+            if value:
+                return str(value)
+        return None
+
+    @property
+    def effective_window_days(self) -> float | None:
+        """Days from the oldest retained observation to now, one decimal."""
+        oldest = self.oldest_observation
+        if oldest is None:
+            return None
+        try:
+            oldest_dt = datetime.fromisoformat(oldest)
+        except ValueError:
+            return None
+        if oldest_dt.tzinfo is None:
+            oldest_dt = oldest_dt.replace(tzinfo=NEM_TZ)
+        return round((_now_nem() - oldest_dt).total_seconds() / 86400.0, 1)
+
     def summary_attributes(self) -> dict:
         if not self._calibration:
             return {
@@ -658,6 +701,11 @@ class CalibrationStore:
             "fitted_at": self._calibration.fitted_at,
             "observation_count": self.observation_count,
             "observation_window_days": OBSERVATION_WINDOW_DAYS,
+            # What the fit could actually see: the age of the oldest retained
+            # observation. Shorter than the window whenever MAX_TOTAL_OBS
+            # binds (issue #127), and the only honest number to publish.
+            "oldest_observation": self.oldest_observation,
+            "effective_window_days": self.effective_window_days,
             "observations_in_window": self._calibration.observations_in_window,
             "active_buckets": self.active_bucket_count,
             "total_buckets": len(all_bucket_keys()),

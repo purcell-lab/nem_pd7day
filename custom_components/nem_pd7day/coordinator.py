@@ -15,6 +15,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ATTR_LAST_SUCCESS_AT,
+    FETCH_TIMES_NEM,
+    STALE_RUN_GRACE_MIN,
     ATTR_DATA_AGE_HOURS,
     ATTR_IS_STALE,
     ATTR_STALE_REASON,
@@ -51,14 +54,62 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _missed_publish_slot(coordinator: Any, now_utc: datetime) -> str | None:
+    """The latest publish slot the served run predates, as "HH:MM", or None.
+
+    A fetch that never runs produces no failure and so never marks the
+    coordinator stale (issue #128: the scheduled fetch died silently for a
+    day while ``is_stale`` read False). This rule needs no failure: once a
+    publish slot is STALE_RUN_GRACE_MIN behind us and the run being served is
+    older than that slot, the data is stale whatever the reason. Only the
+    PD7DAY coordinator carries a run time; anything else returns None.
+    """
+    prices = getattr(getattr(coordinator, "data", None), "prices", None)
+    if not isinstance(prices, dict) or not prices:
+        return None
+    served: datetime | None = None
+    for price_data in prices.values():
+        generated = getattr(price_data, "forecast_generated_at", None)
+        if not generated:
+            continue
+        try:
+            run_at = datetime.fromisoformat(str(generated))
+        except ValueError:
+            continue
+        if run_at.tzinfo is None:
+            run_at = run_at.replace(tzinfo=NEM_TZ)
+        if served is None or run_at > served:
+            served = run_at
+    if served is None:
+        return None
+    now_nem = now_utc.astimezone(NEM_TZ)
+    grace = timedelta(minutes=STALE_RUN_GRACE_MIN)
+    latest: datetime | None = None
+    for days_back in (0, 1):
+        base = (now_nem - timedelta(days=days_back)).replace(second=0, microsecond=0)
+        for hour, minute in FETCH_TIMES_NEM:
+            slot = base.replace(hour=hour, minute=minute)
+            if slot + grace <= now_nem and (latest is None or slot > latest):
+                latest = slot
+    if latest is None or served >= latest:
+        return None
+    return latest.strftime("%H:%M")
+
+
 def staleness_attributes(coordinator: Any) -> dict[str, Any]:
-    """data_age_hours, is_stale and stale_reason for entity attributes.
+    """data_age_hours, last_success_at, is_stale and stale_reason for entities.
 
     Issue #105: after one successful fetch no failure ever makes an entity
     unavailable, because the coordinator serves its last good result rather
     than raising. That is the right default, but nothing downstream could tell
-    a fresh forecast from one served through a week-long outage. These three
-    keys make the state legible without changing availability.
+    a fresh forecast from one served through a week-long outage. These keys
+    make the state legible without changing availability.
+
+    Issue #128: attributes are snapshotted when the entity writes state, so
+    ``data_age_hours`` alone reads 0.0 for as long as nothing writes.
+    ``last_success_at`` is a timestamp and stays true between writes, and
+    ``is_stale`` also fires when a publish slot has passed without its run
+    arriving, which is the failure mode a silent scheduler produces.
 
     Tolerant of coordinators that do not track staleness (test doubles), in
     which case it returns an empty dict and adds nothing.
@@ -67,15 +118,21 @@ def staleness_attributes(coordinator: Any) -> dict[str, Any]:
     serving_stale = getattr(coordinator, "serving_stale", None)
     if not isinstance(serving_stale, bool):
         return {}
+    now = dt_util.utcnow()
     age: float | None = None
+    last_iso: str | None = None
     if isinstance(last_success_at, datetime):
-        age = round(
-            (dt_util.utcnow() - last_success_at).total_seconds() / 3600.0, 2
-        )
+        age = round((now - last_success_at).total_seconds() / 3600.0, 2)
+        last_iso = last_success_at.astimezone(NEM_TZ).isoformat()
+    missed = _missed_publish_slot(coordinator, now)
+    reason = getattr(coordinator, "stale_reason", None)
+    if reason is None and missed is not None:
+        reason = f"missed {missed} run"
     return {
         ATTR_DATA_AGE_HOURS: age,
-        ATTR_IS_STALE: serving_stale,
-        ATTR_STALE_REASON: getattr(coordinator, "stale_reason", None),
+        ATTR_LAST_SUCCESS_AT: last_iso,
+        ATTR_IS_STALE: serving_stale or missed is not None,
+        ATTR_STALE_REASON: reason,
     }
 
 

@@ -1507,6 +1507,30 @@ class PD7DayDataSensor(
             return None
         return self.coordinator.data.prices.get(self._region)
 
+    async def async_added_to_hass(self) -> None:
+        """Rewrite state on the half hour so the staleness attributes move.
+
+        This sensor's state is the run datetime, which only changes when a
+        run lands, and Home Assistant snapshots attributes at each write. With
+        no periodic write ``data_age_hours`` stayed at whatever it was when
+        the last run arrived, 0.0, right through a stale period (issue #128).
+        The price sensors already tick like this; the same tick here keeps
+        the diagnostic attributes within half an hour of the truth.
+        """
+        await super().async_added_to_hass()
+
+        async def _handle_tick(_now) -> None:
+            self._schedule_warm_state_write()
+
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                _handle_tick,
+                minute=[0, 30],
+                second=5,
+            )
+        )
+
     @property
     def native_value(self):
         d = self._price_data

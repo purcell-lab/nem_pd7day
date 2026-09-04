@@ -407,7 +407,12 @@ def test_success_clears_staleness_and_resets_age():
         run_async(coord._async_update_data())
         attrs = coord.staleness_attributes()
 
-    assert attrs == {"data_age_hours": 0.0, "is_stale": False, "stale_reason": None}
+    assert attrs == {
+        "data_age_hours": 0.0,
+        "last_success_at": "2026-09-03T17:30:00+10:00",
+        "is_stale": False,
+        "stale_reason": None,
+    }
     assert coord.last_success_at == now
 
 
@@ -416,7 +421,8 @@ def test_staleness_attributes_before_first_success():
     stale rather than a misleading zero."""
     coord = _make_pd7day_coordinator()
     assert coord.staleness_attributes() == {
-        "data_age_hours": None, "is_stale": False, "stale_reason": None,
+        "data_age_hours": None, "last_success_at": None,
+        "is_stale": False, "stale_reason": None,
     }
 
 
@@ -434,3 +440,82 @@ def test_dispatch_coordinator_flags_stale_prices():
     attrs = coord.staleness_attributes()
     assert attrs["is_stale"] is True
     assert attrs["stale_reason"] == "timeout"
+
+
+# ── A run that never arrives is stale without any failure (issue #128) ───────
+
+def _serving_run(coord, generated_at: str) -> None:
+    """Make the coordinator serve a PD7DAY result whose run is generated_at."""
+    price = MagicMock(name="price_data")
+    price.forecast_generated_at = generated_at
+    result = MagicMock(name="result")
+    result.prices = {"SA1": price}
+    coord.data = result
+
+
+def _attrs_at(coord, now):
+    from unittest.mock import patch
+    with patch.object(_coord_dt_util(), "utcnow", return_value=now):
+        return coord.staleness_attributes()
+
+
+def test_missed_publish_slot_marks_stale_without_a_failure():
+    """The 07:30 run has not arrived by 08:05 NEM: stale, and the reason says
+    which slot was missed. The live failure of 5 Sep 2026: the scheduled
+    fetch died silently, no failure was recorded, and is_stale read False."""
+    from datetime import datetime
+    coord = _make_pd7day_coordinator()
+    coord.last_success_at = datetime(2026, 9, 4, 21, 9, tzinfo=timezone.utc)  # 07:09 NEM
+    _serving_run(coord, "2026-09-04T18:00:00+10:00")
+    attrs = _attrs_at(coord, datetime(2026, 9, 4, 22, 5, tzinfo=timezone.utc))  # 08:05 NEM
+    assert attrs["is_stale"] is True
+    assert attrs["stale_reason"] == "missed 07:30 run"
+    assert attrs["last_success_at"] == "2026-09-05T07:09:00+10:00"
+    assert attrs["data_age_hours"] == 0.93
+
+
+def test_missed_slot_waits_for_the_grace_period():
+    """At 07:50 NEM the 07:30 slot is inside STALE_RUN_GRACE_MIN: not stale."""
+    from datetime import datetime
+    coord = _make_pd7day_coordinator()
+    coord.last_success_at = datetime(2026, 9, 4, 21, 9, tzinfo=timezone.utc)
+    _serving_run(coord, "2026-09-04T18:00:00+10:00")
+    attrs = _attrs_at(coord, datetime(2026, 9, 4, 21, 50, tzinfo=timezone.utc))  # 07:50 NEM
+    assert attrs["is_stale"] is False
+    assert attrs["stale_reason"] is None
+
+
+def test_current_run_is_not_stale_after_the_slot():
+    """Serving the 07:30 run at 08:05 NEM is fresh; the overnight case, the
+    18:00 run served at 06:00 NEM, is fresh too because the latest slot that
+    has passed is yesterday's 18:00."""
+    from datetime import datetime
+    coord = _make_pd7day_coordinator()
+    coord.last_success_at = datetime(2026, 9, 4, 21, 30, tzinfo=timezone.utc)
+    _serving_run(coord, "2026-09-05T07:30:00+10:00")
+    assert _attrs_at(coord, datetime(2026, 9, 4, 22, 5, tzinfo=timezone.utc))["is_stale"] is False
+    _serving_run(coord, "2026-09-04T18:00:00+10:00")
+    assert _attrs_at(coord, datetime(2026, 9, 4, 20, 0, tzinfo=timezone.utc))["is_stale"] is False  # 06:00 NEM
+
+
+def test_fetch_failure_reason_wins_over_the_missed_slot():
+    """A recorded failure keeps its own reason; the missed slot only fills in
+    when nothing else explains the staleness."""
+    from datetime import datetime
+    coord = _make_pd7day_coordinator()
+    coord.last_success_at = datetime(2026, 9, 4, 21, 9, tzinfo=timezone.utc)
+    coord.serving_stale = True
+    coord.stale_reason = "403 Forbidden"
+    _serving_run(coord, "2026-09-04T18:00:00+10:00")
+    attrs = _attrs_at(coord, datetime(2026, 9, 4, 22, 5, tzinfo=timezone.utc))
+    assert attrs["is_stale"] is True and attrs["stale_reason"] == "403 Forbidden"
+
+
+def test_missed_slot_rule_ignores_results_without_a_run_time():
+    """The dispatch coordinator and a bare MagicMock result carry no run time."""
+    from datetime import datetime
+    coord = _make_pd7day_coordinator()
+    coord.last_success_at = datetime(2026, 9, 4, 21, 9, tzinfo=timezone.utc)
+    coord.data = MagicMock(name="opaque")
+    attrs = _attrs_at(coord, datetime(2026, 9, 4, 22, 5, tzinfo=timezone.utc))
+    assert attrs["is_stale"] is False and attrs["stale_reason"] is None
