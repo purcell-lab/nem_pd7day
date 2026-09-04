@@ -124,6 +124,27 @@ class CalibrationStore:
         self._iso_history: list[dict] = []
 
     @property
+    def _log(self) -> ObservationLog:
+        """The daily segmented observation log, built on first use.
+
+        Built in ``__init__`` for real stores. Many tests construct the store
+        with ``__new__`` and assign only the attributes they need, so the log
+        is also created lazily from ``_hass`` and ``_region`` rather than
+        requiring every such helper to know about it.
+        """
+        log = self.__dict__.get("_log")
+        if log is None:
+            log = ObservationLog(
+                getattr(self, "_hass", None), getattr(self, "_region", "")
+            )
+            self.__dict__["_log"] = log
+        return log
+
+    @_log.setter
+    def _log(self, log: ObservationLog) -> None:
+        self.__dict__["_log"] = log
+
+    @property
     def _observations(self) -> list[dict[str, Any]]:
         """The flat observation list, owned by the daily segmented log."""
         return self._log.observations
