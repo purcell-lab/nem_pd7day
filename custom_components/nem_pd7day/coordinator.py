@@ -411,7 +411,8 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
     @property
     def current_run_features(self) -> "RunFeatures | None":
         """
-        Compute RunFeatures from the latest PD7DAY result in coordinator.data.
+        RunFeatures for the latest PD7DAY result in coordinator.data, computed
+        once per run.
 
         Mirrors calibration_engine._compute_run_features so the values fed to
         OLS apply() at runtime match those used during fitting:
@@ -420,10 +421,14 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
           run_spread     : p90 − p10 of raw forecast for horizon < 24h
         Horizon is interval START (period.time) minus the run datetime
         (forecast_generated_at).  Returns None if no usable data.
-        """
-        from .calibration_engine import RunFeatures, _p90_minus_p10
-        from .nem_time import parse_iso
 
+        Cached against the run identity (its generated-at stamp and interval
+        count). calibrate_interval reads this once per interval, so without
+        the cache a cold calibration of a 336 interval run parsed every
+        interval's timestamp 336 times over, 115,795 parses, which was 92 per
+        cent of a cold tariff state write and the source of the 0.4 to 0.9 s
+        event loop stalls in issue #135.
+        """
         result = self.data
         if result is None or not result.prices:
             return None
@@ -433,6 +438,20 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             return None
         if not price_data.forecast_generated_at:
             return None
+        key = (price_data.forecast_generated_at, len(price_data.forecast))
+        cached = getattr(self, "_run_features_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        features = self._compute_run_features(price_data)
+        self._run_features_cache = (key, features)
+        return features
+
+    @staticmethod
+    def _compute_run_features(price_data: Any) -> "RunFeatures | None":
+        """The uncached computation behind ``current_run_features``."""
+        from .calibration_engine import RunFeatures, _p90_minus_p10
+        from .nem_time import parse_iso
+
         try:
             run_dt = parse_iso(price_data.forecast_generated_at)
         except Exception:  # noqa: BLE001
