@@ -95,29 +95,31 @@ Wait for checks to go green again on the bump commit.
 
 ### 5. Tag and publish
 
-Put the notes in `docs/releases/vX.Y.Z.md` in the release commit, then tag it.
-Pushing the tag is the publish step: `.github/workflows/release.yml` runs the
-version lockstep check, creates the release from that file, and attaches the
-zip. No `gh` needed, which matters when releasing from a session that has git
-but no GitHub CLI.
+Put the notes in `docs/releases/vX.Y.Z.md` in the release commit and merge it
+to `main`. Publishing is then one manual run of `.github/workflows/release.yml`
+(**Actions > Release > Run workflow**, or `workflow_dispatch` through the API),
+the same house style as `purcell-lab/ha-amber-v2x`:
 
-```bash
-git tag -a vX.Y.Z -m "vX.Y.Z — <one-line summary>"
-git push origin vX.Y.Z
-```
+| Input | Value |
+|---|---|
+| `version` | `X.Y.Z`, without the leading `v`; must match `manifest.json` and the README table at the target |
+| `summary` | lower-case phrase, e.g. `cache run features per run`; becomes the tag message `vX.Y.Z: <summary>` and the release title `vX.Y.Z - <summary>` |
+| `target` | commit or branch to tag; defaults to the head of `main` |
+| `notes` | leave empty to use `docs/releases/vX.Y.Z.md`, falling back to the tagged commit's body |
+| `prerelease` | tick for a pre-release |
 
-From a session that can push branches but not tags (the Claude Code cloud
-git proxy is one), run the workflow by hand instead: **Actions > Release >
-Run workflow** on `main` with the tag as the input, or trigger the
-`workflow_dispatch` through the API. The workflow creates the tag at the
-`main` commit it checks out, so merge the release commit first.
-
-Creating the release by hand with `gh release create` still works; the same
-workflow attaches the zip when the release is published. If
-`docs/releases/vX.Y.Z.md` is missing, the workflow falls back to GitHub's
-generated notes, so write the file.
+The workflow runs the version lockstep check, refuses an existing tag (it
+never moves one), creates the annotated tag, publishes the release with
+`nem_pd7day.zip` attached, and verifies the tag object and the asset count.
+There is no tag-push path any more: a tag pushed by hand publishes nothing,
+which matters because the Claude Code cloud git proxy cannot push tags and a
+half-published release used to be the failure mode.
 
 ### 6. Verify the artifact
+
+The workflow's own Verify step prints the tag object type and the release
+with its asset count, and fails unless exactly one asset is attached. From
+outside:
 
 ```bash
 gh run list --workflow release.yml --limit 1
