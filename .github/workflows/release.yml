@@ -1,59 +1,90 @@
 name: "Release"
 
-# Three ways in, one outcome: a published GitHub release with nem_pd7day.zip
-# attached, which is what HACS installs from.
+# Tags a release commit and publishes the GitHub release with nem_pd7day.zip
+# attached, which is what HACS installs from. Same house style as
+# purcell-lab/ha-amber-v2x:
+#   tag      vX.Y.Z (annotated), message "vX.Y.Z: <summary>"
+#   release  title "vX.Y.Z - <summary>", notes from docs/releases/vX.Y.Z.md,
+#            or the input, or the tagged commit's body
 #
-#   * Push a tag vX.Y.Z: the release is created here from docs/releases/vX.Y.Z.md
-#     (falls back to GitHub's generated notes when that file is absent).
-#   * Run this workflow by hand with the tag as input: the tag is created at the
-#     checked-out commit along with the release. For releasing from a session
-#     that can push branches but not tags.
-#   * Publish a release by hand: the zip is attached to it.
-#
-# Every way the version lockstep check runs first and refuses to publish a
-# zip whose manifest.json disagrees with the tag.
+# Manual only. Bump manifest.json and the README version table in the release
+# commit first; the workflow refuses to tag a commit whose manifest and README
+# do not carry the version, because HACS installs what the manifest says, not
+# what the tag says. It never moves an existing tag.
+
 on:
-  push:
-    tags:
-      - "v*"
-  release:
-    types:
-      - "published"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag to create, vX.Y.Z; must match manifest.json"
+      version:
+        description: "Version without the leading v, e.g. 3.9.1. Must match manifest.json at the target."
         required: true
         type: string
+      summary:
+        description: "Lower-case summary phrase used in the tag message and the release title."
+        required: true
+        type: string
+      target:
+        description: "Commit sha or branch to tag. Defaults to the head of main."
+        required: false
+        default: main
+        type: string
+      notes:
+        description: "Release notes. Leave empty to use docs/releases/vX.Y.Z.md, or the tagged commit's message body when that file is absent."
+        required: false
+        type: string
+      prerelease:
+        description: "Mark the release as a pre-release."
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
 jobs:
   release:
-    name: "Release"
+    name: "Tag and release v${{ inputs.version }}"
     runs-on: "ubuntu-latest"
     permissions:
       contents: write
     steps:
-      - name: "Checkout the repository"
+      - name: "Checkout the target"
         uses: "actions/checkout@v6"
-
-      - name: "Resolve the tag"
-        id: tag
-        shell: "bash"
-        run: |
-          tag="${{ inputs.tag || github.event.release.tag_name || github.ref_name }}"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          if [ -f "docs/releases/${tag}.md" ]; then
-            echo "notes=docs/releases/${tag}.md" >> "$GITHUB_OUTPUT"
-          fi
+        with:
+          ref: ${{ inputs.target }}
+          fetch-depth: 0
 
       # A release cut from a manifest that still says the previous version
-      # installs as that previous version. Refuse to publish the zip unless
-      # the tag, manifest.json and the README version table agree.
-      - name: "Version lockstep"
+      # installs as that previous version. Refuse unless the tag, manifest.json
+      # and the README version table agree, and never move an existing tag.
+      - name: "Check the version is carried everywhere and the tag is new"
         shell: "bash"
-        run: python3 scripts/version_lockstep.py --tag "${{ steps.tag.outputs.tag }}"
+        run: |
+          python3 scripts/version_lockstep.py --tag "v${{ inputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${{ inputs.version }}" >/dev/null; then
+            echo "::error::tag v${{ inputs.version }} already exists. Delete it explicitly if it is wrong; this workflow never moves a tag."
+            exit 1
+          fi
+
+      - name: "Write the release notes"
+        shell: "bash"
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          if [ -n "$NOTES" ]; then
+            printf '%s\n' "$NOTES" > /tmp/notes.md
+          elif [ -f "docs/releases/v${{ inputs.version }}.md" ]; then
+            cp "docs/releases/v${{ inputs.version }}.md" /tmp/notes.md
+          else
+            # The tagged commit's body, minus trailer lines such as Co-Authored-By.
+            git log -1 --format=%b HEAD | python3 -c '
+          import re, sys
+          lines = sys.stdin.read().rstrip().splitlines()
+          while lines and re.match(r"^[A-Za-z-]+: \S", lines[-1]):
+              lines.pop()
+          print("\n".join(lines).strip())
+          ' > /tmp/notes.md
+          fi
+          echo "--- notes ---"; cat /tmp/notes.md
 
       - name: "ZIP the integration directory"
         shell: "bash"
@@ -61,13 +92,35 @@ jobs:
           cd "${{ github.workspace }}/custom_components/nem_pd7day"
           zip nem_pd7day.zip -r ./
 
-      - name: "Create or update the release and upload the ZIP"
-        uses: "softprops/action-gh-release@v2.3.2"
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          # Where a tag that does not exist yet is created (the dispatch path).
-          target_commitish: ${{ github.sha }}
-          name: ${{ steps.tag.outputs.tag }}
-          body_path: ${{ steps.tag.outputs.notes }}
-          generate_release_notes: ${{ steps.tag.outputs.notes == '' }}
-          files: ${{ github.workspace }}/custom_components/nem_pd7day/nem_pd7day.zip
+      - name: "Create the annotated tag"
+        shell: "bash"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ inputs.version }}" -m "v${{ inputs.version }}: ${{ inputs.summary }}" HEAD
+          git push origin "refs/tags/v${{ inputs.version }}"
+
+      - name: "Publish the release with the ZIP attached"
+        shell: "bash"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            "${{ github.workspace }}/custom_components/nem_pd7day/nem_pd7day.zip" \
+            --title "v${{ inputs.version }} - ${{ inputs.summary }}" \
+            --notes-file /tmp/notes.md \
+            --verify-tag \
+            ${{ inputs.prerelease && '--prerelease' || '' }}
+
+      - name: "Verify"
+        shell: "bash"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/git/refs/tags/v${{ inputs.version }}" --jq '"tag object type: \(.object.type)"'
+          gh api "repos/${{ github.repository }}/releases/tags/v${{ inputs.version }}" --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease) assets=\(.assets|length) \(.name)"'
+          assets=$(gh api "repos/${{ github.repository }}/releases/tags/v${{ inputs.version }}" --jq '.assets|length')
+          if [ "$assets" != "1" ]; then
+            echo "::error::expected exactly one asset (nem_pd7day.zip), found $assets"
+            exit 1
+          fi
