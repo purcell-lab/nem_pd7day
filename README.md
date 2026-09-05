@@ -92,7 +92,9 @@ The integration uses a two-stage forecasting pipeline:
 This removes the integration and all its entities. Calibration storage files are not automatically deleted. To fully clean up, remove the following files from your HA config `.storage/` directory:
 
 ```bash
-rm /config/.storage/nem_pd7day.{region}.observation_log
+rm /config/.storage/nem_pd7day.{region}.observation_segments
+rm /config/.storage/nem_pd7day.{region}.observations.*
+rm /config/.storage/nem_pd7day.{region}.observation_log   # only on installs upgraded from before v3.9.0
 rm /config/.storage/nem_pd7day.{region}.calibration_coefficients
 rm /config/.storage/nem_pd7day.{region}.forecast_history
 rm /config/.storage/nem_pd7day.{region}.stpasa

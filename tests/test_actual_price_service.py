@@ -95,6 +95,25 @@ _service_mod = _load(
 from custom_components.nem_pd7day.actual_price_service import ActualPriceService
 from custom_components.nem_pd7day.nem_time import NEM_TZ
 from custom_components.nem_pd7day.calibration_store import CalibrationStore
+from custom_components.nem_pd7day.observation_log import ObservationLog
+
+
+class _MemoryStore:
+    """Dict-backed stand-in for an HA Store: load, save, remove, no delay."""
+
+    _data: dict = {}
+
+    def __init__(self, key: str) -> None:
+        self._key = key
+
+    async def async_load(self):
+        return _MemoryStore._data.get(self._key)
+
+    async def async_save(self, data) -> None:
+        _MemoryStore._data[self._key] = data
+
+    async def async_remove(self) -> None:
+        _MemoryStore._data.pop(self._key, None)
 from custom_components.nem_pd7day.calibration_engine import CalibrationEngine
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -108,6 +127,7 @@ def make_store() -> CalibrationStore:
     store = CalibrationStore.__new__(CalibrationStore)
     store._hass = MagicMock()
     store._region = "QLD1"
+    store._log = ObservationLog(store._hass, "QLD1", store_factory=_MemoryStore)
     store._obs_store = AsyncMock()
     store._obs_store.async_load = AsyncMock(return_value=None)
     store._obs_store.async_save = AsyncMock()
@@ -118,7 +138,6 @@ def make_store() -> CalibrationStore:
     store._fh_store.async_load = AsyncMock(return_value=None)
     store._fh_store.async_save = AsyncMock()
     store._engine = CalibrationEngine()
-    store._observations = []
     store._calibration = None
     store._forecast_history = {}
     store._actual_accum = {}

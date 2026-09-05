@@ -217,6 +217,16 @@ def storage_keys(region: str) -> tuple[str, str, str]:
     )
 
 
+def observation_manifest_key(region: str) -> str:
+    """Storage key of the list of daily observation segments for a region."""
+    return f"nem_pd7day.{region.lower()}.observation_segments"
+
+
+def observation_segment_key(region: str, date: str) -> str:
+    """Storage key of one day's observations (``date`` is YYYY-MM-DD, NEM)."""
+    return f"nem_pd7day.{region.lower()}.observations.{date}"
+
+
 # Legacy (unscoped) key names — used only for one-time migration
 _LEGACY_OBS_KEY = "nem_pd7day.observation_log"
 _LEGACY_COEFF_KEY = "nem_pd7day.calibration_coefficients"
@@ -229,6 +239,8 @@ _LEGACY_FH_KEY = "nem_pd7day.forecast_history"
 # #127). 100,000 is about 93 days, so the window is the constant again. At
 # roughly 500 bytes per observation the store is about 50 MB per region on
 # disk; see calibration_store._save_observations for how writes are paced.
+# Pruning drops whole days (see observation_log.py), so the retained count
+# settles up to a day's worth below the cap rather than exactly at it.
 MAX_TOTAL_OBS = 100_000
 # Seconds to hold observation-log writes so a burst of settling intervals
 # becomes one file rewrite. Home Assistant still flushes a pending delayed

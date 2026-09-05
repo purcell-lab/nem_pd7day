@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
+from .observation_log import ObservationLog
 from .calibration_engine import (
     OBSERVATION_WINDOW_DAYS,
     CalibrationEngine,
@@ -45,7 +46,6 @@ from .const import (
     MAX_HORIZON_HOURS,
     MAX_TOTAL_OBS,
     NEM_TZ,
-    OBS_SAVE_DELAY_S,
     SPIKE_GAS_THRESHOLD_TJ,
     SPIKE_QNI_THRESHOLD_MW,
     STORAGE_VERSION,
@@ -87,7 +87,9 @@ class CalibrationStore:
         self._fh_store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, fh_key)
         self._engine = CalibrationEngine()
 
-        self._observations: list[dict[str, Any]] = []
+        # Daily segmented observation log (issue #130). ``_obs_store`` is the
+        # previous single-file store, read once to migrate and then removed.
+        self._log = ObservationLog(hass, region)
         self._calibration: CalibrationResult | None = None
         # Monotonic counter, bumped every time the calibration changes in a way
         # that changes calibrated output. Consumers memoise calibrated forecasts
@@ -121,28 +123,69 @@ class CalibrationStore:
         # to sit here could only ever hold one key (issue #110).
         self._iso_history: list[dict] = []
 
+    @property
+    def _log(self) -> ObservationLog:
+        """The daily segmented observation log, built on first use.
+
+        Built in ``__init__`` for real stores. Many tests construct the store
+        with ``__new__`` and assign only the attributes they need, so the log
+        is also created lazily from ``_hass`` and ``_region`` rather than
+        requiring every such helper to know about it.
+        """
+        log = self.__dict__.get("_log")
+        if log is None:
+            log = ObservationLog(
+                getattr(self, "_hass", None), getattr(self, "_region", "")
+            )
+            self.__dict__["_log"] = log
+        return log
+
+    @_log.setter
+    def _log(self, log: ObservationLog) -> None:
+        self.__dict__["_log"] = log
+
+    @property
+    def _observations(self) -> list[dict[str, Any]]:
+        """The flat observation list, owned by the daily segmented log."""
+        return self._log.observations
+
+    @_observations.setter
+    def _observations(self, rows: list[dict[str, Any]]) -> None:
+        self._log.replace_all(rows)
+
     # ── Startup ───────────────────────────────────────────────────────────────
 
     async def async_load(self) -> None:
         """Load calibration state from storage, migrating legacy keys if needed."""
 
         # ── Load observations ────────────────────────────────────────────────
-        obs_data = await self._obs_store.async_load()
+        # Daily segments are the current format. With no manifest the single
+        # file store is split into segments and removed, and before that the
+        # unscoped legacy key is tried, so an install from any version lands
+        # in the current format after one load (issue #130).
+        single_file = self._obs_store
+        legacy_unscoped: Store[dict[str, Any]] = Store(
+            self._hass, STORAGE_VERSION, _LEGACY_OBS_KEY
+        )
+        migrated_from: list[Any] = []
 
-        if obs_data is None:
-            legacy_obs_store: Store[dict[str, Any]] = Store(
-                self._hass, STORAGE_VERSION, _LEGACY_OBS_KEY
+        async def _from_store(store: Any) -> list[dict] | None:
+            data = await store.async_load()
+            rows = (data or {}).get("observations") if isinstance(data, dict) else None
+            if rows:
+                migrated_from.append(store)
+            return rows
+
+        await self._log.async_load(
+            legacy_loaders=(
+                lambda: _from_store(single_file),
+                lambda: _from_store(legacy_unscoped),
             )
-            legacy_data = await legacy_obs_store.async_load()
-            if legacy_data:
-                _LOGGER.info(
-                    "Migrating observation log from legacy storage key to "
-                    "nem_pd7day.%s.observation_log", self._region.lower()
-                )
-                await self._obs_store.async_save(legacy_data)
-                obs_data = legacy_data
-
-        self._observations = (obs_data or {}).get("observations", [])
+        )
+        for store in migrated_from:
+            remove = getattr(type(store), "async_remove", None)
+            if remove is not None:
+                await store.async_remove()
 
         # ── Load coefficients ────────────────────────────────────────────────
         coeff_data = await self._coeff_store.async_load()
@@ -192,14 +235,16 @@ class CalibrationStore:
 
         self._forecast_history = (fh_data or {}).get("forecast_history", {})
 
-        # Rebuild in-memory accumulator index from observations
+        # Rebuild the in-memory accumulator from observations. It holds the
+        # observation dict itself, not its position: positions shift when the
+        # log is pruned and the accumulator was never rebuilt (issue #132).
         self._actual_accum = {
             (o["interval_time"], o["forecast_run_at"]): {
                 "sum": o["actual_rrp"],
                 "count": 1,
-                "obs_idx": i,
+                "obs": o,
             }
-            for i, o in enumerate(self._observations)
+            for o in self._observations
             if "interval_time" in o and "forecast_run_at" in o
         }
 
@@ -363,7 +408,8 @@ class CalibrationStore:
                 acc["sum"] += actual_rrp
                 acc["count"] += 1
                 new_avg = acc["sum"] / acc["count"]
-                self._observations[acc["obs_idx"]]["actual_rrp"] = round(new_avg, 6)
+                acc["obs"]["actual_rrp"] = round(new_avg, 6)
+                self._log.touch(acc["obs"])
                 _LOGGER.debug(
                     "Updated actual_rrp for interval %s run_at %s: "
                     "avg=%.4f over %d readings",
@@ -408,18 +454,20 @@ class CalibrationStore:
                 ) / max(demand50, 1.0)
                 obs["stpasa_run_at"] = fc.get("stpasa_run_at", "")
 
-            obs_idx = len(self._observations)
-            self._observations.append(obs)
+            self._log.append(obs)
             self._actual_accum[pair_key] = {
                 "sum": actual_rrp,
                 "count": 1,
-                "obs_idx": obs_idx,
+                "obs": obs,
             }
             new_count += 1
 
         if new_count:
-            if len(self._observations) > MAX_TOTAL_OBS:
-                self._observations = self._observations[-MAX_TOTAL_OBS:]
+            for dropped in self._log.prune(MAX_TOTAL_OBS):
+                interval = dropped.get("interval_time")
+                run_at = dropped.get("forecast_run_at")
+                if isinstance(interval, str) and isinstance(run_at, str):
+                    self._actual_accum.pop((interval, run_at), None)
             await self._save_observations()
             _LOGGER.debug(
                 "Logged %d observations for interval %s (total=%d)",
@@ -429,26 +477,15 @@ class CalibrationStore:
         return new_count
 
     async def _save_observations(self) -> None:
-        """Persist the observation log, coalescing bursts of writes.
+        """Persist whatever the daily segmented log has changed.
 
-        Every save rewrites the whole file, about 500 bytes per observation,
-        so at MAX_TOTAL_OBS that is roughly 50 MB per region. Observations
-        arrive as dispatch prices settle, several times per half hour, and an
-        immediate write each time is gigabytes a day across five regions on
-        whatever the config directory lives on (issue #127 raised the cap;
-        the write pattern is tracked separately). ``async_delay_save`` folds
-        a burst into one write OBS_SAVE_DELAY_S after the first change and
-        still flushes on Home Assistant stop. The check is on the store's
-        class, not the instance: the AsyncMock doubles in the tests answer
-        any attribute on the instance, and an immediate save is the right
-        thing for them.
+        Only the days touched since the last save are written, through Home
+        Assistant's delayed save so a burst inside OBS_SAVE_DELAY_S becomes
+        one write per day, and days dropped by pruning are removed. The
+        previous design rewrote the whole log, about 50 MB per region at
+        MAX_TOTAL_OBS, on every settled interval (issue #130).
         """
-        if hasattr(type(self._obs_store), "async_delay_save"):
-            self._obs_store.async_delay_save(
-                lambda: {"observations": self._observations}, OBS_SAVE_DELAY_S
-            )
-            return
-        await self._obs_store.async_save({"observations": self._observations})
+        await self._log.async_save()
 
     # ── STPASA feature map ─────────────────────────────────────────────────────
 

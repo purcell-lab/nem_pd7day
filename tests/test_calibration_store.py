@@ -74,6 +74,25 @@ from custom_components.nem_pd7day.calibration_engine import (
     CalibrationEngine, Observation,
 )
 from custom_components.nem_pd7day.calibration_store import CalibrationStore
+from custom_components.nem_pd7day.observation_log import ObservationLog
+
+
+class _MemoryStore:
+    """Dict-backed stand-in for an HA Store: load, save, remove, no delay."""
+
+    _data: dict = {}
+
+    def __init__(self, key: str) -> None:
+        self._key = key
+
+    async def async_load(self):
+        return _MemoryStore._data.get(self._key)
+
+    async def async_save(self, data) -> None:
+        _MemoryStore._data[self._key] = data
+
+    async def async_remove(self) -> None:
+        _MemoryStore._data.pop(self._key, None)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -103,6 +122,7 @@ def make_store() -> CalibrationStore:
     store = CalibrationStore.__new__(CalibrationStore)
     store._hass = hass
     store._region = "QLD1"
+    store._log = ObservationLog(store._hass, "QLD1", store_factory=_MemoryStore)
     store._obs_store = AsyncMock()
     store._obs_store.async_load = AsyncMock(return_value=None)
     store._obs_store.async_save = AsyncMock()
@@ -113,7 +133,6 @@ def make_store() -> CalibrationStore:
     store._fh_store.async_load = AsyncMock(return_value=None)
     store._fh_store.async_save = AsyncMock()
     store._engine = CalibrationEngine()
-    store._observations = []
     store._calibration = None
     store._forecast_history = {}
     store._actual_accum = {}
@@ -312,7 +331,7 @@ def test_accumulator_rebuilt_from_loaded_observations():
         ("2026-04-14T21:00:00+10:00", "2026-04-14T18:00:00+10:00"): {
             "sum": 0.092,
             "count": 1,
-            "obs_idx": 0,
+            "obs": store._observations[0],
         }
     }
     # Also rebuild forecast history so the lookup succeeds
@@ -1368,33 +1387,36 @@ def test_summary_reports_the_effective_window_from_the_oldest_observation():
     assert attrs["observation_window_days"] == 90
 
 
-def test_observation_log_is_saved_through_a_delayed_save_when_the_store_offers_one():
-    """A real HA Store folds a burst of writes into one; a double without
-    async_delay_save on its class is saved immediately."""
-    class _DelayStore:
-        def __init__(self):
-            self.delayed = []
-            self.saved = []
-        def async_delay_save(self, data_func, delay):
-            self.delayed.append((data_func, delay))
-        async def async_save(self, data):
-            self.saved.append(data)
-
+def test_record_actual_persists_only_the_touched_day():
+    """A settled interval writes its own day's segment and the manifest,
+    not the whole log (issue #130)."""
     store = make_store()
-    store._observations = [{"interval_time": "2026-09-05T07:30:00+10:00"}]
-    delayed = _DelayStore()
-    store._obs_store = delayed
+    _MemoryStore._data.clear()
+    old_day = {"interval_time": "2026-08-20T12:00:00+10:00", "forecast_run_at": "2026-08-20T07:30:00+10:00",
+               "actual_rrp": 0.05, "pd7day_forecast": 0.06, "horizon_hours": 4.5}
+    store._observations = [old_day]
     asyncio.run(store._save_observations())
-    assert delayed.saved == []
-    assert len(delayed.delayed) == 1
-    data_func, delay = delayed.delayed[0]
-    assert delay == 300
-    assert data_func() == {"observations": store._observations}
+    saved_before = dict(_MemoryStore._data)
+    assert "nem_pd7day.qld1.observations.2026-08-20" in saved_before
 
-    plain = make_store()
-    plain._observations = [{"interval_time": "2026-09-05T07:30:00+10:00"}]
-    asyncio.run(plain._save_observations())
-    plain._obs_store.async_save.assert_awaited_once_with({"observations": plain._observations})
+    run_at = datetime(2026, 9, 5, 7, 30, tzinfo=NEM_TZ)
+    interval = datetime(2026, 9, 5, 12, 0, tzinfo=NEM_TZ)
+    store._forecast_history[nem_iso(interval)] = [{
+        "run_at": nem_iso(run_at), "forecast_price": 0.08, "region": "QLD1",
+        "gas_tj": None, "qni_mwflow": None, "qni_violation": None, "is_intervention": False,
+    }]
+    _MemoryStore._data.clear()
+    asyncio.run(store.async_record_actual(nem_iso(interval), 0.07))
+    written = sorted(_MemoryStore._data)
+    assert written == [
+        "nem_pd7day.qld1.observation_segments",
+        "nem_pd7day.qld1.observations.2026-09-05",
+    ], written
+    assert _MemoryStore._data["nem_pd7day.qld1.observation_segments"] == {
+        "dates": ["2026-08-20", "2026-09-05"]
+    }
+    assert len(store._observations) == 2
+    assert store._observations[0] is old_day
 
 
 def test_observation_log_is_pruned_to_max_total_obs():
