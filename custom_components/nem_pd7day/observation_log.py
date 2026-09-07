@@ -53,6 +53,20 @@ def segment_date(obs: dict) -> str:
     return UNDATED_SEGMENT
 
 
+def _sort_key(date: str) -> tuple[int, str]:
+    """Chronological key for a segment date: undated sorts first.
+
+    A plain string sort puts ``UNDATED_SEGMENT`` ("undated") after every real
+    "YYYY-MM-DD" key, so it read as the newest possible day everywhere in this
+    module: never pruned (the newest-day guard in ``prune`` protected it),
+    presented at the tail of the flat list as if most recent, and once one
+    existed every subsequent append fell onto the ``_rebuild_flat`` path
+    because the tail's date compared greater than any real date (issue #141).
+    An undated row is not newer than anything, so it sorts first instead.
+    """
+    return (0, "") if date == UNDATED_SEGMENT else (1, date)
+
+
 def _default_store_factory(hass: Any) -> StoreFactory:
     from homeassistant.helpers.storage import Store
 
@@ -91,7 +105,7 @@ class ObservationLog:
 
     @property
     def dates(self) -> list[str]:
-        return sorted(self._segments)
+        return sorted(self._segments, key=_sort_key)
 
     @property
     def dirty_dates(self) -> set[str]:
@@ -106,7 +120,7 @@ class ObservationLog:
 
     def _rebuild_flat(self) -> None:
         flat: list[dict] = []
-        for date in sorted(self._segments):
+        for date in sorted(self._segments, key=_sort_key):
             flat.extend(self._segments[date])
         self._observations = flat
 
@@ -166,8 +180,12 @@ class ObservationLog:
         self._segments[date].append(obs)
         self._dirty.add(date)
         # Appending to the newest day keeps the flat list ordered; a row for
-        # an older day (a late-settling interval) needs a rebuild.
-        if self._observations and segment_date(self._observations[-1]) > date:
+        # an older day (a late-settling interval, or an undated row, which
+        # sorts as the oldest) needs a rebuild instead. Compared by
+        # _sort_key, not the raw strings: "undated" > any real date lexically,
+        # which used to make every append after one undated row take the
+        # rebuild path (issue #141).
+        if self._observations and _sort_key(segment_date(self._observations[-1])) > _sort_key(date):
             self._rebuild_flat()
         else:
             self._observations.append(obs)
@@ -190,11 +208,15 @@ class ObservationLog:
 
         Returns the dropped observations so the caller can retire whatever
         it indexes them by. The newest day is never dropped, so a cap below
-        one day's worth of rows degrades to keeping that day.
+        one day's worth of rows degrades to keeping that day. The undated
+        segment, if present, sorts as the oldest and so is always the first
+        candidate dropped (issue #141): it was previously reached last, by
+        which point the newest-day guard below protected it as if it were the
+        most recent day, so it accumulated without bound.
         """
         dropped: list[dict] = []
         total = len(self._observations)
-        for date in sorted(self._segments):
+        for date in sorted(self._segments, key=_sort_key):
             if total <= max_total or len(self._segments) <= 1:
                 break
             rows = self._segments.pop(date)
