@@ -774,9 +774,15 @@ class BucketModel:
 
         return {
             "calibrated": round(calibrated, 6),
-            # Same number as "calibrated" since issue #114; kept as its own
-            # key for stage 2 and older callers. See stage2_iso_feature.
-            ISO_FEATURE_KEY: round(iso_raw, 6),
+            # Same number as "calibrated", the floored value, not iso_raw:
+            # every apply_all branch publishes the feature equal to the point
+            # estimate (see the below-domain and no-model branches above), and
+            # stage2_iso_feature's docstring states it as the invariant. This
+            # branch used to publish the unfloored iso_raw here instead, so a
+            # fitted step dragged below MARKET_PRICE_FLOOR by a corrupt
+            # observation batch fed stage 2 a feature more extreme than the
+            # price it was ever shown next to (issue #144).
+            ISO_FEATURE_KEY: round(calibrated, 6),
             "p10": round(p10, 6) if p10 is not None else None,
             "p50": round(p50, 6) if p50 is not None else None,
             "p90": round(p90, 6) if p90 is not None else None,
