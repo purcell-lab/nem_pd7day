@@ -20,9 +20,12 @@ injected timer function and clock.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from functools import partial
 from typing import Any, Callable
+
+_LOGGER = logging.getLogger(__name__)
 
 Slot = tuple[int, int]
 CancelFn = Callable[[], None]
@@ -142,5 +145,15 @@ class DailyFetchScheduler:
         self._pending.pop(slot, None)
         if self._stopped:
             return
-        self._action(*slot)
-        self._arm(slot)
+        # Re-arm in a finally: an action that raises must not kill the slot.
+        # This was popped from _pending above and nothing else re-arms it, so
+        # a bare self._action(*slot) followed by self._arm(slot) left that
+        # publish slot dead until the entry reloaded whenever the action
+        # raised (entry.async_create_background_task does, if the config
+        # entry is mid-teardown or mid-reload). Issue #140.
+        try:
+            self._action(*slot)
+        except Exception:  # noqa: BLE001 - a slot must outlive its action
+            _LOGGER.exception("Scheduled fetch action failed for slot %s", slot)
+        finally:
+            self._arm(slot)

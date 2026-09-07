@@ -7,6 +7,7 @@ real scheduler with an injected timer registry and clock.
 """
 from __future__ import annotations
 
+import logging
 import sys
 import types
 from datetime import datetime, timezone
@@ -126,6 +127,67 @@ def test_rearm_replaces_rather_than_stacks():
     sched.start()
     assert sched.pending_count == 3
     assert len(timers.live) == 3
+
+
+# ── A raising action must not kill its slot ───────────────────────────────────
+
+def test_raising_action_still_rearms_its_slot(caplog):
+    """Issue #140: the old code popped the slot, called the action, then
+    re-armed with nothing in between, so an action that raised left that
+    slot with no live timer until the entry reloaded. It must survive.
+
+    A single slot, so advancing the clock to the next firing cannot bring a
+    sibling slot due at the same time and confuse the count.
+    """
+    def raising_action(hour, minute):
+        raise RuntimeError(f"boom {hour}:{minute}")
+
+    timers = _Timers()
+    clock = _Clock(datetime(2026, 9, 3, 23, 0, tzinfo=timezone.utc))
+    sched = DailyFetchScheduler(
+        hass=object(), slots=[(3, 0)], action=raising_action, track=timers, now=clock,
+    )
+    sched.start()
+    assert sched.pending_count == 1
+
+    clock.now = datetime(2026, 9, 4, 3, 0, tzinfo=timezone.utc)
+    with caplog.at_level(logging.ERROR):
+        assert timers.fire_due(clock.now) == 1
+    assert sched.pending_count == 1, (
+        "a raising action must not leave its slot without a live timer"
+    )
+    assert len(timers.live) == 1
+    assert "Scheduled fetch action failed for slot (3, 0)" in caplog.text
+
+    # And the slot fires again the next day, same as any other.
+    clock.now = datetime(2026, 9, 5, 3, 0, tzinfo=timezone.utc)
+    assert timers.fire_due(clock.now) == 1
+    assert sched.pending_count == 1
+
+
+def test_cancel_all_during_a_raising_action_still_stops():
+    """cancel_all invoked from inside a raising action (e.g. the action tears
+    the entry down) must still leave the scheduler stopped with nothing
+    pending, not resurrect the slot in the finally."""
+    sched_holder: list = []
+
+    def action_that_cancels(hour, minute):
+        sched_holder[0].cancel_all()
+        raise RuntimeError("entry gone")
+
+    timers = _Timers()
+    clock = _Clock(datetime(2026, 9, 3, 23, 0, tzinfo=timezone.utc))
+    sched = DailyFetchScheduler(
+        hass=object(), slots=SLOTS, action=action_that_cancels, track=timers, now=clock,
+    )
+    sched_holder.append(sched)
+    sched.start()
+
+    clock.now = datetime(2026, 9, 4, 3, 0, tzinfo=timezone.utc)
+    assert timers.fire_due(clock.now) == 1
+    assert sched.stopped
+    assert sched.pending_count == 0
+    assert timers.live == {}
 
 
 # ── The timer action must run on the event loop ──────────────────────────────
