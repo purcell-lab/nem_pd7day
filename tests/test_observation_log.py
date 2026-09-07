@@ -10,6 +10,7 @@ import asyncio
 from custom_components.nem_pd7day.observation_log import (
     UNDATED_SEGMENT,
     ObservationLog,
+    _sort_key,
     segment_date,
 )
 
@@ -60,6 +61,15 @@ def _obs(day: str, hour: int, run: str = "07:30") -> dict:
     }
 
 
+def _undated_obs() -> dict:
+    return {
+        "interval_time": None,
+        "forecast_run_at": "2026-09-01T07:30:00+10:00",
+        "actual_rrp": 0.05,
+        "pd7day_forecast": 0.06,
+    }
+
+
 def _log(backend: _Backend, store_cls=_Store) -> ObservationLog:
     return ObservationLog(
         hass=object(), region="SA1",
@@ -72,6 +82,90 @@ def test_segment_date_reads_the_nem_day_and_tolerates_junk():
     assert segment_date({"interval_time": None}) == UNDATED_SEGMENT
     assert segment_date({}) == UNDATED_SEGMENT
     assert segment_date({"interval_time": "not a date"}) == UNDATED_SEGMENT
+
+
+# ── Issue #141: undated segments must sort as the oldest, not the newest ─────
+
+def test_sort_key_puts_undated_before_every_real_date():
+    """A plain string sort put "undated" after every "YYYY-MM-DD" key, so an
+    undated segment read as the newest possible day everywhere in the module.
+    It is not newer than anything, so its key must compare lowest instead."""
+    assert _sort_key(UNDATED_SEGMENT) < _sort_key("2026-01-01")
+    assert _sort_key("2026-09-04") < _sort_key("2026-09-05")
+    assert _sort_key(UNDATED_SEGMENT) < _sort_key("0001-01-01")
+
+
+def test_prune_drops_the_undated_segment_before_any_dated_day():
+    """Before the fix, "undated" sorted last, so prune reached it after every
+    real day and the newest-day guard then protected it as if it were the
+    most recent: a genuine dated day was dropped in its place. 3 undated
+    rows plus 3 dated days of 4 rows each is 15 total; capping at 12 must
+    drop exactly the 3 undated rows and leave every dated day intact."""
+    b = _Backend()
+    log = _log(b)
+    for _ in range(3):
+        log.append(_undated_obs())
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        for hour in range(4):
+            log.append(_obs(day, hour))
+    assert len(log.observations) == 15
+
+    dropped = log.prune(max_total=12)
+    assert len(dropped) == 3
+    assert all(segment_date(o) == UNDATED_SEGMENT for o in dropped), (
+        "prune must drop the undated segment, not a dated day"
+    )
+    assert log.dates == ["2026-09-01", "2026-09-02", "2026-09-03"], (
+        "every dated day must survive a prune that only needs to drop the "
+        "undated segment to reach the cap"
+    )
+    assert len(log.observations) == 12
+
+
+def test_undated_rows_do_not_present_as_the_most_recent():
+    """The flat list is documented oldest day first; an undated row is not
+    newer than a real date and must not sit at the tail as though it were."""
+    b = _Backend()
+    log = _log(b)
+    log.append(_obs("2026-09-01", 12))
+    log.append(_undated_obs())
+    log.append(_obs("2026-09-02", 12))
+    assert segment_date(log.observations[0]) == UNDATED_SEGMENT
+    assert segment_date(log.observations[-1]) == "2026-09-02", (
+        "the most recent dated row must be the tail, not the undated one"
+    )
+
+
+def test_append_after_an_undated_row_does_not_force_repeated_rebuilds():
+    """Once an undated segment exists, every following append used to
+    compare its date against the tail's "undated" string and lose (any real
+    date sorts lower than "undated" lexically), forcing a full _rebuild_flat
+    on every single append thereafter. One rebuild is needed to move the
+    undated segment ahead of the dated tail; nothing after that should
+    rebuild for same-day or later appends."""
+    b = _Backend()
+    log = _log(b)
+    log.append(_obs("2026-09-01", 0))
+
+    calls = []
+    real_rebuild = log._rebuild_flat
+
+    def counting() -> None:
+        calls.append(1)
+        real_rebuild()
+
+    log._rebuild_flat = counting
+
+    log.append(_undated_obs())
+    assert len(calls) == 1, "inserting the undated row ahead of the dated tail needs one rebuild"
+
+    for hour in range(1, 20):
+        log.append(_obs("2026-09-01", hour))
+    assert len(calls) == 1, (
+        f"19 subsequent same-day appends triggered {len(calls) - 1} extra "
+        "rebuilds; each one should have taken the O(1) append path"
+    )
+    assert len(log.observations) == 21
 
 
 def test_empty_log_loads_to_nothing_and_saves_nothing():
