@@ -203,9 +203,9 @@ All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (
 | `stale_reason` | The failure being served through, e.g. `403 Forbidden`, or `missed 07:30 run` when a slot passed without its file; `null` when fresh |
 | `forecast` | List of all forecast periods (see below) |
 | `next_value` | Calibrated price for the next interval |
-| `min_24h_value` | Minimum calibrated price in the next 24 hours |
-| `max_24h_value` | Maximum calibrated price in the next 24 hours |
-| `cheapest_2h_window` | Best contiguous 2-hour window over 7 days |
+| `min_24h_value` | Minimum calibrated price in the first 24 hours of this sensor's window (the 24 hours after the Amber Express cutoff) |
+| `max_24h_value` | Maximum calibrated price in the first 24 hours of this sensor's window |
+| `cheapest_2h_window` | Best contiguous 2-hour window over the whole days 2–7 window, by design |
 
 Each entry in `forecast` contains:
 
