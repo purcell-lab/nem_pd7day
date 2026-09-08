@@ -272,7 +272,7 @@ Default interconnectors per region:
 | `observation_window_days` | The configured training window, 90 days |
 | `oldest_observation` | Interval time of the oldest observation still in the store |
 | `effective_window_days` | Days from the oldest retained observation to now; shorter than the configured window when the store cap (100,000 observations, about 93 days) binds |
-| `summary` | `buckets`: per-bucket isotonic diagnostics (n, iso_n_steps, compression_ratio, iso_mae, x_min, x_max, q10_a, q90_a). `stage2`: per-bucket stage-2 diagnostics for buckets with a fitted OLS model (n_train, r2, resid_q10/q50/q90, and feature_min/feature_max keyed by feature name: the training range the serving gate accepts) |
+| `summary` | `buckets`: per-bucket isotonic diagnostics (n, iso_n_steps, compression_ratio, iso_mae, x_min, x_max, q10_a, q90_a). `stage2`: per-bucket stage-2 diagnostics for buckets with a fitted OLS model (n_train, r2, coef with the intercept first then the feature order of feature_min, resid_q10/q50/q90, and feature_min/feature_max keyed by feature name: the training range the serving gate accepts) |
 
 #### Forecast history attributes
 
