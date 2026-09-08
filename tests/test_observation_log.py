@@ -337,3 +337,50 @@ def test_replace_all_rebuilds_every_day_dirty():
     assert log.dates == ["2026-09-01", "2026-09-02"]
     assert [segment_date(o) for o in log.observations] == ["2026-09-01", "2026-09-02"]
     assert log.dirty_dates == {"2026-09-01", "2026-09-02"}
+
+
+# ── Issue #144 (finding D): a pruned day must not be recreated by a write ────
+# that outlived it. Investigated against Home Assistant's real Store
+# (homeassistant/helpers/storage.py): Store.async_remove() calls
+# self._async_cleanup_delay_listener(), which cancels a pending
+# async_delay_save timer on *that instance*. That only protects a pruned day
+# because ObservationLog hands async_remove() the identical Store object the
+# delayed save was scheduled on, via the per-date cache in self._stores,
+# rather than a freshly constructed one. This test pins that reuse rather
+# than changing behaviour, since no bug survived the check against the real
+# Store implementation.
+
+def test_prune_removes_a_delayed_day_through_the_same_store_instance():
+    b = _Backend()
+    seen: dict[str, list[tuple[str, int]]] = {"delay_save": [], "remove": []}
+
+    class _TrackedDelayStore(_DelayStore):
+        def async_delay_save(self, data_func, delay) -> None:
+            seen["delay_save"].append((self.key, id(self)))
+            super().async_delay_save(data_func, delay)
+
+        async def async_remove(self) -> None:
+            seen["remove"].append((self.key, id(self)))
+            await super().async_remove()
+
+    log = _log(b, _TrackedDelayStore)
+    log.append(_obs("2026-09-01", 12))
+    asyncio.run(log.async_save())  # schedules a delayed save for 2026-09-01
+
+    # A second day, still open, so the delayed save above is scheduled and
+    # pending, not yet fired, when 2026-09-01 is pruned below.
+    log.append(_obs("2026-09-02", 12))
+    dropped = log.prune(max_total=1)
+    assert len(dropped) == 1 and segment_date(dropped[0]) == "2026-09-01"
+    asyncio.run(log.async_save())  # must remove 2026-09-01 through that same instance
+
+    target_key = "nem_pd7day.sa1.observations.2026-09-01"
+    delay_ids = [obj_id for key, obj_id in seen["delay_save"] if key == target_key]
+    remove_ids = [obj_id for key, obj_id in seen["remove"] if key == target_key]
+    assert len(delay_ids) == 1 and len(remove_ids) == 1
+    assert delay_ids[0] == remove_ids[0], (
+        "a pruned day must be removed through the exact Store instance its "
+        "delayed save was scheduled on, or Home Assistant's real cancel-on-"
+        "remove guarantee does not apply to it and a late-firing delayed "
+        "write can recreate the file after removal"
+    )

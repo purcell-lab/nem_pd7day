@@ -209,6 +209,11 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         # recalibrated roughly 336 intervals three times per region during
         # platform setup. See PD7DayForecastSensor._calibrated_forecast.
         self._calibrated_forecast_cache: dict[str, tuple] = {}
+        # current_run_features' cache: (key, RunFeatures | None), key being
+        # (forecast_generated_at, interval count). Declared here alongside
+        # its sibling above rather than left to spring into existence via
+        # getattr on first use, so the object's state is visible in __init__.
+        self._run_features_cache: tuple[tuple[str, int], Any] | None = None
         self._stpasa_index_map: dict[str, Any] = {}
         self._stpasa_index_sorted: list[tuple[float, Any]] = []
         self._first_refresh_done = False
@@ -439,6 +444,9 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         if not price_data.forecast_generated_at:
             return None
         key = (price_data.forecast_generated_at, len(price_data.forecast))
+        # getattr, not a direct read: tests reuse this property on stand-in
+        # coordinator classes that never run PD7DayCoordinator.__init__, and
+        # must still degrade to an uncached first read rather than raising.
         cached = getattr(self, "_run_features_cache", None)
         if cached is not None and cached[0] == key:
             return cached[1]

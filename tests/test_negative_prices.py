@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from custom_components.nem_pd7day.calibration_engine import (
+    ISO_FEATURE_KEY,
     SOURCE_ISOTONIC_BELOW_DOMAIN,
     BucketModel,
     CalibrationResult,
@@ -109,6 +110,28 @@ def test_point_estimate_is_floored_at_the_market_floor():
     out = bucket.apply_all(0.002)
     assert out["calibrated"] == MARKET_PRICE_FLOOR
     assert out["p10"] is None or out["p10"] <= out["calibrated"]
+
+
+def test_iso_feature_matches_the_floored_price_not_the_unfloored_step():
+    """The stage-2 feature must never be more extreme than the published price.
+
+    Every other apply_all branch (no model, below domain) publishes
+    ISO_FEATURE_KEY equal to "calibrated", and stage2_iso_feature's own
+    docstring states that as the invariant the split key exists to protect.
+    The isotonic branch used to publish the unfloored step here instead, so a
+    fitted value below MARKET_PRICE_FLOOR fed stage 2 a feature more negative
+    than the price it was ever shown next to (issue #144).
+    """
+    iso = IsotonicRegression(increasing=True, out_of_bounds="clip")
+    iso.fit(np.asarray([0.001, 0.002, 0.003], dtype=float), np.asarray([-3.2, -3.1, -3.0], dtype=float))
+    bucket = _bucket()
+    bucket.iso_model = iso
+    out = bucket.apply_all(0.002)
+    assert out["calibrated"] == MARKET_PRICE_FLOOR
+    assert out[ISO_FEATURE_KEY] == out["calibrated"] == MARKET_PRICE_FLOOR, (
+        f"iso_feature {out[ISO_FEATURE_KEY]} must equal the floored calibrated "
+        f"price {out['calibrated']}, not the unfloored step"
+    )
 
 
 def test_below_domain_clips_to_the_edge_with_the_floor_band():
