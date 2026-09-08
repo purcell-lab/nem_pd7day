@@ -1216,6 +1216,44 @@ def test_build_stpasa_feature_map():
     assert feat.stpasa_run_at == nem_iso(stpasa_run_dt)
 
 
+def test_record_actual_skips_stpasa_features_when_demand_is_below_floor():
+    """
+    A STPASA interval whose demand50 is below the transform's floor gives no
+    honest features: log_demand would be 0 and poe_spread_n a spread divided
+    by a clamped 1. The observation is recorded without any stpasa_log_*
+    field, so the fit never sees the degenerate vector, through the same
+    helper the serving path reads. Issue #147.
+    """
+    store = make_store()
+    run_dt = BASE_DT
+    interval_end_dt = BASE_DT + timedelta(hours=24)
+    interval_start_str = nem_iso(interval_end_dt - timedelta(minutes=30))
+    period = make_price_period(interval_end_dt, value=0.108)
+
+    stpasa_run_dt = datetime(2026, 4, 14, 7, 25, 7, tzinfo=NEM_TZ)
+    stpasa = MagicMock(intervals=[
+        _make_stpasa_interval(interval_end_dt, stpasa_run_dt,
+                              d10=-8.0, d50=-13.0, d90=-18.0,
+                              surplus=1200.0, solar=800.0, wind=400.0),
+    ])
+
+    run_async(store.ingest_forecast(
+        region="QLD1",
+        price_data=make_price_data(run_dt, [period]),
+        interconnectors={},
+        case=None,
+        stpasa=stpasa,
+    ))
+    run_async(store.async_record_actual(interval_start_str, 0.095))
+
+    obs = [o for o in store._observations if o["interval_time"] == interval_start_str]
+    assert len(obs) == 1, obs
+    for key in ("stpasa_log_surplus", "stpasa_log_solar",
+                "stpasa_log_demand", "stpasa_poe_spread_n"):
+        assert key not in obs[0], f"{key} recorded from a degenerate transform: {obs[0]}"
+    assert store.build_stpasa_feature_map() == {}
+
+
 # ── Guard: fixture observations must stay inside the training window ──────────
 # See the matching guard in test_calibration_engine.py. Fixture dates pinned to
 # a fixed calendar date age out of OBSERVATION_WINDOW_DAYS and silently turn

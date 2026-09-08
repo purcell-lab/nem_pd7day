@@ -227,6 +227,14 @@ class FakeCoordinator:
         return RunFeatures(run_max_h6_rrp=0.24, run_mean_rrp=0.11, run_spread=0.06)
 
 
+# (base, width) of the near-term raw prices of each training run in
+# fitted_store: run_max_h6 runs 0.04 to 0.59, run_mean 0.04 to 0.55 and
+# run_spread 0.03 to 0.40 across them, bracketing what FakeCoordinator serves.
+_RUN_SHAPES = (
+    (0.02, 0.04), (0.05, 0.10), (0.10, 0.16), (0.16, 0.24), (0.22, 0.36), (0.30, 0.50),
+)
+
+
 def fitted_store(region: str = "QLD1") -> CalibrationStore:
     """A real CalibrationStore holding a real isotonic plus stage 2 OLS fit.
 
@@ -239,35 +247,48 @@ def fitted_store(region: str = "QLD1") -> CalibrationStore:
     observations: list[Observation] = []
     stpasa_by_key: dict[str, StpasaFeatures] = {}
 
-    train_run_at = nem_iso(_ANCHOR.replace(hour=3, minute=30) - timedelta(days=25))
-    for j in range(6):
-        near_dt = (_ANCHOR - timedelta(days=25)).replace(hour=4 + j, minute=0)
-        observations.append(
-            Observation(
-                interval_time=nem_iso(near_dt),
-                horizon_hours=2.0 + j,
-                pd7day_forecast=rng.uniform(0.05, 0.25),
-                actual_rrp=rng.uniform(0.05, 0.30),
-                forecast_run_at=train_run_at,
-                hour_of_day=4 + j,
-                day_of_week=near_dt.weekday(),
-                month=near_dt.month,
-                gas_forecast_tj=75.0,
-                qni_mwflow=-150.0,
-                qni_violation_degree=0.0,
-                is_intervention=False,
+    # Several training runs rather than one: the stage-2 serving gate (#147)
+    # refuses a feature outside its training range, and the three run
+    # features are constant within a run, so a single-run fixture has
+    # zero-width ranges there and would refuse the run FakeCoordinator
+    # serves. The near-term prices are laid out per run so the run features
+    # bracket current_run_features.
+    run_ats = []
+    for k, (base, width) in enumerate(_RUN_SHAPES):
+        run_dt = (_ANCHOR - timedelta(days=25 + k)).replace(hour=3, minute=30)
+        run_at = nem_iso(run_dt)
+        run_ats.append(run_at)
+        for j in range(8):
+            near_dt = run_dt + timedelta(hours=1 + j)
+            observations.append(
+                Observation(
+                    interval_time=nem_iso(near_dt),
+                    horizon_hours=1.0 + j,
+                    pd7day_forecast=base + width * j / 7.0,
+                    actual_rrp=rng.uniform(0.05, 0.30),
+                    forecast_run_at=run_at,
+                    hour_of_day=near_dt.hour,
+                    day_of_week=near_dt.weekday(),
+                    month=near_dt.month,
+                    gas_forecast_tj=75.0,
+                    qni_mwflow=-150.0,
+                    qni_violation_degree=0.0,
+                    is_intervention=False,
+                )
             )
-        )
 
     # Two buckets in the OLS band: h24_48 peak and h48_96 peak. OLS_MIN_OBS is
-    # 50 per bucket, so 70 each leaves margin.
-    for horizon_hours in (30.0, 60.0):
+    # 50 per bucket, so 70 each leaves margin. Horizons vary across each
+    # bucket so the horizons the sweeps serve sit inside the fitted range.
+    for horizon_lo, horizon_hi in ((25.0, 47.0), (49.0, 95.0)):
         for i in range(70):
             interval_dt = (_ANCHOR - timedelta(days=i % 20)).replace(
                 hour=17, minute=(i % 2) * 30
             )
-            if horizon_hours > 48:
+            if horizon_lo > 48:
                 interval_dt = interval_dt - timedelta(days=20)
+            run_at = run_ats[i % len(run_ats)]
+            horizon_hours = rng.uniform(horizon_lo, horizon_hi)
             # Spans the mild negatives the sweep below serves through stage 2,
             # so they sit inside the fitted domain (#117).
             forecast = rng.uniform(-0.08, 0.26)
@@ -284,7 +305,7 @@ def fitted_store(region: str = "QLD1") -> CalibrationStore:
                     horizon_hours=horizon_hours,
                     pd7day_forecast=forecast,
                     actual_rrp=actual,
-                    forecast_run_at=train_run_at,
+                    forecast_run_at=run_at,
                     hour_of_day=17,
                     day_of_week=interval_dt.weekday(),
                     month=interval_dt.month,
@@ -294,11 +315,12 @@ def fitted_store(region: str = "QLD1") -> CalibrationStore:
                     is_intervention=False,
                 )
             )
-            stpasa_by_key[f"{nem_iso(interval_dt)}|{train_run_at}"] = StpasaFeatures(
+            stpasa_by_key[f"{nem_iso(interval_dt)}|{run_at}"] = StpasaFeatures(
                 log_surplus=math.log1p(surplus),
                 log_solar=math.log1p(solar),
                 log_demand=math.log(max(demand50, 1.0)),
-                poe_spread_n=(demand50 * 1.1 - demand50 * 0.9) / demand50,
+                # Spans the 0.114 make_stpasa_interval serves (#147 gate).
+                poe_spread_n=rng.uniform(0.08, 0.30),
                 stpasa_run_at=STPASA_RUN_AT,
             )
 

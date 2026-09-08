@@ -21,7 +21,6 @@ so they are correct regardless of the HA system timezone.
 from __future__ import annotations
 
 import logging
-import math
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Sequence
 
@@ -37,6 +36,7 @@ from .calibration_engine import (
     RunFeatures,
     StpasaFeatures,
     all_bucket_keys,
+    stpasa_feature_values,
 )
 from .const import (
     _LEGACY_COEFF_KEY,
@@ -440,18 +440,24 @@ class CalibrationStore:
             # previous `.get(key, 0.0)` defaults would have turned that back
             # into a zero and fed it to the fit as a real observation. An
             # incomplete interval is omitted from the fit instead. See #43.
-            surplus = fc.get("stpasa_surplus")
-            solar = fc.get("stpasa_solar")
-            demand50 = fc.get("stpasa_demand50")
-            demand10 = fc.get("stpasa_demand10")
-            demand90 = fc.get("stpasa_demand90")
-            if None not in (surplus, solar, demand50, demand10, demand90):
-                obs["stpasa_log_surplus"] = math.log1p(max(surplus, 0.0))
-                obs["stpasa_log_solar"] = math.log1p(max(solar, 0.0))
-                obs["stpasa_log_demand"] = math.log(max(demand50, 1.0))
-                obs["stpasa_poe_spread_n"] = (
-                    demand10 - demand90
-                ) / max(demand50, 1.0)
+            # The transform itself lives in calibration_engine so the training
+            # and serving sides cannot drift apart; it also returns None for a
+            # demand50 below its floor, where the features are degenerate
+            # (issue #147).
+            values = stpasa_feature_values(
+                fc.get("stpasa_surplus"),
+                fc.get("stpasa_solar"),
+                fc.get("stpasa_demand50"),
+                fc.get("stpasa_demand10"),
+                fc.get("stpasa_demand90"),
+            )
+            if values is not None:
+                (
+                    obs["stpasa_log_surplus"],
+                    obs["stpasa_log_solar"],
+                    obs["stpasa_log_demand"],
+                    obs["stpasa_poe_spread_n"],
+                ) = values
                 obs["stpasa_run_at"] = fc.get("stpasa_run_at", "")
 
             self._log.append(obs)
