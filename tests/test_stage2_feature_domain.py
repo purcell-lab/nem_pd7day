@@ -348,6 +348,7 @@ def test_summary_publishes_stage2_diagnostics():
     m = result.ols_models[_KEY]
     assert entry["n_train"] == m.n_train
     assert entry["r2"] == m.r2
+    assert entry["coef"] == m.coef and len(entry["coef"]) == 1 + len(STAGE2_FEATURE_NAMES)
     assert entry["resid_q10"] == m.resid.q10
     assert entry["resid_q90"] == m.resid.q90
     assert set(entry["feature_min"]) == set(STAGE2_FEATURE_NAMES)

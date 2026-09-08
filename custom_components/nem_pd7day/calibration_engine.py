@@ -1119,6 +1119,8 @@ class CalibrationResult:
           n_train        — rows that fitted the coefficients, after the
                            leverage screen
           r2             — in-sample R² of the fit
+          coef           — the fitted coefficients, intercept first then
+                           STAGE2_FEATURE_NAMES order (#153)
           resid_q10/q50/q90 — leave-one-out residual quantiles ($/kWh), None
                            when the bucket has no usable stage-2 band
           feature_min/feature_max — per-feature training range, keyed by
@@ -1189,6 +1191,11 @@ class CalibrationResult:
             entry: dict[str, Any] = {
                 "n_train": m.n_train,
                 "r2": m.r2,
+                # Intercept first, then STAGE2_FEATURE_NAMES order. Without
+                # these the serving gate cannot be reconstructed from the
+                # sensors: the #153 analysis could say which feature was
+                # outside its range but not what that cost the prediction.
+                "coef": list(m.coef),
                 "resid_q10": r.q10 if r is not None else None,
                 "resid_q50": r.q50 if r is not None else None,
                 "resid_q90": r.q90 if r is not None else None,
