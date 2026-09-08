@@ -393,6 +393,11 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         started = time.monotonic()
         self._notice_client.last_seen_notice_id = self.notice_store.last_seen_notice_id
         new_notices = await self._notice_client.fetch_new_notices()
+        # The poll succeeded: say so whether or not anything relevant came
+        # back, so the sensor's last_fetched reads as "the poll is running"
+        # rather than "a notice was once stored" (issue #139). A failed fetch
+        # raises above this line and leaves the previous stamp in place.
+        self.notice_store.mark_fetched()
 
         # Persist the cursor even when nothing relevant was found. The client has
         # examined those files and will not examine them again, so the store has

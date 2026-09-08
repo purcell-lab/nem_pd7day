@@ -1454,9 +1454,22 @@ class NemPd7dayGridNoticesSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
             "max_msl_level": max_msl,
             "next_notice_from": next_from.isoformat() if next_from else None,
             "notices": [n.to_dict() for n in active],
-            "last_fetched": self._notice_store.last_fetched_at.isoformat()
-                if hasattr(self._notice_store, "last_fetched_at") and self._notice_store.last_fetched_at
-                else None,
+            # Three distinct facts (issue #139): when NEMWEB was last polled
+            # this session, when the newest stored notice was issued, and the
+            # cursor, which moves on every poll that examined new files even
+            # when none was relevant, so it proves the poll is working on a
+            # quiet grid.
+            "last_fetched": (
+                last_fetched.isoformat()
+                if (last_fetched := getattr(self._notice_store, "last_fetched_at", None))
+                else None
+            ),
+            "last_notice_issued_at": (
+                last_issued.isoformat()
+                if (last_issued := getattr(self._notice_store, "last_notice_issued_at", None))
+                else None
+            ),
+            "last_seen_notice_id": getattr(self._notice_store, "last_seen_notice_id", None),
         }
 
 
