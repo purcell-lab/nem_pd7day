@@ -310,6 +310,22 @@ Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the
 
 ---
 
+### Grid Notices
+
+`sensor.nem_pd7day_{region}_grid_notices` — count of active, non-cancelled LOR/MSL notices for the region in the next 7 days, polled from NEMWEB market notices on every coordinator refresh.
+
+| Attribute | Description |
+|---|---|
+| `active_count`, `lor_active`, `msl_active` | Active notices in the next 7 days, by type |
+| `max_lor_level`, `max_msl_level` | Highest active level of each type, `null` when none |
+| `next_notice_from` | Start of the earliest active notice period |
+| `notices` | The active notices (not saved to the HA recorder) |
+| `last_fetched` | NEM-time ISO-8601 timestamp of the last successful NEMWEB notice poll this session; `null` until the first poll. Moves on every refresh whether or not a relevant notice was found |
+| `last_notice_issued_at` | Issue time of the newest stored notice, `null` when the store is empty. This is about the market, not the poll |
+| `last_seen_notice_id` | The poll cursor: the highest NEMWEB notice id examined so far. A moving cursor proves the poll is working on a quiet grid |
+
+---
+
 ### PD7DAY Data / STPASA Data (diagnostic)
 
 Two diagnostic sensors expose the full underlying forecast payloads as unrecorded HA attributes. Both are in the **Diagnostic** category and their large attribute lists are **not saved to the HA recorder/database**.

@@ -44,6 +44,14 @@ class GridNoticeStore:
         self._store = Store(hass, NOTICE_STORE_VERSION, NOTICE_STORE_KEY)
         self._notices: dict[str, list[GridNoticeAnnotation]] = {}
         self._last_seen_notice_id: int = 0
+        # When the NEMWEB notice feed was last polled successfully in this
+        # session, stamped by mark_fetched() at the end of every poll whether
+        # or not anything relevant came back. Not persisted and not derived
+        # from stored notices on load, so it is None until the first poll,
+        # the same way the PD7DAY staleness attributes behave (#105, #128).
+        # Before issue #139 this was set only when a relevant notice was
+        # stored, so on a quiet grid it sat days old across every scheduled
+        # refresh and a silently broken poll looked identical to a quiet one.
         self.last_fetched_at: datetime | None = None
 
     async def async_load(self) -> None:
@@ -67,10 +75,6 @@ class GridNoticeStore:
             self._notices[region] = [
                 GridNoticeAnnotation.from_dict(n) for n in notice_list
             ]
-        # Set last_fetched_at to the most recent issued_at across all loaded notices
-        all_notices = [n for ns in self._notices.values() for n in ns]
-        if all_notices:
-            self.last_fetched_at = max(n.issued_at for n in all_notices)
         _LOGGER.debug(
             "Loaded %d notices from storage, last_seen_id=%d",
             sum(len(v) for v in self._notices.values()),
@@ -98,7 +102,6 @@ class GridNoticeStore:
            period_from date — handles AEMO cancellation notices that don't
            reference a specific notice ID.
         """
-        self.last_fetched_at = now_nem()
         for notice in notices:
             region = notice.region
             if region not in self._notices:
@@ -181,6 +184,23 @@ class GridNoticeStore:
     def has_active_stress(self, region: str, horizon_hours: int = 48) -> bool:
         """True if any LOR2+ or MSL2+ notice is active within horizon_hours."""
         return len(self.get_upcoming_stress(region, horizon_hours)) > 0
+
+    def mark_fetched(self) -> None:
+        """Record that a NEMWEB poll completed, relevant notices or not."""
+        self.last_fetched_at = now_nem()
+
+    @property
+    def last_notice_issued_at(self) -> datetime | None:
+        """Issue time of the most recent stored notice, or None.
+
+        This is the meaning ``last_fetched_at`` carried before issue #139;
+        it is about the market, not about the poll, and is published under
+        its own name so neither is mistaken for the other.
+        """
+        all_notices = [n for ns in self._notices.values() for n in ns]
+        if not all_notices:
+            return None
+        return max(n.issued_at for n in all_notices)
 
     @property
     def last_seen_notice_id(self) -> int:

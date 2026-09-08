@@ -517,6 +517,44 @@ def test_cursor_advances_when_no_relevant_notices_found():
     notice_store._store.async_save.assert_awaited()
 
 
+def test_notice_poll_stamps_last_fetched_at_even_when_nothing_relevant_found():
+    """
+    Every completed poll stamps last_fetched_at, notices or not, so the grid
+    notices sensor's last_fetched reports the poll rather than the last
+    stored notice (issue #139). A poll that raises leaves the stamp alone.
+    """
+    from custom_components.nem_pd7day.notice_store import GridNoticeStore
+
+    notice_store = GridNoticeStore.__new__(GridNoticeStore)
+    notice_store._notices = {}
+    notice_store._last_seen_notice_id = 50000
+    notice_store.last_fetched_at = None
+    notice_store._store = MagicMock()
+    notice_store._store.async_save = AsyncMock()
+
+    notice_client = MagicMock()
+    notice_client.last_seen_notice_id = 50000
+    notice_client.fetch_new_notices = AsyncMock(return_value=[])
+
+    coord = make_coordinator(notice_store=notice_store, notice_client=notice_client)
+    polled = datetime(2026, 9, 6, 13, 0, tzinfo=NEM_TZ)
+    with patch("custom_components.nem_pd7day.notice_store.now_nem", return_value=polled):
+        run_async(coord._fetch_notices_once())
+    assert notice_store.last_fetched_at == polled
+    # Nothing relevant and the cursor did not move, so nothing was written.
+    notice_store._store.async_save.assert_not_awaited()
+
+    # A failed poll must not claim success.
+    notice_client.fetch_new_notices = AsyncMock(side_effect=RuntimeError("503"))
+    later = polled + timedelta(hours=1)
+    with patch("custom_components.nem_pd7day.notice_store.now_nem", return_value=later):
+        try:
+            run_async(coord._fetch_notices_once())
+        except RuntimeError:
+            pass
+    assert notice_store.last_fetched_at == polled
+
+
 def test_empty_store_does_not_trigger_backfill_reset():
     """
     An empty notice store must not reset the cursor.
