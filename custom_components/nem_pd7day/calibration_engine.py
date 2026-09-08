@@ -380,39 +380,113 @@ class Observation(NamedTuple):
 OLS_MIN_HORIZON_H = 22.0
 OLS_MAX_HORIZON_H = 120.0
 
+# Stage-2 feature order, after the intercept. Shared by fit_ols_stage2, the
+# serving path in CalibrationResult.apply and the diagnostic summary, so the
+# ranges published on the calibration sensor are keyed by the name of the
+# feature they bound (issue #147).
+STAGE2_FEATURE_NAMES = (
+    "iso_cal",
+    "run_max_h6_rrp",
+    "run_mean_rrp",
+    "run_spread",
+    "horizon_frac",
+    "log_surplus",
+    "log_solar",
+    "log_demand",
+    "poe_spread_n",
+)
+
+
+# Smallest scheduled demand (MW) the STPASA transform accepts.
+#
+# WHY: two of the four STPASA features divide or take a log of demand50, so
+# below this floor the transform stops being a function of its input:
+# log_demand is 0 for every value and poe_spread_n, whose divisor is clamped
+# here, turns a 5 MW POE spread into 5.0 against a training range near 0.2.
+# STPASA does publish such rows: on the SA1 weekend of 12 September 2026 the
+# midday demand50 ran to -27 MW with rooftop PV over operational demand. A
+# vector built from those numbers is not evidence about the price, and before
+# issue #147 only the sign and floor gates in CalibrationResult.apply stood
+# between it and the sensors. An interval at or below the floor now yields no
+# features at all, on both the training and the serving side, through the one
+# helper below.
+STPASA_DEMAND_FLOOR_MW = 1.0
+
+
+def stpasa_feature_values(
+    surplus: float | None,
+    solar: float | None,
+    demand50: float | None,
+    demand10: float | None,
+    demand90: float | None,
+) -> tuple[float, float, float, float] | None:
+    """The four STPASA features from the raw MW inputs, or None.
+
+    Returns ``(log_surplus, log_solar, log_demand, poe_spread_n)``.
+
+    None when any input is missing (issue #43: a missing MW value is None
+    rather than a substituted zero) or when demand50 is below
+    STPASA_DEMAND_FLOOR_MW (issue #147: the transform is degenerate there).
+
+    This is the single definition of the transform. ``StpasaFeatures.from_interval``
+    reads it for the serving path and ``CalibrationStore.async_record_actual``
+    for the observation log, so a row is fitted from exactly the numbers the
+    same interval would be served from.
+    """
+    if (
+        surplus is None
+        or solar is None
+        or demand50 is None
+        or demand10 is None
+        or demand90 is None
+    ):
+        return None
+    if demand50 < STPASA_DEMAND_FLOOR_MW:
+        return None
+    return (
+        math.log1p(max(surplus, 0.0)),
+        math.log1p(max(solar, 0.0)),
+        math.log(demand50),
+        (demand10 - demand90) / demand50,
+    )
+
 
 @dataclass
 class StpasaFeatures:
     """Derived STPASA features for a single forecast interval."""
     log_surplus: float       # log1p(surpluscapacity)
     log_solar: float         # log1p(ss_solar_uigf)
-    log_demand: float        # log(max(demand50, 1))
-    poe_spread_n: float      # (demand10 - demand90) / max(demand50, 1)
+    log_demand: float        # log(demand50), demand50 >= STPASA_DEMAND_FLOOR_MW
+    poe_spread_n: float      # (demand10 - demand90) / demand50
     stpasa_run_at: str       # ISO-8601, for attribute tagging
 
     @classmethod
     def from_interval(cls, interval: "StpasaInterval") -> "StpasaFeatures | None":
-        """Derive features, or None when the interval is missing an input.
+        """Derive features, or None when the interval cannot honestly give any.
 
         Every field below is now optional on the interval, because a missing
         MW value is no longer coerced to 0.0 at parse time. An interval short
         of any input is skipped rather than fitted on a substituted zero,
         which would bias the fit rather than merely display wrongly. The
         caller treats None as "no STPASA features for this interval". See
-        issue #43.
+        issue #43. An interval whose demand50 is below STPASA_DEMAND_FLOOR_MW
+        is skipped for the reason given on that constant (issue #147).
         """
-        surplus = interval.surpluscapacity
-        solar = interval.ss_solar_uigf
-        demand50 = interval.demand50
-        demand10 = interval.demand10
-        demand90 = interval.demand90
-        if None in (surplus, solar, demand50, demand10, demand90):
+        values = stpasa_feature_values(
+            interval.surpluscapacity,
+            interval.ss_solar_uigf,
+            interval.demand50,
+            interval.demand10,
+            interval.demand90,
+        )
+        if values is None:
             return None
+        log_surplus, log_solar, log_demand, poe_spread_n = values
         return cls(
-            log_surplus=math.log1p(max(surplus, 0.0)),
-            log_solar=math.log1p(max(solar, 0.0)),
-            log_demand=math.log(max(demand50, 1.0)),
-            poe_spread_n=(demand10 - demand90) / max(demand50, 1.0),
+            log_surplus=log_surplus,
+            log_solar=log_solar,
+            log_demand=log_demand,
+            poe_spread_n=poe_spread_n,
             stpasa_run_at=interval.run_datetime,
         )
 
@@ -488,12 +562,61 @@ class OlsModel:
     # and lose residuals, and nothing would notice. Travelling together the
     # pairing cannot come apart.
     resid: ResidualQuantiles | None = None
+    # Per-feature training minimum and maximum, in feature order (no
+    # intercept), from the rows that fitted ``coef`` after the leverage screen.
+    #
+    # WHY: a linear model evaluated outside the range it was fitted on is an
+    # extrapolation with no evidence behind it, and nothing in the serving
+    # gates before issue #147 asked the question. The live case: SA1
+    # Saturday 12 September 12:30, STPASA demand50 of 24 MW gave log_demand
+    # 3.18 against a training range of about 5.7 to 7.3, and the regression
+    # extrapolated two to four natural-log units to publish -$0.86/kWh for a
+    # raw -$0.10 that stage 1 put at -$0.012. The ranges travel with the
+    # coefficients for the same reason ``resid`` does: they only describe
+    # THESE rows. Empty on a model stored before this field existed, which
+    # in_feature_domain treats as "no evidence either way" so the old
+    # behaviour holds until the next fit rewrites the store.
+    feature_min: list[float] = field(default_factory=list)
+    feature_max: list[float] = field(default_factory=list)
 
     def predict(self, features: list[float]) -> float:
         """Apply: intercept + dot(coef[1:], features)."""
         if len(self.coef) < 2:
             return 0.0
         return self.coef[0] + sum(c * x for c, x in zip(self.coef[1:], features))
+
+    def in_feature_domain(self, features: list[float]) -> bool:
+        """True when every feature lies within its training range.
+
+        Inclusive at both ends, with a tolerance of one part in 1e9 so a
+        feature computed by the same code from the same inputs cannot fall
+        outside its own range on floating-point jitter. Legacy models with no
+        ranges pass. A range list of the wrong length is a corrupt store and
+        fails, which is the safe direction: stage 1 is served instead.
+        See issue #147.
+        """
+        lo, hi = self.feature_min, self.feature_max
+        if not lo and not hi:
+            return True
+        if len(lo) != len(features) or len(hi) != len(features):
+            return False
+        for x, a, b in zip(features, lo, hi):
+            tol = 1e-9 * max(1.0, abs(a), abs(b))
+            if x < a - tol or x > b + tol:
+                return False
+        return True
+
+    def out_of_domain_features(self, features: list[float]) -> list[int]:
+        """Indices of the features outside their training range (diagnostic)."""
+        lo, hi = self.feature_min, self.feature_max
+        if len(lo) != len(features) or len(hi) != len(features):
+            return []
+        out = []
+        for i, (x, a, b) in enumerate(zip(features, lo, hi)):
+            tol = 1e-9 * max(1.0, abs(a), abs(b))
+            if x < a - tol or x > b + tol:
+                out.append(i)
+        return out
 
     def residual_band(
         self, prediction: float
@@ -866,7 +989,18 @@ class CalibrationResult:
             stpasa.poe_spread_n,
         ]
 
-        # 5. Predict.
+        # 5a. Gate: serve stage 2 only inside the feature range it was fitted
+        #     on. #123's principle applied to stage 2: below the evidence,
+        #     publish the evidence. A feature outside its training range means
+        #     the prediction is an extrapolation of a linear model, and the
+        #     sign and floor gates below cannot tell a plausible extrapolation
+        #     from a blow-up that happens to land between the floor and zero,
+        #     which is exactly what -$0.86 for a raw -$0.10 was. See #147 and
+        #     the note on OlsModel.feature_min.
+        if not ols.in_feature_domain(feature_vec):
+            return result
+
+        # 5b. Predict.
         prediction = ols.predict(feature_vec)
 
         # 6. Fall back to the isotonic result when stage 2 disagrees with it on
@@ -977,6 +1111,19 @@ class CalibrationResult:
           spot_020       — calibrated output at 0.20 $/kWh forecast
           q10_a          — quantile P10 slope (used for P10 interval)
           q90_a          — quantile P90 slope (used for P90 interval)
+
+        ``stage2`` carries one entry per bucket with a fitted OLS model
+        (issue #147: before this, n_train, r2, the residual quantiles and the
+        feature ranges were on no sensor and diagnosing an extrapolation took
+        inference from neighbouring rows):
+          n_train        — rows that fitted the coefficients, after the
+                           leverage screen
+          r2             — in-sample R² of the fit
+          resid_q10/q50/q90 — leave-one-out residual quantiles ($/kWh), None
+                           when the bucket has no usable stage-2 band
+          feature_min/feature_max — per-feature training range, keyed by
+                           feature name; the serving gate refuses stage 2
+                           outside it
         """
         out: dict[str, Any] = {
             "fitted_at": self.fitted_at,
@@ -984,6 +1131,7 @@ class CalibrationResult:
             "observation_window_days": OBSERVATION_WINDOW_DAYS,
             "observations_in_window": self.observations_in_window,
             "buckets": {},
+            "stage2": self._stage2_summary(),
         }
         for key, model in self.models.items():
             bucket: dict[str, Any] = {
@@ -1028,6 +1176,31 @@ class CalibrationResult:
                 bucket["spot_010"] = round(float(iso.predict(np.array([0.10]))[0]), 4)
                 bucket["spot_020"] = round(float(iso.predict(np.array([0.20]))[0]), 4)
             out["buckets"][key] = bucket
+        return out
+
+    def _stage2_summary(self) -> dict[str, dict[str, Any]]:
+        """Per-bucket stage-2 diagnostics for fitted OLS models only."""
+        out: dict[str, dict[str, Any]] = {}
+        for key in sorted(self.ols_models):
+            m = self.ols_models[key]
+            if len(m.coef) < 2:
+                continue
+            r = m.resid if (m.resid is not None and m.resid.is_fitted) else None
+            entry: dict[str, Any] = {
+                "n_train": m.n_train,
+                "r2": m.r2,
+                "resid_q10": r.q10 if r is not None else None,
+                "resid_q50": r.q50 if r is not None else None,
+                "resid_q90": r.q90 if r is not None else None,
+                "feature_min": None,
+                "feature_max": None,
+            }
+            if len(m.feature_min) == len(STAGE2_FEATURE_NAMES) and len(
+                m.feature_max
+            ) == len(STAGE2_FEATURE_NAMES):
+                entry["feature_min"] = dict(zip(STAGE2_FEATURE_NAMES, m.feature_min))
+                entry["feature_max"] = dict(zip(STAGE2_FEATURE_NAMES, m.feature_max))
+            out[key] = entry
         return out
 
     def get_iso_diagnostics(self, bucket_key: str) -> dict[str, Any] | None:
@@ -1740,6 +1913,14 @@ class CalibrationEngine:
             ss_res = float(np.sum((y - y_hat) ** 2))
             ss_tot = float(np.sum((y - np.mean(y)) ** 2))
             r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
+            # Feature ranges from the rows that survived the leverage screen,
+            # so a screened-out row cannot widen the domain the serving gate
+            # accepts. Column 0 is the intercept. Rounded OUTWARD to 6 dp:
+            # rounding to nearest put a served value that equals a training
+            # bound (horizon/168 at the same horizon, iso_cal at the domain
+            # edge) a fraction of a micro-unit outside its own range and the
+            # gate refused it. Issue #147.
+            features_only = X[:, 1:]
             ols_models[bucket_key] = OlsModel(
                 bucket_key=bucket_key,
                 coef=[round(float(c), 8) for c in coef],
@@ -1749,6 +1930,12 @@ class CalibrationEngine:
                 # can never describe a different fit than the one they ship
                 # with. Issue #72.
                 resid=_residual_quantiles(bucket_key, X, y, coef),
+                feature_min=[
+                    math.floor(float(v) * 1e6) / 1e6 for v in features_only.min(axis=0)
+                ],
+                feature_max=[
+                    math.ceil(float(v) * 1e6) / 1e6 for v in features_only.max(axis=0)
+                ],
             )
 
         n_resid_fitted = sum(
@@ -1823,11 +2010,16 @@ class CalibrationEngine:
         # serialisable and does not survive a restart, but the OLS coefficients
         # do, so stage 2 keeps overriding after a restart and would otherwise
         # have no stage-2 band to publish with until the next fit.
+        # "feature_min"/"feature_max" likewise (issue #147): a payload from
+        # before them has neither key and loads as empty lists, which the
+        # serving gate treats as legacy and passes.
         out["ols_models"] = {
             key: {
                 "coef": m.coef,
                 "n_train": m.n_train,
                 "r2": m.r2,
+                "feature_min": m.feature_min,
+                "feature_max": m.feature_max,
                 **(
                     {
                         "resid": {
@@ -1883,6 +2075,8 @@ class CalibrationEngine:
                 n_train=md.get("n_train", 0),
                 r2=md.get("r2", 0.0),
                 resid=resid,
+                feature_min=[float(v) for v in (md.get("feature_min") or [])],
+                feature_max=[float(v) for v in (md.get("feature_max") or [])],
             )
 
         return CalibrationResult(

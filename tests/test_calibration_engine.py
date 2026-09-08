@@ -1478,33 +1478,43 @@ def _make_stpasa_obs(
     features so the OLS fit sees real variation.
     """
     rng = random.Random(seed)
-    run_at = _obs_iso(offset_days=-1, hour=3, minute=30)
     obs: list[Observation] = []
     stpasa_by_key: dict[str, StpasaFeatures] = {}
 
-    # Seed a handful of near-term (h<24) observations sharing the same run_at so
-    # _compute_run_features populates RunFeatures for this run.  A real PD7DAY
+    # Seed near-term (h<24) observations for several runs so
+    # _compute_run_features populates RunFeatures for each.  A real PD7DAY
     # run always contains near-term intervals; the in-band rows need them.
-    for j in range(6):
-        near_dt = _obs_day(offset_days=-1).replace(hour=4 + j)
-        obs.append(
-            Observation(
-                interval_time=near_dt.isoformat(),
-                horizon_hours=2.0 + j,
-                pd7day_forecast=rng.uniform(0.05, 0.25),
-                actual_rrp=rng.uniform(0.05, 0.30),
-                forecast_run_at=run_at,
-                hour_of_day=4 + j,
-                day_of_week=near_dt.weekday(),
-                month=near_dt.month,
-                gas_forecast_tj=75.0,
-                qni_mwflow=-150.0,
-                qni_violation_degree=0.0,
-                is_intervention=False,
+    # Several runs rather than one because the stage-2 serving gate (#147)
+    # refuses a feature outside its training range and the run features are
+    # constant within a run: the near-term prices are laid out per run so
+    # the ranges bracket the RunFeatures(0.2, 0.1, 0.05) the tests serve.
+    run_shapes = (
+        (0.02, 0.04), (0.05, 0.10), (0.10, 0.16), (0.16, 0.24), (0.22, 0.36),
+    )
+    run_ats: list[str] = []
+    for k, (base, width) in enumerate(run_shapes):
+        run_ats.append(_obs_iso(offset_days=-1 - k, hour=3, minute=30))
+        for j in range(8):
+            near_dt = _obs_day(offset_days=-1 - k).replace(hour=4 + j)
+            obs.append(
+                Observation(
+                    interval_time=near_dt.isoformat(),
+                    horizon_hours=1.0 + j,
+                    pd7day_forecast=base + width * j / 7.0,
+                    actual_rrp=rng.uniform(0.05, 0.30),
+                    forecast_run_at=run_ats[-1],
+                    hour_of_day=4 + j,
+                    day_of_week=near_dt.weekday(),
+                    month=near_dt.month,
+                    gas_forecast_tj=75.0,
+                    qni_mwflow=-150.0,
+                    qni_violation_degree=0.0,
+                    is_intervention=False,
+                )
             )
-        )
 
     for i in range(n):
+        run_at = run_ats[i % len(run_ats)]
         # Distinct interval_time per obs (vary the day so keys are unique).
         # Days step backwards from the anchor to stay inside the training window.
         interval_time = _obs_day(offset_days=-(i % 15)).replace(
@@ -1570,9 +1580,11 @@ def test_apply_with_stpasa_improves_high_surplus():
     result.ols_models = engine.fit_ols_stage2(obs, stpasa_by_key)
 
     rf = RunFeatures(run_max_h6_rrp=0.2, run_mean_rrp=0.1, run_spread=0.05)
+    # High, and inside the fixture's training range (surplus 500 to 5000,
+    # solar 0 to 4000): the #147 gate refuses stage 2 beyond it.
     high = StpasaFeatures(
-        log_surplus=math.log1p(5000.0),
-        log_solar=math.log1p(4000.0),
+        log_surplus=math.log1p(4500.0),
+        log_solar=math.log1p(3500.0),
         log_demand=math.log(6000.0),
         poe_spread_n=0.2,
         stpasa_run_at=_obs_iso(offset_days=-1, hour=3),

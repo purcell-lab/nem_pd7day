@@ -425,6 +425,12 @@ _TRAIN_RUN_AT = (_ANCHOR - timedelta(days=40)).replace(hour=3, minute=30).strfti
     "%Y-%m-%dT%H:%M:%S+10:00"
 )
 _CELLS = ((30.0, 17), (60.0, 17))
+# (base, width) of the near-term raw prices of each training run: run_max_h6
+# runs 0.04 to 0.59, run_mean 0.04 to 0.55 and run_spread 0.03 to 0.40 across
+# them, bracketing RUN_FEATURES.
+_RUN_SHAPES = (
+    (0.02, 0.04), (0.05, 0.10), (0.10, 0.16), (0.16, 0.24), (0.22, 0.36), (0.30, 0.50),
+)
 
 
 def _nem_iso(dt: datetime) -> str:
@@ -446,26 +452,35 @@ def _fitted_result() -> CalibrationResult:
     observations: list[Observation] = []
     stpasa_by_key: dict[str, StpasaFeatures] = {}
 
-    # _compute_run_features only builds an entry for a run holding at least one
-    # horizon < 24 row, and fit_ols_stage2 skips rows whose run has no entry.
-    for j in range(8):
-        near = (_ANCHOR - timedelta(days=40)).replace(hour=4 + j, minute=0)
-        observations.append(
-            Observation(
-                interval_time=_nem_iso(near),
-                horizon_hours=2.0 + j,
-                pd7day_forecast=rng.uniform(0.05, 0.25),
-                actual_rrp=rng.uniform(0.05, 0.30),
-                forecast_run_at=_TRAIN_RUN_AT,
-                hour_of_day=4 + j,
-                day_of_week=near.weekday(),
-                month=near.month,
-                gas_forecast_tj=75.0,
-                qni_mwflow=-150.0,
-                qni_violation_degree=0.0,
-                is_intervention=False,
+    # Several training runs, not one. _compute_run_features only builds an
+    # entry for a run holding at least one horizon < 24 row, and the three
+    # run features are constant within a run, so a single-run fixture has
+    # zero-width training ranges there and the stage-2 serving gate (#147)
+    # would refuse every served run but that one. The near-term prices are
+    # laid out per run so the run features bracket RUN_FEATURES.
+    run_ats = []
+    for k, (base, width) in enumerate(_RUN_SHAPES):
+        run_dt = (_ANCHOR - timedelta(days=40 + k)).replace(hour=3, minute=30)
+        run_at = _nem_iso(run_dt)
+        run_ats.append(run_at)
+        for j in range(8):
+            near = run_dt + timedelta(hours=1 + j)
+            observations.append(
+                Observation(
+                    interval_time=_nem_iso(near),
+                    horizon_hours=1.0 + j,
+                    pd7day_forecast=base + width * j / 7.0,
+                    actual_rrp=rng.uniform(0.05, 0.30),
+                    forecast_run_at=run_at,
+                    hour_of_day=near.hour,
+                    day_of_week=near.weekday(),
+                    month=near.month,
+                    gas_forecast_tj=75.0,
+                    qni_mwflow=-150.0,
+                    qni_violation_degree=0.0,
+                    is_intervention=False,
+                )
             )
-        )
 
     for horizon, hour in _CELLS:
         for i in range(90):
@@ -473,6 +488,7 @@ def _fitted_result() -> CalibrationResult:
             interval_dt = (_ANCHOR - timedelta(days=day_off)).replace(
                 hour=hour, minute=(i % 2) * 30
             )
+            run_at = run_ats[i % len(run_ats)]
             forecast = rng.uniform(0.03, 0.28)
             surplus = rng.uniform(400.0, 5200.0)
             solar = rng.uniform(0.0, 4200.0)
@@ -492,7 +508,7 @@ def _fitted_result() -> CalibrationResult:
                     horizon_hours=horizon,
                     pd7day_forecast=forecast,
                     actual_rrp=actual,
-                    forecast_run_at=_TRAIN_RUN_AT,
+                    forecast_run_at=run_at,
                     hour_of_day=hour,
                     day_of_week=interval_dt.weekday(),
                     month=interval_dt.month,
@@ -502,11 +518,12 @@ def _fitted_result() -> CalibrationResult:
                     is_intervention=False,
                 )
             )
-            stpasa_by_key[f"{_nem_iso(interval_dt)}|{_TRAIN_RUN_AT}"] = StpasaFeatures(
+            stpasa_by_key[f"{_nem_iso(interval_dt)}|{run_at}"] = StpasaFeatures(
                 log_surplus=math.log1p(surplus),
                 log_solar=math.log1p(solar),
                 log_demand=math.log(max(demand50, 1.0)),
-                poe_spread_n=0.2,
+                # Spans the 0.1 to 0.22 the tests serve (#147 gate).
+                poe_spread_n=rng.uniform(0.08, 0.30),
                 stpasa_run_at=STPASA.stpasa_run_at,
             )
 
