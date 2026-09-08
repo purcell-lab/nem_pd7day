@@ -925,8 +925,13 @@ def test_day27_sensor_forecast_only_contains_post_cutoff_intervals():
     assert len(forecast) > 0, "Day 2-7 sensor should not be empty"
 
 
-def test_min_max_computed_over_full_window():
-    """min_24h_value and max_24h_value come from full day 1-7 forecast."""
+def test_min_max_computed_over_first_24h_of_day17_window():
+    """min_24h_value and max_24h_value cover the first 24 hours of the run.
+
+    Issue #148: they were min/max of the whole window. The forecast attribute
+    still carries every interval; only the two summary attributes are sized
+    to the 24 hours their names claim.
+    """
     sensor = make_sensor(store=None)
 
     run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
@@ -936,9 +941,10 @@ def test_min_max_computed_over_full_window():
     for i in range(96):
         interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
         if i < 48:
-            val = 0.01 if i % 2 == 0 else 9.99
+            val = 0.10 + i * 0.001
         else:
-            val = 0.05 + i * 0.0005
+            # Deeper and higher than anything in the first 24 h.
+            val = 0.001 if i % 2 == 0 else 9.99
         periods.append(make_price_period(interval_end_dt, value=val))
 
     price_data = MagicMock()
@@ -952,10 +958,77 @@ def test_min_max_computed_over_full_window():
     sensor.coordinator.data.prices = {"QLD1": price_data}
 
     attrs = sensor.extra_state_attributes
-    # Base sensor includes ALL intervals, so min/max spans the full window
-    assert attrs["min_24h_value"] is not None
-    assert attrs["max_24h_value"] is not None
+    assert attrs["min_24h_value"] == 0.10
+    assert attrs["max_24h_value"] == round(0.10 + 47 * 0.001, 6)
+    # The window itself is untrimmed on the day 1-7 sensor.
     assert len(attrs["forecast"]) == 96
+
+
+def test_day27_min_max_cover_first_24h_after_cutoff_not_whole_window():
+    """Day 2-7 sensor: min_24h_value is the first 24 h after the cutoff.
+
+    Issue #148: SA1 published min_24h_value -0.864 from a Saturday row four
+    days out. Here the deepest and highest values sit beyond the first 24
+    post-cutoff hours and must not be reported, while cheapest_2h_window
+    still searches the whole trimmed window by design.
+    """
+    from unittest.mock import patch
+    from custom_components.nem_pd7day.sensor import SpotPriceForecastDays27Sensor
+
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = SpotPriceForecastDays27Sensor.__new__(SpotPriceForecastDays27Sensor)
+    sensor.coordinator = coordinator
+    sensor._region = "SA1"
+    sensor._store = None
+    sensor._attr_unique_id = "nem_pd7day_sa1_forecast_days27"
+    sensor._attr_name = "NEM Spot Price Forecast Day 2-7"
+    entry = MagicMock()
+    entry.entry_id = "entry_test"
+    entry.options = {}
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=None, dispatch=None
+    )
+    sensor._entry = entry
+    sensor.hass = MagicMock()
+    sensor.hass.data = {DOMAIN: {}}
+
+    run_at_dt = datetime(2026, 9, 8, 7, 30, tzinfo=NEM_TZ)
+    # The trim keeps intervals starting strictly after the cutoff, so a cutoff
+    # one minute short of 24 h makes interval 48 (start run+24 h) the first
+    # post-cutoff interval.
+    cutoff = run_at_dt + timedelta(hours=23, minutes=59)
+    periods = []
+    for i in range(6 * 48):
+        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
+        post_cutoff_index = i - 48  # 0 is the first interval after the cutoff
+        if 0 <= post_cutoff_index < 48:
+            val = 0.05 + post_cutoff_index * 0.001
+        elif post_cutoff_index == 200:
+            val = -0.864  # the Saturday row
+        elif post_cutoff_index == 210:
+            val = 9.99
+        else:
+            val = 0.20
+        periods.append(make_price_period(interval_end_dt, value=val))
+
+    price_data = MagicMock()
+    price_data.forecast = periods
+    price_data.forecast_generated_at = nem_iso(run_at_dt)
+    price_data.region = "SA1"
+    price_data.interval_minutes = 30
+    price_data.source_file = "test.xml"
+    sensor.coordinator.data = MagicMock()
+    sensor.coordinator.data.prices = {"SA1": price_data}
+
+    with patch("custom_components.nem_pd7day.sensor._amber_express_cutoff", return_value=cutoff):
+        attrs = sensor.extra_state_attributes
+
+    assert attrs["min_24h_value"] == 0.05
+    assert attrs["max_24h_value"] == round(0.05 + 47 * 0.001, 6)
+    # The whole-window search is unchanged and does find the Saturday row.
+    assert attrs["cheapest_2h_window"]["avg_value"] < 0.0
+    assert len(attrs["forecast"]) == 6 * 48 - 48
 
 
 def test_cheapest_2h_window_computed_over_full_forecast():

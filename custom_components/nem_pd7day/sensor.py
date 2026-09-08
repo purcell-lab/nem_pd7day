@@ -736,12 +736,8 @@ class PD7DayForecastSensor(
         # Base sensor always provides full day 1-7 forecast
         trimmed_forecast = calibrated_forecast
 
-        # Min/max over trimmed window (use calibrated 'value' field)
-        trimmed_values = [
-            p.get("value") for p in trimmed_forecast if p.get("value") is not None
-        ]
-        min_value = round(min(trimmed_values), 6) if trimmed_values else None
-        max_value = round(max(trimmed_values), 6) if trimmed_values else None
+        # Min/max over the first 24 hours of the window (calibrated 'value').
+        min_value, max_value = _min_max_first_24h(trimmed_forecast, d.interval_minutes)
 
         # Cheapest 2h window over trimmed forecast
         # Find the 4 consecutive intervals (30-min each = 2h) with lowest average 'value'
@@ -785,6 +781,31 @@ class PD7DayForecastSensor(
             ),
         }
 
+
+
+def _min_max_first_24h(
+    forecast: list[dict], interval_minutes: int | None
+) -> tuple[float | None, float | None]:
+    """Min and max calibrated ``value`` over the first 24 hours of ``forecast``.
+
+    ``forecast`` is the sensor's own window, so on the day 1 to 7 sensor this
+    is the first 24 hours of the run and on the day 2 to 7 sensor the first
+    24 hours after the Amber Express cutoff. Sized in intervals, the same way
+    pd7day_client._min_max_24h sizes the raw attribute, so the two agree.
+
+    Before issue #148 both sensors published min/max of the whole window
+    under ``min_24h_value``/``max_24h_value``: on the day 2 to 7 sensor that
+    was up to six days, and a single Saturday row four days out set
+    ``min_24h_value`` for the whole week.
+    """
+    minutes = interval_minutes if interval_minutes and interval_minutes > 0 else 30
+    n = max(1, (24 * 60) // minutes)
+    values = [
+        p.get("value") for p in forecast[:n] if p.get("value") is not None
+    ]
+    if not values:
+        return None, None
+    return round(min(values), 6), round(max(values), 6)
 
 
 class SpotPriceForecastDays27Sensor(
@@ -970,11 +991,10 @@ class SpotPriceForecastDays27Sensor(
             p for p in calibrated_forecast
             if parse_iso(p["time"]) > cutoff_dt
         ]
-        trimmed_values = [
-            p.get("value") for p in trimmed_forecast if p.get("value") is not None
-        ]
-        min_value = round(min(trimmed_values), 6) if trimmed_values else None
-        max_value = round(max(trimmed_values), 6) if trimmed_values else None
+        # Min/max over the first 24 hours after the cutoff, as the attribute
+        # name says. The cheapest 2 h window below searches the whole trimmed
+        # window by design; see issue #148.
+        min_value, max_value = _min_max_first_24h(trimmed_forecast, d.interval_minutes)
         n = 4
         cheapest_window = None
         if len(trimmed_forecast) >= n:
