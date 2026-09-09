@@ -11,8 +11,10 @@ to 6), and were refused only because their predictions happened to land
 below the floor.
 
 Fix under test:
-  * OlsModel carries each feature's training min and max; apply refuses
-    stage 2 when any feature lies outside them.
+  * OlsModel carries each feature's training min and max. Stage 2 is refused
+    when the extrapolation cost, sum of |coef_i| times the distance each
+    feature lies outside its range, exceeds half the bucket's residual
+    spread (#147 range gate, weighed per #153).
   * stpasa_feature_values returns None for demand50 below the transform's
     floor, on both the training and the serving side.
   * The ranges persist with the coefficients; a legacy store without them
@@ -64,6 +66,8 @@ _ce = _load(
 CalibrationEngine = _ce.CalibrationEngine
 Observation = _ce.Observation
 OlsModel = _ce.OlsModel
+ResidualQuantiles = _ce.ResidualQuantiles
+OLS_MIN_OBS = _ce.OLS_MIN_OBS
 RunFeatures = _ce.RunFeatures
 StpasaFeatures = _ce.StpasaFeatures
 STAGE2_FEATURE_NAMES = _ce.STAGE2_FEATURE_NAMES
@@ -258,25 +262,93 @@ def test_negative_raw_inside_domain_at_low_demand_falls_back():
     print(f"  PASS: raw -0.10 at 24 MW demand publishes stage 1 ({out['calibrated']:.4f})")
 
 
-def test_every_feature_is_gated_not_only_demand():
-    """Each feature outside its range, on its own, refuses stage 2."""
+def test_gate_weighs_each_excursion_by_its_coefficient():
+    """An excursion is refused when |coef| * excess exceeds the allowance.
+
+    Issue #153: the range test alone refused hairline excursions on features
+    the model barely weights. Now each feature's excursion costs |coef_i|
+    times the distance outside its range, summed, against half the bucket's
+    residual spread. So for every feature: an excursion costing twice the
+    allowance is refused, one costing half of it is served, and the bounds
+    themselves are served.
+    """
     _engine, result, rf = _fitted_result()
     model = result.ols_models[_KEY]
     base = _feature_vec(result, 0.12, rf, _stpasa(_IN_RANGE_DEMAND_MW))
-    assert model.in_feature_domain(base)
+    assert model.serves(base)
+    assert model.extrapolation_cost(base) == 0.0
+    allowance = model.extrapolation_allowance
+    assert allowance is not None and allowance > 0.0
+    checked = 0
     for i, name in enumerate(STAGE2_FEATURE_NAMES):
         lo, hi = model.feature_min[i], model.feature_max[i]
-        width = max(hi - lo, 1e-3)
-        for probe in (lo - 0.01 * width, hi + 0.01 * width):
-            vec = list(base)
-            vec[i] = probe
-            assert not model.in_feature_domain(vec), f"{name}={probe} passed"
-            assert model.out_of_domain_features(vec) == [i]
         for probe in (lo, hi):
             vec = list(base)
             vec[i] = probe
-            assert model.in_feature_domain(vec), f"{name} at its bound {probe} refused"
-    print("  PASS: every feature gates independently, inclusive at both bounds")
+            assert model.serves(vec), f"{name} at its bound {probe} refused"
+        c = abs(model.coef[i + 1])
+        if c < 1e-9:
+            continue  # a feature the model does not use cannot be extrapolated on
+        checked += 1
+        for factor, expect in ((2.0, False), (0.5, True)):
+            excess = factor * allowance / c
+            for probe in (lo - excess, hi + excess):
+                vec = list(base)
+                vec[i] = probe
+                cost = model.extrapolation_cost(vec)
+                assert abs(cost - factor * allowance) < 1e-9 * max(1.0, allowance), (name, cost)
+                assert model.serves(vec) is expect, f"{name}={probe} cost={cost:.5f} allowance={allowance:.5f}"
+    assert checked >= 5, checked
+    print(f"  PASS: {checked} features gate by coefficient-weighted excursion (allowance {allowance:.4f})")
+
+
+def test_hairline_excursion_on_a_light_feature_is_served():
+    """The #153 shape: poe_spread_n a hundredth below a narrow range.
+
+    On the live install this refused 19 SA1 rows whose extrapolation cost
+    was 0.0003 $/kWh against a 0.037 allowance. It must serve now.
+    """
+    _engine, result, rf = _fitted_result()
+    model = result.ols_models[_KEY]
+    i = STAGE2_FEATURE_NAMES.index("poe_spread_n")
+    sf = _stpasa(_IN_RANGE_DEMAND_MW)
+    sf.poe_spread_n = model.feature_min[i] - 0.01
+    vec = _feature_vec(result, 0.12, rf, sf)
+    assert model.out_of_domain_features(vec) == [i]
+    cost = model.extrapolation_cost(vec)
+    assert cost is not None and cost < model.extrapolation_allowance, (cost, model.extrapolation_allowance)
+    out = result.apply(
+        0.12, horizon_hours=_HORIZON, hour_of_day=_HOUR, stpasa=sf, run_features=rf,
+    )
+    assert out["calibrated_source"] == "isotonic+stpasa", out["calibrated_source"]
+    print(f"  PASS: poe_spread_n 0.01 below range served (cost {cost:.5f} < {model.extrapolation_allowance:.4f})")
+
+
+def test_original_147_case_costs_more_than_the_band():
+    """The 24 MW row is refused because its extrapolation cost exceeds the allowance."""
+    _engine, result, rf = _fitted_result()
+    model = result.ols_models[_KEY]
+    vec = _feature_vec(result, 0.12, rf, _stpasa(_LIVE_DEMAND_MW))
+    cost = model.extrapolation_cost(vec)
+    assert cost is not None and cost > model.extrapolation_allowance, (cost, model.extrapolation_allowance)
+    assert not model.serves(vec)
+    print(f"  PASS: 24 MW demand costs {cost:.4f} against allowance {model.extrapolation_allowance:.4f}")
+
+
+def test_no_residual_quantiles_falls_back_to_the_strict_range_test():
+    """With ranges but no usable band there is nothing to size an allowance from."""
+    m = OlsModel(
+        bucket_key="x", coef=[0.0, 1.0, 0.001], feature_min=[0.0, 0.0], feature_max=[1.0, 1.0],
+    )
+    assert m.extrapolation_allowance is None
+    assert m.serves([0.5, 0.5])
+    assert not m.serves([0.5, 1.001]), "a light feature's hairline excursion is refused without a band"
+    m.resid = ResidualQuantiles(bucket_key="x", q10=-0.02, q50=0.0, q90=0.02, n=OLS_MIN_OBS)
+    assert m.extrapolation_allowance == 0.02
+    assert m.serves([0.5, 1.001])       # cost 0.001 * 0.001
+    assert m.serves([1.019, 0.5])       # cost 0.019
+    assert not m.serves([1.021, 0.5])   # cost 0.021
+    print("  PASS: strict range test without a band, allowance with one")
 
 
 def test_in_feature_domain_tolerates_float_jitter_and_rejects_bad_ranges():
@@ -301,7 +373,7 @@ def test_legacy_model_without_ranges_serves_as_before():
         n_train=120,
         r2=0.8,
     )
-    assert result.ols_models[_KEY].in_feature_domain([0.0] * 9)
+    assert result.ols_models[_KEY].serves([0.0] * 9)
     out = result.apply(
         0.12, horizon_hours=_HORIZON, hour_of_day=_HOUR,
         stpasa=_stpasa(_LIVE_DEMAND_MW), run_features=rf,
@@ -326,7 +398,7 @@ def test_feature_ranges_survive_storage_round_trip():
     del md["feature_min"], md["feature_max"]
     legacy = engine.from_storage(stored).ols_models[_KEY]
     assert legacy.feature_min == [] and legacy.feature_max == []
-    assert legacy.in_feature_domain([0.0] * 9)
+    assert legacy.serves([0.0] * 9)
     print("  PASS: ranges round-trip through storage; legacy payload loads empty")
 
 
@@ -394,7 +466,10 @@ if __name__ == "__main__":
     test_demand_far_below_training_range_falls_back_to_stage1()
     test_demand_inside_training_range_is_still_served_by_stage2()
     test_negative_raw_inside_domain_at_low_demand_falls_back()
-    test_every_feature_is_gated_not_only_demand()
+    test_gate_weighs_each_excursion_by_its_coefficient()
+    test_hairline_excursion_on_a_light_feature_is_served()
+    test_original_147_case_costs_more_than_the_band()
+    test_no_residual_quantiles_falls_back_to_the_strict_range_test()
     test_in_feature_domain_tolerates_float_jitter_and_rejects_bad_ranges()
     test_legacy_model_without_ranges_serves_as_before()
     test_feature_ranges_survive_storage_round_trip()

@@ -15,7 +15,7 @@ AEMO publishes PD7DAY three times per day (07:30, 13:00, 18:00 AEST). This integ
 The integration uses a two-stage forecasting pipeline:
 
 - **Stage 1 — PD7DAY isotonic calibration**: AEMO's 7-day PD7DAY price forecasts are calibrated using isotonic regression fit on 60 days of rolling history. This corrects systematic bias and shapes the time-of-day profile across all horizons (h0–168).
-- **Stage 2 — STPASA OLS correction** (horizons h22–h120): At medium-range horizons, an OLS model trained on AEMO STPASA supply/demand features (solar UIGF, wind UIGF, surplus capacity, demand 10/50/90) further corrects the isotonic output. Beyond h120, the model falls back to isotonic-only. Stage 2 is only served inside the range of features it was fitted on: if any feature of an interval (for example `log_demand` on a day STPASA forecasts a few tens of MW of scheduled demand) lies outside the training minimum and maximum recorded with the bucket's coefficients, the isotonic result is published instead. Intervals whose STPASA demand50 is below 1 MW carry no STPASA features at all.
+- **Stage 2 — STPASA OLS correction** (horizons h22–h120): At medium-range horizons, an OLS model trained on AEMO STPASA supply/demand features (solar UIGF, wind UIGF, surplus capacity, demand 10/50/90) further corrects the isotonic output. Beyond h120, the model falls back to isotonic-only. Stage 2 is only served where its extrapolation stays within the uncertainty the bucket already publishes: each feature's distance outside the training range recorded with the bucket's coefficients is weighed by the coefficient it multiplies, and if the sum exceeds half the bucket's residual spread (for example `log_demand` on a day STPASA forecasts a few tens of MW of scheduled demand) the isotonic result is published instead. A hairline excursion on a feature the model barely uses costs nothing and is served. Intervals whose STPASA demand50 is below 1 MW carry no STPASA features at all.
 
 ### Performance vs isotonic-only
 
@@ -272,7 +272,7 @@ Default interconnectors per region:
 | `observation_window_days` | The configured training window, 90 days |
 | `oldest_observation` | Interval time of the oldest observation still in the store |
 | `effective_window_days` | Days from the oldest retained observation to now; shorter than the configured window when the store cap (100,000 observations, about 93 days) binds |
-| `summary` | `buckets`: per-bucket isotonic diagnostics (n, iso_n_steps, compression_ratio, iso_mae, x_min, x_max, q10_a, q90_a). `stage2`: per-bucket stage-2 diagnostics for buckets with a fitted OLS model (n_train, r2, coef with the intercept first then the feature order of feature_min, resid_q10/q50/q90, and feature_min/feature_max keyed by feature name: the training range the serving gate accepts) |
+| `summary` | `buckets`: per-bucket isotonic diagnostics (n, iso_n_steps, compression_ratio, iso_mae, x_min, x_max, q10_a, q90_a). `stage2`: per-bucket stage-2 diagnostics for buckets with a fitted OLS model (n_train, r2, coef with the intercept first then the feature order of feature_min, resid_q10/q50/q90, and feature_min/feature_max keyed by feature name: the training range beyond which the serving gate charges |coef| per unit of excursion against half the residual spread) |
 
 #### Forecast history attributes
 

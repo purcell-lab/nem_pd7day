@@ -21,7 +21,7 @@ from test_tariff_calibration_parity import RUN_AT
 from test_tariff_spot_memo import _tariff_mod, build, clear_memos
 
 from custom_components.nem_pd7day import coordinator as coord_mod
-from custom_components.nem_pd7day.nem_time import parse_iso
+from custom_components.nem_pd7day.nem_time import parse_iso, to_nem_iso
 
 PD7DayCoordinator = coord_mod.PD7DayCoordinator
 
@@ -80,7 +80,10 @@ def test_run_features_recompute_when_the_run_changes():
     first = coord.current_run_features
     assert first is coord.current_run_features, "same run must return the cached object"
     price_data = coord.data.prices["QLD1"]
-    price_data.forecast_generated_at = "2026-09-05T18:00:00+10:00"
+    # A new stamp near the fixture's own run, not a calendar date: the run
+    # features need rows within 24 h of the stamp, and the fixture is anchored
+    # to now, so a fixed date ages out and the property returns None.
+    price_data.forecast_generated_at = to_nem_iso(parse_iso(RUN_AT) + timedelta(minutes=30))
     second = coord.current_run_features
     assert second is not first, "a new run stamp must recompute"
     # An interval count change on the same stamp (a refetched file) recomputes too.
