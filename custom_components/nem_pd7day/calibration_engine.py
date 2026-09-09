@@ -618,6 +618,91 @@ class OlsModel:
                 out.append(i)
         return out
 
+    def extrapolation_cost(self, features: list[float]) -> float | None:
+        """What the out-of-range part of ``features`` adds to the prediction.
+
+        The sum over features of |coef_i| times the distance by which the
+        feature lies outside its training range, in $/kWh. Zero when every
+        feature is inside. None when the model carries no ranges (legacy
+        store) or the range lists do not match the feature vector.
+
+        WHY this rather than the range test alone: a linear model's
+        extrapolation error on a feature is bounded by its coefficient times
+        the excursion, so a hairline excursion on a feature the model barely
+        weights costs nothing, while the #147 case (log_demand 2.5 units
+        below its floor at a coefficient near 0.05 $/kWh per unit) costs
+        more than the whole band. Issue #153 measured the range test alone
+        on the live install: of 141 refusals across five regions, 120 were
+        on excursions worth under a cent, mostly poe_spread_n a hundredth
+        below a range 0.05 wide and log_solar a hair above its spring
+        maximum, and only the handful the gate was built for were worth
+        refusing.
+        """
+        lo, hi = self.feature_min, self.feature_max
+        if not lo and not hi:
+            return None
+        if (
+            len(lo) != len(features)
+            or len(hi) != len(features)
+            or len(self.coef) != len(features) + 1
+        ):
+            return None
+        cost = 0.0
+        for c, x, a, b in zip(self.coef[1:], features, lo, hi):
+            tol = 1e-9 * max(1.0, abs(a), abs(b))
+            if x < a - tol:
+                cost += abs(c) * (a - x)
+            elif x > b + tol:
+                cost += abs(c) * (x - b)
+        return cost
+
+    @property
+    def extrapolation_allowance(self) -> float | None:
+        """The extrapolation cost this bucket's band can absorb, or None.
+
+        Half the residual spread, ``(q90 - q10) / 2``: the distance from the
+        point estimate to either edge of the band the model publishes. An
+        extrapolation adding less than that to the prediction stays inside
+        the uncertainty the bucket already claims; one adding more would
+        publish a value the band itself does not cover. Per bucket and
+        fitted from the same rows as the coefficients, so there is no
+        constant to choose. None when the bucket has no usable residual
+        quantiles.
+        """
+        r = self.resid
+        if r is None or not r.is_fitted or r.q10 is None or r.q90 is None:
+            return None
+        return (r.q90 - r.q10) / 2.0
+
+    def serves(self, features: list[float]) -> bool:
+        """Whether stage 2 may be published for this feature vector.
+
+        Three regimes, in order (issues #147 and #153):
+
+        * No ranges stored (legacy payload): serve, as before #147, until the
+          next fit writes ranges.
+        * Ranges stored and residual quantiles usable: serve when the
+          extrapolation cost is within the bucket's allowance. Inside the
+          ranges the cost is zero and this always serves.
+        * Ranges stored but no usable residual quantiles: nothing to size the
+          allowance from, so fall back to the strict range test.
+
+        A range list of the wrong length is a corrupt store and refuses,
+        which is the safe direction: stage 1 is served instead.
+        """
+        lo, hi = self.feature_min, self.feature_max
+        if not lo and not hi:
+            return True
+        cost = self.extrapolation_cost(features)
+        if cost is None:
+            return False
+        if cost == 0.0:
+            return True
+        allowance = self.extrapolation_allowance
+        if allowance is None:
+            return False
+        return cost <= allowance
+
     def residual_band(
         self, prediction: float
     ) -> tuple[float, float, float] | None:
@@ -989,15 +1074,20 @@ class CalibrationResult:
             stpasa.poe_spread_n,
         ]
 
-        # 5a. Gate: serve stage 2 only inside the feature range it was fitted
-        #     on. #123's principle applied to stage 2: below the evidence,
-        #     publish the evidence. A feature outside its training range means
-        #     the prediction is an extrapolation of a linear model, and the
-        #     sign and floor gates below cannot tell a plausible extrapolation
-        #     from a blow-up that happens to land between the floor and zero,
-        #     which is exactly what -$0.86 for a raw -$0.10 was. See #147 and
-        #     the note on OlsModel.feature_min.
-        if not ols.in_feature_domain(feature_vec):
+        # 5a. Gate: serve stage 2 only where its extrapolation is within the
+        #     uncertainty the bucket already publishes. #123's principle
+        #     applied to stage 2: below the evidence, publish the evidence.
+        #     A feature outside its training range means the prediction is an
+        #     extrapolation of a linear model, and the sign and floor gates
+        #     below cannot tell a plausible extrapolation from a blow-up that
+        #     happens to land between the floor and zero, which is exactly
+        #     what -$0.86 for a raw -$0.10 was (#147). The excursion is
+        #     weighed by the coefficient it multiplies against half the
+        #     bucket's residual spread (#153), so a hairline excursion on a
+        #     feature the model barely uses does not cost the row its
+        #     correction while the #147 case still cannot be served. See
+        #     OlsModel.serves.
+        if not ols.serves(feature_vec):
             return result
 
         # 5b. Predict.
