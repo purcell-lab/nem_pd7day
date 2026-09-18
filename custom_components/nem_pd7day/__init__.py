@@ -149,7 +149,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # the user has removed (issue #106). The trigger for that fetch is
     # registered on any loaded region (#37), so popping here does not stop
     # STPASA refreshes for the regions that remain.
-    entry.async_on_unload(lambda: stpasa_stores.pop(region, None))
+    #
+    # The callback must return None. Home Assistant 2026.9 schedules any
+    # value an on-unload callback returns as a task, so a lambda that
+    # returned the popped StpasaStore raised "TypeError: a coroutine was
+    # expected" on every unload of the entry.
+    def _forget_stpasa_store() -> None:
+        stpasa_stores.pop(region, None)
+
+    entry.async_on_unload(_forget_stpasa_store)
 
     # ── Shared market notice store + client ──────────────────────────────────
     # All five region coordinators share ONE notice store + client so the
