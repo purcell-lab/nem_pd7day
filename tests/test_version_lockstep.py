@@ -7,9 +7,12 @@ import os
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from support import ROOT
+
+# The script lives outside the integration package, so support.load (which
+# only knows custom_components/nem_pd7day) does not apply.
 _spec = importlib.util.spec_from_file_location(
-    "version_lockstep", os.path.join(_ROOT, "scripts", "version_lockstep.py")
+    "version_lockstep", os.path.join(ROOT, "scripts", "version_lockstep.py")
 )
 lockstep = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lockstep)
