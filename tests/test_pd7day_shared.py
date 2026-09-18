@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
-from support import install_ha_stubs, load_chain, make_zip, run_async
+from support import install_ha_stubs, load_chain, make_zip
 
 install_ha_stubs()
 
@@ -188,7 +188,7 @@ def test_five_concurrent_regions_cause_one_download_and_one_parse():
             )
             return results, spy.count
 
-    results, parses = run_async(scenario())
+    results, parses = asyncio.run(scenario())
 
     assert len(results) == 5
     assert parses == 1, f"CSV was parsed {parses} times for 5 regions, expected 1"
@@ -214,7 +214,7 @@ def test_sequential_fetches_inside_the_burst_window_reuse_the_parse():
                 clock.advance(5)  # matches the 5 s stagger between coordinators
             return spy.count
 
-    parses = run_async(scenario())
+    parses = asyncio.run(scenario())
 
     assert parses == 1, f"{len(REGIONS)} regions caused {parses} parses"
     assert session.file_requests == 1, f"{len(REGIONS)} regions caused {session.file_requests} downloads"
@@ -235,7 +235,7 @@ def test_unchanged_newest_file_reuses_the_parse_without_downloading():
             await fetcher.fetch_all(["NSW1"], REGION_INTERCONNECTORS["NSW1"])
             return spy.count
 
-    parses = run_async(scenario())
+    parses = asyncio.run(scenario())
 
     assert parses == 1, "a file already parsed was parsed again"
     assert session.file_requests == 1, "a file already downloaded was downloaded again"
@@ -256,7 +256,7 @@ def test_new_publication_triggers_a_fresh_download():
             second = await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
             return spy.count, first, second
 
-    parses, first, second = run_async(scenario())
+    parses, first, second = asyncio.run(scenario())
 
     assert parses == 2, "a newly published file was not parsed"
     assert fetcher.stats.downloads == 2
@@ -288,7 +288,7 @@ def test_reused_parse_is_restamped_so_the_disk_cache_stays_usable():
             second = await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
             return first, second
 
-    first, second = run_async(scenario())
+    first, second = asyncio.run(scenario())
 
     assert second.updated_at != first.updated_at, "reused parse kept its original updated_at and would read as stale"
     assert second.updated_at == nem_time.to_nem_iso(times[1])
@@ -314,7 +314,7 @@ def test_a_failed_fetch_is_not_cached():
             await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
         return await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
 
-    result = run_async(scenario())
+    result = asyncio.run(scenario())
 
     assert "QLD1" in result.prices
     assert fetcher.stats.downloads == 1
@@ -331,7 +331,7 @@ def test_concurrent_callers_all_observe_a_failure():
             return_exceptions=True,
         )
 
-    results = run_async(scenario())
+    results = asyncio.run(scenario())
 
     failures = [r for r in results if isinstance(r, Exception)]
     successes = [r for r in results if not isinstance(r, Exception)]
@@ -352,7 +352,7 @@ def test_each_region_sees_only_its_own_prices():
     async def scenario():
         return {r: await fetcher.fetch_all([r], REGION_INTERCONNECTORS[r]) for r in REGIONS}
 
-    per_region = run_async(scenario())
+    per_region = asyncio.run(scenario())
 
     for region, result in per_region.items():
         assert set(result.prices) == {region}, f"{region} coordinator also received {set(result.prices) - {region}}"
@@ -367,7 +367,7 @@ def test_each_region_sees_only_its_own_interconnectors():
             await fetcher.fetch_all(["TAS1"], REGION_INTERCONNECTORS["TAS1"]),
         )
 
-    qld, tas = run_async(scenario())
+    qld, tas = asyncio.run(scenario())
 
     assert set(qld.interconnectors) <= REGION_INTERCONNECTORS["QLD1"]
     assert set(tas.interconnectors) <= REGION_INTERCONNECTORS["TAS1"]
@@ -388,7 +388,7 @@ def test_shared_parse_covers_every_region_and_interconnector():
             await fetcher.fetch_all(["TAS1"], REGION_INTERCONNECTORS["TAS1"])
             return spy.calls
 
-    calls = run_async(scenario())
+    calls = asyncio.run(scenario())
 
     assert calls, "no parse happened"
     assert set(calls[0]) == set(REGIONS), f"the shared parse only covered {calls[0]}, so other regions would be empty"
@@ -408,7 +408,7 @@ def test_result_for_regions_leaves_the_source_result_untouched():
         result_for_regions(full, ["TAS1"], REGION_INTERCONNECTORS["TAS1"])
         return before_prices, before_ics, set(full.prices), set(full.interconnectors)
 
-    before_p, before_i, after_p, after_i = run_async(scenario())
+    before_p, before_i, after_p, after_i = asyncio.run(scenario())
 
     assert before_p == after_p
     assert before_i == after_i
@@ -427,7 +427,7 @@ def test_shared_parse_runs_off_the_event_loop_thread():
             await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
             return threading.get_ident(), spy.threads
 
-    loop_thread, parse_threads = run_async(scenario())
+    loop_thread, parse_threads = asyncio.run(scenario())
 
     assert parse_threads, "_parse_all_tables was never called"
     assert loop_thread not in parse_threads, "the shared all-region parse ran on the event loop thread"

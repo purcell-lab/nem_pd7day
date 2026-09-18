@@ -17,8 +17,6 @@ import logging
 
 import pytest
 
-from support import run_async
-
 from custom_components.nem_pd7day.shared_dispatch import async_shared_dispatch
 from custom_components.nem_pd7day.const import (
     DISPATCH_UNSUBS_KEY,
@@ -88,7 +86,7 @@ def test_five_concurrent_entries_create_one_coordinator():
     """The whole point of #34: one coordinator, one first refresh, one timer."""
     hass = _FakeHass()
 
-    results = run_async(_setup_all_concurrently(hass, asyncio.Lock()))
+    results = asyncio.run(_setup_all_concurrently(hass, asyncio.Lock()))
 
     assert _StubDispatch.constructed == 1
     assert _StubDispatch.refreshed == 1
@@ -102,7 +100,7 @@ def test_cancel_callbacks_are_registered_once_at_domain_level():
     """Unload must be able to cancel the timer that was actually started."""
     hass = _FakeHass()
 
-    run_async(_setup_all_concurrently(hass, asyncio.Lock()))
+    asyncio.run(_setup_all_concurrently(hass, asyncio.Lock()))
 
     unsubs = hass.data[DOMAIN][DISPATCH_UNSUBS_KEY]
     assert len(unsubs) == 1
@@ -116,7 +114,7 @@ def test_existing_coordinator_is_reused_without_refetching():
     hass = _FakeHass()
     lock = asyncio.Lock()
 
-    first = run_async(
+    first = asyncio.run(
         async_shared_dispatch(
             hass,
             lock,
@@ -126,7 +124,7 @@ def test_existing_coordinator_is_reused_without_refetching():
     )
     assert _StubDispatch.constructed == 1
 
-    second = run_async(
+    second = asyncio.run(
         async_shared_dispatch(
             hass,
             lock,
@@ -162,7 +160,7 @@ def test_unguarded_claim_would_fail_this_property():
     async def _all():
         return await asyncio.gather(*(_unguarded(r) for r in REGIONS))
 
-    run_async(_all())
+    asyncio.run(_all())
 
     assert _StubDispatch.constructed == len(REGIONS)
     assert _StubDispatch.scheduled == len(REGIONS)

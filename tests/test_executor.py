@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
-from support import PKG_DIR, install_ha_stubs, load, load_chain, make_zip, run_async
+from support import PKG_DIR, install_ha_stubs, load, load_chain, make_zip
 
 install_ha_stubs()
 
@@ -107,7 +107,7 @@ def test_run_in_executor_uses_a_worker_thread():
     async def scenario():
         return threading.get_ident(), await run_in_executor(None, threading.get_ident)
 
-    loop_thread, work_thread = run_async(scenario())
+    loop_thread, work_thread = asyncio.run(scenario())
     assert work_thread != loop_thread, "run_in_executor ran the callable on the event loop thread"
 
 
@@ -122,7 +122,7 @@ def test_run_in_executor_prefers_the_supplied_hass_job():
     async def scenario():
         return await run_in_executor(fake_job, threading.get_ident)
 
-    result = run_async(scenario())
+    result = asyncio.run(scenario())
     assert calls, "supplied executor_job was bypassed"
     assert result != threading.get_ident()
 
@@ -149,7 +149,7 @@ def test_pd7day_unzip_and_parse_run_off_the_loop():
                 patch.object(PD7DayClient, "_unzip", staticmethod(spy_unzip)):
             await _pd7day_client().fetch_all(["QLD1"])
 
-    run_async(scenario())
+    asyncio.run(scenario())
 
     assert "unzip" in seen, "_unzip was never called"
     assert "parse" in seen, "_parse_all_tables was never called"
@@ -191,7 +191,7 @@ def test_event_loop_stays_responsive_during_parse():
                 pass
         return ticks
 
-    ticks = run_async(scenario())
+    ticks = asyncio.run(scenario())
 
     # With the parse inline, the loop is frozen for BLOCK_S and records ~0
     # ticks. Off the loop, it should manage most of BLOCK_S / 0.01.
@@ -202,7 +202,7 @@ def test_event_loop_stays_responsive_during_parse():
 
 def test_parse_offload_is_awaited_not_fire_and_forget():
     """fetch_all must still return fully parsed data, not an empty result."""
-    result = run_async(_pd7day_client().fetch_all(["QLD1"]))
+    result = asyncio.run(_pd7day_client().fetch_all(["QLD1"]))
     assert result.case is not None, "case solution lost by the executor hand-off"
     assert result.source_file.upper().endswith(".ZIP")
 
@@ -228,7 +228,7 @@ def test_stpasa_extract_and_parse_run_off_the_loop():
         with patch.object(stpasa_mod, "_extract_and_parse_all_regions", spy):
             await client.fetch_all_regions()
 
-    run_async(scenario())
+    asyncio.run(scenario())
 
     assert "work" in seen, "_extract_and_parse_all_regions was never called"
     assert seen["work"] != seen["loop"], "STPASA extraction/parsing ran on the event loop thread"
