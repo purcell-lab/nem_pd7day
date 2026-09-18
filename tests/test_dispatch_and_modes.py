@@ -154,6 +154,25 @@ _tariff_mod = _load(
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "tariff_sensor.py"),
 )
 
+
+def _expected_import_price(lib_c_kwh, rrp_mwh, fee=0.0293, distributor="energex"):
+    """Published import price in $/kWh for a mocked spot_to_tariff return.
+
+    aemo_to_tariff composes a tariff as spot plus network rate and grosses the
+    network rate up itself on seven of the thirteen networks, so tariff_sensor
+    separates the components, removes the library's GST from the network
+    component where the library applied it, and grosses the total up once
+    (#158). A mocked library return has to be split the same way.
+
+    tests/test_tariff_gst.py is what checks that placement against the real
+    library; this only keeps the surrounding plumbing assertions honest.
+    """
+    spot_c = rrp_mwh * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
+    network_c = lib_c_kwh - spot_c
+    if distributor in _tariff_mod._LIB_APPLIES_GST:
+        network_c /= _tariff_mod.GST
+    return round(((spot_c + network_c) / 100 + fee) * _tariff_mod.GST, 6)
+
 from custom_components.nem_pd7day.const import (
     CONF_ACTIVE_TARIFF,
     CONF_FORECAST_MODE,
@@ -603,11 +622,11 @@ def test_tariff_sensor_dispatch_native_value():
     sensor._entry.runtime_data.dispatch = dispatch
 
     # Mock spot_to_tariff for the dispatch path
-    # New formula: (12.5/100 + 0.0293) * 1.1
+    # Dispatch price 0.050 $/kWh is 50 $/MWh into the split.
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=12.5):
         val = sensor.native_value
         assert val is not None
-        expected = round((12.5 / 100 + 0.0293) * 1.1, 6)
+        expected = _expected_import_price(12.5, 50.0)
         assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
 
 
@@ -623,11 +642,11 @@ def test_tariff_sensor_dispatch_fallback():
     dispatch.prices = {}
     sensor._entry.runtime_data.dispatch = dispatch
 
-    # Fallback uses PD7DAY forecast path: (15.5/100 + 0.0293) * 1.1
+    # Fallback uses the PD7DAY forecast path at 100 $/MWh.
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
         val = sensor.native_value
         assert val is not None
-        expected = round((15.5 / 100 + 0.0293) * 1.1, 6)
+        expected = _expected_import_price(15.5, 100.0)
         assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
 
 
