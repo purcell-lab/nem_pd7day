@@ -1,5 +1,6 @@
 """
-Integration tests for CalibrationStore — pure Python, no HA dependency.
+CalibrationStore (calibration_store.py): forecast history, observation
+recording, persistence across restarts and the attributes it publishes.
 
 Covers the bugs found in production:
   - forecast_history keyed by datetime vs str (type mismatch)
@@ -7,44 +8,44 @@ Covers the bugs found in production:
   - 5-min Amber readings averaged into 30-min trading interval actuals
   - Sanity guard in calibration_engine rejecting corrupt OLS fits
   - Observation accumulator rebuilt correctly after restart
-
-Run with:  python -m pytest tests/test_calibration_store.py -v
+  - forecast_history lost on restart, so no actual beyond the first session's
+    run ever matched (the h48_96 and h96plus buckets never filled)
+  - forecast_history_* attributes, merged into PD7DayCalibrationSensor when
+    PD7DayForecastHistorySensor was removed in v2.0.4
 """
 from __future__ import annotations
 
-import asyncio
-import sys
+import math
+import random
 import pytest
 from functools import partial
-from unittest.mock import MagicMock
-from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timedelta
 
 import support
 from support import (
     MemoryStore,
     install_ha_stubs,
-    load,
+    load_chain,
     make_price_data,
     make_price_period,
     nem_iso,
     run_async,
 )
 
-# ── Module loader (avoids HA import chain) ────────────────────────────────────
-
-_nem_time = load("nem_time")
-_engine_mod = load("calibration_engine")
-
-# Stub out all HA modules so CalibrationStore can be imported without HA installed
+# Stub HA before loading anything hass-aware. sensor is loaded too because the
+# forecast history attributes are published by PD7DayCalibrationSensor.
 install_ha_stubs()
-_store_mod = load("calibration_store")
+_const_mod, _nem_time, _engine_mod, _client_mod, _store_mod, _coord_mod, _sensor_mod = load_chain(
+    "const", "nem_time", "calibration_engine", "pd7day_client",
+    "calibration_store", "coordinator", "sensor",
+)
 
 make_store = partial(support.make_store, _store_mod)
 
-from custom_components.nem_pd7day.nem_time import NEM_TZ
-from custom_components.nem_pd7day.calibration_engine import (
-    CalibrationEngine, Observation,
-)
+NEM_TZ = _nem_time.NEM_TZ
+CalibrationEngine = _engine_mod.CalibrationEngine
+Observation = _engine_mod.Observation
 
 BASE_DT = datetime(2026, 4, 14, 18, 0, tzinfo=NEM_TZ)  # 18:00 NEM forecast run
 
@@ -266,8 +267,7 @@ def test_accumulator_rebuilt_from_loaded_observations():
 # A previously hard-coded 2026-04-14 anchor aged out of the window on
 # 2026-07-13, after which every observation was silently discarded and
 # apply() returned "passthrough" with n_obs=0 instead of "isotonic".
-NEM_TZ_FIXTURE = timezone(timedelta(hours=10))  # NEM is UTC+10 year-round
-_OBS_ANCHOR = (datetime.now(NEM_TZ_FIXTURE) - timedelta(days=2)).replace(
+_OBS_ANCHOR = (datetime.now(NEM_TZ) - timedelta(days=2)).replace(
     minute=0, second=0, microsecond=0
 )
 
@@ -300,8 +300,7 @@ def test_isotonic_handles_large_negative_actuals():
     market floor): the fitted step lands at about -3.15 and the published
     value is floored at MARKET_PRICE_FLOOR, the only floor left after #114.
     """
-    from custom_components.nem_pd7day.const import MARKET_PRICE_FLOOR
-    import random
+    MARKET_PRICE_FLOOR = _const_mod.MARKET_PRICE_FLOOR
     rng = random.Random(42)
     # Near-constant forecast (~0.003), actual = -3.15 → isotonic floors at 0.0
     obs = [
@@ -330,7 +329,6 @@ def test_high_ratio_isotonic_flows_through():
     With sanity guard removed, high-ratio isotonic output flows through as isotonic.
     raw=0.10, actual ≈ 6x → isotonic calibrates to ~0.60 — a legitimate correction.
     """
-    import random
     rng = random.Random(7)
     # High slope: actual ≈ 6 * forecast → at raw=0.10, calibrated ≈ 0.60
     obs = [
@@ -360,7 +358,6 @@ def test_sanity_guard_ratio_skipped_below_floor():
     is large. This is the real-world case: raw=0.010 → isotonic lifts to ~0.054
     (step function minimum), ratio=5.4 — correct behaviour, not corruption.
     """
-    import random
     rng = random.Random(42)
     # Observations: forecast ~0.01 (10 $/MWh), actual ~0.054 (54 $/MWh)
     # The isotonic model will learn the step function floor ≈ 0.054.
@@ -391,7 +388,6 @@ def test_large_abs_diff_isotonic_flows_through():
     With sanity guard removed, large absolute difference isotonic output flows
     through as isotonic. raw=0.10, actual ≈ 4.5x → isotonic calibrates to ~0.45.
     """
-    import random
     rng = random.Random(99)
     # actual ≈ 4.5 * forecast → at raw=0.10, calibrated ≈ 0.45
     obs = [
@@ -417,7 +413,6 @@ def test_large_abs_diff_isotonic_flows_through():
 
 def test_sanity_guard_passes_normal_values():
     """Normal OLS output within plausible range must NOT be caught by the guard."""
-    import random
     rng = random.Random(1)
     obs = [
         _make_obs(
@@ -619,11 +614,6 @@ def test_horizon_uses_interval_start_not_nemtime():
         f"Expected horizon 6.0h (using interval START), got {obs['horizon_hours']}h. "
         f"If 6.5h, the store is incorrectly using nemtime (interval END)."
     )
-
-
-if __name__ == "__main__":
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
 
 
 def test_ingest_forecast_populates_gas_tj():
@@ -843,8 +833,8 @@ def test_total_buckets_matches_tod_labels_times_horizon_labels():
     After adding morning_ramp as a 4th ToD label, total_buckets must be 24.
     summary_attributes() must derive this from the actual constants.
     """
-    from custom_components.nem_pd7day.calibration_engine import all_bucket_keys
-    from custom_components.nem_pd7day.const import TOD_LABELS, HORIZON_LABELS
+    all_bucket_keys = _engine_mod.all_bucket_keys
+    TOD_LABELS, HORIZON_LABELS = _const_mod.TOD_LABELS, _const_mod.HORIZON_LABELS
 
     store = make_store()
     store._observations = [{"dummy": i} for i in range(20)]
@@ -872,7 +862,6 @@ def test_total_buckets_matches_tod_labels_times_horizon_labels():
 
 def _make_store_with_calibration():
     """Create a CalibrationStore with a fitted calibration so apply_to_price uses the engine."""
-    import random
     store = make_store()
     rng = random.Random(42)
     # Fit with enough normal observations so the calibration is active
@@ -1082,7 +1071,6 @@ def test_build_stpasa_feature_map():
     observation must carry derived stpasa_log_* fields and
     build_stpasa_feature_map() must expose them keyed by interval|run_at.
     """
-    import math
     store = make_store()
     run_dt = BASE_DT
     interval_end_dt = BASE_DT + timedelta(hours=24)
@@ -1163,7 +1151,7 @@ def test_record_actual_skips_stpasa_features_when_demand_is_below_floor():
 def test_store_fixture_observations_are_inside_training_window():
     """_make_obs() dates must be recent enough for CalibrationEngine to fit."""
     window_days = _engine_mod.OBSERVATION_WINDOW_DAYS
-    now = datetime.now(NEM_TZ_FIXTURE)
+    now = datetime.now(NEM_TZ)
     cutoff = now - timedelta(days=window_days)
 
     o = _make_obs(forecast=0.10, actual=0.20)
@@ -1309,7 +1297,6 @@ def test_summary_reports_the_effective_window_from_the_oldest_observation():
     store = make_store()
     assert store.oldest_observation is None
     assert store.effective_window_days is None
-    from unittest.mock import patch
     now = datetime(2026, 9, 5, 8, 0, tzinfo=NEM_TZ)
     store._observations = [
         {"interval_time": nem_iso(now - timedelta(days=19, hours=12)), "pd7day_forecast": 0.1},
@@ -1334,7 +1321,7 @@ def test_record_actual_persists_only_the_touched_day():
     old_day = {"interval_time": "2026-08-20T12:00:00+10:00", "forecast_run_at": "2026-08-20T07:30:00+10:00",
                "actual_rrp": 0.05, "pd7day_forecast": 0.06, "horizon_hours": 4.5}
     store._observations = [old_day]
-    asyncio.run(store._save_observations())
+    run_async(store._save_observations())
     saved_before = dict(MemoryStore._data)
     assert "nem_pd7day.qld1.observations.2026-08-20" in saved_before
 
@@ -1345,7 +1332,7 @@ def test_record_actual_persists_only_the_touched_day():
         "gas_tj": None, "qni_mwflow": None, "qni_violation": None, "is_intervention": False,
     }]
     MemoryStore._data.clear()
-    asyncio.run(store.async_record_actual(nem_iso(interval), 0.07))
+    run_async(store.async_record_actual(nem_iso(interval), 0.07))
     written = sorted(MemoryStore._data)
     assert written == [
         "nem_pd7day.qld1.observation_segments",
@@ -1359,8 +1346,183 @@ def test_record_actual_persists_only_the_touched_day():
 
 
 def test_observation_log_is_pruned_to_max_total_obs():
-    from custom_components.nem_pd7day.const import MAX_TOTAL_OBS
-    assert MAX_TOTAL_OBS == 100_000, (
+    assert _const_mod.MAX_TOTAL_OBS == 100_000, (
         "100,000 observations is about 93 days at three runs a day; the "
         "previous 20,000 was 19 days and the 90 day window never bound (#127)"
     )
+
+
+# ── Forecast history persistence across restarts ─────────────────────────────
+# _forecast_history is saved on every ingest and reloaded by async_load. It has
+# to survive save -> fresh store -> load, actuals recorded after the restart
+# must match the previous session's entries (72 h and 120 h are the h48_96 and
+# h96plus buckets that never filled while history was lost), pruning must be
+# persisted and the run_at dedup must hold across the restart boundary.
+
+def _restarted(store):
+    """A fresh store loaded from what ``store`` last saved to its history store."""
+    assert store._fh_store.async_save.called, "ingest_forecast must call _save_forecast_history"
+    store2 = make_store(fh_load_data=store._fh_store.async_save.call_args[0][0])
+    run_async(store2.async_load())
+    return store2
+
+
+def test_forecast_history_survives_restart():
+    """Every interval key and every entry of a multi-interval run is restored."""
+    store1 = make_store()
+    periods = [
+        make_price_period(BASE_DT + timedelta(hours=i + 1, minutes=30), value=0.10 + i * 0.01)
+        for i in range(5)
+    ]
+    run_async(store1.ingest_forecast("QLD1", make_price_data(BASE_DT, periods), {}, None))
+    assert len(store1._forecast_history) == 5
+
+    store2 = _restarted(store1)
+
+    assert set(store2._forecast_history) == set(store1._forecast_history)
+    for key, original in store1._forecast_history.items():
+        loaded = store2._forecast_history[key]
+        assert [e["run_at"] for e in loaded] == [e["run_at"] for e in original], key
+        assert [e["forecast_price"] for e in loaded] == pytest.approx(
+            [e["forecast_price"] for e in original], abs=1e-9
+        ), key
+
+
+@pytest.mark.parametrize("horizon_hours", [72.0, 120.0], ids=["h48_96", "h96plus"])
+def test_actual_recorded_after_restart(horizon_hours):
+    """An actual for an interval forecast in the previous session still matches."""
+    store1 = make_store()
+    run_dt = datetime(2026, 4, 14, 7, 30, tzinfo=NEM_TZ)
+    interval_start_dt = run_dt + timedelta(hours=horizon_hours)
+    period = make_price_period(interval_start_dt + timedelta(minutes=30), value=0.095)
+    run_async(store1.ingest_forecast("QLD1", make_price_data(run_dt, [period]), {}, None))
+
+    store2 = _restarted(store1)
+    run_async(store2.async_record_actual(nem_iso(interval_start_dt), 0.090))
+
+    assert len(store2._observations) == 1, (
+        f"Expected 1 observation after restart, got {len(store2._observations)}; "
+        f"forecast_history keys: {list(store2._forecast_history)[:5]}"
+    )
+    assert abs(store2._observations[0]["horizon_hours"] - horizon_hours) < 0.01
+
+
+def test_forecast_history_pruning_persisted():
+    """Intervals older than MAX_FORECAST_AGE_DAYS are pruned before the save."""
+    store = make_store()
+    old_dt = datetime(2026, 3, 25, 12, 0, tzinfo=NEM_TZ)  # 20 days before BASE_DT
+    old_key = nem_iso(old_dt)
+    store._forecast_history[old_key] = [{
+        "run_at": nem_iso(old_dt - timedelta(hours=6)), "forecast_price": 0.10,
+        "gas_tj": None, "qni_mwflow": None, "qni_violation": None,
+        "is_intervention": False, "region": "QLD1",
+    }]
+    period = make_price_period(BASE_DT + timedelta(hours=3, minutes=30), value=0.108)
+    run_async(store.ingest_forecast("QLD1", make_price_data(BASE_DT, [period]), {}, None))
+
+    assert old_key not in store._forecast_history
+    saved = store._fh_store.async_save.call_args[0][0]
+    assert old_key not in saved.get("forecast_history", {})
+    fresh_key = next(iter(store._forecast_history))
+    assert fresh_key in saved["forecast_history"]
+
+
+def test_dedup_after_restart():
+    """Re-ingesting the same run_at after a restart adds no duplicate entry."""
+    store1 = make_store()
+    run_dt = datetime(2026, 4, 15, 7, 30, tzinfo=NEM_TZ)
+    interval_end = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
+    price_data = make_price_data(run_dt, [make_price_period(interval_end, value=0.110)])
+    run_async(store1.ingest_forecast("QLD1", price_data, {}, None))
+
+    store2 = _restarted(store1)
+    run_async(store2.ingest_forecast("QLD1", price_data, {}, None))
+
+    key = nem_iso(interval_end - timedelta(minutes=30))
+    assert len(store2._forecast_history[key]) == 1
+
+
+def test_async_load_with_empty_storage():
+    """First install: no history store yet, and async_load must start empty."""
+    store = make_store(fh_load_data=None)
+    run_async(store.async_load())
+    assert store._forecast_history == {}
+
+
+# ── fit_generation ───────────────────────────────────────────────────────────
+# sensor.py memoises the calibrated forecast per region keyed on
+# store.fit_generation rather than id(store.calibration): async_refit publishes
+# the result and then mutates that same object in place to attach the OLS
+# stage 2 models, which object identity cannot see (issue #35). The counter
+# must move on restore, on refit and again on the in-place stage 2 update.
+
+def test_fit_generation_advances_on_restore_refit_and_stage2():
+    store = make_store()
+    store._fit_generation = 0
+    store._iso_history = []
+    store._observations = [
+        dict(
+            _make_obs(forecast=0.10 + i * 0.002, actual=0.12 + i * 0.002)._asdict(),
+            stpasa_log_surplus=7.0, stpasa_log_solar=6.0,
+            stpasa_log_demand=8.7, stpasa_poe_spread_n=-0.16,
+        )
+        for i in range(30)
+    ]
+    # Stage 2 is best effort; stand in for the OLS fit so the in-place update runs.
+    store._engine.fit_ols_stage2 = lambda obs, fmap, region: {"bucket": object()}
+    assert store.fit_generation == 0
+
+    run_async(store.async_refit())
+    assert store.fit_generation == 2, "refit and the stage 2 in-place update must each move it"
+
+    restored = make_store()
+    restored._fit_generation = 0
+    restored._coeff_store.async_load = AsyncMock(
+        return_value=store._coeff_store.async_save.call_args[0][0]
+    )
+    run_async(restored.async_load())
+    assert restored.fit_generation == 1, "restore from storage must move it"
+    assert restored.calibration is not None
+
+
+# ── forecast_history_* attributes on the calibration sensor ──────────────────
+# PD7DayForecastHistorySensor was removed in v2.0.4; its data is merged into
+# PD7DayCalibrationSensor.extra_state_attributes under the five
+# forecast_history_* keys.
+
+def _calibration_sensor(history: dict):
+    cls = _sensor_mod.PD7DayCalibrationSensor
+    sensor = cls.__new__(cls)
+    sensor._store = make_store()
+    sensor._store._forecast_history = history
+    sensor._region = "QLD1"
+    return sensor
+
+
+@pytest.mark.parametrize(
+    "history, expected",
+    [
+        ({}, dict(entries=0, intervals=0, oldest=None, newest=None, runs_avg=0)),
+        (
+            {"2026-04-18T17:00:00+10:00": [{"run_at": "x", "forecast_price": 0.09}]},
+            dict(entries=1, intervals=1, oldest="2026-04-18T17:00:00+10:00",
+                 newest="2026-04-18T17:00:00+10:00", runs_avg=1.0),
+        ),
+        (
+            {
+                "2026-04-18T17:00:00+10:00": [
+                    {"run_at": "a", "forecast_price": 0.09},
+                    {"run_at": "b", "forecast_price": 0.10},
+                ],
+                "2026-04-20T10:00:00+10:00": [{"run_at": "a", "forecast_price": 0.11}],
+            },
+            dict(entries=3, intervals=2, oldest="2026-04-18T17:00:00+10:00",
+                 newest="2026-04-20T10:00:00+10:00", runs_avg=1.5),
+        ),
+    ],
+    ids=["empty", "single", "multiple"],
+)
+def test_calibration_sensor_publishes_forecast_history_attributes(history, expected):
+    attrs = _calibration_sensor(history).extra_state_attributes
+    assert {k: attrs[f"forecast_history_{k}"] for k in expected} == expected
+    assert attrs[_const_mod.ATTR_REGION] == "QLD1"

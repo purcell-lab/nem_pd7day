@@ -1,206 +1,43 @@
 """
-Tests for export tariff sensors and Day 2-7 entity_category.
+Tests for tariff_sensor.py: NemPd7dayExportTariffSensor.
 
-Covers:
-  1. Export tariff sensor produces different value from import tariff sensor
-     for Ausgrid EA025/EA029 at a peak-hour interval (16:00-21:00)
-  2. Export tariff sensor entity_id follows _export_tariff suffix pattern
-  3. Day 2-7 sensors have entity_category == EntityCategory.DIAGNOSTIC
+The export sensor converts through spot_to_feed_in_tariff and publishes the
+raw feed-in rate: no additional usage fee and no GST, which is correct only
+because the library adds none to a feed-in rate either (probed in
+test_tariff_gst.py). Export programs are enumerated from the library's own
+pairings (#159, test_tariff_catalogue.py). The calibrated spot must agree
+with the price forecast sensor (#66, test_tariff_calibration_parity.py) and,
+as in the import sensor, each interval is calibrated once per attribute build
+(#62).
 
 Run with:  python -m pytest tests/test_export_tariff.py -v
 """
 from __future__ import annotations
 
-import sys
-import os
-import importlib.util
+import contextlib
+import io
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
-# ── Module loader ─────────────────────────────────────────────────────────────
+import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from support import NEM_TZ, install_ha_stubs, load_chain, make_price_period, nem_iso, run_async
 
+install_ha_stubs()
 
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-# Stub HA and aiohttp before loading any integration module
-sys.modules.setdefault("aiohttp", MagicMock())
-for ha_mod in [
-    "homeassistant", "homeassistant.core", "homeassistant.helpers",
-    "homeassistant.helpers.storage", "homeassistant.helpers.event",
-    "homeassistant.helpers.aiohttp_client", "homeassistant.helpers.update_coordinator",
-    "homeassistant.helpers.entity_platform", "homeassistant.helpers.device_registry",
-    "homeassistant.config_entries",
-    "homeassistant.const", "homeassistant.util", "homeassistant.util.dt",
-    "homeassistant.components", "homeassistant.components.sensor",
-]:
-    sys.modules.setdefault(ha_mod, MagicMock())
-
-device_registry_mock = MagicMock()
-device_registry_mock.DeviceInfo = dict
-sys.modules["homeassistant.helpers.device_registry"] = device_registry_mock
-
-import enum
-
-
-class _SensorDeviceClass(str, enum.Enum):
-    MONETARY = "monetary"
-    ENERGY = "energy"
-    TIMESTAMP = "timestamp"
-
-
-class _SensorStateClass(str, enum.Enum):
-    MEASUREMENT = "measurement"
-    TOTAL_INCREASING = "total_increasing"
-
-
-sensor_mock = MagicMock()
-sensor_mock.SensorDeviceClass = _SensorDeviceClass
-sensor_mock.SensorStateClass = _SensorStateClass
-sensor_mock.SensorEntity = object
-sys.modules["homeassistant.components.sensor"] = sensor_mock
-
-# Provide EntityCategory so tariff_sensor.py can import it
-ec = MagicMock()
-ec.DIAGNOSTIC = "diagnostic"
-sys.modules["homeassistant.const"].EntityCategory = ec
-
-
-class _FakeCoordinator:
-    def __init__(self, hass, logger, name, update_interval):
-        self.hass = hass
-        self.last_update_success = True
-        self.data = None
-    def __class_getitem__(cls, item):
-        return cls
-    async def async_config_entry_first_refresh(self): pass
-    async def async_refresh(self): pass
-
-
-class _FakeCoordinatorEntity:
-    def __init__(self, coordinator=None, **kwargs):
-        self.coordinator = coordinator
-    def __class_getitem__(cls, item):
-        return cls
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-
-
-_uc_mock = MagicMock()
-_uc_mock.DataUpdateCoordinator = _FakeCoordinator
-_uc_mock.UpdateFailed = Exception
-_uc_mock.CoordinatorEntity = _FakeCoordinatorEntity
-sys.modules["homeassistant.helpers.update_coordinator"] = _uc_mock
-
-_nem_time = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
+_const_mod, _nem_time, _client_mod, _store_mod, _coord_mod, _tariff_mod, _sensor_mod = load_chain(
+    "const", "nem_time", "pd7day_client", "calibration_store", "coordinator",
+    "tariff_sensor", "sensor",
 )
 
-sys.modules.setdefault("aiohttp", MagicMock())
-_client_mod = _load(
-    "custom_components.nem_pd7day.pd7day_client",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_client.py"),
-)
+NemPd7dayExportTariffSensor = _tariff_mod.NemPd7dayExportTariffSensor
+DOMAIN = _const_mod.DOMAIN
 
-_const_mod = _load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-
-ha_storage_mock = MagicMock()
-class _FakeStore:
-    def __init__(self, hass, version, key): pass
-    async def async_load(self): return None
-    async def async_save(self, data): pass
-ha_storage_mock.Store = _FakeStore
-sys.modules["homeassistant.helpers.storage"] = ha_storage_mock
-
-_store_mod = _load(
-    "custom_components.nem_pd7day.calibration_store",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_store.py"),
-)
-_coord_mod = _load(
-    "custom_components.nem_pd7day.coordinator",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
-)
-
-_tariff_mod = _load(
-    "custom_components.nem_pd7day.tariff_sensor",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "tariff_sensor.py"),
-)
+PEAK_NEMTIME = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
 
 
-def _expected_import_price(lib_c_kwh, rrp_mwh, fee=0.0293, distributor="energex"):
-    """Published import price in $/kWh for a mocked spot_to_tariff return.
-
-    aemo_to_tariff composes a tariff as spot plus network rate and grosses the
-    network rate up itself on seven of the thirteen networks, so tariff_sensor
-    separates the components, removes the library's GST from the network
-    component where the library applied it, and grosses the total up once
-    (#158). A mocked library return has to be split the same way.
-
-    tests/test_tariff_gst.py is what checks that placement against the real
-    library; this only keeps the surrounding plumbing assertions honest.
-    """
-    spot_c = rrp_mwh * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
-    network_c = lib_c_kwh - spot_c
-    if distributor in _tariff_mod._LIB_APPLIES_GST:
-        network_c /= _tariff_mod.GST
-    return round(((spot_c + network_c) / 100 + fee) * _tariff_mod.GST, 6)
-
-_engine_mod = _load(
-    "custom_components.nem_pd7day.calibration_engine",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_engine.py"),
-)
-
-_sensor_mod = _load(
-    "custom_components.nem_pd7day.sensor",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "sensor.py"),
-)
-
-from custom_components.nem_pd7day.tariff_sensor import (
-    NemPd7dayExportTariffSensor,
-    NemPd7dayTariffSensor,
-    TariffForecastDays27Sensor,
-    get_tariff_name,
-)
-from custom_components.nem_pd7day.sensor import SpotPriceForecastDays27Sensor
-from custom_components.nem_pd7day.const import (
-    CONF_ACTIVE_TARIFF,
-    CONF_FORECAST_MODE,
-    CONF_REGION,
-    DEFAULT_ENABLED_TARIFFS,
-    DISTRIBUTOR_DISPLAY_NAMES,
-    DOMAIN,
-    FORECAST_MODE_DAYS_2_7,
-)
-
-NEM_TZ = timezone(timedelta(hours=10))
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def nem_iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
-
-
-def make_price_period(nemtime_dt: datetime, value: float = 0.10):
-    start_dt = nemtime_dt - timedelta(minutes=30)
-    return MagicMock(
-        nemtime=nem_iso(nemtime_dt),
-        time=nem_iso(start_dt),
-        value=value,
-    )
-
+# ── Builders ──────────────────────────────────────────────────────────────────
 
 def make_export_sensor(
     region="NSW1",
@@ -223,9 +60,7 @@ def make_export_sensor(
     entry = MagicMock()
     entry.entry_id = "entry_1"
     entry.options = {}
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator, store=None, dispatch=None
-    )
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator, store=None, dispatch=None)
 
     sensor = NemPd7dayExportTariffSensor.__new__(NemPd7dayExportTariffSensor)
     sensor.coordinator = coordinator
@@ -236,153 +71,103 @@ def make_export_sensor(
     sensor._entry = entry
     sensor._store = None
     sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{import_code}_export_tariff"
-    distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
-    from custom_components.nem_pd7day.tariff_sensor import get_export_tariff_name
-    export_name = get_export_tariff_name(distributor, export_code)
-    if "Export" in export_name:
-        sensor._attr_name = f"{distributor_display} {export_name} Tariff ({export_code})"
-    else:
-        sensor._attr_name = f"{distributor_display} {export_name} Export Tariff ({export_code})"
+    sensor._attr_name = f"{distributor} {export_code} export"
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {}}
     sensor.hass.states.get.return_value = None
     return sensor
 
 
-def make_import_sensor(
-    region="NSW1",
-    distributor="ausgrid",
-    tariff_code="EA025",
-    price_periods=None,
-) -> NemPd7dayTariffSensor:
-    """Construct a NemPd7dayTariffSensor bypassing HA CoordinatorEntity init."""
-    coordinator = MagicMock()
-    if price_periods is not None:
-        price_data = MagicMock()
-        price_data.forecast = price_periods
-        coordinator.data = MagicMock()
-        coordinator.data.prices = {region: price_data}
-    else:
-        coordinator.data = None
-    coordinator.last_update_success = True
+def make_calibrated_export_sensor(raw_value=0.01745, calibrated_value=0.01425):
+    """An export sensor over one peak period with a mock calibration store."""
+    period = make_price_period(PEAK_NEMTIME, value=raw_value)
+    sensor = make_export_sensor(price_periods=[period])
+    mock_store = MagicMock()
+    mock_store.apply_to_price.return_value = {
+        "calibrated": calibrated_value,
+        "p10": None, "p50": None, "p90": None,
+        "ols_mae": None, "calibrated_source": "isotonic",
+        "n_obs": 100,
+    }
+    sensor._store = mock_store
+    sensor.coordinator.data.prices["NSW1"].forecast_generated_at = nem_iso(PEAK_NEMTIME - timedelta(hours=6))
+    return sensor, period, mock_store
 
+
+def make_forecast(n: int) -> list:
+    run = datetime(2026, 9, 2, 4, 0, tzinfo=NEM_TZ)
+    return [
+        make_price_period(run + timedelta(minutes=30 * (i + 1)), value=0.10 + i * 1e-4)
+        for i in range(n)
+    ]
+
+
+# ── Value ─────────────────────────────────────────────────────────────────────
+
+def test_export_native_value_is_the_raw_feed_in_rate():
+    """native_value converts through spot_to_feed_in_tariff and adds no fee and no GST."""
+    period = make_price_period(PEAK_NEMTIME, value=0.10)  # 0.10 $/kWh = 100 $/MWh
+    sensor = make_export_sensor(price_periods=[period])
+    feed_in_rate_c = 14.77
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=feed_in_rate_c) as mock_fit:
+        val = sensor.native_value
+
+    mock_fit.assert_called_once()
+    assert abs(mock_fit.call_args[0][3] - 100.0) < 1e-6  # rrp_mwh
+    expected_raw = round(feed_in_rate_c / 100, 6)
+    assert val == expected_raw, f"Export tariff should be raw {expected_raw}, got {val}"
+    old_formula = round((feed_in_rate_c / 100 + 0.0293) * 1.1, 6)
+    assert val != old_formula, f"Export tariff should NOT include fee+GST ({old_formula})"
+
+
+def test_export_tariff_stdout_suppressed():
+    """Debug print() calls inside the library's feed-in conversion never reach stdout."""
+    sensor = make_export_sensor(price_periods=[make_price_period(PEAK_NEMTIME, value=0.10)])
+
+    def noisy_feed_in(*args, **kwargs):
+        print("DEBUG: sapower feed_in_tariff lookup")
+        return 14.77
+
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured), \
+            patch.object(_tariff_mod, "spot_to_feed_in_tariff", side_effect=noisy_feed_in):
+        assert sensor.native_value is not None
+    assert captured.getvalue() == "", f"Expected no stdout but got: {captured.getvalue()!r}"
+
+
+# ── Identity and registration ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize("distributor, import_code, export_code, name", [
+    ("ausgrid", "EA025", "EA029", "Ausgrid Residential Electrify Export Tariff (EA029)"),
+    # A feed-in name that already says Export is not doubled.
+    ("essential", "BLNRSS2", "BLNREX2", "Essential Energy LV Residential Solar Export Tariff (BLNREX2)"),
+])
+def test_init_sets_name_and_unique_id(distributor, import_code, export_code, name):
+    """'<network> <feed-in name> Export Tariff (<code>)' and the _export_tariff unique_id, from __init__."""
+    coordinator = MagicMock()
+    coordinator.data = None
     entry = MagicMock()
     entry.entry_id = "entry_1"
     entry.options = {}
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator, store=None, dispatch=None
-    )
-
-    sensor = NemPd7dayTariffSensor.__new__(NemPd7dayTariffSensor)
-    sensor.coordinator = coordinator
-    sensor._region = region
-    sensor._distributor = distributor
-    sensor._tariff_code = tariff_code
-    sensor._entry = entry
-    sensor._store = None
-    sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
-    distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
-    tariff_name = get_tariff_name(distributor, tariff_code)
-    sensor._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
-    sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {}}
-    sensor.hass.states.get.return_value = None
-    return sensor
-
-
-# ── Tests ─────────────────────────────────────────────────────────────────────
-
-
-def test_export_tariff_different_from_import_at_peak():
-    """Export tariff (EA029) produces different value from import (EA025) at peak hour."""
-    # Create a period at 18:00 NEM time (peak hour, 16:00-21:00 window)
-    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
-    period = make_price_period(peak_nemtime, value=0.10)  # 0.10 $/kWh = 100 $/MWh
-
-    import_sensor = make_import_sensor(price_periods=[period])
-    export_sensor = make_export_sensor(price_periods=[period])
-
-    # Import uses spot_to_tariff, returns higher rate at peak
-    import_rate_c = 16.92  # approximate c/kWh for Ausgrid EA025 at peak
-    # Export uses spot_to_feed_in_tariff, returns lower rate
-    export_rate_c = 14.77  # approximate c/kWh for Ausgrid EA029 at peak
-
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=import_rate_c):
-        import_val = import_sensor.native_value
-
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=export_rate_c):
-        export_val = export_sensor.native_value
-
-    assert import_val is not None
-    assert export_val is not None
-
-    # Values should differ
-    import_expected = _expected_import_price(import_rate_c, 100.0, distributor="ausgrid")
-    # Export returns raw feed-in tariff: no additional fee, no GST
-    export_expected = round(export_rate_c / 100, 6)
-    assert abs(import_val - import_expected) < 1e-6
-    assert abs(export_val - export_expected) < 1e-6
-
-    # Export should be lower than import at peak
-    assert export_val < import_val, (
-        f"Export ({export_val}) should be less than import ({import_val}) at peak"
-    )
-    # Difference should be notable (import has fee+GST, export is raw)
-    diff = import_val - export_val
-    assert diff > 0.01, f"Difference {diff} $/kWh too small"
-
-
-def test_export_tariff_entity_id_suffix():
-    """Export tariff sensor unique_id follows _export_tariff suffix pattern."""
-    sensor = make_export_sensor(
-        region="NSW1",
-        distributor="ausgrid",
-        import_code="EA025",
-        export_code="EA029",
-    )
-    assert sensor._attr_unique_id == "entry_1_NSW1_ausgrid_EA025_export_tariff"
-    assert "_export_tariff" in sensor._attr_unique_id
-
-
-def test_export_tariff_friendly_names():
-    """Names are '<network> <feed-in name> Export Tariff (<code>)', without doubling an 'Export' already in the name."""
-    sensor_ausgrid = make_export_sensor(distributor="ausgrid", import_code="EA025", export_code="EA029")
-    assert sensor_ausgrid._attr_name == "Ausgrid Residential Electrify Export Tariff (EA029)"
-    sensor_essential = make_export_sensor(distributor="essential", import_code="BLNRSS2", export_code="BLNREX2")
-    assert sensor_essential._attr_name == "Essential Energy LV Residential Solar Export Tariff (BLNREX2)"
-
-
-def test_day27_spot_sensor_has_diagnostic_entity_category():
-    """SpotPriceForecastDays27Sensor must have entity_category == DIAGNOSTIC."""
-    assert hasattr(SpotPriceForecastDays27Sensor, "_attr_entity_category")
-    assert SpotPriceForecastDays27Sensor._attr_entity_category == ec.DIAGNOSTIC
-
-
-def test_day27_tariff_sensor_has_diagnostic_entity_category():
-    """TariffForecastDays27Sensor must have entity_category == DIAGNOSTIC."""
-    assert hasattr(TariffForecastDays27Sensor, "_attr_entity_category")
-    assert TariffForecastDays27Sensor._attr_entity_category == ec.DIAGNOSTIC
+    sensor = NemPd7dayExportTariffSensor(coordinator, entry, "NSW1", distributor, import_code, export_code)
+    assert sensor._attr_name == name
+    assert sensor._attr_unique_id == f"entry_1_NSW1_{distributor}_{import_code}_export_tariff"
 
 
 def test_export_programs_registered_in_setup():
-    """async_setup_entry registers export tariff sensors for the region."""
-    import asyncio
-    from custom_components.nem_pd7day.sensor import async_setup_entry as sensor_async_setup_entry
-
+    """async_setup_entry registers one export sensor per library pairing for the region."""
     coordinator = MagicMock()
     coordinator.data = None
 
     entry = MagicMock()
     entry.entry_id = "entry_export"
-    entry.data = {CONF_REGION: "NSW1"}
+    entry.data = {_const_mod.CONF_REGION: "NSW1"}
     entry.options = {
-        CONF_FORECAST_MODE: FORECAST_MODE_DAYS_2_7,
-        CONF_ACTIVE_TARIFF: "ausgrid/EA025",
+        _const_mod.CONF_FORECAST_MODE: _const_mod.FORECAST_MODE_DAYS_2_7,
+        _const_mod.CONF_ACTIVE_TARIFF: "ausgrid/EA025",
     }
-
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator, store=MagicMock(), dispatch=None
-    )
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator, store=MagicMock(), dispatch=None)
 
     hass = MagicMock()
     hass.data = {DOMAIN: {}}
@@ -392,15 +177,12 @@ def test_export_programs_registered_in_setup():
     def _add_entities(entities, update_before_add=False):
         created.extend(entities)
 
-    asyncio.new_event_loop().run_until_complete(
-        sensor_async_setup_entry(hass, entry, _add_entities)
-    )
+    run_async(_sensor_mod.async_setup_entry(hass, entry, _add_entities))
 
-    # Find export sensors — they have _export_code attribute
-    export_sensors = [e for e in created if hasattr(e, "_export_code")]
-    # NSW1 pairings come from the library (issue #159): ausgrid EA025→EA029 and
-    # EA225→EA029, endeavour N71→N61 and N95→N95, essential BLNRSS2→BLNREX2 and
-    # BLNBSS1→BLNBEX1, evoenergy 026→026.
+    export_sensors = [e for e in created if isinstance(e, NemPd7dayExportTariffSensor)]
+    # NSW1 pairings come from the library (issue #159): ausgrid EA025->EA029 and
+    # EA225->EA029, endeavour N71->N61 and N95->N95, essential BLNRSS2->BLNREX2 and
+    # BLNBSS1->BLNBEX1, evoenergy 026->026.
     programs = {(s._distributor, s._import_code): s._export_code for s in export_sensors}
     assert programs == {
         ("ausgrid", "EA025"): "EA029",
@@ -411,180 +193,135 @@ def test_export_programs_registered_in_setup():
         ("essential", "BLNBSS1"): "BLNBEX1",
         ("evoenergy", "026"): "026",
     }
+    assert all(s._attr_unique_id.endswith("_export_tariff") for s in export_sensors)
 
 
-def test_sapn_resele_import_sensor_default_enabled():
-    """SAPN RESELE should be in DEFAULT_ENABLED_TARIFFS."""
-    assert ("sapn", "RESELE") in DEFAULT_ENABLED_TARIFFS
-
-
-def test_export_tariff_uses_feed_in_function():
-    """Export sensor calls spot_to_feed_in_tariff (not spot_to_tariff)."""
-    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
-    period = make_price_period(peak_nemtime, value=0.10)
-    sensor = make_export_sensor(price_periods=[period])
-
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
-        val = sensor.native_value
-        assert val is not None
-        mock_fit.assert_called_once()
-        # Verify RRP conversion: 0.10 $/kWh * 1000 = 100 $/MWh
-        call_args = mock_fit.call_args
-        assert abs(call_args[0][3] - 100.0) < 1e-6
-
-
-def test_export_tariff_no_fee_or_gst():
-    """Export sensor returns raw feed-in tariff without additional fee or GST."""
-    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
-    period = make_price_period(peak_nemtime, value=0.10)
-    sensor = make_export_sensor(price_periods=[period])
-
-    feed_in_rate_c = 14.77  # c/kWh returned by spot_to_feed_in_tariff
-
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=feed_in_rate_c):
-        val = sensor._compute_export_tariff(period)
-
-    # Should be exactly the raw conversion: c/kWh -> $/kWh, no fee, no GST
-    expected_raw = round(feed_in_rate_c / 100, 6)
-    assert val == expected_raw, (
-        f"Export tariff should be raw {expected_raw}, got {val}"
-    )
-
-    # Verify it does NOT match the old fee+GST formula
-    old_formula = round((feed_in_rate_c / 100 + 0.0293) * 1.1, 6)
-    assert val != old_formula, (
-        f"Export tariff should NOT include fee+GST ({old_formula})"
-    )
-
-
-def test_export_tariff_stdout_suppressed():
-    """Export sensor suppresses stdout from aemo_to_tariff library."""
-    import io
-
-    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
-    period = make_price_period(peak_nemtime, value=0.10)
-    sensor = make_export_sensor(price_periods=[period])
-
-    def noisy_feed_in(*args, **kwargs):
-        print("DEBUG: sapower feed_in_tariff lookup")
-        return 14.77
-
-    captured = io.StringIO()
-    real_stdout = sys.stdout
-    sys.stdout = captured
-    try:
-        with patch.object(_tariff_mod, "spot_to_feed_in_tariff", side_effect=noisy_feed_in):
-            val = sensor.native_value
-            assert val is not None
-    finally:
-        sys.stdout = real_stdout
-
-    assert captured.getvalue() == "", (
-        f"Expected no stdout but got: {captured.getvalue()!r}"
-    )
-
-
-# ── Export tariff calibration tests ──────────────────────────────────────────
-
+# ── Calibration plumbing ──────────────────────────────────────────────────────
 
 def test_export_tariff_uses_calibrated_price():
     """Export tariff passes calibrated $/MWh (not raw) to spot_to_feed_in_tariff."""
-    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
-    period = make_price_period(peak_nemtime, value=0.01745)  # raw $/kWh
-    sensor = make_export_sensor(price_periods=[period])
-
-    # Attach calibration store
-    mock_store = MagicMock()
-    mock_store.apply_to_price.return_value = {
-        "calibrated": 0.01425,
-        "p10": None, "p50": None, "p90": None,
-        "ols_mae": None, "calibrated_source": "isotonic",
-        "n_obs": 100,
-    }
-    sensor._store = mock_store
-    sensor.coordinator.data.prices["NSW1"].forecast_generated_at = nem_iso(
-        peak_nemtime - timedelta(hours=6)
-    )
-
+    sensor, _period, _store = make_calibrated_export_sensor(raw_value=0.01745, calibrated_value=0.01425)
     with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
-        val = sensor.native_value
-        assert val is not None
-        # Verify calibrated price: 0.01425 * 1000 = 14.25 $/MWh
-        call_args = mock_fit.call_args
-        assert abs(call_args[0][3] - 14.25) < 1e-6, (
-            f"Expected calibrated RRP 14.25 $/MWh, got {call_args[0][3]}"
-        )
+        assert sensor.native_value is not None
+    rrp = mock_fit.call_args[0][3]
+    assert abs(rrp - 14.25) < 1e-6, f"Expected calibrated RRP 14.25 $/MWh, got {rrp}"
 
 
 def test_export_tariff_forecast_spot_shows_calibrated():
-    """Export forecast 'spot' attribute uses calibrated value."""
-    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
-    period = make_price_period(peak_nemtime, value=0.01745)
-    sensor = make_export_sensor(price_periods=[period])
-
-    mock_store = MagicMock()
-    mock_store.apply_to_price.return_value = {
-        "calibrated": 0.01425,
-        "p10": None, "p50": None, "p90": None,
-        "ols_mae": None, "calibrated_source": "isotonic",
-        "n_obs": 100,
-    }
-    sensor._store = mock_store
-    sensor.coordinator.data.prices["NSW1"].forecast_generated_at = nem_iso(
-        peak_nemtime - timedelta(hours=6)
-    )
-
+    """Export forecast 'spot' is the calibrated value; 'spot_raw' the input; period fields present."""
+    sensor, _period, _store = make_calibrated_export_sensor(raw_value=0.01745, calibrated_value=0.01425)
     with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=10.0):
+        forecast = sensor.extra_state_attributes["forecast"]
+    assert forecast
+    for entry in forecast:
+        assert abs(entry["spot"] - 0.01425) < 1e-6, f"Export forecast spot should be calibrated, got {entry['spot']}"
+        assert abs(entry["spot_raw"] - 0.01745) < 1e-6
+        assert "period" in entry
+        assert "network_rate" in entry
+
+
+# #62: the export attribute loop calibrates each interval once and hands the
+# result to _compute_export_tariff; native_value's direct call is unchanged.
+
+def test_export_loop_calibrates_each_interval_once():
+    periods = make_forecast(120)
+    sensor = make_export_sensor(price_periods=periods)
+
+    original = type(sensor)._calibrated_value
+    calls = []
+
+    def wrapper(self, *args, **kwargs):
+        calls.append(args)
+        return original(self, *args, **kwargs)
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=8.0), \
+            patch.object(type(sensor), "_calibrated_value", wrapper):
         attrs = sensor.extra_state_attributes
-        for entry in attrs["forecast"]:
-            assert abs(entry["spot"] - 0.01425) < 1e-6, (
-                f"Export forecast spot should be calibrated 0.01425, got {entry['spot']}"
-            )
-            # New per-interval fields
-            assert "spot_raw" in entry
-            assert "period" in entry
-            assert "network_rate" in entry
-            # spot_raw is the uncalibrated input value, not the calibrated one
-            assert abs(entry["spot_raw"] - round(0.01745, 6)) < 1e-6
+
+    assert len(attrs["forecast"]) == 120
+    assert len(calls) == 120
 
 
-def test_export_tariff_no_store_uses_raw():
-    """Without calibration store, export tariff falls back to raw value."""
-    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
-    period = make_price_period(peak_nemtime, value=0.10)
+def test_export_spot_key_is_the_value_that_was_fed_to_the_tariff():
+    """The spot attribute and the feed-in input must remain the same number."""
+    periods = make_forecast(8)
+    sensor = make_export_sensor(price_periods=periods)
+
+    seen = []
+
+    def fake_calibrate(self, period):
+        # Deliberately not derived from period.value, so a caller that
+        # recomputed instead of reusing would produce a different number.
+        v = 0.5 + len(seen) * 0.01
+        seen.append(v)
+        return v
+
+    fed = []
+    original = type(sensor)._compute_export_tariff
+
+    def spy(self, period, calibrated=None):
+        fed.append(calibrated)
+        return original(self, period, calibrated=calibrated)
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=15.5), \
+            patch.object(type(sensor), "_calibrated_value", fake_calibrate), \
+            patch.object(type(sensor), "_compute_export_tariff", spy):
+        attrs = sensor.extra_state_attributes
+
+    assert len(seen) == 8
+    assert fed == seen, "the calibrated value was not passed through"
+    assert [e["spot"] for e in attrs["forecast"]] == [round(v, 6) for v in seen]
+
+
+def test_export_compute_still_calibrates_when_not_given_a_value():
+    period = make_price_period(datetime(2026, 9, 2, 18, 0, tzinfo=NEM_TZ), value=0.10)
     sensor = make_export_sensor(price_periods=[period])
-    assert sensor._store is None
+    calls = []
 
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
-        val = sensor.native_value
-        assert val is not None
-        # Raw value: 0.10 * 1000 = 100 $/MWh
-        call_args = mock_fit.call_args
-        assert abs(call_args[0][3] - 100.0) < 1e-6
+    def fake_calibrate(self, p):
+        calls.append(p)
+        return 0.42
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=15.5) as lib, \
+            patch.object(type(sensor), "_calibrated_value", fake_calibrate):
+        sensor._compute_export_tariff(period)
+
+    assert len(calls) == 1, "the default path must still calibrate"
+    assert lib.call_args[0][3] == pytest.approx(420.0), "0.42 $/kWh -> 420 $/MWh"
 
 
-# ── Export tariff cache tests ──────────────────────────────────────────────
+def test_export_compute_uses_the_supplied_value_and_does_not_calibrate():
+    period = make_price_period(datetime(2026, 9, 2, 18, 0, tzinfo=NEM_TZ), value=0.10)
+    sensor = make_export_sensor(price_periods=[period])
 
+    def boom(self, p):
+        raise AssertionError("_calibrated_value must not be called")
+
+    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=15.5) as lib, \
+            patch.object(type(sensor), "_calibrated_value", boom):
+        sensor._compute_export_tariff(period, calibrated=0.77)
+
+    assert lib.call_args[0][3] == pytest.approx(770.0)
+
+
+# ── Single-entry caches ───────────────────────────────────────────────────────
 
 def test_compute_export_tariff_cache_hit():
-    """Calling _compute_export_tariff twice with same period calls library only once."""
-    peak_nemtime = datetime(2026, 5, 24, 18, 0, tzinfo=NEM_TZ)
-    period = make_price_period(peak_nemtime, value=0.10)
+    """Calling _compute_export_tariff twice with the same period calls the library once."""
+    period = make_price_period(PEAK_NEMTIME, value=0.10)
     sensor = make_export_sensor(price_periods=[period])
     sensor._period_export_tariff_cache = None
 
     with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
         result1 = sensor._compute_export_tariff(period)
         result2 = sensor._compute_export_tariff(period)
-        assert result1 is not None
-        assert result1 == result2
-        assert mock_fit.call_count == 1, (
-            f"Expected spot_to_feed_in_tariff called once (cache hit), got {mock_fit.call_count}"
-        )
+    assert result1 is not None
+    assert result1 == result2
+    assert mock_fit.call_count == 1
 
 
 def test_apply_export_tariff_to_spot_cache_hit():
-    """Calling _apply_export_tariff_to_spot twice with same inputs calls library only once."""
+    """Calling _apply_export_tariff_to_spot twice with the same inputs calls the library once."""
     now = datetime(2026, 5, 24, 14, 12, 0, tzinfo=NEM_TZ)
     sensor = make_export_sensor(price_periods=[])
     sensor._export_tariff_cache = None
@@ -592,8 +329,6 @@ def test_apply_export_tariff_to_spot_cache_hit():
     with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
         result1 = sensor._apply_export_tariff_to_spot(0.10, now)
         result2 = sensor._apply_export_tariff_to_spot(0.10, now)
-        assert result1 is not None
-        assert result1 == result2
-        assert mock_fit.call_count == 1, (
-            f"Expected spot_to_feed_in_tariff called once (cache hit), got {mock_fit.call_count}"
-        )
+    assert result1 is not None
+    assert result1 == result2
+    assert mock_fit.call_count == 1
