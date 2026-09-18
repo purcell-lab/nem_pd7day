@@ -1536,3 +1536,16 @@ def test_calibration_sensor_publishes_forecast_history_attributes(history, expec
     attrs = _calibration_sensor(history).extra_state_attributes
     assert {k: attrs[f"forecast_history_{k}"] for k in expected} == expected
     assert attrs[_const_mod.ATTR_REGION] == "QLD1"
+
+
+def test_observation_log_is_built_lazily_for_a_store_made_without_init():
+    """A store built with __new__ (as the test helpers do) gets its
+    ObservationLog on first use, keyed on _hass and _region, and keeps it."""
+    store = _store_mod.CalibrationStore.__new__(_store_mod.CalibrationStore)
+    store._hass = MagicMock()
+    store._region = "SA1"
+    assert "_log" not in store.__dict__
+    log = store._log
+    assert isinstance(log, _store_mod.ObservationLog)
+    assert store._log is log
+    assert store._observations == []

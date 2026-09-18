@@ -966,6 +966,26 @@ def test_leader_lines_clear_every_label_across_the_awkward_shapes():
 
 # ── Daily extreme and day divider label placement, issue #93 ──────────────────
 
+def test_text_collision_pairs_reports_overlapping_text_only():
+    """The module's own collision helper agrees with the geometry: two texts
+    painted on top of each other are one pair, a distant third is none."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    fig = matplotlib.figure.Figure(figsize=(4, 3), dpi=100)
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.text(0.5, 0.5, "alpha", transform=ax.transAxes)
+    ax.text(0.5, 0.5, "alpha", transform=ax.transAxes)
+    ax.text(0.05, 0.05, "far", transform=ax.transAxes)
+    hits = fc.text_collision_pairs(fig)
+    assert len(hits) == 1, hits
+    ki, ti, kj, tj, ox, oy = hits[0]
+    assert (ki, ti, kj, tj) == ("label0", "alpha", "label0", "alpha")
+    assert ox > 0.5 and oy > 0.5
+
+
 def test_the_measurement_itself_sees_the_legend_and_both_axes():
     """Guard the sweep before trusting it, since scope is how this defect hid.
 
