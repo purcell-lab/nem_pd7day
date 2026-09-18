@@ -20,16 +20,15 @@ from .const import (
     DEFAULT_ENABLED_TARIFFS,
     DEFAULT_REGION,
     DISTRIBUTOR_DISPLAY_NAMES,
-    DISTRIBUTOR_TARIFFS,
     DOMAIN,
     FETCH_TIMES_NEM,
     FORECAST_MODE_DAYS_2_7,
     FORECAST_MODE_FULL,
     REGION_DISTRIBUTORS,
     REGIONS,
-    TARIFF_NAMES,
 )
 from .pd7day_client import PD7DayClient
+from .tariff_catalogue import import_tariff_codes, tariff_name as catalogue_tariff_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,11 +42,11 @@ def _tariff_options_for_region(region: str) -> list[dict[str, str]]:
     """Build tariff dropdown options for a region using DEFAULT_ENABLED_TARIFFS."""
     options = []
     for distributor in REGION_DISTRIBUTORS.get(region, []):
-        for tariff_code in DISTRIBUTOR_TARIFFS.get(distributor, []):
+        for tariff_code in import_tariff_codes(distributor):
             if (distributor, tariff_code) not in DEFAULT_ENABLED_TARIFFS:
                 continue
             display_name = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
-            tariff_name = TARIFF_NAMES.get(distributor, {}).get(tariff_code, tariff_code)
+            tariff_name = catalogue_tariff_name(distributor, tariff_code)
             label = f"{display_name} {tariff_name}"
             options.append({"value": f"{distributor}/{tariff_code}", "label": label})
     return options
@@ -56,7 +55,7 @@ def _tariff_options_for_region(region: str) -> list[dict[str, str]]:
 def _default_tariff_for_region(region: str) -> str | None:
     """Return the first default-enabled tariff key for the region."""
     for distributor in REGION_DISTRIBUTORS.get(region, []):
-        for tariff_code in DISTRIBUTOR_TARIFFS.get(distributor, []):
+        for tariff_code in import_tariff_codes(distributor):
             if (distributor, tariff_code) in DEFAULT_ENABLED_TARIFFS:
                 return f"{distributor}/{tariff_code}"
     return None

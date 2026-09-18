@@ -272,6 +272,10 @@ SPIKE_CALLOUT_THRESHOLD_48H = 3.00   # $/kWh — only extreme spikes at 24-48h
 AMBER_EXPRESS_HORIZON_H = 24.0
 
 # ── Region → distributor → tariff mapping (for tariff forecast sensors) ────────
+# DISTRIBUTOR_TARIFFS is the FALLBACK catalogue, used only when aemo_to_tariff
+# is not importable. With the library present the sensor platform and the
+# config flow enumerate from its own tables (tariff_catalogue.py, issue #159);
+# this snapshot mirrors aemo-to-tariff 0.7.27 and need not be kept current.
 DISTRIBUTOR_DISPLAY_NAMES = {
     "energex":     "Energex",
     "ergon":       "Ergon",
@@ -297,19 +301,19 @@ REGION_DISTRIBUTORS = {
 }
 
 DISTRIBUTOR_TARIFFS = {
-    "energex":     ["8400", "3900", "3700", "6900", "8500", "3600", "3800", "6000", "6800", "6600", "6700", "7200", "8100", "8300", "8900", "8800", "94300"],
-    "ergon":       ["6900", "3900", "ERTOUET1", "WRTOUET1", "MRTOUET4", "ERTDEMXT1", "ERTDEMCT1", "3600", "3800", "7200"],
-    "ausgrid":     ["EA010", "EA025", "EA111", "EA116", "EA225", "EA305"],
-    "endeavour":   ["N70", "N71", "N90", "N91", "N19", "N95", "N73", "N61"],
-    "essential":   ["BLNREX2", "BLNBEX1", "BLNN2AU", "BLNT3AU", "BLNT3AL", "BLNRSS2", "BLND1AR", "BLNC1AU", "BLNC2AU", "BLNN1AU", "BLNT2AU", "BLNT2AL", "BLNT1AO", "BLNBSS1", "BLND1AB"],
-    "evoenergy":   ["015", "016", "017", "018", "026", "090"],
-    "jemena":      ["D1", "PRTOU"],
-    "powercor":    ["D1", "PRTOU", "NDMO21", "NDTOU", "PRDS"],
-    "united":      ["D1", "URTOU", "FURTOU", "FURDS", "URDS", "NDMO21", "NDTOU", "PRDS", "LVS1R", "URSTOU"],
-    "ausnet":      ["NAST11S", "NEE11S"],
-    "victoria":    ["VICR_SINGLE", "VICR_TOU", "VICR_DEMAND", "VICS_SINGLE", "VICS_TOU", "VICS_DEMAND"],
-    "sapn":        ["RESELE", "RESELEX", "RELE2W", "SBELE", "SBELEX", "B2R", "RSR", "RTOU", "RTOUNE", "RPRO", "RELE", "SBTOU", "SBTOUNE"],
-    "tasnetworks": ["TAS93", "TAS87", "TAS97", "TAS94", "TAS88"],
+    "energex":      ["8400", "3900", "3700", "6900", "8500", "3600", "3800", "6000", "6800", "6600", "6700", "7200", "8100", "8300", "8900", "8800", "94300", "96200"],
+    "ergon":        ["6900", "ERTOUET1", "WRTOUET1", "MRTOUET4", "ERTDEMT1", "WRTDEMT1", "MRTDEMT4", "EBTOUET1", "WBTOUET1", "MBTOUET4", "EBTDEMT1", "WBTDEMT1", "MBTDEMT4"],
+    "ausgrid":      ["EA010", "EA025", "EA111", "EA116", "EA225", "EA305"],
+    "endeavour":    ["N70", "N71", "N90", "N91", "N19", "N95", "N73"],
+    "essential":    ["BLNN2AU", "BLNT3AU", "BLNT3AL", "BLNRSS2", "BLND1AR", "BLNC1AU", "BLNC2AU", "BLNN1AU", "BLNT2AU", "BLNT2AL", "BLNT1AO", "BLNBSS1", "BLND1AB"],
+    "evoenergy":    ["015", "016", "017", "018", "026", "090"],
+    "jemena":       ["D1", "PRTOU", "A100", "A130", "A200", "A210"],
+    "powercor":     ["D1", "PRTOU", "NDMO21", "NDTOU", "PRDS", "PRSTOU", "ND1", "NDD"],
+    "united":       ["D1", "URTOU", "FURTOU", "FURDS", "URDS", "NDMO21", "NDTOU", "PRDS", "LVS1R", "URSTOU", "RESKW1R", "LVTOU", "LVM1R"],
+    "ausnet":       ["NAST11S", "NEE11S", "NEE11", "NEE12", "NAST12"],
+    "victoria":     ["VICR_SINGLE", "VICR_TOU", "VICR_DEMAND", "VICS_SINGLE", "VICS_TOU", "VICS_DEMAND"],
+    "sapn":         ["RESELE", "RELE2W", "SBELE", "B2R", "RSR", "RTOU", "RTOUNE", "RPRO", "RELE", "SBTOU", "SBTOUNE"],
+    "tasnetworks":  ["TAS93", "TAS87", "TAS97", "TAS94", "TAS88", "TAS22", "TAS31"],
 }
 
 # ── Human-readable tariff names ──────────────────────────────────────────────
@@ -473,7 +477,6 @@ DEFAULT_ENABLED_TARIFFS = {
     ("ausgrid", "EA111"),  # Residential Demand Introductory (trial)
     # Endeavour
     ("endeavour", "N71"),  # Residential Seasonal TOU
-    ("endeavour", "N61"),  # Residential Electrify (trial)
     # Essential
     ("essential", "BLNT3AL"), # Residential TOU Interval Meter
     ("essential", "BLNRSS2"), # Residential Sun Soaker (trial)

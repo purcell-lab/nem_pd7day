@@ -67,7 +67,6 @@ from .const import (
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
-    DISTRIBUTOR_TARIFFS,
     DOMAIN,
     EXPORT_TARIFF_PROGRAMS,
     FORECAST_MODE_DAYS_2_7,
@@ -91,6 +90,7 @@ from .calibration_inputs import (
     stpasa_features_for_interval,
 )
 from .coordinator import PD7DayCoordinator, staleness_attributes
+from .tariff_catalogue import export_program_supported, import_tariff_codes
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
@@ -182,16 +182,29 @@ async def async_setup_entry(
 
     entities.append(NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store))
 
-    # Tariff forecast sensors — one per (distributor, tariff_code) for this region
+    # Tariff forecast sensors — one per (distributor, tariff_code) for this
+    # region, enumerated from aemo_to_tariff's own catalogue so a tariff the
+    # library adds appears (disabled unless in DEFAULT_ENABLED_TARIFFS) and a
+    # code it cannot convert is not created. Issue #159.
     for distributor in REGION_DISTRIBUTORS.get(region, []):
-        for tariff_code in DISTRIBUTOR_TARIFFS.get(distributor, []):
+        for tariff_code in import_tariff_codes(distributor):
             entities.append(
                 NemPd7dayTariffSensor(coordinator, entry, region, distributor, tariff_code, store=store)
             )
 
-    # Export tariff sensors — one per export program for this region
+    # Export tariff sensors — one per export program for this region. The
+    # pairing is curated (the library does not say which import tariff an
+    # export program belongs to) but the export code is checked against the
+    # library's feed-in table where the network publishes one.
     for (dist, import_code), export_code in EXPORT_TARIFF_PROGRAMS.items():
         if dist in REGION_DISTRIBUTORS.get(region, []):
+            if not export_program_supported(dist, export_code):
+                _LOGGER.warning(
+                    "Export tariff %s/%s is not a feed-in tariff in the installed "
+                    "aemo_to_tariff; sensor not created",
+                    dist, export_code,
+                )
+                continue
             entities.append(
                 NemPd7dayExportTariffSensor(
                     coordinator, entry, region, dist, import_code, export_code, store=store,
@@ -208,7 +221,7 @@ async def async_setup_entry(
         if not active_tariff:
             # Default: first enabled tariff for the region's first distributor
             for dist in REGION_DISTRIBUTORS.get(region, []):
-                for code in DISTRIBUTOR_TARIFFS.get(dist, []):
+                for code in import_tariff_codes(dist):
                     if (dist, code) in DEFAULT_ENABLED_TARIFFS:
                         active_tariff = f"{dist}/{code}"
                         break

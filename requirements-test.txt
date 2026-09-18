@@ -11,3 +11,7 @@ astral==2.2
 numpy==2.4.6
 matplotlib==3.11.1
 PyYAML==6.0.1
+# The tariff catalogue and names are read from the library at runtime
+# (issue #159); the tests assert against the pinned catalogue.
+aemo-to-tariff==0.7.27
+tzdata==2025.2
