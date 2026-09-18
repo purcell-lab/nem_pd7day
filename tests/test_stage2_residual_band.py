@@ -27,40 +27,17 @@ or simply: python tests/test_stage2_residual_band.py
 from __future__ import annotations
 
 import copy
-import importlib.util
 import math
-import os
 import random
-import sys
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
+from support import load_chain
 
 # Same loader order as tests/test_calibration_engine.py: const before nem_time
 # keeps the relative import out of the HA-dependent package __init__.py.
-_load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-_load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-_load(
-    "custom_components.nem_pd7day.calibration_engine",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_engine.py"),
-)
+load_chain("const", "nem_time", "calibration_engine")
 
 from custom_components.nem_pd7day.calibration_engine import (  # noqa: E402
     BAND_SOURCE_KEY,

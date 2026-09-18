@@ -15,169 +15,40 @@ Run with:  python -m pytest tests/test_coordinator.py -v
 """
 from __future__ import annotations
 
-import sys
-import os
 import asyncio
-import importlib.util
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
+import support
+from support import NEM_TZ, install_ha_stubs, load, nem_iso, run_async
 
 # Stub HA and aiohttp
-sys.modules.setdefault("aiohttp", MagicMock())
-for ha_mod in [
-    "homeassistant", "homeassistant.core", "homeassistant.helpers",
-    "homeassistant.helpers.storage", "homeassistant.helpers.event",
-    "homeassistant.helpers.aiohttp_client", "homeassistant.helpers.update_coordinator",
-    "homeassistant.helpers.entity_platform", "homeassistant.config_entries",
-    "homeassistant.const", "homeassistant.util", "homeassistant.util.dt",
-]:
-    sys.modules.setdefault(ha_mod, MagicMock())
+install_ha_stubs()
 
-# DataUpdateCoordinator stub — our coordinator inherits from it
-class _FakeCoordinator:
-    def __init__(self, hass, logger, name, update_interval):
-        self.hass = hass
-        self.logger = logger
-        self.name = name
-        self.update_interval = update_interval
-        self.last_update_success = True
-        self.data = None
+_nem_time = load("nem_time")
+_engine_mod = load("calibration_engine")
+_store_mod = load("calibration_store")
+_client_mod = load("pd7day_client")
+# Load const and the notice modules before coordinator
+_const_mod = load("const")
+_notice_client_mod = load("market_notice_client")
+_notice_store_mod = load("notice_store")
+_coord_mod = load("coordinator")
 
-    # Support DataUpdateCoordinator[PD7DayResult] subscript syntax
-    def __class_getitem__(cls, item):
-        return cls
+# Bound to this file's module objects, not the last file's (see support.py).
+make_price_period = partial(support.make_real_price_period, _client_mod)
+make_pd7day_data = partial(support.make_pd7day_data, _client_mod)
+make_store = partial(support.make_store, _store_mod)
 
-    async def async_config_entry_first_refresh(self):
-        pass
-
-uc_mock = MagicMock()
-uc_mock.DataUpdateCoordinator = _FakeCoordinator
-uc_mock.UpdateFailed = Exception
-sys.modules["homeassistant.helpers.update_coordinator"] = uc_mock
-
-_nem_time = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-_engine_mod = _load(
-    "custom_components.nem_pd7day.calibration_engine",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_engine.py"),
-)
-
-# HA storage stub for CalibrationStore
-ha_storage_mock = MagicMock()
-class _FakeStore:
-    def __init__(self, hass, version, key): pass
-    async def async_load(self): return None
-    async def async_save(self, data): pass
-ha_storage_mock.Store = _FakeStore
-sys.modules["homeassistant.helpers.storage"] = ha_storage_mock
-
-_store_mod = _load(
-    "custom_components.nem_pd7day.calibration_store",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_store.py"),
-)
-_client_mod = _load(
-    "custom_components.nem_pd7day.pd7day_client",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_client.py"),
-)
-
-# Load const before coordinator
-_const_mod = _load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-
-# Load notice modules before coordinator
-_notice_client_mod = _load(
-    "custom_components.nem_pd7day.market_notice_client",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "market_notice_client.py"),
-)
-_notice_store_mod = _load(
-    "custom_components.nem_pd7day.notice_store",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "notice_store.py"),
-)
-
-_coord_mod = _load(
-    "custom_components.nem_pd7day.coordinator",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
-)
-
-from custom_components.nem_pd7day.calibration_store import CalibrationStore
-from custom_components.nem_pd7day.observation_log import ObservationLog
-
-
-class _MemoryStore:
-    """Dict-backed stand-in for an HA Store: load, save, remove, no delay."""
-
-    _data: dict = {}
-
-    def __init__(self, key: str) -> None:
-        self._key = key
-
-    async def async_load(self):
-        return _MemoryStore._data.get(self._key)
-
-    async def async_save(self, data) -> None:
-        _MemoryStore._data[self._key] = data
-
-    async def async_remove(self) -> None:
-        _MemoryStore._data.pop(self._key, None)
 from custom_components.nem_pd7day.coordinator import PD7DayCoordinator
-from custom_components.nem_pd7day.pd7day_client import (
-    PD7DayResult, PD7DayData, CaseSolutionData, PricePeriod,
-)
-
-NEM_TZ = timezone(timedelta(hours=10))
+from custom_components.nem_pd7day.pd7day_client import CaseSolutionData, PD7DayResult
 
 # Pin _now_nem() close to test dates so forecast-history pruning doesn't discard data
 _store_mod._now_nem = lambda: datetime(2026, 4, 15, 19, 0, tzinfo=NEM_TZ)
 
 
-def run_async(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def nem_iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
-
-
-def make_price_period(nemtime_dt: datetime, value: float = 0.10) -> PricePeriod:
-    start_dt = nemtime_dt - timedelta(minutes=30)
-    return PricePeriod(
-        nemtime=nem_iso(nemtime_dt),
-        time=nem_iso(start_dt),
-        value=value,
-    )
-
-
-def make_pd7day_data(run_at_dt: datetime, periods: list) -> PD7DayData:
-    return PD7DayData(
-        region="QLD1",
-        source_file="PUBLIC_PD7DAY_20260415.ZIP",
-        forecast_generated_at=nem_iso(run_at_dt),
-        interval_minutes=30,
-        current_value=periods[0].value if periods else 0.0,
-        next_value=periods[1].value if len(periods) > 1 else None,
-        min_24h_value=None,
-        max_24h_value=None,
-        cheapest_2h_window=None,
-        forecast=periods,
-    )
-
 
 def make_case(intervention: bool = False, run_dt: str = "2026-04-15T07:25:07+10:00"):
     return CaseSolutionData(
@@ -199,32 +70,6 @@ def make_result(run_at_dt: datetime, periods: list,
     )
 
 
-def make_store() -> CalibrationStore:
-    hass = MagicMock()
-    hass.async_add_executor_job = AsyncMock(
-        side_effect=lambda fn, *args: asyncio.coroutine(lambda: fn(*args))()
-    )
-    store = CalibrationStore.__new__(CalibrationStore)
-    store._hass = hass
-    store._region = "QLD1"
-    store._log = ObservationLog(store._hass, "QLD1", store_factory=_MemoryStore)
-    store._obs_store = MagicMock()
-    store._obs_store.async_load = AsyncMock(return_value=None)
-    store._obs_store.async_save = AsyncMock()
-    store._coeff_store = MagicMock()
-    store._coeff_store.async_load = AsyncMock(return_value=None)
-    store._coeff_store.async_save = AsyncMock()
-    store._fh_store = MagicMock()
-    store._fh_store.async_load = AsyncMock(return_value=None)
-    store._fh_store.async_save = AsyncMock()
-    from custom_components.nem_pd7day.calibration_engine import CalibrationEngine
-    store._engine = CalibrationEngine()
-    store._calibration = None
-    store._forecast_history = {}
-    store._actual_accum = {}
-    return store
-
-
 def make_coordinator(store=None, notice_store=None, notice_client=None) -> PD7DayCoordinator:
     hass = MagicMock()
     coord = PD7DayCoordinator.__new__(PD7DayCoordinator)
@@ -244,8 +89,6 @@ def make_coordinator(store=None, notice_store=None, notice_client=None) -> PD7Da
     coord._stpasa_store = None
     coord._first_refresh_done = False
     return coord
-
-
 # ── Tests: coordinator feeds store ───────────────────────────────────────────
 
 def test_coordinator_calls_ingest_forecast_after_fetch():

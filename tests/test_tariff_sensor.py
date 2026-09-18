@@ -13,120 +13,26 @@ Run with:  python -m pytest tests/test_tariff_sensor.py -v
 from __future__ import annotations
 
 import sys
-import os
-import importlib.util
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from functools import partial
 from unittest.mock import MagicMock, patch
 
-# ── Module loader ─────────────────────────────────────────────────────────────
-
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
+import support
+from support import NEM_TZ, install_ha_stubs, load, make_price_period, nem_iso
 
 # Stub HA and aiohttp before loading any integration module
-sys.modules.setdefault("aiohttp", MagicMock())
-for ha_mod in [
-    "homeassistant", "homeassistant.core", "homeassistant.helpers",
-    "homeassistant.helpers.storage", "homeassistant.helpers.event",
-    "homeassistant.helpers.aiohttp_client", "homeassistant.helpers.update_coordinator",
-    "homeassistant.helpers.entity_platform", "homeassistant.helpers.device_registry",
-    "homeassistant.config_entries",
-    "homeassistant.const", "homeassistant.util", "homeassistant.util.dt",
-    "homeassistant.components", "homeassistant.components.sensor",
-]:
-    sys.modules.setdefault(ha_mod, MagicMock())
+install_ha_stubs()
 
-device_registry_mock = MagicMock()
-device_registry_mock.DeviceInfo = dict
-sys.modules["homeassistant.helpers.device_registry"] = device_registry_mock
+_nem_time = load("nem_time")
+_client_mod = load("pd7day_client")
+_const_mod = load("const")
+_store_mod = load("calibration_store")
+_coord_mod = load("coordinator")
+_tariff_mod = load("tariff_sensor")
 
-import enum
-
-class _SensorDeviceClass(str, enum.Enum):
-    MONETARY = "monetary"
-    ENERGY = "energy"
-    TIMESTAMP = "timestamp"
-
-class _SensorStateClass(str, enum.Enum):
-    MEASUREMENT = "measurement"
-    TOTAL_INCREASING = "total_increasing"
-
-sensor_mock = MagicMock()
-sensor_mock.SensorDeviceClass = _SensorDeviceClass
-sensor_mock.SensorStateClass = _SensorStateClass
-sensor_mock.SensorEntity = object
-sys.modules["homeassistant.components.sensor"] = sensor_mock
-
-class _FakeCoordinator:
-    def __init__(self, hass, logger, name, update_interval):
-        self.hass = hass
-        self.last_update_success = True
-        self.data = None
-    def __class_getitem__(cls, item):
-        return cls
-    async def async_config_entry_first_refresh(self): pass
-    async def async_refresh(self): pass
-
-class _FakeCoordinatorEntity:
-    def __init__(self, coordinator=None, **kwargs):
-        self.coordinator = coordinator
-    def __class_getitem__(cls, item):
-        return cls
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-
-_uc_mock = MagicMock()
-_uc_mock.DataUpdateCoordinator = _FakeCoordinator
-_uc_mock.UpdateFailed = Exception
-_uc_mock.CoordinatorEntity = _FakeCoordinatorEntity
-sys.modules["homeassistant.helpers.update_coordinator"] = _uc_mock
-
-_nem_time = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-
-sys.modules.setdefault("aiohttp", MagicMock())
-_client_mod = _load(
-    "custom_components.nem_pd7day.pd7day_client",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_client.py"),
-)
-
-_const_mod = _load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-
-ha_storage_mock = MagicMock()
-class _FakeStore:
-    def __init__(self, hass, version, key): pass
-    async def async_load(self): return None
-    async def async_save(self, data): pass
-ha_storage_mock.Store = _FakeStore
-sys.modules["homeassistant.helpers.storage"] = ha_storage_mock
-
-_store_mod = _load(
-    "custom_components.nem_pd7day.calibration_store",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_store.py"),
-)
-_coord_mod = _load(
-    "custom_components.nem_pd7day.coordinator",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
-)
-
-_tariff_mod = _load(
-    "custom_components.nem_pd7day.tariff_sensor",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "tariff_sensor.py"),
-)
+# Reads the tariff constants from this file's module object (see support.py).
+expected_import_price = partial(support.expected_import_price, _tariff_mod)
 
 from custom_components.nem_pd7day.tariff_sensor import NemPd7dayTariffSensor, get_tariff_name
 from custom_components.nem_pd7day.const import (
@@ -136,24 +42,8 @@ from custom_components.nem_pd7day.const import (
     REGION_DISTRIBUTORS,
 )
 
-NEM_TZ = timezone(timedelta(hours=10))
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def nem_iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
-
-
-def make_price_period(nemtime_dt: datetime, value: float = 0.10):
-    """Create a PricePeriod-like mock with correct time fields."""
-    start_dt = nemtime_dt - timedelta(minutes=30)
-    return MagicMock(
-        nemtime=nem_iso(nemtime_dt),
-        time=nem_iso(start_dt),
-        value=value,
-    )
-
 
 def make_tariff_sensor(
     region="QLD1",
@@ -197,30 +87,6 @@ def make_tariff_sensor(
     # Return None for the additional fee input_number so fallback is used
     sensor.hass.states.get.return_value = None
     return sensor
-
-
-def expected_import_price(lib_c_kwh, rrp_mwh, fee=0.0293, distributor="energex"):
-    """Published import price in $/kWh for a mocked spot_to_tariff return.
-
-    These tests mock the library to a fixed c/kWh figure, so they have to
-    reproduce the way tariff_sensor splits that figure up. aemo_to_tariff
-    composes a tariff as spot plus network rate and GSTs the network rate
-    itself on seven of the thirteen networks, so the integration separates the
-    two components, removes the library's GST from the network component where
-    the library applied it, and grosses the total up once (#158).
-
-    Whether that placement is right is the subject of tests/test_tariff_gst.py,
-    which probes the real library rather than a mock. This helper exists only so
-    the tests around it can go on testing the plumbing: fee handling, the $/MWh
-    conversion, dispatch versus forecast selection, and forecast structure.
-    """
-    spot_c = rrp_mwh * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
-    network_c = lib_c_kwh - spot_c
-    if distributor in _tariff_mod._LIB_APPLIES_GST:
-        network_c /= _tariff_mod.GST
-    return round(((spot_c + network_c) / 100 + fee) * _tariff_mod.GST, 6)
-
-
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 def test_tariff_sensor_current_value():

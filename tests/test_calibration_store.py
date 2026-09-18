@@ -12,143 +12,44 @@ Run with:  python -m pytest tests/test_calibration_store.py -v
 """
 from __future__ import annotations
 
+import asyncio
 import sys
-import os
-import importlib.util
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from functools import partial
+from unittest.mock import MagicMock
 from datetime import datetime, timedelta, timezone
+
+import support
+from support import (
+    MemoryStore,
+    install_ha_stubs,
+    load,
+    make_price_data,
+    make_price_period,
+    nem_iso,
+    run_async,
+)
 
 # ── Module loader (avoids HA import chain) ────────────────────────────────────
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-def _load(name, path, deps=None):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-_nem_time = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-_engine_mod = _load(
-    "custom_components.nem_pd7day.calibration_engine",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_engine.py"),
-)
+_nem_time = load("nem_time")
+_engine_mod = load("calibration_engine")
 
 # Stub out all HA modules so CalibrationStore can be imported without HA installed
-_ha_mock = MagicMock()
-sys.modules.setdefault("homeassistant", _ha_mock)
-sys.modules["homeassistant.core"] = MagicMock()
-sys.modules["homeassistant.helpers"] = MagicMock()
+install_ha_stubs()
+_store_mod = load("calibration_store")
 
-# Provide a fake Store whose async_load returns None (awaitable)
-class _FakeStore:
-    def __init__(self, hass, version, key):
-        self._key = key
-    async def async_load(self):
-        return None
-    async def async_save(self, data):
-        pass
-
-_storage_mock = MagicMock()
-_storage_mock.Store = _FakeStore
-sys.modules["homeassistant.helpers.storage"] = _storage_mock
-
-sys.modules["homeassistant.helpers.event"] = MagicMock()
-sys.modules["homeassistant.config_entries"] = MagicMock()
-sys.modules["homeassistant.const"] = MagicMock()
-sys.modules["homeassistant.util"] = MagicMock()
-sys.modules["homeassistant.util.dt"] = MagicMock()
-
-_store_mod = _load(
-    "custom_components.nem_pd7day.calibration_store",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_store.py"),
-)
+make_store = partial(support.make_store, _store_mod)
 
 from custom_components.nem_pd7day.nem_time import NEM_TZ
 from custom_components.nem_pd7day.calibration_engine import (
     CalibrationEngine, Observation,
 )
-from custom_components.nem_pd7day.calibration_store import CalibrationStore
-from custom_components.nem_pd7day.observation_log import ObservationLog
-
-
-class _MemoryStore:
-    """Dict-backed stand-in for an HA Store: load, save, remove, no delay."""
-
-    _data: dict = {}
-
-    def __init__(self, key: str) -> None:
-        self._key = key
-
-    async def async_load(self):
-        return _MemoryStore._data.get(self._key)
-
-    async def async_save(self, data) -> None:
-        _MemoryStore._data[self._key] = data
-
-    async def async_remove(self) -> None:
-        _MemoryStore._data.pop(self._key, None)
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def nem_iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
-
-def make_price_period(nemtime_dt: datetime, value: float = 0.10):
-    """Create a minimal PricePeriod-like object with str time fields."""
-    start_dt = nemtime_dt - timedelta(minutes=30)
-    return MagicMock(
-        nemtime=nem_iso(nemtime_dt),
-        time=nem_iso(start_dt),       # str, not datetime
-        value=value,
-    )
-
-def make_price_data(run_at_dt: datetime, periods):
-    """Create a minimal PD7DayData-like object."""
-    return MagicMock(
-        forecast_generated_at=nem_iso(run_at_dt),
-        forecast=periods,
-    )
-
-def make_store() -> CalibrationStore:
-    """Create a CalibrationStore with mocked HA storage."""
-    hass = MagicMock()
-    store = CalibrationStore.__new__(CalibrationStore)
-    store._hass = hass
-    store._region = "QLD1"
-    store._log = ObservationLog(store._hass, "QLD1", store_factory=_MemoryStore)
-    store._obs_store = AsyncMock()
-    store._obs_store.async_load = AsyncMock(return_value=None)
-    store._obs_store.async_save = AsyncMock()
-    store._coeff_store = AsyncMock()
-    store._coeff_store.async_load = AsyncMock(return_value=None)
-    store._coeff_store.async_save = AsyncMock()
-    store._fh_store = AsyncMock()
-    store._fh_store.async_load = AsyncMock(return_value=None)
-    store._fh_store.async_save = AsyncMock()
-    store._engine = CalibrationEngine()
-    store._calibration = None
-    store._forecast_history = {}
-    store._actual_accum = {}
-    return store
 
 BASE_DT = datetime(2026, 4, 14, 18, 0, tzinfo=NEM_TZ)  # 18:00 NEM forecast run
 
 # Pin _now_nem() to BASE_DT + 1h so forecast-history pruning doesn't discard test data
 _store_mod._now_nem = lambda: BASE_DT + timedelta(hours=1)
-
-import asyncio
-
-def run_async(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
-
-
 # ── Tests: forecast_history key type ──────────────────────────────────────────
 
 def test_forecast_history_keyed_by_str():
@@ -1429,12 +1330,12 @@ def test_record_actual_persists_only_the_touched_day():
     """A settled interval writes its own day's segment and the manifest,
     not the whole log (issue #130)."""
     store = make_store()
-    _MemoryStore._data.clear()
+    MemoryStore._data.clear()
     old_day = {"interval_time": "2026-08-20T12:00:00+10:00", "forecast_run_at": "2026-08-20T07:30:00+10:00",
                "actual_rrp": 0.05, "pd7day_forecast": 0.06, "horizon_hours": 4.5}
     store._observations = [old_day]
     asyncio.run(store._save_observations())
-    saved_before = dict(_MemoryStore._data)
+    saved_before = dict(MemoryStore._data)
     assert "nem_pd7day.qld1.observations.2026-08-20" in saved_before
 
     run_at = datetime(2026, 9, 5, 7, 30, tzinfo=NEM_TZ)
@@ -1443,14 +1344,14 @@ def test_record_actual_persists_only_the_touched_day():
         "run_at": nem_iso(run_at), "forecast_price": 0.08, "region": "QLD1",
         "gas_tj": None, "qni_mwflow": None, "qni_violation": None, "is_intervention": False,
     }]
-    _MemoryStore._data.clear()
+    MemoryStore._data.clear()
     asyncio.run(store.async_record_actual(nem_iso(interval), 0.07))
-    written = sorted(_MemoryStore._data)
+    written = sorted(MemoryStore._data)
     assert written == [
         "nem_pd7day.qld1.observation_segments",
         "nem_pd7day.qld1.observations.2026-09-05",
     ], written
-    assert _MemoryStore._data["nem_pd7day.qld1.observation_segments"] == {
+    assert MemoryStore._data["nem_pd7day.qld1.observation_segments"] == {
         "dates": ["2026-08-20", "2026-09-05"]
     }
     assert len(store._observations) == 2
