@@ -1,13 +1,31 @@
-"""Tests for tod_stats — time-of-day actual price statistics."""
+"""Tests for tod_stats.py (time of day actual price statistics) and the bias
+chart that draws them.
+
+``slot_for_now`` floors to the containing slot, issue #45: requiring exact
+equality on the minute meant a state write at, say, 10:06:39 matched no slot
+at all and the sensor rendered unknown until the next boundary tick 24
+minutes later.
+"""
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
-from custom_components.nem_pd7day.tod_stats import compute, render_chart, TodStats, SlotStats
+
+from support import NEM_TZ, load
+
+_engine_mod = load("calibration_engine")
+_tod_stats = load("tod_stats")
+_bias_chart = load("bias_chart")
+compute, render_chart, TodStats, SlotStats = (
+    _tod_stats.compute, _tod_stats.render_chart, _tod_stats.TodStats, _tod_stats.SlotStats,
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _make_obs(interval_time: str, actual_rrp: float | None, forecast_run_at: str = "2026-04-20T07:00:00+10:00") -> dict:
+def _make_obs(interval_time: str, actual_rrp: float | None,
+              forecast_run_at: str = "2026-04-20T07:00:00+10:00") -> dict:
     return {
         "interval_time": interval_time,
         "actual_rrp": actual_rrp,
@@ -16,7 +34,41 @@ def _make_obs(interval_time: str, actual_rrp: float | None, forecast_run_at: str
     }
 
 
-# ── compute() tests ─────────────────────────────────────────────────────────
+def _full_day_stats() -> TodStats:
+    """Statistics with all 48 slots populated, one observation each."""
+    return compute([
+        _make_obs(f"2026-04-20T{hour:02d}:{minute:02d}:00+10:00", 0.10)
+        for hour in range(24) for minute in (0, 30)
+    ])
+
+
+def _bucket(key, a, b, n):
+    e = _engine_mod
+    return e.BucketModel(
+        key,
+        e.LinearCoeff(a=a, b=b, n=n, mae=0.01, rmse=0.02),
+        e.QuantileCoeff(0.1, a=a * 0.95, b=b, n=n),
+        e.QuantileCoeff(0.5, a=a, b=b, n=n),
+        e.QuantileCoeff(0.9, a=a * 1.15, b=b, n=n),
+    )
+
+
+def _calibration(keys):
+    """A CalibrationResult with a fitted bucket for each key."""
+    coeffs = {
+        "h00_06__peak": (0.40, 0.060, 50),
+        "h00_06__solar": (0.95, 0.012, 70),
+        "h12_24__shoulder": (1.50, -0.057, 18),
+        "h24_48__peak": (0.05, 0.087, 76),
+    }
+    return _engine_mod.CalibrationResult(
+        fitted_at="2026-04-21T18:00:00+10:00",
+        total_observations=500,
+        models={k: _bucket(k, *coeffs[k]) for k in keys},
+    )
+
+
+# ── compute() ─────────────────────────────────────────────────────────────────
 
 def test_empty_observations_returns_empty_stats():
     stats = compute([])
@@ -25,11 +77,10 @@ def test_empty_observations_returns_empty_stats():
 
 
 def test_none_actual_rrp_excluded():
-    obs = [
+    stats = compute([
         _make_obs("2026-04-20T08:00:00+10:00", None),
         _make_obs("2026-04-20T08:30:00+10:00", 0.10),
-    ]
-    stats = compute(obs)
+    ])
     assert stats.unique_intervals == 1
     assert len(stats.slots) == 1
     assert stats.slots[0].label == "08:30"
@@ -37,12 +88,11 @@ def test_none_actual_rrp_excluded():
 
 def test_deduplication_same_interval_different_runs():
     """Multiple forecast runs for the same interval_time count as one actual."""
-    obs = [
+    stats = compute([
         _make_obs("2026-04-20T09:00:00+10:00", 0.10, "2026-04-20T07:00:00+10:00"),
         _make_obs("2026-04-20T09:00:00+10:00", 0.10, "2026-04-20T08:00:00+10:00"),
         _make_obs("2026-04-20T09:00:00+10:00", 0.10, "2026-04-19T18:00:00+10:00"),
-    ]
-    stats = compute(obs)
+    ])
     assert stats.unique_intervals == 1
     assert len(stats.slots) == 1
     assert stats.slots[0].n == 1
@@ -50,12 +100,11 @@ def test_deduplication_same_interval_different_runs():
 
 def test_multiple_days_same_slot_aggregated():
     """Same time-of-day slot across multiple days accumulates correctly."""
-    obs = [
+    stats = compute([
         _make_obs("2026-04-18T10:00:00+10:00", 0.05),
         _make_obs("2026-04-19T10:00:00+10:00", 0.07),
         _make_obs("2026-04-20T10:00:00+10:00", 0.09),
-    ]
-    stats = compute(obs)
+    ])
     assert stats.unique_intervals == 3
     assert len(stats.slots) == 1
     slot = stats.slots[0]
@@ -67,50 +116,32 @@ def test_multiple_days_same_slot_aggregated():
 
 def test_slot_stats_ordering():
     """Slots are ordered by (hour, minute)."""
-    obs = [
+    stats = compute([
         _make_obs("2026-04-20T12:30:00+10:00", 0.08),
         _make_obs("2026-04-20T08:00:00+10:00", 0.10),
         _make_obs("2026-04-20T23:00:00+10:00", 0.06),
         _make_obs("2026-04-20T00:30:00+10:00", 0.09),
-    ]
-    stats = compute(obs)
+    ])
     labels = [s.label for s in stats.slots]
     assert labels == sorted(labels)
 
 
 def test_negative_prices_included():
     """Negative actual prices (solar window) must be included, not filtered."""
-    obs = [
+    stats = compute([
         _make_obs("2026-04-20T11:00:00+10:00", -0.03),
         _make_obs("2026-04-20T11:30:00+10:00", -0.05),
-    ]
-    stats = compute(obs)
+    ])
     assert stats.unique_intervals == 2
     for slot in stats.slots:
         assert slot.mean < 0
 
 
-def test_slot_for_now_returns_correct_slot():
-    from datetime import datetime, timezone, timedelta
-    NEM_TZ = timezone(timedelta(hours=10))
-    obs = [
-        _make_obs("2026-04-20T14:00:00+10:00", 0.10),
-        _make_obs("2026-04-20T14:30:00+10:00", 0.12),
-    ]
-    stats = compute(obs)
-    dt_match    = datetime(2026, 4, 21, 14, 0, tzinfo=NEM_TZ)
-    dt_no_match = datetime(2026, 4, 21, 15, 0, tzinfo=NEM_TZ)
-    assert stats.slot_for_now(dt_match) is not None
-    assert stats.slot_for_now(dt_match).label == "14:00"
-    assert stats.slot_for_now(dt_no_match) is None
-
-
 def test_as_attributes_structure():
-    obs = [
+    stats = compute([
         _make_obs("2026-04-20T08:00:00+10:00", 0.10),
         _make_obs("2026-04-20T08:30:00+10:00", 0.12),
-    ]
-    stats = compute(obs)
+    ])
     attrs = stats.as_attributes()
     assert "unique_intervals" in attrs
     assert "slots" in attrs
@@ -122,138 +153,7 @@ def test_as_attributes_structure():
             assert key in slot_dict, f"Missing key: {key}"
 
 
-def test_render_chart_returns_png_bytes():
-    obs = [
-        _make_obs(f"2026-04-{18+d:02d}T{h:02d}:{m:02d}:00+10:00", 0.05 + h * 0.005)
-        for d in range(5)
-        for h, m in [(8, 0), (8, 30), (12, 0), (12, 30), (18, 0), (18, 30)]
-    ]
-    stats = compute(obs)
-    png = render_chart(stats)
-    assert isinstance(png, bytes)
-    assert len(png) > 1000
-    # PNG magic bytes
-    assert png[:4] == b'\x89PNG'
-
-
-def test_render_chart_empty_returns_empty():
-    stats = TodStats()
-    result = render_chart(stats)
-    assert result == b""
-
-
-# ── bias_chart smoke tests ────────────────────────────────────────────────────
-
-def test_bias_chart_none_calibration_returns_empty():
-    from custom_components.nem_pd7day.bias_chart import render_chart
-    assert render_chart(None) == b""
-
-
-def test_bias_chart_renders_png_from_calibration():
-    """Smoke test: render_chart produces valid PNG bytes from a CalibrationResult."""
-    from custom_components.nem_pd7day.bias_chart import render_chart
-    from custom_components.nem_pd7day.calibration_engine import (
-        BucketModel, LinearCoeff, QuantileCoeff, CalibrationResult
-    )
-
-    # Build a minimal CalibrationResult with a few fitted buckets
-    buckets = {
-        "h00_06__peak":    BucketModel("h00_06__peak",    LinearCoeff(a=0.40, b=0.060, n=50,  mae=0.01, rmse=0.02), QuantileCoeff(0.1, a=0.38, b=0.060, n=50), QuantileCoeff(0.5, a=0.40, b=0.060, n=50), QuantileCoeff(0.9, a=0.47, b=0.060, n=50)),
-        "h00_06__solar":   BucketModel("h00_06__solar",   LinearCoeff(a=0.95, b=0.012, n=70,  mae=0.01, rmse=0.01), QuantileCoeff(0.1, a=0.85, b=0.012, n=70), QuantileCoeff(0.5, a=0.95, b=0.012, n=70), QuantileCoeff(0.9, a=0.97, b=0.012, n=70)),
-        "h12_24__shoulder": BucketModel("h12_24__shoulder", LinearCoeff(a=1.50, b=-0.057, n=18, mae=0.01, rmse=0.01), QuantileCoeff(0.1, a=1.49, b=-0.057, n=18), QuantileCoeff(0.5, a=1.50, b=-0.057, n=18), QuantileCoeff(0.9, a=1.65, b=-0.057, n=18)),
-        "h24_48__peak":    BucketModel("h24_48__peak",    LinearCoeff(a=0.05, b=0.087, n=76,  mae=0.007, rmse=0.009), QuantileCoeff(0.1, a=0.05, b=0.087, n=76), QuantileCoeff(0.5, a=0.05, b=0.087, n=76), QuantileCoeff(0.9, a=0.06, b=0.087, n=76)),
-    }
-    result = CalibrationResult(
-        fitted_at="2026-04-21T18:00:00+10:00",
-        total_observations=500,
-        models=buckets,
-    )
-
-    png = render_chart(result, obs_count=500, region="QLD1")
-    assert isinstance(png, bytes)
-    assert len(png) > 5000
-    assert png[:4] == b'\x89PNG'
-
-
-# ── render_chart region parameter tests ──────────────────────────────────────
-
-def test_render_chart_accepts_region_parameter():
-    """render_chart must accept a region parameter and not crash for non-QLD1 regions."""
-    obs = [
-        _make_obs(f"2026-04-{18+d:02d}T{h:02d}:{m:02d}:00+10:00", 0.05 + h * 0.005)
-        for d in range(3)
-        for h, m in [(8, 0), (8, 30), (12, 0)]
-    ]
-    stats = compute(obs)
-    png = render_chart(stats, region="NSW1")
-    assert isinstance(png, bytes)
-    assert len(png) > 1000
-    assert png[:4] == b'\x89PNG'
-
-
-# ── bias_chart with tod_stats parameter ──────────────────────────────────────
-
-def test_bias_chart_renders_with_tod_stats():
-    """bias_chart.render_chart must accept tod_stats and produce a valid PNG."""
-    from custom_components.nem_pd7day.bias_chart import render_chart as bc_render
-    from custom_components.nem_pd7day.calibration_engine import (
-        BucketModel, LinearCoeff, QuantileCoeff, CalibrationResult
-    )
-
-    buckets = {
-        "h00_06__peak": BucketModel("h00_06__peak", LinearCoeff(a=0.40, b=0.060, n=50, mae=0.01, rmse=0.02), QuantileCoeff(0.1, a=0.38, b=0.060, n=50), QuantileCoeff(0.5, a=0.40, b=0.060, n=50), QuantileCoeff(0.9, a=0.47, b=0.060, n=50)),
-    }
-    cal = CalibrationResult(fitted_at="2026-04-21T18:00:00+10:00", total_observations=100, models=buckets)
-
-    # Build TodStats with mean_raw and mean_calibrated
-    stats = TodStats(
-        slots=[
-            SlotStats(hour=h, minute=m, n=10, mean=0.05 + h * 0.003,
-                      median=0.05, p10=0.03, p25=0.04, p75=0.06, p90=0.07,
-                      mean_raw=0.06 + h * 0.003, mean_calibrated=0.055 + h * 0.003)
-            for h in range(0, 24) for m in (0, 30)
-        ],
-        unique_intervals=48,
-        date_from="18 Apr",
-        date_to="20 Apr 2026",
-    )
-
-    png = bc_render(cal, obs_count=100, region="SA1", tod_stats=stats)
-    assert isinstance(png, bytes)
-    assert len(png) > 5000
-    assert png[:4] == b'\x89PNG'
-
-
-def test_bias_chart_renders_without_tod_stats():
-    """bias_chart.render_chart must still work when tod_stats is None (placeholder)."""
-    from custom_components.nem_pd7day.bias_chart import render_chart as bc_render
-    from custom_components.nem_pd7day.calibration_engine import (
-        BucketModel, LinearCoeff, QuantileCoeff, CalibrationResult
-    )
-
-    buckets = {
-        "h00_06__peak": BucketModel("h00_06__peak", LinearCoeff(a=0.40, b=0.060, n=50, mae=0.01, rmse=0.02), QuantileCoeff(0.1, a=0.38, b=0.060, n=50), QuantileCoeff(0.5, a=0.40, b=0.060, n=50), QuantileCoeff(0.9, a=0.47, b=0.060, n=50)),
-    }
-    cal = CalibrationResult(fitted_at="2026-04-21T18:00:00+10:00", total_observations=100, models=buckets)
-
-    png = bc_render(cal, obs_count=100, region="QLD1", tod_stats=None)
-    assert isinstance(png, bytes)
-    assert len(png) > 5000
-    assert png[:4] == b'\x89PNG'
-
-
-# ── slot_for_now containment (issue #45) ────────────────────────────────────
-
-def _full_day_stats() -> TodStats:
-    """Statistics with all 48 slots populated, one observation each."""
-    obs = []
-    for hour in range(24):
-        for minute in (0, 30):
-            obs.append(
-                _make_obs(f"2026-04-20T{hour:02d}:{minute:02d}:00+10:00", 0.10)
-            )
-    return compute(obs)
-
+# ── slot_for_now containment, issue #45 ──────────────────────────────────────
 
 @pytest.mark.parametrize(
     "minute,expected_label",
@@ -269,29 +169,17 @@ def _full_day_stats() -> TodStats:
     ],
 )
 def test_slot_for_now_floors_to_the_containing_slot(minute, expected_label):
-    """
-    Any minute must resolve to the 30 minute slot containing it.
-
-    Requiring exact equality on the minute meant a state write at, say,
-    10:06:39 matched no slot at all and the sensor rendered unknown until the
-    next boundary tick 24 minutes later. Issue #45.
-    """
-    from datetime import datetime, timezone, timedelta
-    NEM_TZ = timezone(timedelta(hours=10))
-    stats = _full_day_stats()
-    slot = stats.slot_for_now(datetime(2026, 4, 21, 14, minute, tzinfo=NEM_TZ))
+    """Any minute must resolve to the 30 minute slot containing it."""
+    slot = _full_day_stats().slot_for_now(datetime(2026, 4, 21, 14, minute, tzinfo=NEM_TZ))
     assert slot is not None, f"minute {minute} resolved to no slot"
     assert slot.label == expected_label
 
 
 def test_slot_for_now_resolves_every_minute_of_the_day():
-    """
-    A populated set of slots must never yield None for any wall clock minute,
+    """A populated set of slots must never yield None for any wall clock minute,
     which is the property that makes the sensor independent of when it happens
     to be written.
     """
-    from datetime import datetime, timezone, timedelta
-    NEM_TZ = timezone(timedelta(hours=10))
     stats = _full_day_stats()
     unresolved = [
         (h, m)
@@ -303,16 +191,69 @@ def test_slot_for_now_resolves_every_minute_of_the_day():
 
 
 def test_slot_for_now_still_returns_none_when_the_slot_has_no_data():
-    """
-    Flooring must not invent a slot. An hour with no observations still
+    """Flooring must not invent a slot. An hour with no observations still
     resolves to None rather than borrowing a neighbouring slot.
     """
-    from datetime import datetime, timezone, timedelta
-    NEM_TZ = timezone(timedelta(hours=10))
-    obs = [
+    stats = compute([
         _make_obs("2026-04-20T14:00:00+10:00", 0.10),
         _make_obs("2026-04-20T14:30:00+10:00", 0.12),
-    ]
-    stats = compute(obs)
+    ])
+    assert stats.slot_for_now(datetime(2026, 4, 21, 14, 0, tzinfo=NEM_TZ)).label == "14:00"
     assert stats.slot_for_now(datetime(2026, 4, 21, 14, 6, tzinfo=NEM_TZ)) is not None
+    assert stats.slot_for_now(datetime(2026, 4, 21, 15, 0, tzinfo=NEM_TZ)) is None
     assert stats.slot_for_now(datetime(2026, 4, 21, 15, 6, tzinfo=NEM_TZ)) is None
+
+
+# ── render_chart ──────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("region", [None, "NSW1"])
+def test_render_chart_returns_png_bytes(region):
+    """A PNG for the default region and for a non-QLD1 one."""
+    stats = compute([
+        _make_obs(f"2026-04-{18 + d:02d}T{h:02d}:{m:02d}:00+10:00", 0.05 + h * 0.005)
+        for d in range(5)
+        for h, m in [(8, 0), (8, 30), (12, 0), (12, 30), (18, 0), (18, 30)]
+    ])
+    png = render_chart(stats) if region is None else render_chart(stats, region=region)
+    assert isinstance(png, bytes)
+    assert len(png) > 1000
+    assert png[:4] == b"\x89PNG"
+
+
+def test_render_chart_empty_returns_empty():
+    assert render_chart(TodStats()) == b""
+
+
+# ── bias_chart ────────────────────────────────────────────────────────────────
+
+def test_bias_chart_none_calibration_returns_empty():
+    assert _bias_chart.render_chart(None) == b""
+
+
+def test_bias_chart_renders_png_from_calibration():
+    """A few fitted buckets and no tod_stats (the placeholder panel) render."""
+    cal = _calibration(("h00_06__peak", "h00_06__solar", "h12_24__shoulder", "h24_48__peak"))
+    png = _bias_chart.render_chart(cal, obs_count=500, region="QLD1")
+    assert isinstance(png, bytes)
+    assert len(png) > 5000
+    assert png[:4] == b"\x89PNG"
+
+
+def test_bias_chart_renders_with_tod_stats():
+    """bias_chart.render_chart accepts tod_stats and draws them."""
+    stats = TodStats(
+        slots=[
+            SlotStats(hour=h, minute=m, n=10, mean=0.05 + h * 0.003,
+                      median=0.05, p10=0.03, p25=0.04, p75=0.06, p90=0.07,
+                      mean_raw=0.06 + h * 0.003, mean_calibrated=0.055 + h * 0.003)
+            for h in range(0, 24) for m in (0, 30)
+        ],
+        unique_intervals=48,
+        date_from="18 Apr",
+        date_to="20 Apr 2026",
+    )
+    png = _bias_chart.render_chart(_calibration(("h00_06__peak",)), obs_count=100,
+                                   region="SA1", tod_stats=stats)
+    assert isinstance(png, bytes)
+    assert len(png) > 5000
+    assert png[:4] == b"\x89PNG"
