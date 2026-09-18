@@ -80,8 +80,29 @@ def test_library_is_read():
 
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
 def test_import_codes_are_the_library_catalogue(distributor):
-    """Every import tariff the library carries gets a sensor, in the library's order."""
-    assert _cat.import_tariff_codes(distributor) == list(_lib_import_table(distributor).keys())
+    """Every import tariff the library carries gets a sensor, and nothing else."""
+    assert sorted(_cat.import_tariff_codes(distributor)) == sorted(_lib_import_table(distributor).keys())
+
+
+@pytest.mark.parametrize("distributor", DISTRIBUTORS)
+def test_import_codes_keep_the_snapshot_order_then_append(distributor):
+    """The first default-enabled code decides the day 2-7 default; library order must not move it."""
+    codes = _cat.import_tariff_codes(distributor)
+    snapshot = [c for c in _const.DISTRIBUTOR_TARIFFS[distributor] if c in codes]
+    assert codes[: len(snapshot)] == snapshot
+    assert codes[len(snapshot):] == [c for c in _lib_import_table(distributor) if c not in snapshot]
+
+
+def test_library_order_cannot_change_the_default_tariff(monkeypatch):
+    """SAPN listed RTOU before RESELE; the default stays the snapshot's first code."""
+    fake = SimpleNamespace(sapower=SimpleNamespace(
+        __name__="sapower",
+        tariffs={"RTOU": {"name": "a"}, "RESELE": {"name": "b"}, "NEWCODE": {"name": "c"}},
+    ))
+    monkeypatch.setattr(_cat, "_att", fake)
+    codes = _cat.import_tariff_codes("sapn")
+    assert codes[0] == _const.DISTRIBUTOR_TARIFFS["sapn"][0] == "RESELE"
+    assert codes[-1] == "NEWCODE"
 
 
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)

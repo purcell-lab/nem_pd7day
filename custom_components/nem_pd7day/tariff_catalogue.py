@@ -90,14 +90,26 @@ def feed_in_tariffs(distributor: str) -> dict[str, Any] | None:
 def import_tariff_codes(distributor: str) -> list[str]:
     """Import tariff codes to build sensors for.
 
-    From the library when it is importable, in the library's own order; from
-    DISTRIBUTOR_TARIFFS otherwise. A code the library does not carry is not
-    returned even if the constant lists it: the library could not convert it,
-    so the sensor would never publish a price.
+    From the library when it is importable, from DISTRIBUTOR_TARIFFS
+    otherwise. A code the library does not carry is not returned even if the
+    constant lists it: the library could not convert it, so the sensor would
+    never publish a price.
+
+    Order is DISTRIBUTOR_TARIFFS' order for the codes both have, then the
+    library's new codes in the library's order. The order is load-bearing:
+    the day 2 to 7 tariff sensor and the config flow default to the FIRST
+    default-enabled code for the region when no active tariff is set, and
+    on the first deploy of the library-driven catalogue SA Power Networks'
+    table happened to list RTOU before RESELE, which silently moved that
+    default from RESELE to RTOU and retired the entity a live install was
+    using. Keeping the snapshot's order pins the default; a new library
+    code can only ever be appended.
     """
     if _att is None:
         return list(DISTRIBUTOR_TARIFFS.get(distributor, []))
-    return list(import_tariffs(distributor).keys())
+    library = list(import_tariffs(distributor).keys())
+    known = [code for code in DISTRIBUTOR_TARIFFS.get(distributor, []) if code in library]
+    return known + [code for code in library if code not in known]
 
 
 def export_program_supported(distributor: str, export_code: str) -> bool:

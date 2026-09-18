@@ -524,7 +524,14 @@ def test_stpasa_store_is_deregistered_per_entry():
     stops writing .storage for a region the user removed; before #106 the
     dict was only dropped when the last entry unloaded."""
     src = _init_source()
-    assert "entry.async_on_unload(lambda: stpasa_stores.pop(region, None))" in src
+    assert "entry.async_on_unload(_forget_stpasa_store)" in src
+    # The callback must return None. Home Assistant 2026.9 schedules whatever
+    # an on-unload callback returns as a task, so the lambda this used to be,
+    # which returned the popped StpasaStore, raised "TypeError: a coroutine
+    # was expected" and left the entry in failed_unload on the live install
+    # (QLD1, 18 September 2026).
+    assert "lambda: stpasa_stores.pop" not in src
+    assert "def _forget_stpasa_store() -> None:" in src
 
 
 def test_no_untracked_tasks_in_init():
