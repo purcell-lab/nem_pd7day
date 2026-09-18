@@ -316,12 +316,12 @@ def test_tariff_sensor_unique_id_format():
 
 
 def test_distributor_tariff_counts():
-    """Verify QLD1 tariff count: energex (17) + ergon (10) = 27."""
+    """The fallback catalogue mirrors aemo-to-tariff 0.7.27: energex 18 + ergon 13 (issue #159)."""
     qld_count = sum(
         len(DISTRIBUTOR_TARIFFS[d])
         for d in REGION_DISTRIBUTORS["QLD1"]
     )
-    assert qld_count == 27
+    assert qld_count == 31
 
 
 def test_all_distributors_have_tariffs():

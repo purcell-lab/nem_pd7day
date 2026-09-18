@@ -28,8 +28,6 @@ from .const import (
     DEFAULT_ENABLED_TARIFFS,
     DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
-    EXPORT_TARIFF_NAMES,
-    TARIFF_NAMES,
     additional_fee_entity_id,
 )
 from .calibration_inputs import (
@@ -39,6 +37,7 @@ from .calibration_inputs import (
     interval_key_for_period,
 )
 from .coordinator import PD7DayCoordinator, staleness_attributes
+from .tariff_catalogue import tariff_name as catalogue_tariff_name
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,31 +81,19 @@ _DISTRIBUTOR_LIB_MAP = {
 
 
 def get_tariff_name(distributor_key: str, tariff_code: str) -> str:
-    """Look up human-readable tariff name from the aemo_to_tariff library."""
-    if _att is None:
-        return TARIFF_NAMES.get(distributor_key, {}).get(tariff_code, tariff_code)
-    lib_key = _DISTRIBUTOR_LIB_MAP.get(distributor_key, distributor_key)
-    module = getattr(_att, lib_key, None)
-    if module and hasattr(module, "tariffs"):
-        tariff_data = module.tariffs.get(tariff_code, {})
-        name = tariff_data.get("name", "")
-        if name:
-            return name
-    # Fallback to TARIFF_NAMES const then raw code
-    return TARIFF_NAMES.get(distributor_key, {}).get(tariff_code, tariff_code)
+    """Human-readable tariff name: the library's, then const.py, then the code.
+
+    Read through tariff_catalogue, which knows the library's current table
+    shape. The lookup here used to read ``module.tariffs``, an attribute the
+    library had replaced, so on twelve of thirteen networks it silently fell
+    back to stale constants (issue #159).
+    """
+    return catalogue_tariff_name(distributor_key, tariff_code)
 
 
 def get_export_tariff_name(distributor_key: str, export_code: str) -> str:
-    """Look up human-readable export tariff name."""
-    if _att is not None:
-        lib_key = _DISTRIBUTOR_LIB_MAP.get(distributor_key, distributor_key)
-        module = getattr(_att, lib_key, None)
-        if module and hasattr(module, "tariffs"):
-            tariff_data = module.tariffs.get(export_code, {})
-            name = tariff_data.get("name", "")
-            if name:
-                return name
-    return EXPORT_TARIFF_NAMES.get(export_code, export_code)
+    """Human-readable export tariff name, library first (issue #159)."""
+    return catalogue_tariff_name(distributor_key, export_code, export=True)
 
 
 class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):

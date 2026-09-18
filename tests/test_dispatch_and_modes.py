@@ -745,16 +745,35 @@ def test_async_setup_entry_days_2_7_registers_day27_tariff_sensor():
 
 
 def test_get_tariff_name_from_library():
-    """get_tariff_name() returns correct name from aemo_to_tariff library."""
-    name = get_tariff_name("energex", "6900")
-    assert name == "Residential Time of Use Energy"
+    """get_tariff_name() returns the library's name when it is installed.
 
-    name_ergon = get_tariff_name("ergon", "ERTOUET1")
-    assert name_ergon == "Residential Battery ToU"
+    The literals this test used to pin were the const.py fallbacks, which is
+    what the lookup silently returned once the library replaced its
+    ``module.tariffs`` attribute (issue #159). The expectation now comes from
+    the library itself, and from the constants only when it is absent.
+    """
+    import contextlib
+    import io
 
+    from custom_components.nem_pd7day.const import TARIFF_NAMES
+
+    def expected(distributor, code):
+        try:
+            import importlib
+
+            mod = importlib.import_module(
+                "aemo_to_tariff." + {"sapn": "sapower"}.get(distributor, distributor)
+            )
+        except ImportError:
+            return TARIFF_NAMES[distributor][code]
+        with contextlib.redirect_stdout(io.StringIO()):
+            table = mod.get_tariffs() if hasattr(mod, "get_tariffs") else mod.tariffs
+        return table[code]["name"]
+
+    assert get_tariff_name("energex", "6900") == expected("energex", "6900")
+    assert get_tariff_name("ergon", "ERTOUET1") == expected("ergon", "ERTOUET1")
     # sapn maps to sapower in library
-    name_sapn = get_tariff_name("sapn", "RTOU")
-    assert name_sapn == "Residential Time of Use"
+    assert get_tariff_name("sapn", "RTOU") == expected("sapn", "RTOU")
 
     # Unknown code falls back
     name_unknown = get_tariff_name("energex", "ZZZZZ")

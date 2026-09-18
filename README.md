@@ -341,6 +341,8 @@ Two diagnostic sensors expose the full underlying forecast payloads as unrecorde
 
 One sensor per (distributor, tariff_code) for the configured region. Tariff sensors cover the same **days 2–7 window** as the spot price sensor — the near-term Amber Express window is trimmed from the forecast attribute. The `native_value` (current interval tariff) is unfiltered and always returns the current price.
 
+The set of tariffs comes from the installed [`aemo-to-tariff`](https://pypi.org/project/aemo-to-tariff/) library at setup time: one sensor per import tariff the library carries for each of the region's distributors, named as the library names it, with a curated set enabled by default and the rest created disabled in the entity registry. A tariff added in a library release appears after the next Home Assistant restart; a code the library drops is no longer created (it could not be converted anyway). Export sensors are the curated import-to-export pairings below, each checked against the library's feed-in table where the network publishes one.
+
 Supported distributors per region:
 
 | Region | Distributors |
