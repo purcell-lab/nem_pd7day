@@ -1,90 +1,49 @@
-"""Guards that PD7DAY is downloaded and parsed once per cycle, not once per region.
-
-The PD7DAY archive holds every NEM region and every interconnector, yet each
-region coordinator used to fetch and parse its own copy. On a five-region install
-that was five downloads of ~4.6 MB and five parses of the same ~45 MB CSV per
-cycle, about 3,154 ms of CPU where one all-region parse costs about 700 ms.
-
-These tests assert the property that matters: the number of downloads and parses
-must not scale with the number of configured regions, and each coordinator must
-still receive exactly the slice of data it received before, so single-region
-calibration stores cannot be cross-contaminated.
 """
+Tests for pd7day_shared.py: one PD7DAY download and parse per cycle, served to
+every region coordinator.
 
+The archive holds every NEM region and every interconnector, yet each region
+coordinator used to fetch and parse its own copy. On a five-region install that
+was five downloads of ~4.6 MB and five parses of the same ~45 MB CSV per cycle,
+about 3,154 ms of CPU where one all-region parse costs about 700 ms (measured
+against PUBLIC_PD7DAY_20260814174110: 4.61 MB compressed, 45.43 MB expanded,
+329,505 lines).
+
+The property under test: the number of downloads and parses must not scale
+with the number of configured regions, and each coordinator must still receive
+exactly the slice of data it received before, so single-region calibration
+stores cannot be cross-contaminated.
+
+Run with:  python -m pytest tests/test_pd7day_shared.py -v
+"""
 from __future__ import annotations
 
 import asyncio
-import importlib.util
-import os
 import sys
 import threading
-from datetime import timedelta, timezone
-from unittest.mock import MagicMock
+from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NEM_TZ = timezone(timedelta(hours=10))
+from support import install_ha_stubs, load_chain, make_zip
 
+install_ha_stubs()
 
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-sys.modules.setdefault("aiohttp", MagicMock())
-
-_nem_time = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-_load(
-    "custom_components.nem_pd7day.executor",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "executor.py"),
-)
-_load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-_client_mod = _load(
-    "custom_components.nem_pd7day.pd7day_client",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_client.py"),
-)
-_shared_mod = _load(
-    "custom_components.nem_pd7day.pd7day_shared",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_shared.py"),
+_nem_time, _, _const_mod, _retry_mod, _client_mod, _shared_mod = load_chain(
+    "nem_time", "executor", "const", "nemweb_retry", "pd7day_client", "pd7day_shared",
 )
 
-from custom_components.nem_pd7day.const import (  # noqa: E402
-    REGION_INTERCONNECTORS,
-    REGIONS,
-)
-from custom_components.nem_pd7day.pd7day_client import PD7DayClient  # noqa: E402
-from custom_components.nem_pd7day.nemweb_retry import (  # noqa: E402
-    NemwebFetchError,
-)
-from custom_components.nem_pd7day.pd7day_shared import (  # noqa: E402
-    ALL_INTERCONNECTORS,
-    SharedPD7DayFetch,
-    result_for_regions,
-)
+REGIONS = _const_mod.REGIONS
+REGION_INTERCONNECTORS = _const_mod.REGION_INTERCONNECTORS
+PD7DayClient = _client_mod.PD7DayClient
+NemwebFetchError = _retry_mod.NemwebFetchError
+ALL_INTERCONNECTORS = _shared_mod.ALL_INTERCONNECTORS
+SharedPD7DayFetch = _shared_mod.SharedPD7DayFetch
+result_for_regions = _shared_mod.result_for_regions
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
-
-
-def _make_zip(csv_bytes: bytes, member: str = "PUBLIC_PD7DAY_X.CSV") -> bytes:
-    import io
-    import zipfile
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(member, csv_bytes)
-    return buf.getvalue()
-
 
 def _all_region_csv() -> bytes:
     """A PD7DAY CSV carrying every region and two interconnectors.
@@ -104,17 +63,11 @@ def _all_region_csv() -> bytes:
     # One distinct price per region so filtering errors are visible.
     for i, region in enumerate(REGIONS):
         rrp = 10000.00 + i * 1000
-        rows.append(
-            f"D,PD7DAY,PRICESOLUTION,1,{run_s},1,{period_s},{region},"
-            f"{rrp:.2f}{price_tail}"
-        )
+        rows.append(f"D,PD7DAY,PRICESOLUTION,1,{run_s},1,{period_s},{region},{rrp:.2f}{price_tail}")
     # Interconnectors belonging to different regions: NSW1-QLD1 is in QLD1's and
     # NSW1's sets, T-V-MNSP1 is in TAS1's and VIC1's.
     for ic in ("NSW1-QLD1", "T-V-MNSP1"):
-        rows.append(
-            f"D,PD7DAY,INTERCONNECTORSOLUTION,1,{run_s},1,{period_s},{ic},"
-            "0,100,1,0,0,500,500,1.0"
-        )
+        rows.append(f"D,PD7DAY,INTERCONNECTORSOLUTION,1,{run_s},1,{period_s},{ic},0,100,1,0,0,500,500,1.0")
     # Bulk rows the parser reads and discards, as in the real archive where
     # CONSTRAINTSOLUTION is 98.8% of all lines.
     for n in range(50):
@@ -123,12 +76,12 @@ def _all_region_csv() -> bytes:
 
 
 class _FakeResp:
+    """aiohttp response stand-in. The NEMWEB clients inspect resp.status via
+    classify_status rather than calling raise_for_status, so it carries a
+    status and headers; raise_for_status stays as a no-op."""
+
     def __init__(self, payload: bytes, status: int = 200):
         self._payload = payload
-        # The NEMWEB clients inspect resp.status via classify_status now
-        # instead of calling raise_for_status, so the stub must carry a
-        # status and headers. raise_for_status is kept as a no-op so any
-        # remaining caller still works.
         self.status = status
         self.headers = {}
 
@@ -187,22 +140,25 @@ class _FakeClock:
 
 
 class _ParseSpy:
-    """Counts real _parse_all_tables invocations and the regions requested."""
+    """Counts real _parse_all_tables invocations, the regions requested and the thread used."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
+        self.threads: list[int] = []
         self._real = _client_mod._parse_all_tables
 
     def __enter__(self):
         def spy(csv_bytes, regions, ic_ids):
             self.calls.append(list(regions))
+            self.threads.append(threading.get_ident())
             return self._real(csv_bytes, regions, ic_ids)
 
-        _client_mod._parse_all_tables = spy
+        self._patch = patch.object(_client_mod, "_parse_all_tables", spy)
+        self._patch.start()
         return self
 
     def __exit__(self, *exc):
-        _client_mod._parse_all_tables = self._real
+        self._patch.stop()
         return False
 
     @property
@@ -211,7 +167,7 @@ class _ParseSpy:
 
 
 def _make_fetcher(clock=None, session=None):
-    session = session or _CountingSession(_make_zip(_all_region_csv()))
+    session = session or _CountingSession(make_zip(_all_region_csv()))
     fetcher = SharedPD7DayFetch(
         PD7DayClient(session, interconnector_ids=ALL_INTERCONNECTORS),
         clock=clock or _FakeClock(),
@@ -220,7 +176,6 @@ def _make_fetcher(clock=None, session=None):
 
 
 # ── The core property: work does not scale with region count ─────────────────
-
 
 def test_five_concurrent_regions_cause_one_download_and_one_parse():
     """The startup fan-out: all five coordinators refresh at once."""
@@ -237,9 +192,7 @@ def test_five_concurrent_regions_cause_one_download_and_one_parse():
 
     assert len(results) == 5
     assert parses == 1, f"CSV was parsed {parses} times for 5 regions, expected 1"
-    assert session.file_requests == 1, (
-        f"archive was downloaded {session.file_requests} times, expected 1"
-    )
+    assert session.file_requests == 1, f"archive was downloaded {session.file_requests} times, expected 1"
     assert fetcher.stats.downloads == 1
     assert fetcher.stats.burst_hits == 4
     # Every caller still got its own region's data.
@@ -247,48 +200,28 @@ def test_five_concurrent_regions_cause_one_download_and_one_parse():
         assert region in result.prices
 
 
-@pytest.mark.parametrize("region_count", [1, 2, 3, 4, 5])
-def test_download_count_does_not_scale_with_region_count(region_count):
-    """One download and one parse regardless of how many regions are configured."""
-    fetcher, session = _make_fetcher()
-    regions = REGIONS[:region_count]
-
-    async def scenario():
-        with _ParseSpy() as spy:
-            for r in regions:
-                await fetcher.fetch_all([r], REGION_INTERCONNECTORS[r])
-            return spy.count
-
-    parses = asyncio.run(scenario())
-
-    assert parses == 1, f"{region_count} regions caused {parses} parses"
-    assert session.file_requests == 1, (
-        f"{region_count} regions caused {session.file_requests} downloads"
-    )
-
-
 def test_sequential_fetches_inside_the_burst_window_reuse_the_parse():
-    """The staggered startup refreshes land 30 s to 50 s apart, inside the window."""
+    """The staggered startup refreshes land 30 s to 50 s apart, inside the
+    window: one download, one parse and one listing however many regions are
+    configured."""
     clock = _FakeClock()
     fetcher, session = _make_fetcher(clock=clock)
 
     async def scenario():
         with _ParseSpy() as spy:
-            for i, region in enumerate(REGIONS):
+            for region in REGIONS:
                 await fetcher.fetch_all([region], REGION_INTERCONNECTORS[region])
                 clock.advance(5)  # matches the 5 s stagger between coordinators
             return spy.count
 
     parses = asyncio.run(scenario())
 
-    assert parses == 1
-    assert session.listing_requests == 1, (
-        "inside the burst window no directory listing should be needed"
-    )
+    assert parses == 1, f"{len(REGIONS)} regions caused {parses} parses"
+    assert session.file_requests == 1, f"{len(REGIONS)} regions caused {session.file_requests} downloads"
+    assert session.listing_requests == 1, "inside the burst window no directory listing should be needed"
 
 
 # ── Behaviour once the burst window has lapsed ───────────────────────────────
-
 
 def test_unchanged_newest_file_reuses_the_parse_without_downloading():
     """AEMO publishes ~3 times a day, so a later caller usually sees the same file."""
@@ -340,29 +273,24 @@ def test_reused_parse_is_restamped_so_the_disk_cache_stays_usable():
     clock = _FakeClock()
     fetcher, _ = _make_fetcher(clock=clock)
 
-    # Other test modules reload nem_time under the same name, so patch whichever
-    # module object is live in sys.modules rather than the one imported here.
+    # _reconfirm imports now_nem lazily, so patch whichever nem_time module
+    # object is live in sys.modules rather than the one this file loaded.
     nem_time = sys.modules["custom_components.nem_pd7day.nem_time"]
     base = nem_time.now_nem().replace(microsecond=0)
     times = [base, base + timedelta(minutes=40)]
-    real_now = nem_time.now_nem
+    current = [0]
 
     async def scenario():
-        nem_time.now_nem = lambda: times[0]
-        try:
+        with patch.object(nem_time, "now_nem", lambda: times[current[0]]):
             first = await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
             clock.advance(3600)
-            nem_time.now_nem = lambda: times[1]
+            current[0] = 1
             second = await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
             return first, second
-        finally:
-            nem_time.now_nem = real_now
 
     first, second = asyncio.run(scenario())
 
-    assert second.updated_at != first.updated_at, (
-        "reused parse kept its original updated_at and would read as stale"
-    )
+    assert second.updated_at != first.updated_at, "reused parse kept its original updated_at and would read as stale"
     assert second.updated_at == nem_time.to_nem_iso(times[1])
     # The forecast content itself is unchanged, only the confirmation time moved.
     assert second.source_file == first.source_file
@@ -370,7 +298,6 @@ def test_reused_parse_is_restamped_so_the_disk_cache_stays_usable():
 
 
 # ── Failure handling ─────────────────────────────────────────────────────────
-
 
 def test_a_failed_fetch_is_not_cached():
     """The next cycle has to be able to do real work.
@@ -385,7 +312,6 @@ def test_a_failed_fetch_is_not_cached():
     async def scenario():
         with pytest.raises(NemwebFetchError):
             await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
-        # The next fetch must reach the network, not a memoised failure.
         return await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
 
     result = asyncio.run(scenario())
@@ -401,10 +327,7 @@ def test_concurrent_callers_all_observe_a_failure():
 
     async def scenario():
         return await asyncio.gather(
-            *(
-                fetcher.fetch_all([r], REGION_INTERCONNECTORS[r])
-                for r in REGIONS
-            ),
+            *(fetcher.fetch_all([r], REGION_INTERCONNECTORS[r]) for r in REGIONS),
             return_exceptions=True,
         )
 
@@ -420,27 +343,19 @@ def test_concurrent_callers_all_observe_a_failure():
 
 # ── Per-region filtering ─────────────────────────────────────────────────────
 
-
 def test_each_region_sees_only_its_own_prices():
-    """The coordinator ingests every region in prices into its single-region store.
-
-    Handing it the unfiltered all-region result would cross-contaminate
-    calibration data between regions.
-    """
+    """The coordinator ingests every region in prices into its single-region
+    store, so handing it the unfiltered result would cross-contaminate
+    calibration data between regions."""
     fetcher, _ = _make_fetcher()
 
     async def scenario():
-        return {
-            region: await fetcher.fetch_all([region], REGION_INTERCONNECTORS[region])
-            for region in REGIONS
-        }
+        return {r: await fetcher.fetch_all([r], REGION_INTERCONNECTORS[r]) for r in REGIONS}
 
     per_region = asyncio.run(scenario())
 
     for region, result in per_region.items():
-        assert set(result.prices) == {region}, (
-            f"{region} coordinator also received {set(result.prices) - {region}}"
-        )
+        assert set(result.prices) == {region}, f"{region} coordinator also received {set(result.prices) - {region}}"
 
 
 def test_each_region_sees_only_its_own_interconnectors():
@@ -463,11 +378,9 @@ def test_each_region_sees_only_its_own_interconnectors():
 
 
 def test_shared_parse_covers_every_region_and_interconnector():
-    """The one parse must be wide enough to serve any caller's subset.
-
-    If it were narrowed, a region would silently receive no data rather than
-    triggering a second parse.
-    """
+    """The one parse must be wide enough to serve any caller's subset. If it
+    were narrowed, a region would silently receive no data rather than
+    triggering a second parse."""
     fetcher, _ = _make_fetcher()
 
     async def scenario():
@@ -478,9 +391,7 @@ def test_shared_parse_covers_every_region_and_interconnector():
     calls = asyncio.run(scenario())
 
     assert calls, "no parse happened"
-    assert set(calls[0]) == set(REGIONS), (
-        f"the shared parse only covered {calls[0]}, so other regions would be empty"
-    )
+    assert set(calls[0]) == set(REGIONS), f"the shared parse only covered {calls[0]}, so other regions would be empty"
     for region, ics in REGION_INTERCONNECTORS.items():
         assert ics <= ALL_INTERCONNECTORS, f"{region} interconnectors not covered"
 
@@ -503,92 +414,20 @@ def test_result_for_regions_leaves_the_source_result_untouched():
     assert before_i == after_i
 
 
-# ── Wiring ───────────────────────────────────────────────────────────────────
+# ── Executor hand-off ────────────────────────────────────────────────────────
 
-
-def test_coordinator_fetches_through_the_shared_fetcher_when_registered():
-    """Proves the wiring, not just the class in isolation.
-
-    Without this, the shared fetcher could exist and be perfectly correct while
-    every coordinator quietly kept using its own private client.
-    """
-    for ha_mod in [
-        "homeassistant",
-        "homeassistant.core",
-        "homeassistant.helpers",
-        "homeassistant.helpers.aiohttp_client",
-        "homeassistant.helpers.event",
-        "homeassistant.helpers.storage",
-        "homeassistant.helpers.update_coordinator",
-        "homeassistant.config_entries",
-        "homeassistant.const",
-        "homeassistant.util",
-        "homeassistant.util.dt",
-    ]:
-        sys.modules.setdefault(ha_mod, MagicMock())
-
-    class _FakeCoordinator:
-        def __init__(self, hass, logger, name, update_interval):
-            self.hass = hass
-
-        def __class_getitem__(cls, item):
-            return cls
-
-    uc = MagicMock()
-    uc.DataUpdateCoordinator = _FakeCoordinator
-    uc.UpdateFailed = type("UpdateFailed", (Exception,), {})
-    sys.modules["homeassistant.helpers.update_coordinator"] = uc
-
-    coord_mod = _load(
-        "custom_components.nem_pd7day.coordinator",
-        os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
-    )
-    from custom_components.nem_pd7day.const import DOMAIN, SHARED_FETCH_KEY
-
+def test_shared_parse_runs_off_the_event_loop_thread():
+    """Parsing still happens off the loop after centralisation. The archive is
+    now parsed for five regions instead of one, so regressing the executor
+    hand-off here would be worse than before it was introduced."""
     fetcher, _ = _make_fetcher()
-
-    coord = coord_mod.PD7DayCoordinator.__new__(coord_mod.PD7DayCoordinator)
-    coord.hass = MagicMock()
-    coord.hass.data = {DOMAIN: {SHARED_FETCH_KEY: fetcher}}
-    coord._session = None
-    coord._regions = ["QLD1"]
-    coord._interconnector_ids = REGION_INTERCONNECTORS["QLD1"]
-
-    assert coord._get_client() is fetcher, (
-        "coordinator built its own client while a shared fetcher was registered"
-    )
-
-    # And with nothing registered it must still stand alone. Compared by name
-    # because reloading coordinator.py rebinds its own PD7DayClient class object.
-    coord.hass.data = {DOMAIN: {}}
-    assert type(coord._get_client()).__name__ == "PD7DayClient"
-
-
-def test_shared_fetch_holds_no_reference_to_the_event_loop_thread():
-    """Parsing still happens off the loop after centralisation.
-
-    The archive is now parsed for five regions instead of one, so regressing the
-    executor hand-off here would be worse than before it was introduced.
-    """
-    fetcher, _ = _make_fetcher()
-    seen: dict[str, int] = {}
-    real = _client_mod._parse_all_tables
-
-    def spy(csv_bytes, regions, ic_ids):
-        seen["parse"] = threading.get_ident()
-        return real(csv_bytes, regions, ic_ids)
 
     async def scenario():
-        seen["loop"] = threading.get_ident()
-        _client_mod._parse_all_tables = spy
-        try:
+        with _ParseSpy() as spy:
             await fetcher.fetch_all(["QLD1"], REGION_INTERCONNECTORS["QLD1"])
-        finally:
-            _client_mod._parse_all_tables = real
+            return threading.get_ident(), spy.threads
 
-    asyncio.run(scenario())
+    loop_thread, parse_threads = asyncio.run(scenario())
 
-    assert "parse" in seen
-    assert seen["parse"] != seen["loop"], (
-        "the shared all-region parse ran on the event loop thread"
-    )
+    assert parse_threads, "_parse_all_tables was never called"
+    assert loop_thread not in parse_threads, "the shared all-region parse ran on the event loop thread"

@@ -1,1006 +1,594 @@
 """
-Tests for sensor.py — _calibrate_period output contract, horizon/bucket routing
-consistency between training and inference, and attribute shape.
+Tests for sensor.py: entity registration, the forecast sensor's calibration
+contract, dispatch fallback, forecast-mode trimming and the diagnostic data
+sensors. A short section of tariff_sensor.py tests that arrived with the
+forecast-mode work sits at the end, marked for test_tariff_sensor.py.
 
-Zero coverage previously.  The v1.8.0 bug (nemtime vs time for horizon) was in
-_calibrate_period and would have been caught immediately by this test file.
+History, condensed from the files merged here:
+  * test_sensor.py: _calibrate_period used period.nemtime (interval END) for
+    the horizon while async_record_actual used period.time (START), so bucket
+    lookups near the 6 h boundary were misrouted (v1.8.0). Interconnector
+    entity determinism: #46 (AEMO publishes Heywood as "V-SA", the map carried
+    "SA1-VIC1", so VIC1 had no Heywood sensor), #47 (N-Q-MNSP1 present only on
+    the QLD1 side of a live install), #48 (the entity set depended on what one
+    fetch happened to contain). #148: SA1 published min_24h_value -0.864 from
+    a Saturday row four days out because min/max ran over the whole window.
+  * test_dispatch_and_modes.py: the 5-minute dispatch price wins over PD7DAY
+    when present; days_2_7 mode registers the additive Day 2-7 sensors; an
+    entry without forecast_mode defaults to days_2_7; #159 tariff names come
+    from the installed library, not const.py's fallbacks.
+  * test_data_sensors.py: PD7DayDataSensor and StpasaDataSensor expose the full
+    dataset as an unrecorded attribute and report STATE_UNAVAILABLE without data.
 
 Run with:  python -m pytest tests/test_sensor.py -v
 """
 from __future__ import annotations
 
-import sys
-import os
-import importlib.util
+import contextlib
+import importlib
+import io
 import types
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
-
-# ── Module loader ─────────────────────────────────────────────────────────────
-
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def run_async(coro):
-    import asyncio
-
-    return asyncio.new_event_loop().run_until_complete(coro)
-
-
-# Stub HA and aiohttp before loading any integration module
-sys.modules.setdefault("aiohttp", MagicMock())
-for ha_mod in [
-    "homeassistant", "homeassistant.core", "homeassistant.helpers",
-    "homeassistant.helpers.storage", "homeassistant.helpers.event",
-    "homeassistant.helpers.aiohttp_client", "homeassistant.helpers.update_coordinator",
-    "homeassistant.helpers.entity_platform", "homeassistant.helpers.device_registry",
-    "homeassistant.config_entries",
-    "homeassistant.const", "homeassistant.util", "homeassistant.util.dt",
-    "homeassistant.components", "homeassistant.components.sensor",
-]:
-    sys.modules.setdefault(ha_mod, MagicMock())
-
-device_registry_mock = MagicMock()
-device_registry_mock.DeviceInfo = dict
-sys.modules["homeassistant.helpers.device_registry"] = device_registry_mock
-
-# Make SensorStateClass and SensorDeviceClass importable as real names
-import enum
-class _SensorDeviceClass(str, enum.Enum):
-    MONETARY = "monetary"
-    ENERGY = "energy"
-    TIMESTAMP = "timestamp"
-
-class _SensorStateClass(str, enum.Enum):
-    MEASUREMENT = "measurement"
-    TOTAL_INCREASING = "total_increasing"
-
-sensor_mock = MagicMock()
-sensor_mock.SensorDeviceClass = _SensorDeviceClass
-sensor_mock.SensorStateClass = _SensorStateClass
-sensor_mock.SensorEntity = object  # base class stub
-sys.modules["homeassistant.components.sensor"] = sensor_mock
-
-_nem_time = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-_engine_mod = _load(
-    "custom_components.nem_pd7day.calibration_engine",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_engine.py"),
-)
-sys.modules.setdefault("aiohttp", MagicMock())
-_client_mod = _load(
-    "custom_components.nem_pd7day.pd7day_client",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_client.py"),
-)
-
-# Stub DataUpdateCoordinator with subscript support before loading coordinator
-class _FakeCoordinator:
-    def __init__(self, hass, logger, name, update_interval):
-        self.hass = hass
-        self.last_update_success = True
-        self.data = None
-    def __class_getitem__(cls, item):
-        return cls
-    async def async_config_entry_first_refresh(self): pass
-    async def async_refresh(self): pass
-
-class _FakeCoordinatorEntity:
-    """Stub for CoordinatorEntity — supports subscript and HA init signature."""
-    def __init__(self, coordinator=None, **kwargs):
-        self.coordinator = coordinator
-    def __class_getitem__(cls, item):
-        return cls
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-    # Real CoordinatorEntity defines this and every subclass in the integration
-    # chains up to it, so the stub has to provide it or the chain dies here.
-    async def async_added_to_hass(self): pass
-
-_uc_mock = MagicMock()
-_uc_mock.DataUpdateCoordinator = _FakeCoordinator
-_uc_mock.UpdateFailed = Exception
-_uc_mock.CoordinatorEntity = _FakeCoordinatorEntity
-sys.modules["homeassistant.helpers.update_coordinator"] = _uc_mock
-
-# Load const and coordinator before sensor (sensor imports coordinator)
-_const_mod = _load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-
-ha_storage_mock = MagicMock()
-class _FakeStore:
-    def __init__(self, hass, version, key): pass
-    async def async_load(self): return None
-    async def async_save(self, data): pass
-ha_storage_mock.Store = _FakeStore
-sys.modules["homeassistant.helpers.storage"] = ha_storage_mock
-
-_store_mod = _load(
-    "custom_components.nem_pd7day.calibration_store",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_store.py"),
-)
-_coord_mod = _load(
-    "custom_components.nem_pd7day.coordinator",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
-)
-
-_sensor_mod = _load(
-    "custom_components.nem_pd7day.sensor",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "sensor.py"),
-)
-
-from custom_components.nem_pd7day.nem_time import NEM_TZ
-from custom_components.nem_pd7day.const import (
-    CONF_REGION,
-    DOMAIN,
-    NSW1_INTERCONNECTORS,
-    REGION_INTERCONNECTORS,
-    VIC1_INTERCONNECTORS,
-)
 from collections import Counter
-from custom_components.nem_pd7day.nem_time import _amber_express_cutoff
-from custom_components.nem_pd7day.sensor import (
-    _horizon_hours,
-    PD7DayCalibrationSensor,
-    PD7DayForecastSensor,
-    PD7DayRegionDataUpdatedDatetimeSensor,
-    PD7DayRegionSourceFileDatetimeSensor,
-    PD7DayInterconnectorSensor,
-    async_setup_entry as sensor_async_setup_entry,
+from datetime import datetime, timedelta, timezone
+from functools import partial
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+import support
+from support import NEM_TZ, install_ha_stubs, load_chain, make_price_period, nem_iso, run_async
+
+install_ha_stubs()
+
+(
+    _nem_time,
+    _engine_mod,
+    _client_mod,
+    _const_mod,
+    _store_mod,
+    _dispatch_mod,
+    _coord_mod,
+    _stpasa_client_mod,
+    _tariff_mod,
+    _sensor_mod,
+) = load_chain(
+    "nem_time",
+    "calibration_engine",
+    "pd7day_client",
+    "const",
+    "calibration_store",
+    "dispatch_client",
+    "coordinator",
+    "stpasa_client",
+    "tariff_sensor",
+    "sensor",
 )
 
+# Bound to this file's module objects, not the last file's (see support.py).
+make_real_price_period = partial(support.make_real_price_period, _client_mod)
+make_pd7day_data = partial(support.make_pd7day_data, _client_mod)
+expected_import_price = partial(support.expected_import_price, _tariff_mod)
+
+CONF_ACTIVE_TARIFF = _const_mod.CONF_ACTIVE_TARIFF
+CONF_FORECAST_MODE = _const_mod.CONF_FORECAST_MODE
+CONF_REGION = _const_mod.CONF_REGION
+DOMAIN = _const_mod.DOMAIN
+FORECAST_MODE_DAYS_2_7 = _const_mod.FORECAST_MODE_DAYS_2_7
+FORECAST_MODE_FULL = _const_mod.FORECAST_MODE_FULL
+NSW1_INTERCONNECTORS = _const_mod.NSW1_INTERCONNECTORS
+REGION_INTERCONNECTORS = _const_mod.REGION_INTERCONNECTORS
+SPIKE_COVARIATE_CAP = _const_mod.SPIKE_COVARIATE_CAP
+VIC1_INTERCONNECTORS = _const_mod.VIC1_INTERCONNECTORS
+STATE_UNAVAILABLE = _sensor_mod.STATE_UNAVAILABLE
+
+_amber_express_cutoff = _nem_time._amber_express_cutoff
+_bucket_key = _engine_mod._bucket_key
+_horizon_hours = _sensor_mod._horizon_hours
+parse_iso = _nem_time.parse_iso
+
+DispatchPrice = _dispatch_mod.DispatchPrice
+PD7DayCalibrationSensor = _sensor_mod.PD7DayCalibrationSensor
+PD7DayDataSensor = _sensor_mod.PD7DayDataSensor
+PD7DayForecastSensor = _sensor_mod.PD7DayForecastSensor
+PD7DayInterconnectorSensor = _sensor_mod.PD7DayInterconnectorSensor
+PD7DayRegionDataUpdatedDatetimeSensor = _sensor_mod.PD7DayRegionDataUpdatedDatetimeSensor
+PD7DayRegionSourceFileDatetimeSensor = _sensor_mod.PD7DayRegionSourceFileDatetimeSensor
+PD7DayTodSensor = _sensor_mod.PD7DayTodSensor
+SpotPriceForecastDays27Sensor = _sensor_mod.SpotPriceForecastDays27Sensor
+StpasaDataSensor = _sensor_mod.StpasaDataSensor
+NemPd7dayTariffSensor = _tariff_mod.NemPd7dayTariffSensor
+get_tariff_name = _tariff_mod.get_tariff_name
+sensor_async_setup_entry = _sensor_mod.async_setup_entry
+
+BASE_SENSOR_NAME = "NEM Spot Price Forecast"
+DAY27_SENSOR_NAME = "Day 2-7 NEM Spot Price Forecast"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def nem_iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
-
-
-def make_price_period(nemtime_dt: datetime, value: float = 0.10):
-    """Create a PricePeriod-like mock with correct time fields."""
-    start_dt = nemtime_dt - timedelta(minutes=30)
-    return MagicMock(
-        nemtime=nem_iso(nemtime_dt),
-        time=nem_iso(start_dt),
-        value=value,
-    )
-
-
-def make_sensor(store=None) -> PD7DayForecastSensor:
-    """Construct a PD7DayForecastSensor bypassing HA CoordinatorEntity init."""
-    coordinator = MagicMock()
-    coordinator.data = None
-    sensor = PD7DayForecastSensor.__new__(PD7DayForecastSensor)
-    sensor.coordinator = coordinator
-    sensor._region = "QLD1"
-    sensor._store = store
-    sensor._attr_unique_id = "nem_pd7day_qld1_forecast"
-    sensor._attr_name = "NEM Spot Price Forecast"
-    # Mock entry with options for forecast mode
+def make_entry(entry_id="entry_test", region="QLD1", options=None, coordinator=None, store=None):
+    """A config-entry mock with runtime_data; dispatch is None (fast path skipped)."""
+    if coordinator is None:
+        coordinator = MagicMock()
+        coordinator.data = None
     entry = MagicMock()
-    entry.entry_id = "entry_test"
-    entry.options = {}
+    entry.entry_id = entry_id
+    entry.data = {CONF_REGION: region}
+    entry.options = {} if options is None else options
     entry.runtime_data = types.SimpleNamespace(
         coordinator=coordinator, store=store, dispatch=None
     )
-    sensor._entry = entry
-    # runtime_data.dispatch is None so the dispatch fast path is skipped.
+    return entry
+
+
+def run_setup(region="QLD1", options=None, live_ic_ids=None) -> list:
+    """Run sensor.async_setup_entry for one region and return the entities created.
+
+    ``live_ic_ids`` stands in for what the coordinator holds after a fetch;
+    ``None`` models a coordinator with no data at all.
+    """
+    coordinator = MagicMock()
+    if live_ic_ids is None:
+        coordinator.data = None
+    else:
+        coordinator.data = MagicMock()
+        coordinator.data.interconnectors = {ic: MagicMock() for ic in live_ic_ids}
+    entry = make_entry(f"entry_{region.lower()}", region, options, coordinator, store=MagicMock())
+    hass = MagicMock()
+    hass.data = {DOMAIN: {}}
+    created: list = []
+
+    def _add_entities(entities, update_before_add=False):
+        created.extend(entities)
+
+    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
+    return created
+
+
+def interconnector_ids(entities) -> list[str]:
+    return sorted(e._ic_id for e in entities if isinstance(e, PD7DayInterconnectorSensor))
+
+
+def make_sensor(store=None, *, cls=PD7DayForecastSensor, region="QLD1", options=None):
+    """Construct a forecast sensor (base or Day 2-7) bypassing CoordinatorEntity init."""
+    coordinator = MagicMock()
+    coordinator.data = None
+    sensor = cls.__new__(cls)
+    sensor.coordinator = coordinator
+    sensor._region = region
+    sensor._store = store
+    sensor._attr_unique_id = f"nem_pd7day_{region.lower()}_forecast"
+    sensor._attr_name = BASE_SENSOR_NAME
+    sensor._entry = make_entry(region=region, options=options, coordinator=coordinator, store=store)
     sensor.hass = MagicMock()
     sensor.hass.data = {DOMAIN: {}}
     return sensor
 
 
-def test_async_setup_entry_creates_forecast_entity_for_single_region():
-    """
-    Single-region config must create exactly one forecast entity for the
-    configured region.
-    """
-    coordinator = MagicMock()
-    coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "entry_1"
-    entry.data = {CONF_REGION: "QLD1"}
-    entry.options = {}
-
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator,
-        store=MagicMock(),
-        dispatch=None,
-    )
-
-    hass = MagicMock()
-    hass.data = {DOMAIN: {}}
-
-    created = []
-
-    def _add_entities(entities, update_before_add=False):
-        created.extend(entities)
-
-    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
-
-    forecast_entities = [
-        ent for ent in created if isinstance(ent, PD7DayForecastSensor)
-    ]
-    regions = sorted(ent._region for ent in forecast_entities)
-
-    assert regions == ["QLD1"], (
-        "Forecast entities must match configured single region. "
-        f"Got regions={regions}"
-    )
+def set_price_data(sensor, periods, run_at_dt: datetime):
+    """Give the sensor's coordinator a PD7DayData-like mock for its region."""
+    price_data = MagicMock()
+    price_data.forecast = periods
+    price_data.forecast_generated_at = nem_iso(run_at_dt)
+    price_data.region = sensor._region
+    price_data.interval_minutes = 30
+    price_data.source_file = "test.xml"
+    sensor.coordinator.data = MagicMock()
+    sensor.coordinator.data.prices = {sensor._region: price_data}
+    return price_data
 
 
-def test_async_setup_entry_creates_selected_region_interconnector_entities():
-    """
-    Interconnector entities must be created from the selected region,
-    not always from the QLD-only default set.
-    """
-    coordinator = MagicMock()
-    coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "entry_2"
-    entry.data = {CONF_REGION: "NSW1"}
-    entry.options = {}
-
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator,
-        store=MagicMock(),
-        dispatch=None,
-    )
-
-    hass = MagicMock()
-    hass.data = {DOMAIN: {}}
-
-    created = []
-
-    def _add_entities(entities, update_before_add=False):
-        created.extend(entities)
-
-    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
-
-    interconnector_entities = [
-        ent for ent in created if isinstance(ent, PD7DayInterconnectorSensor)
-    ]
-    ic_ids = sorted(ent._ic_id for ent in interconnector_entities)
-
-    assert ic_ids == ["N-Q-MNSP1", "NSW1-QLD1", "VIC1-NSW1"], (
-        "Interconnector entities must match selected region interconnectors. "
-        f"Got ic_ids={ic_ids}"
-    )
-
-
-def test_async_setup_entry_creates_calibration_sensor_for_configured_region():
-    """Calibration sensor must be created for the configured region."""
-    coordinator = MagicMock()
-    coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "entry_3"
-    entry.data = {CONF_REGION: "NSW1"}
-    entry.options = {}
-
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator,
-        store=MagicMock(),
-        dispatch=None,
-    )
-
-    hass = MagicMock()
-    hass.data = {DOMAIN: {}}
-
-    created = []
-
-    def _add_entities(entities, update_before_add=False):
-        created.extend(entities)
-
-    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
-
-    cal_entities = [
-        ent for ent in created if isinstance(ent, PD7DayCalibrationSensor)
+def ascending_periods(run_at_dt: datetime, n: int, start=0.05, step=0.001) -> list:
+    """``n`` consecutive 30-min periods from ``run_at_dt`` with rising values."""
+    return [
+        make_price_period(run_at_dt + timedelta(minutes=30 * (i + 1)), value=start + i * step)
+        for i in range(n)
     ]
 
-    assert len(cal_entities) == 1
-    assert cal_entities[0]._region == "NSW1"
-    assert cal_entities[0]._attr_unique_id == "nem_pd7day_nsw1_calibration"
 
-def test_async_setup_entry_creates_region_diagnostic_datetime_sensors():
-    """The region must get source-file and updated-at diagnostic timestamp sensors."""
-    coordinator = MagicMock()
-    coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "entry_5"
-    entry.data = {CONF_REGION: "QLD1"}
-    entry.options = {}
-
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator,
-        store=MagicMock(),
-        dispatch=None,
-    )
-
-    hass = MagicMock()
-    hass.data = {DOMAIN: {}}
-
-    created = []
-
-    def _add_entities(entities, update_before_add=False):
-        created.extend(entities)
-
-    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
-
-    source_dt_entities = [
-        ent for ent in created if isinstance(ent, PD7DayRegionSourceFileDatetimeSensor)
-    ]
-    updated_dt_entities = [
-        ent for ent in created if isinstance(ent, PD7DayRegionDataUpdatedDatetimeSensor)
-    ]
-
-    assert len(source_dt_entities) == 1
-    assert len(updated_dt_entities) == 1
+def set_current_interval(sensor, value: float):
+    """A single period covering the real current NEM time, run an hour earlier."""
+    now = datetime.now(NEM_TZ)
+    interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
+    period = make_price_period(interval_start + timedelta(minutes=30), value=value)
+    set_price_data(sensor, [period], now - timedelta(hours=1))
+    return period
 
 
-# ── Tests: _horizon_hours() ───────────────────────────────────────────────────
-
-def test_horizon_hours_basic():
-    """horizon = interval_time − run_at in hours."""
-    run_at = "2026-04-15T07:30:00+10:00"
-    interval = "2026-04-15T13:30:00+10:00"  # 6h later
-    assert abs(_horizon_hours(run_at, interval) - 6.0) < 0.001
-
-
-def test_horizon_hours_zero_run_at():
-    """If run_at is None or empty, horizon must be 0.0 (not crash)."""
-    assert _horizon_hours(None, "2026-04-15T08:00:00+10:00") == 0.0
-    assert _horizon_hours("", "2026-04-15T08:00:00+10:00") == 0.0
+def make_calibrating_store(**result):
+    """A store mock whose apply_to_price returns a fixed calibration result."""
+    store = MagicMock()
+    store.calibration = MagicMock()  # not None -> calibration active
+    store.apply_to_price.return_value = {
+        "calibrated": 0.085, "p10": None, "p50": None, "p90": None,
+        "ols_mae": None, "calibrated_source": "passthrough", "n_obs": 0,
+        **result,
+    }
+    return store
 
 
-def test_horizon_hours_negative_clamped_to_zero():
-    """If interval is before run_at, horizon must clamp to 0.0."""
-    run_at = "2026-04-15T10:00:00+10:00"
-    interval = "2026-04-15T09:00:00+10:00"  # 1h before run_at
-    assert _horizon_hours(run_at, interval) == 0.0, (
-        "Negative horizon must be clamped to 0.0"
-    )
+# ── Entity registration ───────────────────────────────────────────────────────
+
+def test_setup_entry_creates_one_of_each_region_entity():
+    """One forecast, calibration, data and datetime sensor each, for the configured region."""
+    created = run_setup("NSW1")
+
+    forecast = [e for e in created if isinstance(e, PD7DayForecastSensor)]
+    calibration = [e for e in created if isinstance(e, PD7DayCalibrationSensor)]
+    assert [e._region for e in forecast] == ["NSW1"]
+    assert [e._region for e in calibration] == ["NSW1"]
+    assert calibration[0]._attr_unique_id == "nem_pd7day_nsw1_calibration"
+    for cls in (
+        PD7DayRegionSourceFileDatetimeSensor,
+        PD7DayRegionDataUpdatedDatetimeSensor,
+        PD7DayDataSensor,
+        StpasaDataSensor,
+    ):
+        assert sum(isinstance(e, cls) for e in created) == 1, cls.__name__
 
 
-def test_horizon_hours_tz_aware():
-    """Horizon must be correct even if system clock is not UTC+10."""
-    # Both strings have explicit +10:00 — subtraction must be timezone-safe
-    run_at = "2026-04-15T07:30:00+10:00"
-    interval = "2026-04-16T07:30:00+10:00"  # exactly 24h
-    assert abs(_horizon_hours(run_at, interval) - 24.0) < 0.001
+@pytest.mark.parametrize(
+    "options, expected_active",
+    [
+        pytest.param(
+            {CONF_FORECAST_MODE: FORECAST_MODE_DAYS_2_7, CONF_ACTIVE_TARIFF: "energex/6900"},
+            ("energex", "6900"),
+            id="days_2_7 with active tariff",
+        ),
+        pytest.param({}, None, id="no forecast_mode option defaults to days_2_7"),
+    ],
+)
+def test_setup_entry_registers_day27_sensors_in_days_2_7_mode(options, expected_active):
+    """days_2_7 mode adds a Day 2-7 spot sensor and one Day 2-7 tariff sensor.
 
-
-# ── Tests: _calibrate_period() — core contract ────────────────────────────────
-
-def test_calibrate_period_uses_interval_start_for_horizon():
+    An entry from before forecast_mode existed carries no option and must be
+    treated as days_2_7 (migration default).
     """
-    BUG (v1.8.0): _calibrate_period previously used period.nemtime (interval END)
-    for horizon, but async_record_actual uses period.time (interval START).
+    created = run_setup("QLD1", options)
 
-    This caused misrouted bucket lookups near the 6h boundary.
+    base_spot = [e for e in created if getattr(e, "_attr_name", "") == BASE_SENSOR_NAME]
+    day27_spot = [e for e in created if getattr(e, "_attr_name", "") == DAY27_SENSOR_NAME]
+    day27_tariff = [
+        e for e in created
+        if "Day 2-7" in getattr(e, "_attr_name", "") and "Tariff" in getattr(e, "_attr_name", "")
+    ]
+    assert len(base_spot) == 1, "Base spot sensor must always be registered"
+    assert len(day27_spot) == 1
+    assert len(day27_tariff) == 1, "Only one Day 2-7 tariff sensor, for the active tariff"
+    if expected_active is not None:
+        distributor, code = expected_active
+        assert day27_tariff[0]._distributor == distributor
+        assert day27_tariff[0]._tariff_code == code
+        assert day27_tariff[0]._attr_unique_id == f"nem_pd7day_QLD1_{distributor}_{code}_days27"
 
-    With run_at=07:30 and interval START=13:30, horizon must be exactly 6.0h.
-    If nemtime (14:00) were used, horizon=6.5h — same bucket in this case,
-    but wrong in general.  Use a boundary case to make the test definitive.
 
-    run_at=08:00, interval START=14:00 → horizon=6.0h → h06_12
-    run_at=08:00, interval nemtime=14:30 → horizon=6.5h → also h06_12
+def test_setup_entry_registers_no_day27_sensors_in_days_1_7_mode():
+    created = run_setup("QLD1", {CONF_FORECAST_MODE: FORECAST_MODE_FULL})
+    day27 = [e for e in created if "Day 2-7" in getattr(e, "_attr_name", "")]
+    assert day27 == []
 
-    Use run_at=08:30, interval START=14:00 → horizon=5.5h → h00_06 (< 6h)
-    If nemtime=14:30 used → horizon=6.0h → h06_12 (wrong bucket!)
+
+# ── Interconnector entity determinism (issues #46, #47, #48) ─────────────────
+
+def test_vic1_interconnector_map_uses_the_published_heywood_id():
+    """AEMO publishes Heywood as "V-SA"; "SA1-VIC1" never appears in the file (#46)."""
+    assert "V-SA" in VIC1_INTERCONNECTORS
+    assert "SA1-VIC1" not in VIC1_INTERCONNECTORS
+
+
+def test_every_interconnector_is_mapped_to_both_of_its_regions():
+    """A one sided entry leaves one end of the link without a sensor (#46)."""
+    counts = Counter(ic for ics in REGION_INTERCONNECTORS.values() for ic in ics)
+    one_sided = sorted(ic for ic, n in counts.items() if n != 2)
+    assert one_sided == []
+
+
+def test_nsw1_creates_the_terranora_interconnector_sensor():
+    """N-Q-MNSP1 is mapped to NSW1 as well as QLD1 (#47); the NSW1 set is pinned."""
+    assert interconnector_ids(run_setup("NSW1")) == ["N-Q-MNSP1", "NSW1-QLD1", "VIC1-NSW1"]
+
+
+@pytest.mark.parametrize(
+    "live_ic_ids",
+    [
+        pytest.param(None, id="no data"),
+        pytest.param(["NSW1-QLD1", "VIC1-NSW1", "N-Q-MNSP1"], id="full fetch"),
+        pytest.param(["NSW1-QLD1"], id="partial fetch"),
+    ],
+)
+def test_interconnector_entities_do_not_depend_on_live_fetch_contents(live_ic_ids):
+    """The entity set is a function of configuration, not of one fetch (#48).
+
+    An interconnector missing from a file must still get its entity so it
+    reports unavailable rather than vanishing from dashboards and history.
     """
+    assert interconnector_ids(run_setup("NSW1", live_ic_ids=live_ic_ids)) == sorted(NSW1_INTERCONNECTORS)
+
+
+@pytest.mark.parametrize("region", sorted(REGION_INTERCONNECTORS))
+def test_interconnector_entities_match_the_map_for_every_region(region):
+    """Guards the total, so a future map edit cannot silently drop an end."""
+    assert interconnector_ids(run_setup(region, live_ic_ids=[])) == sorted(REGION_INTERCONNECTORS[region])
+
+
+# ── _horizon_hours ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "run_at, interval, expected",
+    [
+        pytest.param("2026-04-15T07:30:00+10:00", "2026-04-15T13:30:00+10:00", 6.0, id="6h"),
+        pytest.param("2026-04-15T07:30:00+10:00", "2026-04-16T07:30:00+10:00", 24.0, id="24h tz-aware"),
+        pytest.param(None, "2026-04-15T08:00:00+10:00", 0.0, id="run_at None"),
+        pytest.param("", "2026-04-15T08:00:00+10:00", 0.0, id="run_at empty"),
+        pytest.param("2026-04-15T10:00:00+10:00", "2026-04-15T09:00:00+10:00", 0.0, id="negative clamped"),
+    ],
+)
+def test_horizon_hours(run_at, interval, expected):
+    """horizon = interval - run_at in hours, 0.0 for a missing run_at or a negative gap."""
+    assert abs(_horizon_hours(run_at, interval) - expected) < 0.001
+
+
+@pytest.mark.parametrize(
+    "offset",
+    [
+        pytest.param(timedelta(hours=5, minutes=54), id="just under the 6h boundary"),
+        pytest.param(timedelta(hours=12), id="exactly the 12h boundary"),
+    ],
+)
+def test_bucket_routing_consistent_between_sensor_and_store(offset):
+    """The sensor's horizon from period.time must route to the bucket the store trained.
+
+    Using period.nemtime (30 min later) would move an interval 6 minutes short
+    of the 6 h boundary into h06_12.
+    """
+    run_at_dt = datetime(2026, 4, 15, 8, 0, tzinfo=NEM_TZ)
+    interval_start_dt = run_at_dt + offset
+    period = make_price_period(interval_start_dt + timedelta(minutes=30))
+
+    sensor_horizon = _horizon_hours(nem_iso(run_at_dt), period.time)
+    store_horizon = (interval_start_dt - run_at_dt).total_seconds() / 3600
+
+    assert abs(sensor_horizon - store_horizon) < 0.001
+    assert _bucket_key(sensor_horizon, interval_start_dt.hour) == _bucket_key(store_horizon, interval_start_dt.hour)
+
+
+# ── _calibrate_period ─────────────────────────────────────────────────────────
+
+def test_calibrate_period_passthrough_contract_without_store():
+    """Without a store the entry carries the raw value through under every expected key."""
     sensor = make_sensor(store=None)
-    run_at = "2026-04-15T08:30:00+10:00"
-    # interval START = 14:00, nemtime = 14:30
-    interval_start_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
-    interval_end_dt = interval_start_dt + timedelta(minutes=30)
-    period = make_price_period(interval_end_dt, value=0.10)
-
-    result = sensor._calibrate_period(period, run_at)
-
-    # With interval START: (14:00 - 08:30) = 5.5h → h00_06 bucket
-    # With interval END:   (14:30 - 08:30) = 6.0h → h06_12 bucket (WRONG)
-    assert abs(result["horizon_hours"] - 5.5) < 0.1, (
-        f"horizon_hours={result['horizon_hours']}. "
-        f"Expected 5.5h (using interval START 14:00 − run_at 08:30). "
-        f"If 6.0h, _calibrate_period is incorrectly using nemtime (interval END)."
-    )
-
-
-def test_calibrate_period_output_has_required_keys():
-    """
-    _calibrate_period must return a dict with all keys expected by downstream
-    template sensors: nemtime, time, raw_value, horizon_hours, value.
-    """
-    sensor = make_sensor(store=None)
-    run_at = "2026-04-15T07:30:00+10:00"
     interval_end_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
     period = make_price_period(interval_end_dt, value=0.085)
 
-    result = sensor._calibrate_period(period, run_at)
+    result = sensor._calibrate_period(period, "2026-04-15T07:30:00+10:00")
 
-    required_keys = {"nemtime", "time", "raw_value", "horizon_hours", "value"}
-    missing = required_keys - set(result.keys())
-    assert not missing, (
-        f"_calibrate_period missing keys: {missing}. "
-        f"Template sensors depending on 'value' will break."
-    )
-
-
-def test_calibrate_period_value_equals_raw_when_no_store():
-    """Without a calibration store, 'value' must equal 'raw_value' (passthrough)."""
-    sensor = make_sensor(store=None)
-    run_at = "2026-04-15T07:30:00+10:00"
-    interval_end_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
-    period = make_price_period(interval_end_dt, value=0.085)
-
-    result = sensor._calibrate_period(period, run_at)
-
+    assert {"nemtime", "time", "raw_value", "horizon_hours", "value"} <= set(result)
     assert abs(result["raw_value"] - 0.085) < 1e-9
-    assert abs(result["value"] - 0.085) < 1e-9, (
-        f"Without store, 'value' must equal raw. Got {result['value']}"
-    )
+    assert abs(result["value"] - 0.085) < 1e-9
+    assert result["nemtime"] == nem_iso(interval_end_dt), "nemtime must be the interval END"
+    assert result["time"] == nem_iso(interval_end_dt - timedelta(minutes=30)), "time must be the interval START"
+    assert result["horizon_hours"] == 6.0
 
 
-def test_calibrate_period_nemtime_is_interval_end():
-    """result['nemtime'] must be interval END (period.nemtime)."""
-    sensor = make_sensor(store=None)
-    interval_end_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
-    period = make_price_period(interval_end_dt, value=0.10)
+def test_calibrate_period_horizon_uses_interval_start():
+    """v1.8.0: run_at 08:30 with interval 14:00-14:30 is 5.5 h (h00_06), not 6.0 h (h06_12).
 
-    result = sensor._calibrate_period(period, "2026-04-15T07:30:00+10:00")
+    Both the published horizon_hours and the horizon handed to the store must
+    come from period.time, matching what async_record_actual trained on.
+    """
+    store = make_calibrating_store()
+    sensor = make_sensor(store=store)
+    period = make_price_period(datetime(2026, 4, 15, 14, 30, tzinfo=NEM_TZ), value=0.085)
 
-    assert result["nemtime"] == nem_iso(interval_end_dt), (
-        f"nemtime wrong: {result['nemtime']!r}. Must be interval END."
-    )
+    result = sensor._calibrate_period(period, "2026-04-15T08:30:00+10:00")
 
-
-def test_calibrate_period_time_is_interval_start():
-    """result['time'] must be interval START (period.time = nemtime − 30min)."""
-    sensor = make_sensor(store=None)
-    interval_end_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
-    interval_start_dt = interval_end_dt - timedelta(minutes=30)
-    period = make_price_period(interval_end_dt, value=0.10)
-
-    result = sensor._calibrate_period(period, "2026-04-15T07:30:00+10:00")
-
-    assert result["time"] == nem_iso(interval_start_dt), (
-        f"time wrong: {result['time']!r}. Must be interval START (nemtime − 30min)."
-    )
+    assert abs(result["horizon_hours"] - 5.5) < 0.1
+    h_passed = store.apply_to_price.call_args[0][1]  # apply_to_price(raw, h, hour, ...)
+    assert abs(h_passed - 5.5) < 0.1, f"store looked up horizon {h_passed:.2f}h; nemtime is being used"
 
 
 def test_calibrate_period_with_active_calibration():
-    """
-    With an active calibration store, _calibrate_period must include
-    calibrated, p10, p50, p90, mae, calibrated_source, n_obs keys.
-    """
-    # Build a calibration store with enough observations to activate a bucket
-
-    # Create a mock store that returns a fixed apply_to_price result
-    mock_store = MagicMock()
-    mock_store.calibration = MagicMock()  # not None → calibration active
-    mock_store.apply_to_price.return_value = {
-        "calibrated": 0.072,
-        "p10": 0.055,
-        "p50": 0.070,
-        "p90": 0.095,
-        "ols_mae": 0.012,
-        "calibrated_source": "ols",
-        "n_obs": 42,
-    }
-
-    sensor = make_sensor(store=mock_store)
-    interval_end_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
-    period = make_price_period(interval_end_dt, value=0.085)
+    """With a store the entry carries the calibration keys and value == calibrated."""
+    store = make_calibrating_store(
+        calibrated=0.072, p10=0.055, p50=0.070, p90=0.095, ols_mae=0.012,
+        calibrated_source="ols", n_obs=42,
+    )
+    sensor = make_sensor(store=store)
+    period = make_price_period(datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ), value=0.085)
 
     result = sensor._calibrate_period(period, "2026-04-15T07:30:00+10:00")
 
-    cal_keys = {"calibrated", "p10", "p50", "p90", "ols_mae", "calibrated_source", "n_obs"}
-    missing = cal_keys - set(result.keys())
-    assert not missing, f"Calibration keys missing from output: {missing}"
-    assert abs(result["value"] - 0.072) < 1e-9, (
-        f"'value' must equal 'calibrated' when store is active. Got {result['value']}"
-    )
+    assert {"calibrated", "p10", "p50", "p90", "ols_mae", "calibrated_source", "n_obs"} <= set(result)
+    assert abs(result["value"] - 0.072) < 1e-9
     assert result["calibrated_source"] == "ols"
 
 
-def test_calibrate_period_horizon_used_for_store_lookup():
-    """
-    The horizon passed to store.apply_to_price() must be computed from
-    period.time (interval START), matching what async_record_actual uses.
-    Run_at=08:30, interval_start=14:00 → horizon=5.5h.
-    """
-    mock_store = MagicMock()
-    mock_store.calibration = MagicMock()
-    mock_store.apply_to_price.return_value = {
-        "calibrated": 0.085, "p10": None, "p50": None, "p90": None,
-        "ols_mae": None, "calibrated_source": "passthrough", "n_obs": 0,
-    }
+# ── native_value: dispatch first, then the current PD7DAY interval ───────────
 
-    sensor = make_sensor(store=mock_store)
-    run_at = "2026-04-15T08:30:00+10:00"
-    interval_start_dt = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
-    interval_end_dt = interval_start_dt + timedelta(minutes=30)
-    period = make_price_period(interval_end_dt, value=0.085)
-
-    sensor._calibrate_period(period, run_at)
-
-    # Check what horizon was passed to apply_to_price
-    call_args = mock_store.apply_to_price.call_args
-    # apply_to_price(raw_price, h, hour) — positional
-    h_passed = call_args[0][1]
-    assert abs(h_passed - 5.5) < 0.1, (
-        f"apply_to_price called with horizon={h_passed:.2f}h. "
-        f"Expected 5.5h (interval START 14:00 − run_at 08:30). "
-        f"If 6.0h, nemtime (interval END) is being used — bucket routing mismatch."
-    )
-
-
-# ── Tests: horizon/bucket routing symmetry between sensor and store ────────────
-
-def test_bucket_routing_consistent_at_h06_12_boundary():
-    """
-    The 6h bucket boundary is the most common misrouting point.
-
-    Simulate an observation stored at horizon=5.9h (h00_06 bucket).
-    The sensor's _calibrate_period must look up the same h00_06 bucket,
-    not h06_12.
-
-    We verify this by checking that the horizon returned by _calibrate_period
-    is consistent with what the store would compute from the same timestamps.
-    """
-    from custom_components.nem_pd7day.calibration_engine import _bucket_key
-
-    run_at_dt = datetime(2026, 4, 15, 8, 0, tzinfo=NEM_TZ)
-    # interval_start at 13:54, 6 minutes before the 6h boundary
-    interval_start_dt = run_at_dt + timedelta(hours=5, minutes=54)
-    interval_end_dt = interval_start_dt + timedelta(minutes=30)
-
-    run_at_str = nem_iso(run_at_dt)
-    period = make_price_period(interval_end_dt, value=0.10)
-
-    # Sensor horizon (should use period.time = interval START)
-    sensor_horizon = _horizon_hours(run_at_str, period.time)
-    # Store horizon (uses interval_time = period.time)
-    store_horizon_h = (interval_start_dt - run_at_dt).total_seconds() / 3600
-
-    sensor_bucket = _bucket_key(sensor_horizon, interval_start_dt.hour)
-    store_bucket = _bucket_key(store_horizon_h, interval_start_dt.hour)
-
-    assert sensor_bucket == store_bucket, (
-        f"Bucket mismatch at 6h boundary: sensor routed to '{sensor_bucket}', "
-        f"store trained '{store_bucket}'. "
-        f"sensor_horizon={sensor_horizon:.3f}h, store_horizon={store_horizon_h:.3f}h. "
-        f"Check that _calibrate_period uses period.time not period.nemtime."
-    )
-
-
-def test_bucket_routing_consistent_at_h12_24_boundary():
-    """Same consistency check at the 12h horizon boundary."""
-
-    run_at_dt = datetime(2026, 4, 15, 7, 30, tzinfo=NEM_TZ)
-    # interval_start exactly at 19:30 → horizon = 12.0h
-    interval_start_dt = run_at_dt + timedelta(hours=12)
-    interval_end_dt = interval_start_dt + timedelta(minutes=30)
-
-    run_at_str = nem_iso(run_at_dt)
-    period = make_price_period(interval_end_dt, value=0.10)
-
-    sensor_horizon = _horizon_hours(run_at_str, period.time)
-    store_horizon_h = (interval_start_dt - run_at_dt).total_seconds() / 3600
-
-    assert abs(sensor_horizon - store_horizon_h) < 0.001, (
-        f"Sensor horizon {sensor_horizon}h != store horizon {store_horizon_h}h. "
-        f"The 30-min discrepancy from using nemtime vs time will misroute buckets."
-    )
-
-
-# ── Tests: native_value passthrough ───────────────────────────────────────────
-
-def test_native_value_returns_none_when_no_data():
-    """native_value must be None when coordinator has no data."""
+def test_native_value_is_none_without_coordinator_data():
     sensor = make_sensor(store=None)
-    sensor.coordinator.data = None
     assert sensor.native_value is None
 
-def test_tod_sensor_device_info_includes_region():
-    """PD7DayTodSensor.device_info must include region in identifiers."""
-    from custom_components.nem_pd7day.sensor import PD7DayTodSensor
 
-    coordinator = MagicMock()
-    coordinator.data = None
-
-    entry = MagicMock()
-    entry.entry_id = "entry_region_test"
-
-    sensor = PD7DayTodSensor.__new__(PD7DayTodSensor)
-    sensor.coordinator = coordinator
-    sensor._region = "NSW1"
-    sensor._entry = entry
-
-    di = sensor.device_info
-    ids = di["identifiers"]
-    expected = (DOMAIN, "entry_region_test_NSW1")
-    assert expected in ids, (
-        f"PD7DayTodSensor device_info identifiers must include region. "
-        f"Got: {ids}"
-    )
-
-
-def test_native_value_returns_raw_when_no_store():
-    """Without a store, native_value must return the value of the current period."""
+def test_native_value_prefers_dispatch_price():
     sensor = make_sensor(store=None)
+    dispatch = MagicMock()
+    dispatch.prices = {"QLD1": DispatchPrice("QLD1", "2026/05/21 09:30:00", 0.042)}
+    sensor._entry.runtime_data.dispatch = dispatch
 
-    # Build a real-looking period covering now
-    from datetime import datetime, timedelta
-    NEM_TZ = timezone(timedelta(hours=10))
-    now = datetime.now(NEM_TZ)
-    interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
-    interval_end = interval_start + timedelta(minutes=30)
+    assert abs(sensor.native_value - 0.042) < 1e-9
 
-    def _iso(dt):
-        return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
 
-    period = MagicMock()
-    period.time = _iso(interval_start)
-    period.nemtime = _iso(interval_end)
-    period.value = 0.085
+@pytest.mark.parametrize(
+    "dispatch",
+    [
+        pytest.param(None, id="no dispatch coordinator"),
+        pytest.param(MagicMock(prices={}), id="dispatch without this region"),
+    ],
+)
+def test_native_value_falls_back_to_current_pd7day_interval(dispatch):
+    """Without a dispatch price the state is the raw value of the current interval."""
+    sensor = make_sensor(store=None)
+    sensor._entry.runtime_data.dispatch = dispatch
+    set_current_interval(sensor, 0.085)
 
-    price_data = MagicMock()
-    price_data.forecast = [period]
-    price_data.forecast_generated_at = _iso(now - timedelta(hours=1))
-    sensor.coordinator.data = MagicMock()
-    sensor.coordinator.data.prices = {"QLD1": price_data}
     assert abs(sensor.native_value - 0.085) < 1e-9
 
 
-# ── Tests: sensor covariate gate integration ─────────────────────────────────
-
-def test_sensor_reads_capped_value():
-    """
-    Sensor native_value returns capped value when covariate gate fires.
-    The sensor must pass covariates through to apply_to_price().
-    """
-    from custom_components.nem_pd7day.const import SPIKE_COVARIATE_CAP
-
-    mock_store = MagicMock()
-    mock_store.calibration = MagicMock()
-
-    # apply_to_price should be called WITH covariate kwargs — we verify this
-    # by making it return covariate_capped when called correctly
-    # Signature mirrors CalibrationStore.apply_to_price, which has always taken
-    # stpasa_features and run_features as well. The sensor now assembles the
-    # full argument set in one shared place (issue #66), so a stub that accepts
-    # only the covariates rejects the call. The assertion below is unchanged:
-    # the covariates must still reach the store.
+def test_native_value_passes_covariates_to_the_store():
+    """The covariate gate can only fire if gas and QNI reach apply_to_price (#66)."""
     def _apply(
         raw, h, hour, *,
         gas_forecast_tj=None, qni_mwflow=None,
         stpasa_features=None, run_features=None,
     ):
-        if gas_forecast_tj is not None and qni_mwflow is not None:
-            return {
-                "calibrated": SPIKE_COVARIATE_CAP,
-                "p10": SPIKE_COVARIATE_CAP,
-                "p50": SPIKE_COVARIATE_CAP,
-                "p90": SPIKE_COVARIATE_CAP,
-                "ols_mae": None,
-                "calibrated_source": "covariate_capped",
-                "n_obs": 0,
-            }
+        capped = gas_forecast_tj is not None and qni_mwflow is not None
+        value = SPIKE_COVARIATE_CAP if capped else raw
         return {
-            "calibrated": raw,
-            "p10": raw,
-            "p50": raw,
-            "p90": raw,
-            "ols_mae": None,
-            "calibrated_source": "passthrough_high",
-            "n_obs": 0,
+            "calibrated": value, "p10": value, "p50": value, "p90": value,
+            "ols_mae": None, "n_obs": 0,
+            "calibrated_source": "covariate_capped" if capped else "passthrough_high",
         }
 
-    mock_store.apply_to_price = _apply
+    store = MagicMock()
+    store.calibration = MagicMock()
+    store.apply_to_price = _apply
+    sensor = make_sensor(store=store)
+    period = set_current_interval(sensor, 5.0)  # high spike
+    price_data = sensor.coordinator.data.prices["QLD1"]
+    price_data.forecast_generated_at = nem_iso(datetime.now(NEM_TZ) - timedelta(hours=24))
 
-    sensor = make_sensor(store=mock_store)
-
-    # Build period covering now
-    from datetime import datetime, timedelta
-    NEM_TZ_local = timezone(timedelta(hours=10))
-    now = datetime.now(NEM_TZ_local)
-    interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
-    interval_end = interval_start + timedelta(minutes=30)
-
-    def _iso(dt):
-        return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
-
-    period = MagicMock()
-    period.time = _iso(interval_start)
-    period.nemtime = _iso(interval_end)
-    period.value = 5.0  # high spike
-
-    price_data = MagicMock()
-    price_data.forecast = [period]
-    price_data.forecast_generated_at = _iso(now - timedelta(hours=24))
-    price_data.region = "QLD1"
-
-    # Set up coordinator data with QNI interconnector and market summary
-    qni_period = MagicMock()
-    qni_period.time = period.time
-    qni_period.mwflow = -200.0
     qni_data = MagicMock()
-    qni_data.forecast = [qni_period]
-
-    gas_period = MagicMock()
-    gas_period.nemtime = _iso(interval_start)  # same date
-    gas_period.value_tj = 100.0
+    qni_data.forecast = [MagicMock(time=period.time, mwflow=-200.0)]
     market_summary = MagicMock()
-    market_summary.forecast = [gas_period]
+    market_summary.forecast = [MagicMock(nemtime=period.time, value_tj=100.0)]
+    sensor.coordinator.data.interconnectors = {"NSW1-QLD1": qni_data}
+    sensor.coordinator.data.market_summary = market_summary
 
-    coordinator_data = MagicMock()
-    coordinator_data.prices = {"QLD1": price_data}
-    coordinator_data.interconnectors = {"NSW1-QLD1": qni_data}
-    coordinator_data.market_summary = market_summary
-    sensor.coordinator.data = coordinator_data
-
-    # Sensor should return capped value because covariates were passed through
-    assert sensor.native_value == SPIKE_COVARIATE_CAP, (
-        f"Sensor should return capped value {SPIKE_COVARIATE_CAP}, "
-        f"got {sensor.native_value}. Covariates may not be passed through."
-    )
+    assert sensor.native_value == SPIKE_COVARIATE_CAP
 
 
-# ── Tests: forecast trim to post-Amber-Express cutoff (dynamic, time-based) ──
-
-def test_sensor_name_is_nem_spot_price_forecast():
-    """Base sensor name is always 'NEM Spot Price Forecast' (day 1-7)."""
+def test_spot_sensor_subscribes_to_dispatch_coordinator():
     sensor = make_sensor(store=None)
-    assert sensor._attr_name == "NEM Spot Price Forecast"
+    dispatch = MagicMock()
+    dispatch.async_add_listener = MagicMock(return_value=lambda: None)
+    sensor._entry.runtime_data.dispatch = dispatch
+    sensor.async_on_remove = MagicMock()
+    sensor.async_write_ha_state = MagicMock()
+
+    run_async(sensor.async_added_to_hass())
+
+    dispatch.async_add_listener.assert_called_once()
 
 
-def test_amber_express_cutoff_short_window():
-    """During 3:30am–12:30pm NEM, cutoff is tomorrow 3:30am NEM."""
-    # 4:00am NEM — inside the short window
-    now = datetime(2026, 5, 19, 4, 0, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=now)
-    expected = datetime(2026, 5, 20, 3, 30, 0, tzinfo=NEM_TZ)
-    assert cutoff == expected, f"At 4:00am NEM cutoff should be tomorrow 3:30am, got {cutoff}"
+def test_tod_sensor_device_info_includes_region():
+    sensor = PD7DayTodSensor.__new__(PD7DayTodSensor)
+    sensor.coordinator = MagicMock()
+    sensor._region = "NSW1"
+    sensor._entry = MagicMock(entry_id="entry_region_test")
 
-    # 8:00am NEM — inside the short window
-    now = datetime(2026, 5, 19, 8, 0, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=now)
-    expected = datetime(2026, 5, 20, 3, 30, 0, tzinfo=NEM_TZ)
-    assert cutoff == expected, f"At 8:00am NEM cutoff should be tomorrow 3:30am, got {cutoff}"
-
-    # 12:29pm NEM — still inside the short window
-    now = datetime(2026, 5, 19, 12, 29, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=now)
-    expected = datetime(2026, 5, 20, 3, 30, 0, tzinfo=NEM_TZ)
-    assert cutoff == expected, f"At 12:29pm NEM cutoff should be tomorrow 3:30am, got {cutoff}"
+    assert (DOMAIN, "entry_region_test_NSW1") in sensor.device_info["identifiers"]
 
 
-def test_amber_express_cutoff_long_window():
-    """Outside 3:30am–12:30pm NEM, cutoff is now + 24h."""
-    # 12:30pm NEM — boundary, outside short window
-    now = datetime(2026, 5, 19, 12, 30, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=now)
-    expected = now + timedelta(hours=24)
-    assert cutoff == expected, f"At 12:30pm NEM cutoff should be now+24h, got {cutoff}"
+# ── Amber Express cutoff (nem_time helper the Day 2-7 sensors trim on) ────────
 
-    # 6:00pm NEM
-    now = datetime(2026, 5, 19, 18, 0, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=now)
-    expected = now + timedelta(hours=24)
-    assert cutoff == expected, f"At 6:00pm NEM cutoff should be now+24h, got {cutoff}"
-
-    # 2:00am NEM — before short window
-    now = datetime(2026, 5, 19, 2, 0, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=now)
-    expected = now + timedelta(hours=24)
-    assert cutoff == expected, f"At 2:00am NEM cutoff should be now+24h, got {cutoff}"
-
-
-def test_amber_express_cutoff_boundary_330am():
-    """At exactly 3:30am NEM, we are inside the short window."""
-    now = datetime(2026, 5, 19, 3, 30, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=now)
-    expected = datetime(2026, 5, 20, 3, 30, 0, tzinfo=NEM_TZ)
-    assert cutoff == expected, f"At 3:30am NEM cutoff should be tomorrow 3:30am, got {cutoff}"
+@pytest.mark.parametrize(
+    "now, expected",
+    [
+        # 3:30am-12:30pm NEM: cutoff is tomorrow 3:30am NEM.
+        pytest.param(datetime(2026, 5, 19, 3, 30, tzinfo=NEM_TZ), datetime(2026, 5, 20, 3, 30, tzinfo=NEM_TZ), id="3:30am boundary inside"),
+        pytest.param(datetime(2026, 5, 19, 4, 0, tzinfo=NEM_TZ), datetime(2026, 5, 20, 3, 30, tzinfo=NEM_TZ), id="4:00am"),
+        pytest.param(datetime(2026, 5, 19, 8, 0, tzinfo=NEM_TZ), datetime(2026, 5, 20, 3, 30, tzinfo=NEM_TZ), id="8:00am"),
+        pytest.param(datetime(2026, 5, 19, 12, 29, tzinfo=NEM_TZ), datetime(2026, 5, 20, 3, 30, tzinfo=NEM_TZ), id="12:29pm"),
+        # Otherwise: rolling now + 24h.
+        pytest.param(datetime(2026, 5, 19, 12, 30, tzinfo=NEM_TZ), datetime(2026, 5, 20, 12, 30, tzinfo=NEM_TZ), id="12:30pm boundary outside"),
+        pytest.param(datetime(2026, 5, 19, 18, 0, tzinfo=NEM_TZ), datetime(2026, 5, 20, 18, 0, tzinfo=NEM_TZ), id="6:00pm"),
+        pytest.param(datetime(2026, 5, 19, 2, 0, tzinfo=NEM_TZ), datetime(2026, 5, 20, 2, 0, tzinfo=NEM_TZ), id="2:00am"),
+    ],
+)
+def test_amber_express_cutoff(now, expected):
+    assert _amber_express_cutoff(now=now) == expected
 
 
-def test_amber_express_cutoff_boundary_1230pm():
-    """At exactly 12:30pm NEM, we are outside the short window (rolling 24h)."""
-    now = datetime(2026, 5, 19, 12, 30, 0, tzinfo=NEM_TZ)
-    cutoff = _amber_express_cutoff(now=now)
-    expected = now + timedelta(hours=24)
-    assert cutoff == expected, f"At 12:30pm NEM cutoff should be now+24h, got {cutoff}"
+# ── Forecast attributes: trim, next_value, min/max (#148), cheapest window ────
 
-
-def test_base_sensor_forecast_contains_all_intervals():
-    """Base sensor ATTR_FORECAST returns full day 1-7 forecast (no trim)."""
-
-    sensor = make_sensor(store=None)
-
-    fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
-
-    run_at_dt = fake_now
-    run_at_str = nem_iso(run_at_dt)
-
-    # Build 200 periods spanning ~100h from run_at
-    periods = []
-    for i in range(200):
-        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
-        periods.append(make_price_period(interval_end_dt, value=0.05 + i * 0.001))
-
-    price_data = MagicMock()
-    price_data.forecast = periods
-    price_data.forecast_generated_at = run_at_str
-    price_data.region = "QLD1"
-    price_data.interval_minutes = 30
-    price_data.source_file = "test.xml"
-
-    sensor.coordinator.data = MagicMock()
-    sensor.coordinator.data.prices = {"QLD1": price_data}
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param({}, id="no mode option"),
+        pytest.param({CONF_FORECAST_MODE: FORECAST_MODE_FULL}, id="days_1_7"),
+        pytest.param({CONF_FORECAST_MODE: FORECAST_MODE_DAYS_2_7}, id="days_2_7"),
+    ],
+)
+def test_base_sensor_forecast_is_untrimmed_in_every_mode(options):
+    """The day 1-7 sensor publishes every interval; next_value is the first of them."""
+    sensor = make_sensor(store=None, options=options)
+    run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    periods = ascending_periods(run_at_dt, 200)  # ~100 h, well past any cutoff
+    set_price_data(sensor, periods, run_at_dt)
 
     attrs = sensor.extra_state_attributes
-    forecast = attrs["forecast"]
 
-    # Base sensor always returns ALL intervals (day 1-7)
-    assert len(forecast) == 200, (
-        f"Base sensor should return all 200 intervals (day 1-7). Got {len(forecast)}"
-    )
+    assert len(attrs["forecast"]) == 200
+    assert attrs["next_value"] == attrs["forecast"][0]["value"] == periods[0].value
 
 
 def test_day27_sensor_forecast_only_contains_post_cutoff_intervals():
-    """SpotPriceForecastDays27Sensor ATTR_FORECAST must only contain post-cutoff intervals."""
-    from unittest.mock import patch
-    from custom_components.nem_pd7day.sensor import SpotPriceForecastDays27Sensor
+    """The Day 2-7 sensor drops every interval starting at or before the cutoff."""
+    sensor = make_sensor(store=None, cls=SpotPriceForecastDays27Sensor)
+    run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    cutoff = run_at_dt + timedelta(hours=12)  # fixed, so the test is deterministic
+    periods = ascending_periods(run_at_dt, 200)
+    set_price_data(sensor, periods, run_at_dt)
 
-    # Build SpotPriceForecastDays27Sensor
-    coordinator = MagicMock()
-    coordinator.data = None
-    sensor = SpotPriceForecastDays27Sensor.__new__(SpotPriceForecastDays27Sensor)
-    sensor.coordinator = coordinator
-    sensor._region = "QLD1"
-    sensor._store = None
-    sensor._attr_unique_id = "nem_pd7day_qld1_forecast_days27"
-    sensor._attr_name = "NEM Spot Price Forecast Day 2-7"
-    entry = MagicMock()
-    entry.entry_id = "entry_test"
-    entry.options = {}
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator, store=None, dispatch=None
-    )
-    sensor._entry = entry
-    sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {}}
-
-    fake_now = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
-    # Use a fixed cutoff 12 hours into the window so the test is deterministic
-    cutoff = fake_now + timedelta(hours=12)
-
-    run_at_dt = fake_now
-    run_at_str = nem_iso(run_at_dt)
-
-    periods = []
-    for i in range(200):
-        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
-        periods.append(make_price_period(interval_end_dt, value=0.05 + i * 0.001))
-
-    price_data = MagicMock()
-    price_data.forecast = periods
-    price_data.forecast_generated_at = run_at_str
-    price_data.region = "QLD1"
-    price_data.interval_minutes = 30
-    price_data.source_file = "test.xml"
-
-    sensor.coordinator.data = MagicMock()
-    sensor.coordinator.data.prices = {"QLD1": price_data}
-
-    with patch("custom_components.nem_pd7day.sensor._amber_express_cutoff", return_value=cutoff):
+    with patch.object(_sensor_mod, "_amber_express_cutoff", return_value=cutoff):
         attrs = sensor.extra_state_attributes
     forecast = attrs["forecast"]
 
-    from custom_components.nem_pd7day.nem_time import parse_iso
     for p in forecast:
-        interval_start = parse_iso(p["time"])
-        assert interval_start > cutoff, (
-            f"Day 2-7 forecast contains interval at {p['time']} which is <= cutoff {cutoff}"
-        )
-
-    assert len(forecast) < 200, f"Day 2-7 sensor should trim. Got {len(forecast)}"
-    assert len(forecast) > 0, "Day 2-7 sensor should not be empty"
+        assert parse_iso(p["time"]) > cutoff, f"interval at {p['time']} is <= cutoff {cutoff}"
+    # Intervals 0..24 start at or before run_at + 12 h; 25..199 survive.
+    assert len(forecast) == 175
+    assert attrs["next_value"] == forecast[0]["value"] == periods[25].value
 
 
 def test_min_max_computed_over_first_24h_of_day17_window():
-    """min_24h_value and max_24h_value cover the first 24 hours of the run.
+    """min_24h_value / max_24h_value cover the first 24 hours of the run (#148).
 
-    Issue #148: they were min/max of the whole window. The forecast attribute
-    still carries every interval; only the two summary attributes are sized
-    to the 24 hours their names claim.
+    The forecast attribute still carries every interval; only the two summary
+    attributes are sized to the 24 hours their names claim.
     """
     sensor = make_sensor(store=None)
-
     run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
-    run_at_str = nem_iso(run_at_dt)
-
     periods = []
     for i in range(96):
-        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
-        if i < 48:
-            val = 0.10 + i * 0.001
-        else:
-            # Deeper and higher than anything in the first 24 h.
-            val = 0.001 if i % 2 == 0 else 9.99
-        periods.append(make_price_period(interval_end_dt, value=val))
-
-    price_data = MagicMock()
-    price_data.forecast = periods
-    price_data.forecast_generated_at = run_at_str
-    price_data.region = "QLD1"
-    price_data.interval_minutes = 30
-    price_data.source_file = "test.xml"
-
-    sensor.coordinator.data = MagicMock()
-    sensor.coordinator.data.prices = {"QLD1": price_data}
+        # Beyond 24 h: deeper and higher than anything in the first 24 h.
+        val = 0.10 + i * 0.001 if i < 48 else (0.001 if i % 2 == 0 else 9.99)
+        periods.append(make_price_period(run_at_dt + timedelta(minutes=30 * (i + 1)), value=val))
+    set_price_data(sensor, periods, run_at_dt)
 
     attrs = sensor.extra_state_attributes
+
     assert attrs["min_24h_value"] == 0.10
     assert attrs["max_24h_value"] == round(0.10 + 47 * 0.001, 6)
-    # The window itself is untrimmed on the day 1-7 sensor.
     assert len(attrs["forecast"]) == 96
 
 
 def test_day27_min_max_cover_first_24h_after_cutoff_not_whole_window():
-    """Day 2-7 sensor: min_24h_value is the first 24 h after the cutoff.
+    """Day 2-7: min_24h_value is the first 24 h after the cutoff (#148).
 
-    Issue #148: SA1 published min_24h_value -0.864 from a Saturday row four
-    days out. Here the deepest and highest values sit beyond the first 24
-    post-cutoff hours and must not be reported, while cheapest_2h_window
-    still searches the whole trimmed window by design.
+    SA1 published min_24h_value -0.864 from a Saturday row four days out. Here
+    the deepest and highest values sit beyond the first 24 post-cutoff hours
+    and must not be reported, while cheapest_2h_window still searches the whole
+    trimmed window by design.
     """
-    from unittest.mock import patch
-    from custom_components.nem_pd7day.sensor import SpotPriceForecastDays27Sensor
-
-    coordinator = MagicMock()
-    coordinator.data = None
-    sensor = SpotPriceForecastDays27Sensor.__new__(SpotPriceForecastDays27Sensor)
-    sensor.coordinator = coordinator
-    sensor._region = "SA1"
-    sensor._store = None
-    sensor._attr_unique_id = "nem_pd7day_sa1_forecast_days27"
-    sensor._attr_name = "NEM Spot Price Forecast Day 2-7"
-    entry = MagicMock()
-    entry.entry_id = "entry_test"
-    entry.options = {}
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator, store=None, dispatch=None
-    )
-    sensor._entry = entry
-    sensor.hass = MagicMock()
-    sensor.hass.data = {DOMAIN: {}}
-
+    sensor = make_sensor(store=None, cls=SpotPriceForecastDays27Sensor, region="SA1")
     run_at_dt = datetime(2026, 9, 8, 7, 30, tzinfo=NEM_TZ)
     # The trim keeps intervals starting strictly after the cutoff, so a cutoff
-    # one minute short of 24 h makes interval 48 (start run+24 h) the first
-    # post-cutoff interval.
+    # one minute short of 24 h makes interval 48 the first post-cutoff one.
     cutoff = run_at_dt + timedelta(hours=23, minutes=59)
     periods = []
     for i in range(6 * 48):
-        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
         post_cutoff_index = i - 48  # 0 is the first interval after the cutoff
         if 0 <= post_cutoff_index < 48:
             val = 0.05 + post_cutoff_index * 0.001
@@ -1010,225 +598,273 @@ def test_day27_min_max_cover_first_24h_after_cutoff_not_whole_window():
             val = 9.99
         else:
             val = 0.20
-        periods.append(make_price_period(interval_end_dt, value=val))
+        periods.append(make_price_period(run_at_dt + timedelta(minutes=30 * (i + 1)), value=val))
+    set_price_data(sensor, periods, run_at_dt)
 
-    price_data = MagicMock()
-    price_data.forecast = periods
-    price_data.forecast_generated_at = nem_iso(run_at_dt)
-    price_data.region = "SA1"
-    price_data.interval_minutes = 30
-    price_data.source_file = "test.xml"
-    sensor.coordinator.data = MagicMock()
-    sensor.coordinator.data.prices = {"SA1": price_data}
-
-    with patch("custom_components.nem_pd7day.sensor._amber_express_cutoff", return_value=cutoff):
+    with patch.object(_sensor_mod, "_amber_express_cutoff", return_value=cutoff):
         attrs = sensor.extra_state_attributes
 
     assert attrs["min_24h_value"] == 0.05
     assert attrs["max_24h_value"] == round(0.05 + 47 * 0.001, 6)
-    # The whole-window search is unchanged and does find the Saturday row.
-    assert attrs["cheapest_2h_window"]["avg_value"] < 0.0
+    assert attrs["cheapest_2h_window"]["avg_value"] < 0.0  # whole-window search finds the Saturday row
     assert len(attrs["forecast"]) == 6 * 48 - 48
 
 
 def test_cheapest_2h_window_computed_over_full_forecast():
-    """cheapest_2h_window computed over full day 1-7 forecast."""
+    """With ascending values the cheapest 4-interval window is the first one."""
     sensor = make_sensor(store=None)
-
     run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
-    run_at_str = nem_iso(run_at_dt)
-
-    periods = []
-    for i in range(96):
-        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
-        val = 0.10 + i * 0.001
-        periods.append(make_price_period(interval_end_dt, value=val))
-
-    price_data = MagicMock()
-    price_data.forecast = periods
-    price_data.forecast_generated_at = run_at_str
-    price_data.region = "QLD1"
-    price_data.interval_minutes = 30
-    price_data.source_file = "test.xml"
-
-    sensor.coordinator.data = MagicMock()
-    sensor.coordinator.data.prices = {"QLD1": price_data}
+    set_price_data(sensor, ascending_periods(run_at_dt, 96, start=0.10), run_at_dt)
 
     attrs = sensor.extra_state_attributes
     cheapest = attrs["cheapest_2h_window"]
-    assert cheapest is not None, "cheapest_2h_window should not be None with enough intervals"
-    # First 4 intervals should be cheapest (ascending values)
-    assert cheapest["avg_value"] < 0.102
+
+    assert cheapest is not None
+    assert cheapest["points"] == 4
+    assert cheapest["start"] == attrs["forecast"][0]["time"]
+    assert cheapest["avg_value"] == round((0.10 + 0.101 + 0.102 + 0.103) / 4, 6)
 
 
-def test_native_value_unaffected_by_trim():
-    """native_value returns the current-interval calibrated price regardless of trim."""
-    sensor = make_sensor(store=None)
+# ── Diagnostic data sensors: PD7DayDataSensor and StpasaDataSensor ───────────
 
-    now = datetime.now(NEM_TZ)
-    interval_start = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
-    interval_end = interval_start + timedelta(minutes=30)
-
-    period = MagicMock()
-    period.time = nem_iso(interval_start)
-    period.nemtime = nem_iso(interval_end)
-    period.value = 0.042
-
-    price_data = MagicMock()
-    price_data.forecast = [period]
-    price_data.forecast_generated_at = nem_iso(now - timedelta(hours=1))
-    sensor.coordinator.data = MagicMock()
-    sensor.coordinator.data.prices = {"QLD1": price_data}
-
-    # native_value should still work even though this interval is within cutoff
-    assert abs(sensor.native_value - 0.042) < 1e-9
+REGION = "QLD1"
+RUN_DT = "2026-06-12T10:00:00+10:00"
 
 
-def test_next_value_from_trimmed_forecast():
-    """next_value must be the first interval from the trimmed (post-cutoff) forecast."""
-    from unittest.mock import patch
-
-    sensor = make_sensor(store=None)
-
-    run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
-    run_at_str = nem_iso(run_at_dt)
-    # Use a fixed cutoff 12 hours into the window so the test is deterministic
-    cutoff = run_at_dt + timedelta(hours=12)
-
-    periods = []
-    for i in range(60):
-        interval_end_dt = run_at_dt + timedelta(minutes=30 * (i + 1))
-        val = 0.05 + i * 0.001
-        periods.append(make_price_period(interval_end_dt, value=val))
-
-    price_data = MagicMock()
-    price_data.forecast = periods
-    price_data.forecast_generated_at = run_at_str
-    price_data.region = "QLD1"
-    price_data.interval_minutes = 30
-    price_data.source_file = "test.xml"
-
-    sensor.coordinator.data = MagicMock()
-    sensor.coordinator.data.prices = {"QLD1": price_data}
-
-    with patch("custom_components.nem_pd7day.sensor._amber_express_cutoff", return_value=cutoff):
-        attrs = sensor.extra_state_attributes
-    forecast = attrs["forecast"]
-    next_val = attrs["next_value"]
-
-    if forecast:
-        expected = forecast[0].get("value")
-        assert next_val == expected, (
-            f"next_value={next_val} should equal first trimmed forecast value={expected}"
-        )
+def make_pd7day_data_sensor(coordinator_data=None, store=None) -> PD7DayDataSensor:
+    coordinator = MagicMock()
+    coordinator.data = coordinator_data
+    coordinator.interconnectors = {}
+    sensor = PD7DayDataSensor.__new__(PD7DayDataSensor)
+    sensor.coordinator = coordinator
+    sensor._region = REGION
+    sensor._store = store
+    sensor._entry = MagicMock(entry_id="entry_test")
+    return sensor
 
 
-# ── Interconnector entity determinism (issues #46, #47, #48) ─────────────────
+def make_stpasa_result(run_dt: str = RUN_DT):
+    return _stpasa_client_mod.StpasaResult(
+        region=REGION,
+        run_datetime=run_dt,
+        intervals=[
+            _stpasa_client_mod.StpasaInterval(
+                interval_datetime="2026-06-12T10:30:00+10:00",
+                run_datetime=run_dt,
+                demand10=5000.0,
+                demand50=5500.0,
+                demand90=6000.0,
+                surpluscapacity=1200.0,
+                ss_solar_uigf=300.0,
+                ss_wind_uigf=400.0,
+            )
+        ],
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+    )
 
-def _setup_interconnectors(region: str, live_ic_ids):
-    """Run sensor setup for one region and return the interconnector ids created.
 
-    ``live_ic_ids`` stands in for what the coordinator holds after a fetch.
-    Pass ``None`` to model a coordinator that has no data at all.
+def make_stpasa_data_sensor(stpasa_result=None) -> StpasaDataSensor:
+    sensor = StpasaDataSensor.__new__(StpasaDataSensor)
+    sensor.coordinator = MagicMock()
+    sensor._region = REGION
+    sensor._entry = MagicMock(entry_id="entry_test")
+    store = MagicMock()
+    store.latest.return_value = stpasa_result
+    sensor.hass = MagicMock()
+    sensor.hass.data = {DOMAIN: {"stpasa_stores": {REGION: store}}}
+    return sensor
+
+
+def test_pd7day_data_sensor_state_and_unrecorded_forecast():
+    period = make_real_price_period(datetime(2026, 6, 12, 10, 30, tzinfo=NEM_TZ), value=0.10)
+    coordinator_data = MagicMock()
+    coordinator_data.prices = {REGION: make_pd7day_data(RUN_DT, [period])}
+    sensor = make_pd7day_data_sensor(coordinator_data=coordinator_data)
+
+    assert sensor.native_value == RUN_DT
+    attrs = sensor.extra_state_attributes
+    assert attrs["run_datetime"] == RUN_DT
+    assert attrs["region"] == REGION
+    assert attrs["interval_count"] == 1
+    entry = attrs["forecast"][0]
+    assert entry["raw_rrp"] == 0.10
+    assert set(entry) == {
+        "time", "nemtime", "raw_rrp", "calibrated",
+        "p10", "p90", "calibrated_source", "band_source", "horizon_hours",
+    }
+    assert "forecast" in PD7DayDataSensor._unrecorded_attributes
+
+
+def test_pd7day_data_sensor_unavailable_without_data():
+    sensor = make_pd7day_data_sensor(coordinator_data=None)
+    assert sensor.native_value == STATE_UNAVAILABLE
+    assert sensor.extra_state_attributes == {}
+
+
+def test_stpasa_data_sensor_state_and_unrecorded_intervals():
+    sensor = make_stpasa_data_sensor(stpasa_result=make_stpasa_result())
+
+    assert sensor.native_value == RUN_DT
+    attrs = sensor.extra_state_attributes
+    assert attrs["run_datetime"] == RUN_DT
+    assert attrs["region"] == REGION
+    assert attrs["interval_count"] == 1
+    interval = attrs["intervals"][0]
+    assert interval["demand50"] == 5500.0
+    assert interval["surpluscapacity"] == 1200.0
+    assert set(interval) == {
+        "interval_datetime", "demand10", "demand50", "demand90",
+        "surpluscapacity", "ss_solar_uigf", "ss_wind_uigf",
+    }
+    assert "intervals" in StpasaDataSensor._unrecorded_attributes
+
+
+def test_stpasa_data_sensor_unavailable_without_data():
+    sensor = make_stpasa_data_sensor(stpasa_result=None)
+    assert sensor.native_value == STATE_UNAVAILABLE
+    assert sensor.extra_state_attributes == {}
+
+
+# ── tariff_sensor.py: forecast-mode behaviour and dispatch selection ──────────
+# These exercise NemPd7dayTariffSensor and belong in test_tariff_sensor.py;
+# they are kept here because that file is owned elsewhere. Lift them as a block.
+
+def make_tariff_sensor(
+    region="QLD1",
+    distributor="energex",
+    tariff_code="8400",
+    price_periods=None,
+    mode=FORECAST_MODE_DAYS_2_7,
+    active_tariff="",
+) -> NemPd7dayTariffSensor:
+    """Construct a NemPd7dayTariffSensor with mode-aware options.
+
+    ``mode=None`` models an entry from before forecast_mode existed (no options).
     """
     coordinator = MagicMock()
-    if live_ic_ids is None:
-        coordinator.data = None
-    else:
+    if price_periods is not None:
+        price_data = MagicMock()
+        price_data.forecast = price_periods
         coordinator.data = MagicMock()
-        coordinator.data.interconnectors = {ic: MagicMock() for ic in live_ic_ids}
+        coordinator.data.prices = {region: price_data}
+    else:
+        coordinator.data = None
+    coordinator.last_update_success = True
 
-    entry = MagicMock()
-    entry.entry_id = f"entry_ic_{region.lower()}"
-    entry.data = {CONF_REGION: region}
-    entry.options = {}
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator,
-        store=MagicMock(),
-        dispatch=None,
+    options = {} if mode is None else {CONF_FORECAST_MODE: mode, CONF_ACTIVE_TARIFF: active_tariff}
+    entry = make_entry("entry_1", region, options, coordinator)
+
+    sensor = NemPd7dayTariffSensor.__new__(NemPd7dayTariffSensor)
+    sensor.coordinator = coordinator
+    sensor._region = region
+    sensor._distributor = distributor
+    sensor._tariff_code = tariff_code
+    sensor._entry = entry
+    sensor._store = None
+    sensor._attr_unique_id = f"entry_1_{region}_{distributor}_{tariff_code}_tariff"
+    sensor._attr_name = f"{distributor.title()} {get_tariff_name(distributor, tariff_code)} Tariff ({tariff_code})"
+    sensor.hass = MagicMock()
+    sensor.hass.data = {DOMAIN: {}}
+    sensor.hass.states.get.return_value = None
+    return sensor
+
+
+def current_interval_period(value=0.10):
+    now = datetime.now(NEM_TZ)
+    current_end = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0) + timedelta(minutes=30)
+    return make_price_period(current_end, value=value)
+
+
+@pytest.mark.parametrize(
+    "tariff_code, mode, active_tariff, expected",
+    [
+        pytest.param("6900", FORECAST_MODE_DAYS_2_7, "energex/6900", True, id="days_2_7 active tariff"),
+        pytest.param("8900", FORECAST_MODE_DAYS_2_7, "energex/6900", True, id="days_2_7 other default tariff"),
+        pytest.param("8400", FORECAST_MODE_DAYS_2_7, "energex/6900", False, id="days_2_7 non-default tariff"),
+        pytest.param("6900", FORECAST_MODE_DAYS_2_7, "", True, id="days_2_7 no active tariff"),
+        pytest.param("6900", FORECAST_MODE_FULL, "energex/8900", True, id="days_1_7 default tariff"),
+        pytest.param("8400", FORECAST_MODE_FULL, "", False, id="days_1_7 non-default tariff"),
+        pytest.param("6900", None, "", True, id="no forecast_mode option"),
+    ],
+)
+def test_tariff_visibility_uses_default_enabled_tariffs_regardless_of_mode(tariff_code, mode, active_tariff, expected):
+    """Base tariff sensors are enabled by DEFAULT_ENABLED_TARIFFS alone; mode and active_tariff do not change it."""
+    sensor = make_tariff_sensor(
+        distributor="energex", tariff_code=tariff_code, mode=mode, active_tariff=active_tariff,
     )
-
-    hass = MagicMock()
-    hass.data = {DOMAIN: {}}
-
-    created = []
-
-    def _add_entities(entities, update_before_add=False):
-        created.extend(entities)
-
-    run_async(sensor_async_setup_entry(hass, entry, _add_entities))
-
-    return sorted(
-        ent._ic_id for ent in created if isinstance(ent, PD7DayInterconnectorSensor)
-    )
+    assert sensor.entity_registry_enabled_default is expected
 
 
-def test_vic1_interconnector_map_uses_the_published_heywood_id():
+@pytest.mark.parametrize("mode", [FORECAST_MODE_FULL, FORECAST_MODE_DAYS_2_7])
+def test_tariff_forecast_is_untrimmed_in_every_mode(mode):
+    """The base tariff sensor publishes every interval; only the Day 2-7 tariff sensor trims."""
+    base = datetime.now(tz=NEM_TZ).replace(minute=0, second=0, microsecond=0)
+    periods = [make_price_period(base + timedelta(minutes=30 * (i + 1)), value=0.05) for i in range(100)]
+    sensor = make_tariff_sensor(price_periods=periods, mode=mode)
+
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+        attrs = sensor.extra_state_attributes
+
+    assert len(attrs["forecast"]) == 100
+
+
+@pytest.mark.parametrize(
+    "dispatch_prices, lib_c_kwh, rrp_mwh",
+    [
+        # Dispatch price 0.050 $/kWh is 50 $/MWh into the split.
+        pytest.param({"QLD1": DispatchPrice("QLD1", "2026/05/21 09:30:00", 0.050)}, 12.5, 50.0, id="dispatch price"),
+        # Fallback uses the PD7DAY forecast (0.10 $/kWh = 100 $/MWh).
+        pytest.param({}, 15.5, 100.0, id="pd7day fallback"),
+    ],
+)
+def test_tariff_native_value_prefers_dispatch_then_pd7day(dispatch_prices, lib_c_kwh, rrp_mwh):
+    sensor = make_tariff_sensor(price_periods=[current_interval_period(0.10)])
+    dispatch = MagicMock()
+    dispatch.prices = dispatch_prices
+    sensor._entry.runtime_data.dispatch = dispatch
+
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=lib_c_kwh):
+        val = sensor.native_value
+
+    assert val is not None
+    expected = expected_import_price(lib_c_kwh, rrp_mwh)
+    assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
+
+
+def test_tariff_sensor_subscribes_to_dispatch_coordinator():
+    sensor = make_tariff_sensor(distributor="energex", tariff_code="6900")
+    dispatch = MagicMock()
+    dispatch.async_add_listener = MagicMock(return_value=lambda: None)
+    sensor._entry.runtime_data.dispatch = dispatch
+    sensor.async_on_remove = MagicMock()
+    sensor.async_write_ha_state = MagicMock()
+    sensor._schedule_next_boundary = lambda: None  # avoid the dt_util mock in full-suite runs
+
+    run_async(sensor.async_added_to_hass())
+
+    dispatch.async_add_listener.assert_called_once()
+
+
+def test_get_tariff_name_from_library():
+    """get_tariff_name() returns the library's name when it is installed (#159).
+
+    The literals this test used to pin were the const.py fallbacks, which is
+    what the lookup silently returned once the library replaced its
+    ``module.tariffs`` attribute. The expectation now comes from the library
+    itself, and from the constants only when it is absent.
     """
-    VIC1 must carry a Heywood sensor.
+    def expected(distributor, code):
+        try:
+            mod = importlib.import_module(
+                "aemo_to_tariff." + {"sapn": "sapower"}.get(distributor, distributor)
+            )
+        except ImportError:
+            return _const_mod.TARIFF_NAMES[distributor][code]
+        with contextlib.redirect_stdout(io.StringIO()):
+            table = mod.get_tariffs() if hasattr(mod, "get_tariffs") else mod.tariffs
+        return table[code]["name"]
 
-    AEMO publishes Heywood as "V-SA". The map previously carried "SA1-VIC1",
-    an id that never appears in the PD7DAY file, so VIC1 silently had no
-    Heywood sensor while SA1 did. Issue #46.
-    """
-    assert "V-SA" in VIC1_INTERCONNECTORS
-    assert "SA1-VIC1" not in VIC1_INTERCONNECTORS
-
-
-def test_every_interconnector_is_mapped_to_both_of_its_regions():
-    """
-    Each interconnector joins two regions, so it must appear in exactly two
-    region sets. A one sided entry means one end of the link has no sensor,
-    which is how issue #46 went unnoticed.
-    """
-    counts = Counter(
-        ic for ics in REGION_INTERCONNECTORS.values() for ic in ics
-    )
-    one_sided = sorted(ic for ic, n in counts.items() if n != 2)
-    assert one_sided == [], (
-        "Every interconnector must be mapped to both of its regions. "
-        f"One sided entries: {one_sided}"
-    )
-
-
-def test_interconnector_entities_do_not_depend_on_live_fetch_contents():
-    """
-    The entity set must be a function of configuration, not of whatever AEMO
-    published at the moment setup ran. A restart where one interconnector is
-    missing from the file must still create its entity, so it reports
-    unavailable rather than disappearing from dashboards and history.
-    Issue #48.
-    """
-    expected = sorted(NSW1_INTERCONNECTORS)
-
-    no_data = _setup_interconnectors("NSW1", None)
-    full_fetch = _setup_interconnectors(
-        "NSW1", ["NSW1-QLD1", "VIC1-NSW1", "N-Q-MNSP1"]
-    )
-    partial_fetch = _setup_interconnectors("NSW1", ["NSW1-QLD1"])
-
-    assert no_data == expected
-    assert full_fetch == expected
-    assert partial_fetch == expected, (
-        "A fetch missing an interconnector must not drop its entity. "
-        f"Got {partial_fetch}, expected {expected}"
-    )
-
-
-def test_nsw1_creates_the_terranora_interconnector_sensor():
-    """
-    N-Q-MNSP1 is mapped to NSW1 as well as QLD1, but a live install carried it
-    only on the QLD1 side. Issue #47.
-    """
-    assert "N-Q-MNSP1" in _setup_interconnectors(
-        "NSW1", ["NSW1-QLD1", "VIC1-NSW1", "N-Q-MNSP1"]
-    )
-
-
-def test_interconnector_entity_count_matches_the_map_for_every_region():
-    """Guards the total, so a future map edit cannot silently drop an end."""
-    for region, mapped in REGION_INTERCONNECTORS.items():
-        created = _setup_interconnectors(region, [])
-        assert created == sorted(mapped), (
-            f"{region} created {created}, map says {sorted(mapped)}"
-        )
+    assert get_tariff_name("energex", "6900") == expected("energex", "6900")
+    assert get_tariff_name("ergon", "ERTOUET1") == expected("ergon", "ERTOUET1")
+    assert get_tariff_name("sapn", "RTOU") == expected("sapn", "RTOU")  # sapn is sapower in the library
+    assert get_tariff_name("energex", "ZZZZZ") == "ZZZZZ"  # unknown code falls back to the code

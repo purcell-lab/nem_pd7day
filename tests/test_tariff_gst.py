@@ -38,27 +38,25 @@ from __future__ import annotations
 import contextlib
 import datetime
 import io
-import os
-import sys
+from unittest.mock import MagicMock
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)
+from support import install_ha_stubs, load_chain
 
-# Reuse the HA stubbing and sensor factory from the existing tariff tests.
-import tests.test_tariff_sensor as tts  # noqa: E402,F401
-from tests.test_tariff_sensor import make_tariff_sensor  # noqa: E402
+install_ha_stubs()
 
-from custom_components.nem_pd7day import tariff_catalogue  # noqa: E402
-from custom_components.nem_pd7day.const import DISTRIBUTOR_TARIFFS  # noqa: E402
-from custom_components.nem_pd7day.tariff_sensor import (  # noqa: E402
-    GST,
-    _DEFAULT_DLF,
-    _DEFAULT_MARKET,
-    _DEFAULT_MLF,
-    _LIB_APPLIES_GST,
+_const_mod, _nem_time, _client_mod, _store_mod, _coord_mod, tariff_catalogue, _tariff_mod = load_chain(
+    "const", "nem_time", "pd7day_client", "calibration_store", "coordinator",
+    "tariff_catalogue", "tariff_sensor",
 )
+
+GST = _tariff_mod.GST
+_DEFAULT_DLF = _tariff_mod._DEFAULT_DLF
+_DEFAULT_MARKET = _tariff_mod._DEFAULT_MARKET
+_DEFAULT_MLF = _tariff_mod._DEFAULT_MLF
+_LIB_APPLIES_GST = _tariff_mod._LIB_APPLIES_GST
+NemPd7dayTariffSensor = _tariff_mod.NemPd7dayTariffSensor
 
 pytest.importorskip("aemo_to_tariff")
 from aemo_to_tariff import spot_to_tariff  # noqa: E402
@@ -74,7 +72,7 @@ NEM = datetime.timezone(datetime.timedelta(hours=10))
 # where the network rate, and therefore the double counted GST, is largest.
 PEAK = datetime.datetime(2026, 9, 18, 18, 30, tzinfo=NEM)
 
-DISTRIBUTORS = sorted(DISTRIBUTOR_TARIFFS)
+DISTRIBUTORS = sorted(_const_mod.DISTRIBUTOR_TARIFFS)
 
 REGIONS = {
     "energex": "QLD1", "ergon": "QLD1",
@@ -274,11 +272,13 @@ def test_spot_component_is_never_gst_inclusive(distributor):
 
 
 def _price(distributor: str, code: str, calibrated: float, fee: float = 0.0) -> float:
-    """Published import price in $/kWh for one interval."""
-    sensor = make_tariff_sensor(
-        region=REGIONS[distributor], distributor=distributor, tariff_code=code,
-    )
-    sensor._get_additional_fee = lambda: fee
+    """Published import price in $/kWh for one interval, through a real sensor."""
+    coordinator = MagicMock()
+    coordinator.data = None
+    entry = MagicMock()
+    entry.entry_id = "entry_gst"
+    entry.options = {}
+    sensor = NemPd7dayTariffSensor(coordinator, entry, REGIONS[distributor], distributor, code)
     rrp_mwh = calibrated * 1000
     return sensor._retail_price(_convert(distributor, code, rrp_mwh), rrp_mwh, fee)
 

@@ -1,82 +1,46 @@
 """
-Tests for ForecastStore (forecast_store.py) and the two-phase startup logic.
+ForecastStore (forecast_store.py): the per region cache of the last
+PD7DayResult that lets a restart publish the previous run before the first
+fetch completes.
 
-Covers:
-  - PD7DayResult serialise → save → load round-trip preserves the object tree
-  - Cache staleness: updated_at older than 35 min returns None from load()
-  - Fresh cache (updated_at within 35 min) is restored
-  - Two-phase startup: cache hit → async_set_updated_data, no first_refresh
-  - No-cache path: first install → async_config_entry_first_refresh
+Covers the PD7DayResult serialise -> save -> load round trip over every nested
+dataclass, optional None fields, staleness (updated_at older than
+_CACHE_MAX_AGE_S loads as None), the first-install and corrupt-cache paths and
+per region key isolation.
 
-Pure Python — HA modules are stubbed, no Home Assistant install required.
-
-Run with:  python -m pytest tests/test_forecast_store.py -v
+The two-phase startup branch in __init__.async_setup_entry (cache hit ->
+async_set_updated_data plus a staggered background refresh, otherwise
+async_config_entry_first_refresh) is not exercised here: __init__ cannot be
+loaded without Home Assistant, and the tests that used to claim it drove a
+local copy of that branch. What the branch keys on, load() returning None or a
+result, is what the staleness tests assert.
 """
 from __future__ import annotations
 
-import asyncio
-import importlib.util
-import os
 import sys
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from support import (
+    NEM_TZ,
+    install_ha_stubs,
+    load_chain,
+    make_pd7day_data,
+    make_real_price_period,
+    nem_iso,
+    run_async,
+)
 
-
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-# ── Stub HA + aiohttp so the integration modules import cleanly ───────────────
-# conftest.py's autouse fixture imports custom_components.nem_pd7day.sensor, so
-# we register the same broad set of HA stubs that test_sensor.py relies on —
-# otherwise running this file in isolation fails on sensor.py's HA imports.
-sys.modules.setdefault("aiohttp", MagicMock())
-for ha_mod in [
-    "homeassistant", "homeassistant.core", "homeassistant.helpers",
-    "homeassistant.helpers.storage", "homeassistant.helpers.event",
-    "homeassistant.helpers.aiohttp_client",
-    "homeassistant.helpers.update_coordinator",
-    "homeassistant.helpers.entity_platform",
-    "homeassistant.helpers.device_registry",
-    "homeassistant.config_entries",
-    "homeassistant.const", "homeassistant.util", "homeassistant.util.dt",
-    "homeassistant.components", "homeassistant.components.sensor",
-]:
-    sys.modules.setdefault(ha_mod, MagicMock())
-
-import enum as _enum
-
-_device_registry_mock = MagicMock()
-_device_registry_mock.DeviceInfo = dict
-sys.modules["homeassistant.helpers.device_registry"] = _device_registry_mock
+install_ha_stubs()
 
 
-class _SensorDeviceClass(str, _enum.Enum):
-    MONETARY = "monetary"
-    ENERGY = "energy"
-    TIMESTAMP = "timestamp"
-
-
-class _SensorStateClass(str, _enum.Enum):
-    MEASUREMENT = "measurement"
-    TOTAL_INCREASING = "total_increasing"
-
-
-_sensor_mock = MagicMock()
-_sensor_mock.SensorDeviceClass = _SensorDeviceClass
-_sensor_mock.SensorStateClass = _SensorStateClass
-_sensor_mock.SensorEntity = object
-sys.modules["homeassistant.components.sensor"] = _sensor_mock
-
-
-# Configurable in-memory fake Store: each instance keyed by storage key.
 class _FakeStore:
+    """HA Store stand-in backed by a class dict keyed by storage key.
+
+    support.FakeStore loads None; this one lets a second ForecastStore read
+    what the first saved, which is the restart the module exists for.
+    """
+
     _backing: dict[str, dict] = {}
 
     def __init__(self, hass, version, key):
@@ -89,105 +53,32 @@ class _FakeStore:
         _FakeStore._backing[self._key] = data
 
 
-_storage_mock = MagicMock()
-_storage_mock.Store = _FakeStore
-sys.modules["homeassistant.helpers.storage"] = _storage_mock
+sys.modules["homeassistant.helpers.storage"].Store = _FakeStore
 
-
-# DataUpdateCoordinator / CoordinatorEntity stubs — real classes so the sensor
-# chain (imported by conftest's autouse fixture) builds without metaclass clashes.
-class _FakeCoordinator:
-    def __init__(self, hass, logger, name, update_interval):
-        self.hass = hass
-        self.last_update_success = True
-        self.data = None
-
-    def __class_getitem__(cls, item):
-        return cls
-
-    async def async_config_entry_first_refresh(self):
-        pass
-
-    async def async_refresh(self):
-        pass
-
-
-class _FakeCoordinatorEntity:
-    def __init__(self, coordinator=None, **kwargs):
-        self.coordinator = coordinator
-
-    def __class_getitem__(cls, item):
-        return cls
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-
-
-_uc_mock = MagicMock()
-_uc_mock.DataUpdateCoordinator = _FakeCoordinator
-_uc_mock.UpdateFailed = Exception
-_uc_mock.CoordinatorEntity = _FakeCoordinatorEntity
-sys.modules["homeassistant.helpers.update_coordinator"] = _uc_mock
-
-_const_mod = _load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-_nem_time = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-_client_mod = _load(
-    "custom_components.nem_pd7day.pd7day_client",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_client.py"),
-)
-_fs_mod = _load(
-    "custom_components.nem_pd7day.forecast_store",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "forecast_store.py"),
+_const_mod, _nem_time, _client_mod, _fs_mod = load_chain(
+    "const", "nem_time", "pd7day_client", "forecast_store"
 )
 
-from custom_components.nem_pd7day.forecast_store import ForecastStore, _CACHE_MAX_AGE_S
-from custom_components.nem_pd7day.pd7day_client import (
-    CaseSolutionData,
-    CheapestWindow,
-    GasForecastPeriod,
-    InterconnectorData,
-    InterconnectorPeriod,
-    MarketSummaryData,
-    PD7DayData,
-    PD7DayResult,
-    PricePeriod,
-)
-
-NEM_TZ = timezone(timedelta(hours=10))
-
-
-def run_async(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
-
-
-def nem_iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
+ForecastStore = _fs_mod.ForecastStore
+_CACHE_MAX_AGE_S = _fs_mod._CACHE_MAX_AGE_S
+CaseSolutionData = _client_mod.CaseSolutionData
+CheapestWindow = _client_mod.CheapestWindow
+GasForecastPeriod = _client_mod.GasForecastPeriod
+InterconnectorData = _client_mod.InterconnectorData
+InterconnectorPeriod = _client_mod.InterconnectorPeriod
+MarketSummaryData = _client_mod.MarketSummaryData
+PD7DayResult = _client_mod.PD7DayResult
 
 
 def _make_result(updated_at: str) -> PD7DayResult:
-    """Build a fully-populated PD7DayResult covering all nested dataclasses."""
+    """A fully populated PD7DayResult covering every nested dataclass."""
     base = datetime(2026, 4, 15, 14, 0, tzinfo=NEM_TZ)
     periods = [
-        PricePeriod(
-            nemtime=nem_iso(base + timedelta(minutes=30 * i)),
-            time=nem_iso(base + timedelta(minutes=30 * i - 30)),
-            value=round(0.10 + 0.01 * i, 6),
-        )
+        make_real_price_period(_client_mod, base + timedelta(minutes=30 * i), round(0.10 + 0.01 * i, 6))
         for i in range(4)
     ]
-    price = PD7DayData(
-        region="QLD1",
-        source_file="PUBLIC_PD7DAY_20260415.ZIP",
-        forecast_generated_at=nem_iso(base),
-        interval_minutes=30,
-        current_value=periods[0].value,
-        next_value=periods[1].value,
+    price = make_pd7day_data(
+        _client_mod, base, periods,
         min_24h_value=0.10,
         max_24h_value=0.13,
         cheapest_2h_window=CheapestWindow(
@@ -198,7 +89,6 @@ def _make_result(updated_at: str) -> PD7DayResult:
             avg_value=0.115,
             points=4,
         ),
-        forecast=periods,
     )
     market = MarketSummaryData(
         run_datetime=nem_iso(base),
@@ -257,10 +147,11 @@ def _new_store(region="QLD1") -> ForecastStore:
     return ForecastStore(MagicMock(), region)
 
 
-# ── Round-trip ────────────────────────────────────────────────────────────────
+# ── Round trip ───────────────────────────────────────────────────────────────
 
 
 def test_save_load_round_trip_preserves_tree():
+    """A fresh cache restores every nested dataclass, field for field."""
     store = _new_store()
     original = _make_result(_fresh_iso())
     run_async(store.save(original))
@@ -299,17 +190,8 @@ def test_round_trip_handles_optional_none_fields():
         source_file="PUBLIC_PD7DAY_X.ZIP",
         case=None,
         prices={
-            "QLD1": PD7DayData(
-                region="QLD1",
-                source_file="PUBLIC_PD7DAY_X.ZIP",
-                forecast_generated_at=None,
-                interval_minutes=30,
-                current_value=0.05,
-                next_value=None,
-                min_24h_value=None,
-                max_24h_value=None,
-                cheapest_2h_window=None,
-                forecast=[],
+            "QLD1": make_pd7day_data(
+                _client_mod, None, [], source_file="PUBLIC_PD7DAY_X.ZIP", current_value=0.05
             )
         },
         market_summary=None,
@@ -328,34 +210,25 @@ def test_round_trip_handles_optional_none_fields():
     assert restored.prices["QLD1"].forecast == []
 
 
-# ── Staleness ──────────────────────────────────────────────────────────────────
+# ── Staleness and the empty paths ────────────────────────────────────────────
 
 
 def test_load_returns_none_when_stale():
-    """updated_at older than 35 minutes → load() returns None."""
+    """updated_at older than _CACHE_MAX_AGE_S (35 minutes) loads as None."""
     store = _new_store()
     run_async(store.save(_make_result(_stale_iso())))
     assert run_async(store.load()) is None
 
 
-def test_load_returns_result_when_fresh():
-    """updated_at within 35 minutes → load() returns the result."""
-    store = _new_store()
-    run_async(store.save(_make_result(_fresh_iso())))
-    restored = run_async(store.load())
-    assert restored is not None
-    assert restored.source_file == "PUBLIC_PD7DAY_20260415.ZIP"
-
-
 def test_load_returns_none_when_no_cache():
-    """Empty backing store → load() returns None (first install)."""
+    """Empty backing store: first install."""
     store = _new_store()
     assert run_async(store.load()) is None
 
 
 def test_load_returns_none_when_updated_at_missing():
+    """A corrupt or legacy payload without updated_at is not served."""
     store = _new_store()
-    # Save a payload with no updated_at (simulating a corrupt/legacy cache).
     _FakeStore._backing["nem_pd7day.forecast.qld1"] = {"source_file": "x", "prices": {}}
     assert run_async(store.load()) is None
 
@@ -368,65 +241,3 @@ def test_per_region_keys_are_isolated():
     run_async(qld.save(_make_result(_fresh_iso())))
     assert run_async(nsw.load()) is None
     assert run_async(qld.load()) is not None
-
-
-# ── Two-phase startup decision logic ───────────────────────────────────────────
-#
-# These tests exercise the branch that async_setup_entry takes based on the
-# cache load result, without standing up the full HA setup machinery.
-
-
-def _startup_branch(coordinator, forecast_store, region, create_bg_task):
-    """Mirror the two-phase startup decision in async_setup_entry."""
-    cached = run_async(forecast_store.load())
-    if cached is not None:
-        coordinator.async_set_updated_data(cached)
-        region_index = _const_mod.REGION_STARTUP_ORDER.get(region, 0)
-        delay = 30 + region_index * 5
-        create_bg_task(delay)
-    else:
-        run_async(coordinator.async_config_entry_first_refresh())
-
-
-def test_two_phase_cache_hit_sets_data_no_first_refresh():
-    store = _new_store("NSW1")
-    run_async(store.save(_make_result(_fresh_iso())))
-
-    coordinator = MagicMock()
-    coordinator.async_config_entry_first_refresh = AsyncMock()
-    delays: list[float] = []
-
-    _startup_branch(coordinator, store, "NSW1", lambda d: delays.append(d))
-
-    coordinator.async_set_updated_data.assert_called_once()
-    coordinator.async_config_entry_first_refresh.assert_not_called()
-    # NSW1 index = 1 → delay 35s
-    assert delays == [35]
-
-
-def test_two_phase_no_cache_calls_first_refresh():
-    store = _new_store("QLD1")  # empty backing
-
-    coordinator = MagicMock()
-    coordinator.async_config_entry_first_refresh = AsyncMock()
-    delays: list[float] = []
-
-    _startup_branch(coordinator, store, "QLD1", lambda d: delays.append(d))
-
-    coordinator.async_set_updated_data.assert_not_called()
-    coordinator.async_config_entry_first_refresh.assert_called_once()
-    assert delays == []
-
-
-def test_two_phase_stale_cache_calls_first_refresh():
-    store = _new_store("VIC1")
-    run_async(store.save(_make_result(_stale_iso())))
-
-    coordinator = MagicMock()
-    coordinator.async_config_entry_first_refresh = AsyncMock()
-    delays: list[float] = []
-
-    _startup_branch(coordinator, store, "VIC1", lambda d: delays.append(d))
-
-    coordinator.async_set_updated_data.assert_not_called()
-    coordinator.async_config_entry_first_refresh.assert_called_once()

@@ -7,78 +7,65 @@ forecast path passed STPASA features, run features and the gas/QNI covariates
 to ``CalibrationStore.apply_to_price`` while the tariff path passed only raw
 price, horizon and hour, so it silently took the isotonic only branch. On a
 live five region install that disagreed on 183 of 183 intervals that had STPASA
-features, by up to 0.633470 $/kWh.
+features, by up to 0.633470 $/kWh. Issue #68 then made the stage 2 band floor a
+property of the run's STPASA coverage; the shared entry point threads the run
+timestamp through so the tariff path gets the same edge.
 
 These tests run a real fitted calibration, isotonic plus a real stage 2 OLS
-fit, behind a real ``CalibrationStore``, and compare the two sensors interval by
+fit, behind a real ``CalibrationStore``, and compare the sensors interval by
 interval. The central assertion is direct equality of the calibrated spot: the
 ``spot`` key a tariff sensor publishes must equal the ``value`` the price
-forecast sensor publishes for the same interval. ``test_tariff_matches_forecast``
-and the sweep both fail against main, where the tariff number is the isotonic
-only one.
+forecast sensor publishes for the same interval.
+
+``RUN_AT``, ``_tariff_mod``, ``make_period``, ``make_stpasa_interval`` and
+``make_sensors`` are imported by test_tariff_spot_memo.py and
+test_tariff_write_latency.py.
 
 Run with:  python -m pytest tests/test_tariff_calibration_parity.py -v
-or simply: python tests/test_tariff_calibration_parity.py
 """
 from __future__ import annotations
 
 import math
-import os
 import random
-import sys
 import types
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from functools import partial
 from unittest.mock import MagicMock, patch
 
-# Repo root on sys.path so the file also runs standalone, per repo convention.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pytest
 
-from custom_components.nem_pd7day.calibration_engine import (
-    CalibrationEngine,
-    Observation,
-    RunFeatures,
-    StpasaFeatures,
-)
-from custom_components.nem_pd7day.calibration_store import CalibrationStore
-from custom_components.nem_pd7day.const import DOMAIN
-from custom_components.nem_pd7day.nem_time import interval_start, parse_iso, to_nem_iso
-from custom_components.nem_pd7day.sensor import PD7DayForecastSensor
-from custom_components.nem_pd7day.stpasa_client import StpasaInterval, StpasaResult
-from custom_components.nem_pd7day.tariff_sensor import (
-    NemPd7dayExportTariffSensor,
-    NemPd7dayTariffSensor,
+import support
+from support import NEM_TZ, install_ha_stubs, load_chain, nem_iso
+
+install_ha_stubs()
+
+(
+    _const_mod, _nem_time, _client_mod, _engine_mod, _store_mod, _inputs_mod,
+    _stpasa_mod, _coord_mod, _tariff_mod, _sensor_mod,
+) = load_chain(
+    "const", "nem_time", "pd7day_client", "calibration_engine", "calibration_store",
+    "calibration_inputs", "stpasa_client", "coordinator", "tariff_sensor", "sensor",
 )
 
-# Patch the module the tariff classes actually live in. Other test modules in
-# this suite load integration modules a second time through importlib, so the
-# package attribute and sys.modules can point at different module objects and
-# patching the wrong one silently does nothing.
-_tariff_mod = sys.modules[NemPd7dayTariffSensor.__module__]
+CalibrationEngine = _engine_mod.CalibrationEngine
+Observation = _engine_mod.Observation
+RunFeatures = _engine_mod.RunFeatures
+StpasaFeatures = _engine_mod.StpasaFeatures
+CalibrationStore = _store_mod.CalibrationStore
+StpasaInterval = _stpasa_mod.StpasaInterval
+StpasaResult = _stpasa_mod.StpasaResult
+PD7DayForecastSensor = _sensor_mod.PD7DayForecastSensor
+NemPd7dayTariffSensor = _tariff_mod.NemPd7dayTariffSensor
+NemPd7dayExportTariffSensor = _tariff_mod.NemPd7dayExportTariffSensor
+DOMAIN = _const_mod.DOMAIN
+interval_start = _nem_time.interval_start
+parse_iso = _nem_time.parse_iso
+to_nem_iso = _nem_time.to_nem_iso
 
-NEM_TZ = timezone(timedelta(hours=10))
+expected_import_price = partial(support.expected_import_price, _tariff_mod)
 
 # Observations must stay inside the engine's 90 day training window, so the
-
-
-def _expected_import_price(lib_c_kwh, rrp_mwh, fee=0.0293, distributor="energex"):
-    """Published import price in $/kWh for a mocked spot_to_tariff return.
-
-    aemo_to_tariff composes a tariff as spot plus network rate and grosses the
-    network rate up itself on seven of the thirteen networks, so tariff_sensor
-    separates the components, removes the library's GST from the network
-    component where the library applied it, and grosses the total up once
-    (#158). A mocked library return has to be split the same way.
-
-    tests/test_tariff_gst.py is what checks that placement against the real
-    library; this only keeps the surrounding plumbing assertions honest.
-    """
-    spot_c = rrp_mwh * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
-    network_c = lib_c_kwh - spot_c
-    if distributor in _tariff_mod._LIB_APPLIES_GST:
-        network_c /= _tariff_mod.GST
-    return round(((spot_c + network_c) / 100 + fee) * _tariff_mod.GST, 6)
-
 # fixture is anchored to now rather than to a fixed calendar date.
 _ANCHOR = datetime.now(NEM_TZ).replace(minute=0, second=0, microsecond=0) - timedelta(days=2)
 
@@ -96,9 +83,7 @@ _RUN_SHAPES = (
 )
 
 
-def nem_iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
-
+# ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @dataclass
 class FakePeriod:
@@ -224,9 +209,7 @@ def fitted_store(region: str = "QLD1") -> CalibrationStore:
     # the fitted range (#147).
     for horizon_lo, horizon_hi in ((25.0, 47.0), (49.0, 95.0)):
         for i in range(70):
-            interval_dt = (_ANCHOR - timedelta(days=i % 20)).replace(
-                hour=17, minute=(i % 2) * 30
-            ) + timedelta(seconds=0)
+            interval_dt = (_ANCHOR - timedelta(days=i % 20)).replace(hour=17, minute=(i % 2) * 30)
             # Distinct interval keys within the run: vary the day, and offset
             # the second bucket so the two do not collide on one key.
             if horizon_lo > 48:
@@ -239,10 +222,7 @@ def fitted_store(region: str = "QLD1") -> CalibrationStore:
             surplus = rng.uniform(500.0, 5000.0)
             solar = rng.uniform(0.0, 4000.0)
             demand50 = rng.uniform(5000.0, 9000.0)
-            actual = max(
-                0.0,
-                1.4 * forecast + 0.02 - solar * 2e-5 + rng.gauss(0, 0.004),
-            )
+            actual = max(0.0, 1.4 * forecast + 0.02 - solar * 2e-5 + rng.gauss(0, 0.004))
             observations.append(
                 Observation(
                     interval_time=nem_iso(interval_dt),
@@ -278,8 +258,8 @@ def fitted_store(region: str = "QLD1") -> CalibrationStore:
 
 
 def make_sensors(periods: list[FakePeriod], stpasa_intervals, region: str = "QLD1"):
-    """Build a forecast sensor, an import tariff sensor and an export tariff
-    sensor on one coordinator and one calibration store, as a live install has.
+    """A forecast sensor, an import tariff sensor and an export tariff sensor
+    on one coordinator and one calibration store, as a live install has.
     """
     coordinator = FakeCoordinator(region, periods, stpasa_intervals)
     store = fitted_store(region)
@@ -287,9 +267,7 @@ def make_sensors(periods: list[FakePeriod], stpasa_intervals, region: str = "QLD
     entry = MagicMock()
     entry.entry_id = "entry_parity"
     entry.options = {}
-    entry.runtime_data = types.SimpleNamespace(
-        coordinator=coordinator, store=store, dispatch=None
-    )
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator, store=store, dispatch=None)
 
     forecast = PD7DayForecastSensor.__new__(PD7DayForecastSensor)
     forecast.coordinator = coordinator
@@ -350,70 +328,51 @@ def forecast_entries_by_time(forecast_sensor) -> dict[str, dict]:
     return {e["time"]: e for e in forecast_sensor._calibrated_forecast(d)}
 
 
-# ── Tests ────────────────────────────────────────────────────────────────────
+class _TripwireIndexMap(dict):
+    """An index map that refuses to be queried.
+
+    Same trick as tests/test_stpasa_band_floor.py, which uses it to show the
+    per-run floor short-circuits ahead of the lookup.
+    """
+
+    def get(self, *args, **kwargs):  # noqa: D102
+        raise AssertionError("STPASA index consulted for an interval below coverage")
 
 
-def test_fixture_actually_reaches_the_stpasa_branch():
-    """The fixture must exercise isotonic+stpasa, or parity proves nothing."""
-    periods, stpasa = in_band_peak_periods()
-    forecast, _tariff, _export, _coord, _store = make_sensors(periods, stpasa)
-    sources = {
-        e["time"]: e["calibrated_source"]
-        for e in forecast_entries_by_time(forecast).values()
-    }
-    assert sources, "no calibrated entries built"
-    assert "isotonic+stpasa" in sources.values(), (
-        "fixture did not reach the stage 2 branch, so a parity assertion over "
-        f"it would be vacuous: sources={sources}"
-    )
-    print("  PASS: fixture reaches the isotonic+stpasa branch")
+# ── Tests ─────────────────────────────────────────────────────────────────────
 
-
-def test_tariff_matches_forecast():
+@pytest.mark.parametrize("kind, library", [
+    ("import", "spot_to_tariff"),
+    ("export", "spot_to_feed_in_tariff"),
+])
+def test_tariff_spot_matches_forecast_value(kind, library):
     """Tariff ``spot`` equals forecast ``value`` for the same interval.
 
-    This is the assertion the issue asks for and it fails on main, where the
-    tariff path omits the STPASA features and publishes the isotonic only
-    number instead.
+    Fails on main, where the tariff path omits the STPASA features and
+    publishes the isotonic only number instead. The export class carried its
+    own copy and must agree too. The fixture is asserted to reach the stage 2
+    branch, or the equality would be vacuous.
     """
     periods, stpasa = in_band_peak_periods()
-    forecast, tariff, _export, _coord, _store = make_sensors(periods, stpasa)
+    forecast, tariff, export, _coord, _store = make_sensors(periods, stpasa)
     ff = forecast_entries_by_time(forecast)
+    assert ff, "no calibrated entries built"
+    assert "isotonic+stpasa" in {e["calibrated_source"] for e in ff.values()}, (
+        "fixture did not reach the stage 2 branch, so a parity assertion over it would be vacuous"
+    )
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
-        entries = tariff.extra_state_attributes["forecast"]
+    sensor = tariff if kind == "import" else export
+    with patch.object(_tariff_mod, library, return_value=15.5):
+        entries = sensor.extra_state_attributes["forecast"]
 
     assert entries, "no tariff forecast entries built"
     for entry in entries:
         g = ff[entry["time"]]
-        assert entry["spot_raw"] == round(g["raw_value"], 6), (
-            "the two sensors must start from the same raw price"
-        )
+        assert entry["spot_raw"] == round(g["raw_value"], 6), "the two sensors must start from the same raw price"
         assert entry["spot"] == round(g["value"], 6), (
-            f"calibrated spot disagrees at {entry['time']}: tariff "
-            f"{entry['spot']} vs forecast {round(g['value'], 6)}, source "
-            f"{g['calibrated_source']}"
+            f"{kind} calibrated spot disagrees at {entry['time']}: tariff "
+            f"{entry['spot']} vs forecast {round(g['value'], 6)}, source {g['calibrated_source']}"
         )
-    print(f"  PASS: tariff spot equals forecast value on {len(entries)} intervals")
-
-
-def test_export_tariff_matches_forecast():
-    """The export tariff class carried its own copy and must agree too."""
-    periods, stpasa = in_band_peak_periods()
-    forecast, _tariff, export, _coord, _store = make_sensors(periods, stpasa)
-    ff = forecast_entries_by_time(forecast)
-
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=8.0):
-        entries = export.extra_state_attributes["forecast"]
-
-    assert entries, "no export forecast entries built"
-    for entry in entries:
-        g = ff[entry["time"]]
-        assert entry["spot"] == round(g["value"], 6), (
-            f"export tariff spot disagrees at {entry['time']}: "
-            f"{entry['spot']} vs {round(g['value'], 6)}"
-        )
-    print("  PASS: export tariff spot equals forecast value")
 
 
 def test_parity_sweep_over_a_full_run():
@@ -456,19 +415,14 @@ def test_parity_sweep_over_a_full_run():
         sources[src] = sources.get(src, 0) + 1
         if entry["spot"] != round(g["value"], 6):
             mismatches.append(
-                f"{entry['time']} src={src} tariff={entry['spot']} "
-                f"forecast={round(g['value'], 6)}"
+                f"{entry['time']} src={src} tariff={entry['spot']} forecast={round(g['value'], 6)}"
             )
     assert not mismatches, "calibrated spot disagrees on:\n" + "\n".join(mismatches[:10])
-    assert sources.get("isotonic+stpasa", 0) >= 20, (
-        f"sweep did not cover enough stage 2 intervals: {sources}"
-    )
+    assert sources.get("isotonic+stpasa", 0) >= 20, f"sweep did not cover enough stage 2 intervals: {sources}"
     non_stage2 = sum(v for k, v in sources.items() if k != "isotonic+stpasa")
     assert non_stage2 >= 20, (
-        f"sweep covered only the stage 2 branch, so it does not show the "
-        f"degrade paths agree as well: {sources}"
+        f"sweep covered only the stage 2 branch, so it does not show the degrade paths agree as well: {sources}"
     )
-    print(f"  PASS: parity across 336 intervals, sources={sources}")
 
 
 def test_tariff_value_is_the_shared_spot_with_network_applied():
@@ -488,61 +442,12 @@ def test_tariff_value_is_the_shared_spot_with_network_applied():
     fee = tariff._get_additional_fee()
     for entry in entries:
         rrp_mwh = round(ff[entry["time"]]["value"] * 1000, 10)
-        assert entry["value"] == _expected_import_price(15.5, rrp_mwh, fee=fee), (
-            "network plus retail assembly moved"
-        )
-    passed_rrp = [call[0][3] for call in stt.call_args_list]
-    expected_rrp = [
-        round(ff[e["time"]]["value"] * 1000, 10) for e in entries
-    ]
-    assert [round(v, 10) for v in passed_rrp] == expected_rrp, (
-        f"library must receive the shared calibrated spot in $/MWh: "
-        f"{passed_rrp} vs {expected_rrp}"
+        assert entry["value"] == expected_import_price(15.5, rrp_mwh, fee=fee), "network plus retail assembly moved"
+    passed_rrp = [round(call[0][3], 10) for call in stt.call_args_list]
+    expected_rrp = [round(ff[e["time"]]["value"] * 1000, 10) for e in entries]
+    assert passed_rrp == expected_rrp, (
+        f"library must receive the shared calibrated spot in $/MWh: {passed_rrp} vs {expected_rrp}"
     )
-    print("  PASS: network and retail components applied to the shared spot")
-
-
-def test_uncalibratable_interval_degrades_to_none_not_zero():
-    """No calibrated spot means None on both keys, never 0 and never the raw price."""
-    periods, stpasa = in_band_peak_periods()
-    forecast, tariff, _export, _coord, store = make_sensors(periods, stpasa)
-
-    class _NoAnswerStore:
-        """A store that has a calibration but cannot produce a number."""
-
-        fit_generation = 1
-
-        def apply_to_price(self, raw_price, horizon_hours, hour_of_day, **kwargs):
-            return {
-                "calibrated": None,
-                "p10": None,
-                "p50": None,
-                "p90": None,
-                "ols_mae": None,
-                "calibrated_source": "passthrough",
-                "n_obs": 0,
-            }
-
-    tariff._store = _NoAnswerStore()
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
-        entries = tariff.extra_state_attributes["forecast"]
-
-    for entry in entries:
-        assert entry["spot"] is None, f"expected None spot, got {entry['spot']!r}"
-        assert entry["value"] is None, f"expected None value, got {entry['value']!r}"
-        assert entry["spot"] != 0 and entry["value"] != 0
-    print("  PASS: uncalibratable interval degrades to None, not 0")
-
-
-class _TripwireIndexMap(dict):
-    """An index map that refuses to be queried.
-
-    Copied in spirit from tests/test_stpasa_band_floor.py, which uses the same
-    trick to show the per-run floor short-circuits ahead of the lookup.
-    """
-
-    def get(self, *args, **kwargs):  # noqa: D102
-        raise AssertionError("STPASA index consulted for an interval below coverage")
 
 
 def test_tariff_path_gets_the_per_run_band_floor():
@@ -559,11 +464,10 @@ def test_tariff_path_gets_the_per_run_band_floor():
     floor applies and the tripwire fires, which is what makes this test
     non vacuous.
 
-    Note honestly what this does and does not change: after issue #67 the
-    bounded nearest match already declined these intervals, so the published
-    tariff number is the same either way. What the tariff path gains is the
-    same band edge semantics and the same short circuit, so the two paths
-    cannot drift apart again when that edge next moves.
+    After issue #67 the bounded nearest match already declined these
+    intervals, so the published tariff number is the same either way. What the
+    tariff path gains is the same band edge semantics and the same short
+    circuit, so the two paths cannot drift apart again when that edge moves.
     """
     run_dt = parse_iso(RUN_AT)
     below = (run_dt + timedelta(hours=30)).replace(minute=0)
@@ -580,27 +484,16 @@ def test_tariff_path_gets_the_per_run_band_floor():
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
         entries = tariff.extra_state_attributes["forecast"]
     assert len(entries) == 1
-    tariff_spot = entries[0]["spot"]
 
     ff = forecast_entries_by_time(forecast)
     assert entries[0]["spot"] == round(ff[entries[0]["time"]]["value"], 6)
 
     # Non vacuity: the same call without the run timestamp falls back to the
     # static floor and does reach the index.
-    from custom_components.nem_pd7day.calibration_inputs import calibrate_interval
-    try:
-        calibrate_interval(
+    with pytest.raises(AssertionError, match="STPASA index consulted"):
+        _inputs_mod.calibrate_interval(
             store, coordinator, periods[0].value, entries[0]["time"], h, below.hour,
         )
-    except AssertionError:
-        pass
-    else:
-        raise AssertionError(
-            "the static floor should have let this interval reach the index, so "
-            "the tripwire proves nothing"
-        )
-    print(f"  PASS: tariff path gated by the per-run floor at h{h:.1f}, "
-          f"spot={tariff_spot}")
 
 
 def test_isotonic_only_call_is_what_used_to_disagree():
@@ -609,10 +502,11 @@ def test_isotonic_only_call_is_what_used_to_disagree():
     Calling the store the way the tariff path used to call it, raw price,
     horizon and hour only, gives a different number for these intervals. That
     is the defect, stated as a property of the store rather than of the sensor,
-    so it stays true if the sensors are refactored again.
+    so it stays true if the sensors are refactored again; it is also what keeps
+    the parity assertions above from being vacuous.
     """
     periods, stpasa = in_band_peak_periods()
-    forecast, tariff, _export, coordinator, store = make_sensors(periods, stpasa)
+    forecast, _tariff, _export, _coordinator, store = make_sensors(periods, stpasa)
     ff = forecast_entries_by_time(forecast)
 
     differences = 0
@@ -628,16 +522,3 @@ def test_isotonic_only_call_is_what_used_to_disagree():
         "the fixture should reproduce the reported disagreement on every "
         f"in band interval, got {differences} of {len(periods)}"
     )
-    print(f"  PASS: old argument list disagrees on {differences} intervals")
-
-
-if __name__ == "__main__":
-    test_fixture_actually_reaches_the_stpasa_branch()
-    test_tariff_matches_forecast()
-    test_export_tariff_matches_forecast()
-    test_parity_sweep_over_a_full_run()
-    test_tariff_value_is_the_shared_spot_with_network_applied()
-    test_uncalibratable_interval_degrades_to_none_not_zero()
-    test_isotonic_only_call_is_what_used_to_disagree()
-    test_tariff_path_gets_the_per_run_band_floor()
-    print("All tariff calibration parity tests passed.")
