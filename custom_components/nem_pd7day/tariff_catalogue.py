@@ -45,6 +45,22 @@ def library_available() -> bool:
     return _att is not None
 
 
+def _read_library_version() -> str | None:
+    if _att is None:
+        return None
+    try:
+        return metadata.version("aemo-to-tariff")
+    except metadata.PackageNotFoundError:
+        return None
+
+
+# Read once at import. importlib.metadata reads the package's dist-info from
+# disk, and diagnostics and state writes run on the event loop, where Home
+# Assistant flags a file read from a custom integration; the import itself
+# already happens off the loop.
+_LIBRARY_VERSION = _read_library_version()
+
+
 def library_version() -> str | None:
     """Installed aemo-to-tariff version, or None when it is not importable.
 
@@ -53,12 +69,7 @@ def library_version() -> str | None:
     catalogue follows whatever version is installed, and nothing else on the
     system said which that was (issue #159).
     """
-    if _att is None:
-        return None
-    try:
-        return metadata.version("aemo-to-tariff")
-    except metadata.PackageNotFoundError:
-        return None
+    return _LIBRARY_VERSION if _att is not None else None
 
 
 def _module(distributor: str) -> Any | None:

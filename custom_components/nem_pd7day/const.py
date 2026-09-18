@@ -512,6 +512,11 @@ DEFAULT_ENABLED_TARIFFS = {
 # Each entry maps (distributor, import_tariff_code) → export_tariff_code.
 # Export sensors use spot_to_feed_in_tariff() instead of spot_to_tariff().
 EXPORT_TARIFF_PROGRAMS = {
+    # Energex publishes these pairs itself (battery_tariffs("residential") in
+    # aemo_to_tariff): the Residential Two-Way Tariff Trial has a seasonal
+    # export reward/charge, and 6900 exports at spot.
+    ("energex", "6900"): "6900X",
+    ("energex", "96200"): "96200X",
     ("ausgrid", "EA025"): "EA029",
     ("endeavour", "N71"): "N61",
     ("essential", "BLNT3AL"): "BLNREX2",
@@ -521,6 +526,8 @@ EXPORT_TARIFF_PROGRAMS = {
 
 # Human-readable export tariff names (export_code → name)
 EXPORT_TARIFF_NAMES = {
+    "6900X": "Residential Time of Use Energy",
+    "96200X": "Residential Two-Way Tariff Trial",
     "EA029": "Residential Electrify",
     "N61": "Residential Electrify",
     "BLNREX2": "LV Residential Solar Export",
