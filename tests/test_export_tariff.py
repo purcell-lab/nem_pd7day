@@ -138,6 +138,25 @@ _tariff_mod = _load(
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "tariff_sensor.py"),
 )
 
+
+def _expected_import_price(lib_c_kwh, rrp_mwh, fee=0.0293, distributor="energex"):
+    """Published import price in $/kWh for a mocked spot_to_tariff return.
+
+    aemo_to_tariff composes a tariff as spot plus network rate and grosses the
+    network rate up itself on seven of the thirteen networks, so tariff_sensor
+    separates the components, removes the library's GST from the network
+    component where the library applied it, and grosses the total up once
+    (#158). A mocked library return has to be split the same way.
+
+    tests/test_tariff_gst.py is what checks that placement against the real
+    library; this only keeps the surrounding plumbing assertions honest.
+    """
+    spot_c = rrp_mwh * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
+    network_c = lib_c_kwh - spot_c
+    if distributor in _tariff_mod._LIB_APPLIES_GST:
+        network_c /= _tariff_mod.GST
+    return round(((spot_c + network_c) / 100 + fee) * _tariff_mod.GST, 6)
+
 _engine_mod = _load(
     "custom_components.nem_pd7day.calibration_engine",
     os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_engine.py"),
@@ -298,7 +317,7 @@ def test_export_tariff_different_from_import_at_peak():
     assert export_val is not None
 
     # Values should differ
-    import_expected = round((import_rate_c / 100 + 0.0293) * 1.1, 6)
+    import_expected = _expected_import_price(import_rate_c, 100.0, distributor="ausgrid")
     # Export returns raw feed-in tariff: no additional fee, no GST
     export_expected = round(export_rate_c / 100, 6)
     assert abs(import_val - import_expected) < 1e-6

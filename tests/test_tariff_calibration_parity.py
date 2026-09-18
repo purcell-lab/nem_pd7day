@@ -59,6 +59,26 @@ _tariff_mod = sys.modules[NemPd7dayTariffSensor.__module__]
 NEM_TZ = timezone(timedelta(hours=10))
 
 # Observations must stay inside the engine's 90 day training window, so the
+
+
+def _expected_import_price(lib_c_kwh, rrp_mwh, fee=0.0293, distributor="energex"):
+    """Published import price in $/kWh for a mocked spot_to_tariff return.
+
+    aemo_to_tariff composes a tariff as spot plus network rate and grosses the
+    network rate up itself on seven of the thirteen networks, so tariff_sensor
+    separates the components, removes the library's GST from the network
+    component where the library applied it, and grosses the total up once
+    (#158). A mocked library return has to be split the same way.
+
+    tests/test_tariff_gst.py is what checks that placement against the real
+    library; this only keeps the surrounding plumbing assertions honest.
+    """
+    spot_c = rrp_mwh * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
+    network_c = lib_c_kwh - spot_c
+    if distributor in _tariff_mod._LIB_APPLIES_GST:
+        network_c /= _tariff_mod.GST
+    return round(((spot_c + network_c) / 100 + fee) * _tariff_mod.GST, 6)
+
 # fixture is anchored to now rather than to a fixed calendar date.
 _ANCHOR = datetime.now(NEM_TZ).replace(minute=0, second=0, microsecond=0) - timedelta(days=2)
 
@@ -467,7 +487,8 @@ def test_tariff_value_is_the_shared_spot_with_network_applied():
 
     fee = tariff._get_additional_fee()
     for entry in entries:
-        assert entry["value"] == round((15.5 / 100 + fee) * 1.1, 6), (
+        rrp_mwh = round(ff[entry["time"]]["value"] * 1000, 10)
+        assert entry["value"] == _expected_import_price(15.5, rrp_mwh, fee=fee), (
             "network plus retail assembly moved"
         )
     passed_rrp = [call[0][3] for call in stt.call_args_list]

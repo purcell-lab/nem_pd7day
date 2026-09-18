@@ -69,10 +69,38 @@ except ImportError:
 # empty list (unsupported tariff code). Only the former triggers a lazy lookup.
 _MISSING = object()
 
-# Default loss factors used by aemo_to_tariff library (Energex defaults)
+# Default loss factors used by aemo_to_tariff library (Energex defaults).
+# These are passed to the library explicitly rather than relying on its own
+# defaults, because _split_spot_and_network below reconstructs the spot
+# component from them and the two sides have to agree. If the library ever
+# changes its defaults, an implicit match would break the split silently.
 _DEFAULT_DLF = 1.05905
 _DEFAULT_MLF = 1.0154
 _DEFAULT_MARKET = 1.0154
+
+# GST multiplier applied to the final retail price.
+GST = 1.1
+
+# Distributor modules inside aemo_to_tariff that apply GST to the network rate
+# themselves, returning "spot (GST exclusive) + network rate * 1.1". The other
+# supported modules apply no GST at all and return both components GST
+# exclusive. The library is simply not consistent about this, so we cannot
+# apply one uniform multiply to its output without double counting GST on the
+# network component for the distributors listed here. See issue #158.
+#
+# Keys are const.py distributor keys, which are what gets passed to the
+# library; it recognises "sapn" directly and routes it to its sapower module.
+#
+# This restates a fact about a pinned third party library, so
+# tests/test_tariff_gst.py probes the installed library at test time and fails
+# if a distributor moves between the two groups rather than trusting this set.
+# The probe is behavioural, comparing the library's network component against
+# the rates in its own tariff table, because a source scan for "GST" gets this
+# wrong: evoenergy applies GST through a lower case local named "gst" and would
+# be misclassified as not applying it.
+_LIB_APPLIES_GST = frozenset(
+    {"energex", "ergon", "ausgrid", "endeavour", "essential", "evoenergy", "sapn"}
+)
 
 # Map const.py distributor keys to aemo_to_tariff module names
 _DISTRIBUTOR_LIB_MAP = {
@@ -381,6 +409,36 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             )
             return None, None
 
+    def _retail_price(self, result_c_kwh: float, rrp_mwh: float, fee: float) -> float:
+        """Combine a library result with the usage fee and GST, in $/kWh.
+
+        ``aemo_to_tariff`` composes a recognised tariff as spot plus network
+        rate, but only some of its distributor modules apply GST to the network
+        rate. Applying one uniform multiply to the combined figure therefore
+        charged GST twice on the network component for those distributors, by
+        the network rate times 0.1: about 2.1 c/kWh on Energex 6900 in the
+        evening peak, and about 4.0 on SAPN RESELE (#158).
+
+        The two components are separated using the library's own formula. For a
+        recognised tariff the network component does not vary with price, so
+        the split is exact. The library's GST is then removed from the network
+        component only where the library applied it, which leaves a single GST
+        multiply here covering spot, network and the usage fee, and keeps the
+        published ``gst_multiplier`` attribute an honest description.
+
+        For an unrecognised tariff code the library falls back to
+        ``spot * slope + intercept``, which is not a spot plus network
+        composition. The split still runs and still yields a single GST on the
+        result, but what it treats as the network component is a residual that
+        varies with price, so GST placement on that path is approximate. That
+        fallback is an acknowledged approximation in the library itself.
+        """
+        spot_c_kwh = rrp_mwh * _DEFAULT_DLF * _DEFAULT_MLF * _DEFAULT_MARKET / 10
+        network_c_kwh = result_c_kwh - spot_c_kwh
+        if self._distributor in _LIB_APPLIES_GST:
+            network_c_kwh /= GST
+        return round(((spot_c_kwh + network_c_kwh) / 100 + fee) * GST, 6)
+
     def _compute_tariff(self, period, calibrated: float | None = None) -> float | None:
         """Compute tariff price in $/kWh for a single forecast period.
 
@@ -417,9 +475,10 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             with _suppress_stdout():
                 result_c_kwh = spot_to_tariff(
                     interval_dt, self._distributor, self._tariff_code, rrp_mwh,
+                    dlf=_DEFAULT_DLF, mlf=_DEFAULT_MLF, market=_DEFAULT_MARKET,
                 )
             fee = self._get_additional_fee()
-            result = round((result_c_kwh / 100 + fee) * 1.1, 6)
+            result = self._retail_price(result_c_kwh, rrp_mwh, fee)
             self._period_tariff_cache = (cache_key, result)
             return result
         except Exception:
@@ -454,9 +513,10 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             with _suppress_stdout():
                 result_c_kwh = spot_to_tariff(
                     nemtime_dt, self._distributor, self._tariff_code, rrp_mwh,
+                    dlf=_DEFAULT_DLF, mlf=_DEFAULT_MLF, market=_DEFAULT_MARKET,
                 )
             fee = self._get_additional_fee()
-            result = round((result_c_kwh / 100 + fee) * 1.1, 6)
+            result = self._retail_price(result_c_kwh, rrp_mwh, fee)
             self._tariff_cache = (cache_key, result)
             return result
         except Exception:

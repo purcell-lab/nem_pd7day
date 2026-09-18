@@ -199,21 +199,44 @@ def make_tariff_sensor(
     return sensor
 
 
+def expected_import_price(lib_c_kwh, rrp_mwh, fee=0.0293, distributor="energex"):
+    """Published import price in $/kWh for a mocked spot_to_tariff return.
+
+    These tests mock the library to a fixed c/kWh figure, so they have to
+    reproduce the way tariff_sensor splits that figure up. aemo_to_tariff
+    composes a tariff as spot plus network rate and GSTs the network rate
+    itself on seven of the thirteen networks, so the integration separates the
+    two components, removes the library's GST from the network component where
+    the library applied it, and grosses the total up once (#158).
+
+    Whether that placement is right is the subject of tests/test_tariff_gst.py,
+    which probes the real library rather than a mock. This helper exists only so
+    the tests around it can go on testing the plumbing: fee handling, the $/MWh
+    conversion, dispatch versus forecast selection, and forecast structure.
+    """
+    spot_c = rrp_mwh * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
+    network_c = lib_c_kwh - spot_c
+    if distributor in _tariff_mod._LIB_APPLIES_GST:
+        network_c /= _tariff_mod.GST
+    return round(((spot_c + network_c) / 100 + fee) * _tariff_mod.GST, 6)
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 def test_tariff_sensor_current_value():
-    """Verify sensor returns (spot_to_tariff/100 + fee) * 1.1 as $/kWh."""
+    """Verify sensor returns the library result plus fee, grossed up once, in $/kWh."""
     now = datetime.now(tz=NEM_TZ)
     current_end = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0) + timedelta(minutes=30)
     period = make_price_period(current_end, value=0.10)  # 0.10 $/kWh
     sensor = make_tariff_sensor(price_periods=[period])
 
-    # spot_to_tariff returns 15.5 c/kWh
-    # New formula: (15.5/100 + 0.0293) * 1.1 = (0.155 + 0.0293) * 1.1 = 0.20273
+    # spot_to_tariff returns 15.5 c/kWh, of which the spot component is
+    # 100 $/MWh through the loss factors; the rest is Energex network rate,
+    # which the library has already grossed up.
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
         val = sensor.native_value
         assert val is not None
-        expected = round((15.5 / 100 + 0.0293) * 1.1, 6)
+        expected = expected_import_price(15.5, 100.0)
         assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
         # Verify RRP conversion: 0.10 $/kWh * 1000 = 100 $/MWh
         call_args = mock_stt.call_args
@@ -242,11 +265,11 @@ def test_tariff_sensor_forecast_attribute():
             assert attrs["tariff_code"] == "8400"
             assert attrs["region"] == "QLD1"
             assert len(attrs["forecast"]) == 5
-            expected_val = round((10.0 / 100 + 0.0293) * 1.1, 6)
             for i, entry in enumerate(attrs["forecast"]):
                 assert "time" in entry
                 assert "value" in entry
-                assert abs(entry["value"] - expected_val) < 1e-6  # (10c/kWh/100 + fee) * 1.1
+                expected_val = expected_import_price(10.0, (0.05 + i * 0.01) * 1000)
+                assert abs(entry["value"] - expected_val) < 1e-6
                 # New per-interval fields
                 assert "spot_raw" in entry
                 assert "period" in entry
@@ -588,7 +611,7 @@ def test_tariff_native_value_not_filtered_by_cutoff():
     with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
         val = sensor.native_value
         assert val is not None, "native_value should not be None for current interval"
-        expected = round((15.5 / 100 + 0.0293) * 1.1, 6)
+        expected = expected_import_price(15.5, 100.0)
         assert abs(val - expected) < 1e-6, f"Expected {expected}, got {val}"
 
 
