@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+from importlib import metadata
 from typing import Any
 
 from .const import DISTRIBUTOR_TARIFFS, EXPORT_TARIFF_NAMES, TARIFF_NAMES
@@ -42,6 +43,22 @@ _LIB_MODULE = {
 def library_available() -> bool:
     """True when aemo_to_tariff imported."""
     return _att is not None
+
+
+def library_version() -> str | None:
+    """Installed aemo-to-tariff version, or None when it is not importable.
+
+    Published on the tariff sensors and in diagnostics so an install can be
+    checked against the floor in manifest.json without shell access: the
+    catalogue follows whatever version is installed, and nothing else on the
+    system said which that was (issue #159).
+    """
+    if _att is None:
+        return None
+    try:
+        return metadata.version("aemo-to-tariff")
+    except metadata.PackageNotFoundError:
+        return None
 
 
 def _module(distributor: str) -> Any | None:

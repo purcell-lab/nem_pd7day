@@ -78,6 +78,15 @@ def test_library_is_read():
     assert _cat.library_available()
 
 
+def test_library_version_is_the_installed_metadata(monkeypatch):
+    """The version is published so an install can be checked against the manifest floor."""
+    from importlib import metadata
+
+    assert _cat.library_version() == metadata.version("aemo-to-tariff")
+    monkeypatch.setattr(_cat, "_att", None)
+    assert _cat.library_version() is None
+
+
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
 def test_import_codes_are_the_library_catalogue(distributor):
     """Every import tariff the library carries gets a sensor, and nothing else."""
