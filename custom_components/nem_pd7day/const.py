@@ -509,22 +509,48 @@ DEFAULT_ENABLED_TARIFFS = {
 }
 
 # ── Export tariff programs (import_code → export_code per distributor) ────────
-# Each entry maps (distributor, import_tariff_code) → export_tariff_code.
+# EXPORT_TARIFF_PROGRAMS is the FALLBACK, used only when aemo_to_tariff is not
+# importable. With the library present the pairings are derived from its own
+# tables and battery_tariffs() lists (tariff_catalogue.export_programs, issue
+# #159); this snapshot mirrors what that derivation yields on 0.7.27.
 # Export sensors use spot_to_feed_in_tariff() instead of spot_to_tariff().
 EXPORT_TARIFF_PROGRAMS = {
+    ("energex", "6900"): "6900X",
+    ("energex", "6800"): "6800X",
+    ("energex", "96200"): "96200X",
     ("ausgrid", "EA025"): "EA029",
+    ("ausgrid", "EA225"): "EA029",
     ("endeavour", "N71"): "N61",
-    ("essential", "BLNT3AL"): "BLNREX2",
-    ("sapn", "RESELE"): "RESELE",
+    ("endeavour", "N95"): "N95",
+    ("essential", "BLNRSS2"): "BLNREX2",
+    ("essential", "BLNBSS1"): "BLNBEX1",
     ("evoenergy", "026"): "026",
+    ("sapn", "RESELE"): "RESELE",
+    ("sapn", "RELE2W"): "RELE2W",
+    ("sapn", "SBELE"): "SBELE",
+    ("sapn", "B2R"): "B2R",
 }
+
+# Pairings the library cannot express, or that override a derived one for the
+# same import code. Empty today: Ergon publishes two export codes (NVGC2,
+# NVGX2) against one import tariff with nothing saying which applies, so it
+# has no export sensor until someone who knows adds a row here.
+EXPORT_TARIFF_OVERRIDES: dict[tuple[str, str], str] = {}
 
 # Human-readable export tariff names (export_code → name)
 EXPORT_TARIFF_NAMES = {
+    "6900X": "Residential Time of Use Energy",
+    "6800X": "Small Business Time of Use Energy",
+    "96200X": "Residential Two-Way Tariff Trial",
     "EA029": "Residential Electrify",
     "N61": "Residential Electrify",
+    "N95": "Storage",
     "BLNREX2": "LV Residential Solar Export",
+    "BLNBEX1": "LV Residential Business Solar Export",
     "RESELE": "Residential Electrify",
+    "RELE2W": "Residential Electrify",
+    "SBELE": "Small Business Electrify",
+    "B2R": "Business Two Rate",
     # Evoenergy
     "026": "Battery Feed-in Trial",
 }

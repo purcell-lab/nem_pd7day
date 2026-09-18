@@ -37,7 +37,7 @@ from .calibration_inputs import (
     interval_key_for_period,
 )
 from .coordinator import PD7DayCoordinator, staleness_attributes
-from .tariff_catalogue import tariff_name as catalogue_tariff_name
+from .tariff_catalogue import library_version, tariff_name as catalogue_tariff_name
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
@@ -713,6 +713,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             # Additional usage fee & GST
             "additional_usage_fee_$/kwh": fee,
             "gst_multiplier": 1.1,
+            "library_version": library_version(),
             # Description
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
@@ -811,6 +812,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
             "combined_loss_multiplier": combined,
             "additional_usage_fee_$/kwh": fee,
             "gst_multiplier": 1.1,
+            "library_version": library_version(),
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
                 _DEFAULT_DLF, _DEFAULT_MLF, combined, fee, self._region,
@@ -1122,5 +1124,6 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
             "combined_loss_multiplier": combined,
             "additional_usage_fee_$/kwh": fee,
             "gst_multiplier": 1.1,
+            "library_version": library_version(),
             "forecast": forecast_list,
         }

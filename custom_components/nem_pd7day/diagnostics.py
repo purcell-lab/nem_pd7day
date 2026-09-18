@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
+from .tariff_catalogue import library_version
 from .const import (
     COORDINATOR_KEY,
     DOMAIN,
@@ -114,4 +115,5 @@ async def async_get_config_entry_diagnostics(
         "pd7day_run_datetime": _pd7day_run_datetime(coordinator, region),
         "nemweb_gate": _nemweb_gate(hass),
         "integration_version": await _integration_version(hass),
+        "aemo_to_tariff_version": library_version(),
     }

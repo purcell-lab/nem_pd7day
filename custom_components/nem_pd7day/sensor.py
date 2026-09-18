@@ -68,7 +68,6 @@ from .const import (
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DOMAIN,
-    EXPORT_TARIFF_PROGRAMS,
     FORECAST_MODE_DAYS_2_7,
     get_region,
     interconnectors_for_regions,
@@ -90,7 +89,7 @@ from .calibration_inputs import (
     stpasa_features_for_interval,
 )
 from .coordinator import PD7DayCoordinator, staleness_attributes
-from .tariff_catalogue import export_program_supported, import_tariff_codes
+from .tariff_catalogue import export_program_supported, export_programs, import_tariff_codes
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
 
 if TYPE_CHECKING:
@@ -192,12 +191,13 @@ async def async_setup_entry(
                 NemPd7dayTariffSensor(coordinator, entry, region, distributor, tariff_code, store=store)
             )
 
-    # Export tariff sensors — one per export program for this region. The
-    # pairing is curated (the library does not say which import tariff an
-    # export program belongs to) but the export code is checked against the
-    # library's feed-in table where the network publishes one.
-    for (dist, import_code), export_code in EXPORT_TARIFF_PROGRAMS.items():
-        if dist in REGION_DISTRIBUTORS.get(region, []):
+    # Export tariff sensors — one per export program for this region, the
+    # pairing derived from the library's own tables and battery_tariffs()
+    # lists with EXPORT_TARIFF_OVERRIDES for what it cannot express (#159);
+    # the export code is checked against the feed-in table where the network
+    # publishes one.
+    for dist in REGION_DISTRIBUTORS.get(region, []):
+        for import_code, export_code in export_programs(dist).items():
             if not export_program_supported(dist, export_code):
                 _LOGGER.warning(
                     "Export tariff %s/%s is not a feed-in tariff in the installed "

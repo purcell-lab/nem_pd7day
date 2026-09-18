@@ -400,17 +400,23 @@ Each entry in the `forecast` list contains:
 
 `sensor.nem_pd7day_{region}_{network}_{import_code}_export_tariff`
 
-Export tariff sensors are registered for battery-eligible network tariffs where an export program exists. The `state` is the feed-in tariff ($/kWh) for the current interval, computed from the live dispatch price via `spot_to_feed_in_tariff()`. The forecast attribute gives the days 2–7 export tariff using the calibrated spot price.
+Export tariff sensors are registered for every import tariff the `aemo-to-tariff` library pairs with an export (feed-in) tariff. The pairing is read from the library at startup rather than hard-coded: an import code that is also a feed-in tariff pairs with itself (SAPN RESELE, Evoenergy 026), an import code with an `X`-suffixed feed-in twin pairs with that (Energex 6900→6900X), and otherwise the library's `battery_tariffs()` lists are used positionally (Ausgrid EA025→EA029, Essential BLNRSS2→BLNREX2). Export codes the library publishes that no rule can place (Ergon lists NVGC2 and NVGX2 against one import tariff) get no sensor until a row is added to `EXPORT_TARIFF_OVERRIDES` in `const.py`. A library release that adds a pairing therefore adds the export sensor on the next restart. The `state` is the feed-in tariff ($/kWh) for the current interval, computed from the live dispatch price via `spot_to_feed_in_tariff()`. The forecast attribute gives the days 2–7 export tariff using the calibrated spot price.
 
 Export tariff formula: `result_c_kwh / 100` (no additional usage fee, no GST — export tariffs do not include these charges).
 
 | Network | Import tariff | Export tariff | ToD structure |
 |---|---|---|---|
-| Ausgrid (NSW1) | EA025 | EA029 | +3.85 c/kWh peak, −1.23 c/kWh solar sponge |
+| Energex (QLD1) | 6900, 6800, 96200 | 6900X, 6800X, 96200X | Two-way ToU; 96200 is the Residential Two-Way Tariff Trial |
+| Ausgrid (NSW1) | EA025, EA225 | EA029 | +3.85 c/kWh peak, −1.23 c/kWh solar sponge |
 | Endeavour (NSW1) | N71 | N61 | +12.43 c/kWh peak, −1.97 c/kWh solar sponge |
-| Essential (NSW1) | BLNT3AL | BLNREX2 | +11.57 c/kWh peak, −0.82 c/kWh solar sponge |
+| Endeavour (NSW1) | N95 | N95 | Storage |
+| Essential (NSW1) | BLNRSS2 | BLNREX2 | +11.57 c/kWh peak, −0.82 c/kWh solar sponge |
+| Essential (NSW1) | BLNBSS1 | BLNBEX1 | LV Residential Business Solar Export |
 | EvoEnergy (NSW1) | 026 | 026 | Battery Feed-in Trial |
-| SAPN (SA1) | RESELE | RESELE | +12.25 c/kWh peak, −1.00 c/kWh solar sponge |
+| SAPN (SA1) | RESELE, RELE2W | RESELE, RELE2W | +12.25 c/kWh peak, −1.00 c/kWh solar sponge |
+| SAPN (SA1) | SBELE, B2R | SBELE, B2R | Small Business Electrify; Business Two Rate |
+
+Pairings are as read from aemo-to-tariff 0.7.27; later library releases may add rows without a change here.
 
 #### Additional usage fee
 

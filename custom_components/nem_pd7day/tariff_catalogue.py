@@ -22,9 +22,16 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+from importlib import metadata
 from typing import Any
 
-from .const import DISTRIBUTOR_TARIFFS, EXPORT_TARIFF_NAMES, TARIFF_NAMES
+from .const import (
+    DISTRIBUTOR_TARIFFS,
+    EXPORT_TARIFF_NAMES,
+    EXPORT_TARIFF_OVERRIDES,
+    EXPORT_TARIFF_PROGRAMS,
+    TARIFF_NAMES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +49,33 @@ _LIB_MODULE = {
 def library_available() -> bool:
     """True when aemo_to_tariff imported."""
     return _att is not None
+
+
+def _read_library_version() -> str | None:
+    if _att is None:
+        return None
+    try:
+        return metadata.version("aemo-to-tariff")
+    except metadata.PackageNotFoundError:
+        return None
+
+
+# Read once at import. importlib.metadata reads the package's dist-info from
+# disk, and diagnostics and state writes run on the event loop, where Home
+# Assistant flags a file read from a custom integration; the import itself
+# already happens off the loop.
+_LIBRARY_VERSION = _read_library_version()
+
+
+def library_version() -> str | None:
+    """Installed aemo-to-tariff version, or None when it is not importable.
+
+    Published on the tariff sensors and in diagnostics so an install can be
+    checked against the floor in manifest.json without shell access: the
+    catalogue follows whatever version is installed, and nothing else on the
+    system said which that was (issue #159).
+    """
+    return _LIBRARY_VERSION if _att is not None else None
 
 
 def _module(distributor: str) -> Any | None:
@@ -112,6 +146,92 @@ def import_tariff_codes(distributor: str) -> list[str]:
     return known + [code for code in library if code not in known]
 
 
+def _battery_lists(distributor: str) -> list[tuple[list[str], list[str]]]:
+    """(import codes, export codes) per customer type from battery_tariffs().
+
+    The library's own statement of which tariffs pair for a battery customer.
+    Not every module has it, and the two lists are not always the same
+    length, so the pairing has to be inferred; see export_programs.
+    """
+    module = _module(distributor)
+    fn = getattr(module, "battery_tariffs", None) if module is not None else None
+    if not callable(fn):
+        return []
+    out: list[tuple[list[str], list[str]]] = []
+    for customer_type in ("Residential", "Business"):
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                pairs = fn(customer_type)
+        except Exception:  # noqa: BLE001 - an unknown customer type is "no data"
+            continue
+        if isinstance(pairs, dict):
+            imports = [str(c) for c in pairs.get("import") or []]
+            exports = [str(c) for c in pairs.get("export") or []]
+            out.append((imports, exports))
+    return out
+
+
+def _library_export_codes(distributor: str) -> set[str]:
+    """Every code the library treats as an export tariff for ``distributor``."""
+    codes: set[str] = set(feed_in_tariffs(distributor) or {})
+    for _imports, exports in _battery_lists(distributor):
+        codes.update(exports)
+    return codes
+
+
+def export_programs(distributor: str) -> dict[str, str]:
+    """Import code → export code for the export sensors of ``distributor``.
+
+    Derived from the library where it is importable (issue #159). Three rules,
+    in order, each applied only to import codes still unpaired:
+
+    1. The same code is both an import tariff and an export tariff (SAPN
+       RESELE, RELE2W, SBELE, B2R; Endeavour N95; Evoenergy 026).
+    2. The import code with an ``X`` suffix is an export tariff (Energex 6900X,
+       96200X, 6800X).
+    3. ``battery_tariffs()`` lists the same number of imports and exports for a
+       customer type, taken positionally (Ausgrid EA025→EA029 and EA225→EA029,
+       Endeavour N71→N61, Essential BLNRSS2→BLNREX2 and BLNBSS1→BLNBEX1).
+
+    What the library cannot express is left to EXPORT_TARIFF_OVERRIDES, which
+    also wins over a derived pairing for the same import code. Ergon is the
+    live case: one import tariff against two export codes, NVGC2 and NVGX2,
+    with nothing saying which is which; see unpaired_export_codes. Without
+    the library the EXPORT_TARIFF_PROGRAMS snapshot is used.
+
+    Order follows import_tariff_codes so the entity list is stable.
+    """
+    if _att is None:
+        pairs = {code: export for (d, code), export in EXPORT_TARIFF_PROGRAMS.items() if d == distributor}
+    else:
+        imports = import_tariff_codes(distributor)
+        exports = _library_export_codes(distributor)
+        pairs = {}
+        for code in imports:
+            if code in exports:
+                pairs[code] = code
+        for code in imports:
+            if code not in pairs and f"{code}X" in exports:
+                pairs[code] = f"{code}X"
+        for battery_imports, battery_exports in _battery_lists(distributor):
+            if len(battery_imports) != len(battery_exports):
+                continue
+            for code, export in zip(battery_imports, battery_exports):
+                if code in imports and code not in pairs and export in exports:
+                    pairs[code] = export
+        pairs = {code: pairs[code] for code in imports if code in pairs}
+    for (d, code), export in EXPORT_TARIFF_OVERRIDES.items():
+        if d == distributor:
+            pairs[code] = export
+    return pairs
+
+
+def unpaired_export_codes(distributor: str) -> list[str]:
+    """Export codes the library carries that no rule could attach to an import."""
+    paired = set(export_programs(distributor).values())
+    return sorted(code for code in _library_export_codes(distributor) if code not in paired)
+
+
 def export_program_supported(distributor: str, export_code: str) -> bool:
     """Whether the library can convert ``export_code`` as a feed-in tariff.
 
@@ -143,4 +263,10 @@ def tariff_name(distributor: str, code: str, *, export: bool = False) -> str:
             name = entry.get("name")
             if name:
                 return str(name)
+    if export and code.endswith("X"):
+        # Energex names its export programs after the import tariff plus X and
+        # publishes no feed-in table, so the import tariff's name is the name.
+        entry = import_tariffs(distributor).get(code[:-1])
+        if isinstance(entry, dict) and entry.get("name"):
+            return str(entry["name"])
     return next((name for name in fallbacks if name), code)

@@ -78,6 +78,15 @@ def test_library_is_read():
     assert _cat.library_available()
 
 
+def test_library_version_is_the_installed_metadata(monkeypatch):
+    """The version is published so an install can be checked against the manifest floor."""
+    from importlib import metadata
+
+    assert _cat.library_version() == metadata.version("aemo-to-tariff")
+    monkeypatch.setattr(_cat, "_att", None)
+    assert _cat.library_version() is None
+
+
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
 def test_import_codes_are_the_library_catalogue(distributor):
     """Every import tariff the library carries gets a sensor, and nothing else."""
@@ -125,12 +134,51 @@ def test_default_enabled_tariffs_exist_in_the_catalogue():
     assert not missing, missing
 
 
-def test_export_programs_are_feed_in_tariffs():
-    for (distributor, _import_code), export_code in _const.EXPORT_TARIFF_PROGRAMS.items():
-        assert _cat.export_program_supported(distributor, export_code), (distributor, export_code)
-        table = _lib_feed_in_table(distributor)
-        if table is not None:
-            assert export_code in table
+# What the derivation yields against 0.7.27, per distributor: the import→export
+# pairings and the export codes no rule could place. A library release that adds
+# a pairing fails here, which is the point: EXPORT_TARIFF_PROGRAMS (the
+# no-library fallback) must be refreshed to match.
+EXPECTED_EXPORT_PROGRAMS = {
+    "energex": ({"6900": "6900X", "6800": "6800X", "96200": "96200X"}, []),      # code + "X"
+    "ergon": ({}, ["NVGC2", "NVGX2"]),                                          # two exports, one import
+    "ausgrid": ({"EA025": "EA029", "EA225": "EA029"}, []),                       # battery_tariffs, positional
+    "endeavour": ({"N71": "N61", "N95": "N95"}, []),                             # positional, then same code
+    "essential": ({"BLNRSS2": "BLNREX2", "BLNBSS1": "BLNBEX1"}, []),             # positional
+    "evoenergy": ({"026": "026"}, []),                                           # same code both ways
+    "sapn": ({"RESELE": "RESELE", "RELE2W": "RELE2W", "SBELE": "SBELE", "B2R": "B2R"},
+             ["RESELEX", "SBELEX"]),                                             # same code beats the X twin
+}
+
+
+@pytest.mark.parametrize("distributor", DISTRIBUTORS)
+def test_export_programs_are_derived_from_the_library(distributor):
+    expected, unpaired = EXPECTED_EXPORT_PROGRAMS.get(distributor, ({}, []))
+    programs = _cat.export_programs(distributor)
+    assert programs == expected
+    assert _cat.unpaired_export_codes(distributor) == unpaired
+    # Every pairing is an import sensor's code against a convertible feed-in code.
+    imports = _cat.import_tariff_codes(distributor)
+    table = _lib_feed_in_table(distributor)
+    for import_code, export_code in programs.items():
+        assert import_code in imports
+        assert _cat.export_program_supported(distributor, export_code)
+        assert table is None or export_code in table
+    # Entity order follows the import catalogue.
+    assert list(programs) == [c for c in imports if c in programs]
+    # The no-library fallback and its names are kept in step.
+    assert {c: e for (d, c), e in _const.EXPORT_TARIFF_PROGRAMS.items() if d == distributor} == programs
+    assert all(e in _const.EXPORT_TARIFF_NAMES for e in programs.values())
+
+
+def test_export_override_wins_over_the_derived_pairing(monkeypatch):
+    monkeypatch.setattr(_cat, "EXPORT_TARIFF_OVERRIDES", {
+        ("ergon", "ERTOUET1"): "NVGC2",   # a pairing the library cannot express
+        ("sapn", "RESELE"): "RESELEX",    # overriding a derived one
+    })
+    assert _cat.export_programs("ergon") == {"ERTOUET1": "NVGC2"}
+    assert _cat.export_programs("sapn")["RESELE"] == "RESELEX"
+    # The displaced RESELE feed-in code is now the one without a sensor.
+    assert _cat.unpaired_export_codes("sapn") == ["RESELE", "SBELEX"]
 
 
 def test_names_come_from_the_library_not_the_constants():
@@ -141,6 +189,8 @@ def test_names_come_from_the_library_not_the_constants():
     # Feed-in names resolve through the feed-in table.
     feed_in = _lib_feed_in_table("endeavour")
     assert _cat.tariff_name("endeavour", "N61", export=True) == feed_in["N61"]["name"]
+    # Energex 6900X has no table entry of its own; it is 6900's export side.
+    assert _cat.tariff_name("energex", "6900X", export=True) == _cat.tariff_name("energex", "6900")
     # An unknown code falls back to itself.
     assert _cat.tariff_name("energex", "ZZZZZ") == "ZZZZZ"
 
@@ -157,6 +207,10 @@ def test_without_the_library_the_constants_are_used(monkeypatch):
     for distributor in DISTRIBUTORS:
         assert _cat.import_tariff_codes(distributor) == list(_const.DISTRIBUTOR_TARIFFS[distributor])
     assert _cat.export_program_supported("endeavour", "N61")
+    for distributor in DISTRIBUTORS:
+        assert _cat.export_programs(distributor) == {
+            code: export for (d, code), export in _const.EXPORT_TARIFF_PROGRAMS.items() if d == distributor
+        }
     assert _cat.tariff_name("energex", "3900") == _const.TARIFF_NAMES["energex"]["3900"]
     assert _cat.tariff_name("endeavour", "N61", export=True) == _const.EXPORT_TARIFF_NAMES["N61"]
 

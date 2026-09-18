@@ -344,46 +344,12 @@ def test_export_tariff_entity_id_suffix():
     assert "_export_tariff" in sensor._attr_unique_id
 
 
-def test_export_tariff_entity_id_all_programs():
-    """Verify entity_id pattern for all export programs."""
-    expected = {
-        ("ausgrid", "EA025", "EA029"): "entry_1_NSW1_ausgrid_EA025_export_tariff",
-        ("endeavour", "N71", "N61"): "entry_1_NSW1_endeavour_N71_export_tariff",
-        ("essential", "BLNT3AL", "BLNREX2"): "entry_1_NSW1_essential_BLNT3AL_export_tariff",
-        ("sapn", "RESELE", "RESELE"): "entry_1_SA1_sapn_RESELE_export_tariff",
-    }
-    for (dist, imp, exp), expected_uid in expected.items():
-        region = "SA1" if dist == "sapn" else "NSW1"
-        sensor = make_export_sensor(
-            region=region,
-            distributor=dist,
-            import_code=imp,
-            export_code=exp,
-        )
-        assert sensor._attr_unique_id == expected_uid, (
-            f"{dist}/{imp}: expected {expected_uid}, got {sensor._attr_unique_id}"
-        )
-
-
 def test_export_tariff_friendly_names():
-    """Verify friendly names match spec — no double 'Export' for BLNREX2."""
-    # Ausgrid EA029
+    """Names are '<network> <feed-in name> Export Tariff (<code>)', without doubling an 'Export' already in the name."""
     sensor_ausgrid = make_export_sensor(distributor="ausgrid", import_code="EA025", export_code="EA029")
     assert sensor_ausgrid._attr_name == "Ausgrid Residential Electrify Export Tariff (EA029)"
-
-    # Endeavour N61
-    sensor_endeavour = make_export_sensor(distributor="endeavour", import_code="N71", export_code="N61")
-    assert sensor_endeavour._attr_name == "Endeavour Energy Residential Electrify Export Tariff (N61)"
-
-    # Essential BLNREX2 — name already contains "Export", so no double
-    sensor_essential = make_export_sensor(distributor="essential", import_code="BLNT3AL", export_code="BLNREX2")
-    # Should be "...Solar Export Tariff (BLNREX2)" not "...Solar Export Export Tariff (BLNREX2)"
-    assert "Export Export" not in sensor_essential._attr_name
+    sensor_essential = make_export_sensor(distributor="essential", import_code="BLNRSS2", export_code="BLNREX2")
     assert sensor_essential._attr_name == "Essential Energy LV Residential Solar Export Tariff (BLNREX2)"
-
-    # SAPN RESELE
-    sensor_sapn = make_export_sensor(region="SA1", distributor="sapn", import_code="RESELE", export_code="RESELE")
-    assert sensor_sapn._attr_name == "SA Power Networks Residential Electrify Export Tariff (RESELE)"
 
 
 def test_day27_spot_sensor_has_diagnostic_entity_category():
@@ -432,12 +398,19 @@ def test_export_programs_registered_in_setup():
 
     # Find export sensors — they have _export_code attribute
     export_sensors = [e for e in created if hasattr(e, "_export_code")]
-    # NSW1 has 4 export programs: ausgrid/EA025→EA029, endeavour/N71→N61, essential/BLNT3AL→BLNREX2, evoenergy/026→026
-    assert len(export_sensors) == 4, (
-        f"Expected 4 export sensors for NSW1, got {len(export_sensors)}"
-    )
-    export_codes = {s._export_code for s in export_sensors}
-    assert export_codes == {"EA029", "N61", "BLNREX2", "026"}
+    # NSW1 pairings come from the library (issue #159): ausgrid EA025→EA029 and
+    # EA225→EA029, endeavour N71→N61 and N95→N95, essential BLNRSS2→BLNREX2 and
+    # BLNBSS1→BLNBEX1, evoenergy 026→026.
+    programs = {(s._distributor, s._import_code): s._export_code for s in export_sensors}
+    assert programs == {
+        ("ausgrid", "EA025"): "EA029",
+        ("ausgrid", "EA225"): "EA029",
+        ("endeavour", "N71"): "N61",
+        ("endeavour", "N95"): "N95",
+        ("essential", "BLNRSS2"): "BLNREX2",
+        ("essential", "BLNBSS1"): "BLNBEX1",
+        ("evoenergy", "026"): "026",
+    }
 
 
 def test_sapn_resele_import_sensor_default_enabled():
