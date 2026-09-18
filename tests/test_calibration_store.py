@@ -51,6 +51,15 @@ BASE_DT = datetime(2026, 4, 14, 18, 0, tzinfo=NEM_TZ)  # 18:00 NEM forecast run
 
 # Pin _now_nem() to BASE_DT + 1h so forecast-history pruning doesn't discard test data
 _store_mod._now_nem = lambda: BASE_DT + timedelta(hours=1)
+
+
+@pytest.fixture(autouse=True)
+def _empty_observation_storage():
+    """make_store backs the observation log with the shared MemoryStore, so a
+    store that async_load()s would otherwise read the rows an earlier test
+    saved. Every test starts from empty storage."""
+    MemoryStore._data.clear()
+    yield
 # ── Tests: forecast_history key type ──────────────────────────────────────────
 
 def test_forecast_history_keyed_by_str():
@@ -1468,8 +1477,9 @@ def test_fit_generation_advances_on_restore_refit_and_stage2():
         )
         for i in range(30)
     ]
-    # Stage 2 is best effort; stand in for the OLS fit so the in-place update runs.
-    store._engine.fit_ols_stage2 = lambda obs, fmap, region: {"bucket": object()}
+    # Stage 2 is best effort; stand in for the OLS fit so the in-place update
+    # runs (an empty model set still counts as a stage 2 update and serialises).
+    store._engine.fit_ols_stage2 = lambda obs, fmap, region: {}
     assert store.fit_generation == 0
 
     run_async(store.async_refit())
