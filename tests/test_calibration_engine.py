@@ -531,7 +531,8 @@ def test_p10_p90_never_outside_calibrated():
             continue
         for x_test in [0.05, 0.10, 0.15, 0.20]:
             out = model.apply_all(x_test)
-            assert out["calibrated_source"] == "isotonic", out
+            # 0.05 can sit just below the fitted domain; both paths clamp.
+            assert out["calibrated_source"] in ("isotonic", SOURCE_ISOTONIC_BELOW_DOMAIN), out
             checked += 1
             cal, p10, p90 = out["calibrated"], out["p10"], out["p90"]
             if p10 is not None and p10 > cal + 1e-9:
