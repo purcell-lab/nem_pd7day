@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
-from support import install_ha_stubs, load, load_chain, make_zip, run_async
+from support import install_ha_stubs, load_chain, make_zip, run_async
 
 install_ha_stubs()
 
