@@ -32,6 +32,7 @@ from .const import (
     EXPORT_TARIFF_PROGRAMS,
     TARIFF_NAMES,
 )
+from . import tariff_extensions
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,9 +104,43 @@ def _table(module: Any, getter: str, attribute: str) -> dict[str, Any]:
     return table if isinstance(table, dict) else {}
 
 
-def import_tariffs(distributor: str) -> dict[str, Any]:
-    """The library's import tariff table for ``distributor``; {} without the library."""
+def _library_import_tariffs(distributor: str) -> dict[str, Any]:
     return _table(_module(distributor), "get_tariffs", "tariffs")
+
+
+def import_tariffs(distributor: str) -> dict[str, Any]:
+    """The library's import tariff table for ``distributor``, plus any extension
+    tariff it lacks (tariff_extensions, issue #170); {} without the library."""
+    table = dict(_library_import_tariffs(distributor))
+    for code, entry in tariff_extensions.import_table(distributor).items():
+        if code not in table:
+            table[code] = entry
+    return table
+
+
+_logged_superseded: set[tuple[str, str]] = set()
+
+
+def priced_by_extension(distributor: str, code: str, *, export: bool = False) -> bool:
+    """Whether ``code`` is priced from tariff_extensions rather than the library.
+
+    True only while the library lacks the code: the library wins as soon as
+    an installed release carries it, and the first time that is seen the
+    superseded entry is logged so it can be deleted.
+    """
+    ext = tariff_extensions.get(distributor, code)
+    if ext is None or (export and not ext.feed_in_periods):
+        return False
+    library = (feed_in_tariffs(distributor) or {}) if export else _library_import_tariffs(distributor)
+    if code in library:
+        if (distributor, code) not in _logged_superseded:
+            _logged_superseded.add((distributor, code))
+            _LOGGER.info(
+                "aemo-to-tariff %s now carries %s/%s; the tariff_extensions entry is ignored and can be removed",
+                library_version(), distributor, code,
+            )
+        return False
+    return True
 
 
 def feed_in_tariffs(distributor: str) -> dict[str, Any] | None:
@@ -172,10 +207,11 @@ def _battery_lists(distributor: str) -> list[tuple[list[str], list[str]]]:
 
 
 def _library_export_codes(distributor: str) -> set[str]:
-    """Every code the library treats as an export tariff for ``distributor``."""
+    """Every code the library, or an extension, treats as an export tariff for ``distributor``."""
     codes: set[str] = set(feed_in_tariffs(distributor) or {})
     for _imports, exports in _battery_lists(distributor):
         codes.update(exports)
+    codes.update(tariff_extensions.feed_in_codes(distributor))
     return codes
 
 
@@ -239,6 +275,8 @@ def export_program_supported(distributor: str, export_code: str) -> bool:
     that publishes no feed-in table; False only when the network publishes
     one and the code is not in it.
     """
+    if priced_by_extension(distributor, export_code, export=True):
+        return True
     table = feed_in_tariffs(distributor)
     if table is None:
         return True
@@ -252,7 +290,10 @@ def tariff_name(distributor: str, code: str, *, export: bool = False) -> str:
     feed-in table and EXPORT_TARIFF_NAMES before the import equivalents, so
     a code that appears in both (SAPN RESELE) names the right program.
     """
-    tables = [import_tariffs(distributor), feed_in_tariffs(distributor) or {}]
+    feed_in = dict(feed_in_tariffs(distributor) or {})
+    for ext_code, entry in tariff_extensions.feed_in_table(distributor).items():
+        feed_in.setdefault(ext_code, entry)
+    tables = [import_tariffs(distributor), feed_in]
     fallbacks = [TARIFF_NAMES.get(distributor, {}).get(code), EXPORT_TARIFF_NAMES.get(code)]
     if export:
         tables.reverse()

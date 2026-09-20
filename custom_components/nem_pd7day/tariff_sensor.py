@@ -37,7 +37,8 @@ from .calibration_inputs import (
     interval_key_for_period,
 )
 from .coordinator import PD7DayCoordinator, staleness_attributes
-from .tariff_catalogue import library_version, tariff_name as catalogue_tariff_name
+from . import tariff_extensions
+from .tariff_catalogue import library_version, priced_by_extension, tariff_name as catalogue_tariff_name
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +107,38 @@ _LIB_APPLIES_GST = frozenset(
 _DISTRIBUTOR_LIB_MAP = {
     "sapn": "sapower",
 }
+
+
+def _tariff_source(distributor: str, code: str, *, export: bool = False) -> str:
+    """Where the network rates come from: the library, or tariff_extensions (#170)."""
+    if priced_by_extension(distributor, code, export=export):
+        return "nem_pd7day extension"
+    return "aemo-to-tariff"
+
+
+def _spot_to_tariff(interval_dt, distributor: str, code: str, rrp_mwh: float, **factors) -> float:
+    """The library's spot_to_tariff, or the extension table's for a code the library lacks."""
+    if priced_by_extension(distributor, code):
+        return tariff_extensions.spot_to_tariff(interval_dt, distributor, code, rrp_mwh, **factors)
+    return spot_to_tariff(interval_dt, distributor, code, rrp_mwh, **factors)
+
+
+def _spot_to_feed_in_tariff(interval_dt, distributor: str, code: str, rrp_mwh: float) -> float:
+    if priced_by_extension(distributor, code, export=True):
+        return tariff_extensions.spot_to_feed_in_tariff(interval_dt, distributor, code, rrp_mwh)
+    return spot_to_feed_in_tariff(interval_dt, distributor, code, rrp_mwh)
+
+
+def _get_periods(distributor: str, code: str):
+    if priced_by_extension(distributor, code):
+        return tariff_extensions.get_periods(distributor, code, now_nem())
+    return get_periods(distributor, code)
+
+
+def _get_daily_fee(distributor: str, code: str):
+    if priced_by_extension(distributor, code):
+        return tariff_extensions.get_daily_fee(distributor, code)
+    return get_daily_fee(distributor, code)
 
 
 def get_tariff_name(distributor_key: str, tariff_code: str) -> str:
@@ -473,7 +506,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             interval_dt = parse_iso(period.nemtime)
             # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
             with _suppress_stdout():
-                result_c_kwh = spot_to_tariff(
+                result_c_kwh = _spot_to_tariff(
                     interval_dt, self._distributor, self._tariff_code, rrp_mwh,
                     dlf=_DEFAULT_DLF, mlf=_DEFAULT_MLF, market=_DEFAULT_MARKET,
                 )
@@ -511,7 +544,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 return cache[1]
             # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
             with _suppress_stdout():
-                result_c_kwh = spot_to_tariff(
+                result_c_kwh = _spot_to_tariff(
                     nemtime_dt, self._distributor, self._tariff_code, rrp_mwh,
                     dlf=_DEFAULT_DLF, mlf=_DEFAULT_MLF, market=_DEFAULT_MARKET,
                 )
@@ -561,7 +594,9 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         attribute is absent (e.g. when bypassing __init__ in tests).
         """
         cached = getattr(self, "_cached_tariff_periods", _MISSING)
-        if cached is _MISSING:
+        if cached is _MISSING or priced_by_extension(self._distributor, self._tariff_code):
+            # An extension tariff's windows can change with the season, so the
+            # construction-time cache is not served for one.
             return self._get_tariff_periods()
         return cached or []
 
@@ -572,7 +607,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         try:
             # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
             with _suppress_stdout():
-                raw_periods = list(get_periods(self._distributor, self._tariff_code))
+                raw_periods = list(_get_periods(self._distributor, self._tariff_code))
             periods = []
             for row in raw_periods:
                 # aemo_to_tariff returns 4-tuples for most networks but
@@ -617,7 +652,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         try:
             # aemo_to_tariff/sapower.py contains debug print() calls; suppress to avoid HA log noise
             with _suppress_stdout():
-                return get_daily_fee(self._distributor, self._tariff_code)
+                return _get_daily_fee(self._distributor, self._tariff_code)
         except Exception:
             return None
 
@@ -714,6 +749,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             "additional_usage_fee_$/kwh": fee,
             "gst_multiplier": 1.1,
             "library_version": library_version(),
+            "tariff_source": _tariff_source(self._distributor, self._tariff_code),
             # Description
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
@@ -813,6 +849,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
             "additional_usage_fee_$/kwh": fee,
             "gst_multiplier": 1.1,
             "library_version": library_version(),
+            "tariff_source": _tariff_source(self._distributor, self._tariff_code),
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
                 _DEFAULT_DLF, _DEFAULT_MLF, combined, fee, self._region,
@@ -972,7 +1009,21 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         period/rate API, so we deliberately return an empty list — which
         makes ``_lookup_period_info`` resolve to ``(None, None)``.
         """
-        return []
+        if not priced_by_extension(self._distributor, self._export_code, export=True):
+            return []
+        # An extension export tariff does publish its windows: the credit or
+        # charge rows in force this month, rate in $/kWh added to the price paid.
+        return [
+            {
+                "period": name,
+                "start": start.strftime("%H:%M"),
+                "end": end.strftime("%H:%M"),
+                "export_adjustment_$/kwh": round(rate / 100, 6),
+            }
+            for name, start, end, rate in tariff_extensions.feed_in_periods_for(
+                self._distributor, self._export_code, now_nem(),
+            )
+        ]
 
     def _lookup_period_info(self, period) -> tuple[str | None, float | None]:
         """Always (None, None): export tariffs have no TOU period structure.
@@ -1006,7 +1057,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
                 return cache[1]
             interval_dt = parse_iso(period.nemtime)
             with _suppress_stdout():
-                result_c_kwh = spot_to_feed_in_tariff(
+                result_c_kwh = _spot_to_feed_in_tariff(
                     interval_dt, self._distributor, self._export_code, rrp_mwh,
                 )
             result = round(result_c_kwh / 100, 6)
@@ -1038,7 +1089,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
             if cache is not None and cache[0] == cache_key:
                 return cache[1]
             with _suppress_stdout():
-                result_c_kwh = spot_to_feed_in_tariff(
+                result_c_kwh = _spot_to_feed_in_tariff(
                     nemtime_dt, self._distributor, self._export_code, rrp_mwh,
                 )
             result = round(result_c_kwh / 100, 6)
@@ -1125,5 +1176,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
             "additional_usage_fee_$/kwh": fee,
             "gst_multiplier": 1.1,
             "library_version": library_version(),
+            "tariff_source": _tariff_source(self._distributor, self._export_code, export=True),
+            "export_periods": self._get_tariff_periods(),
             "forecast": forecast_list,
         }

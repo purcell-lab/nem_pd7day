@@ -371,6 +371,8 @@ The `spot` field in each forecast entry reflects the **calibrated** spot price (
 | `distributor` | Distribution network name |
 | `tariff_periods` | Time-of-use period structure with rates |
 | `daily_supply_charge_$` | Daily supply charge ($/day) |
+| `library_version` | Installed `aemo-to-tariff` version the rates come from |
+| `tariff_source` | `aemo-to-tariff`, or `nem_pd7day extension` for a tariff the library does not carry yet (see below) |
 
 Each entry in the `forecast` list contains:
 
@@ -416,7 +418,15 @@ Export tariff formula: `result_c_kwh / 100` (no additional usage fee, no GST —
 | SAPN (SA1) | RESELE, RELE2W | RESELE, RELE2W | +12.25 c/kWh peak, −1.00 c/kWh solar sponge |
 | SAPN (SA1) | SBELE, B2R | SBELE, B2R | Small Business Electrify; Business Two Rate |
 
-Pairings are as read from aemo-to-tariff 0.7.27; later library releases may add rows without a change here.
+Pairings are as read from aemo-to-tariff 0.7.27; later library releases may add rows without a change here. An export sensor whose rates come from an extension (below) also publishes `export_periods`, the credit and charge windows in force this month.
+
+#### Tariffs the library does not carry yet (extensions)
+
+A network tariff can be live before `aemo-to-tariff` has a release for it. `tariff_extensions.py` carries such a tariff in the library's own conventions (interval-end lookup, c/kWh rates, GST exclusive where the library's module is) so its import and export sensors exist in the meantime; the sensor's `tariff_source` attribute says so. The catalogue lets the library win: once the installed release carries the code the entry is ignored, a line is logged, and the entry can be deleted. Each entry names its source schedule and the upstream change it is waiting on.
+
+| Network | Tariff | Structure | Waiting on |
+|---|---|---|---|
+| Powercor (VIC1) | PRCER, Residential CER (two-way, opt-in) | Import: peak 16:00–21:00 at 27.86 c/kWh Dec–Feb and Jun–Aug, 20.80 c/kWh Mar–May and Sep–Nov; saver 11:00–16:00 at 1.00 c/kWh; off-peak 4.20 c/kWh. Export: +7.00 c/kWh 16:00–21:00 in the peak-season months, −1.00 c/kWh 11:00–16:00 Sep–May (the 1 kWh/day free allowance is not modelled). Powercor 2026–27 Tariff Summary, 7 May 2026. | aemo-to-tariff PR from `purcell-lab/aemo_to_tariff` branch `powercor-prcer` (#170) |
 
 #### Additional usage fee
 

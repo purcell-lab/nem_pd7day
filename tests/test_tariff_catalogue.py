@@ -90,7 +90,9 @@ def test_library_version_is_the_installed_metadata(monkeypatch):
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
 def test_import_codes_are_the_library_catalogue(distributor):
     """Every import tariff the library carries gets a sensor, and nothing else."""
-    assert sorted(_cat.import_tariff_codes(distributor)) == sorted(_lib_import_table(distributor).keys())
+    from custom_components.nem_pd7day import tariff_extensions
+    expected = set(_lib_import_table(distributor)) | set(tariff_extensions.import_codes(distributor))
+    assert sorted(_cat.import_tariff_codes(distributor)) == sorted(expected)
 
 
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
@@ -99,7 +101,10 @@ def test_import_codes_keep_the_snapshot_order_then_append(distributor):
     codes = _cat.import_tariff_codes(distributor)
     snapshot = [c for c in _const.DISTRIBUTOR_TARIFFS[distributor] if c in codes]
     assert codes[: len(snapshot)] == snapshot
-    assert codes[len(snapshot):] == [c for c in _lib_import_table(distributor) if c not in snapshot]
+    from custom_components.nem_pd7day import tariff_extensions
+    library_new = [c for c in _lib_import_table(distributor) if c not in snapshot]
+    extension = [c for c in tariff_extensions.import_codes(distributor) if c not in library_new]
+    assert codes[len(snapshot):] == library_new + extension
 
 
 def test_library_order_cannot_change_the_default_tariff(monkeypatch):
@@ -147,6 +152,7 @@ EXPECTED_EXPORT_PROGRAMS = {
     "evoenergy": ({"026": "026"}, []),                                           # same code both ways
     "sapn": ({"RESELE": "RESELE", "RELE2W": "RELE2W", "SBELE": "SBELE", "B2R": "B2R"},
              ["RESELEX", "SBELEX"]),                                             # same code beats the X twin
+    "powercor": ({"PRCER": "PRCER"}, []),                                        # tariff_extensions (#170)
 }
 
 
