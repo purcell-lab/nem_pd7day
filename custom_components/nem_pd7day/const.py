@@ -437,6 +437,7 @@ TARIFF_NAMES = {
         "SBELE": "Small Business Electrify",
         "SBELEX": "Small Business Electrify Export",
         "B2R": "Business Two Rate",
+    "PRCER": "Residential CER Export",
         "RSR": "Residential Single Rate",
         "RTOU": "Residential Time of Use",
         "RTOUNE": "Residential TOU No Export",
@@ -529,6 +530,7 @@ EXPORT_TARIFF_PROGRAMS = {
     ("sapn", "RELE2W"): "RELE2W",
     ("sapn", "SBELE"): "SBELE",
     ("sapn", "B2R"): "B2R",
+    ("powercor", "PRCER"): "PRCER",   # tariff_extensions until the library carries it (#170)
 }
 
 # Pairings the library cannot express, or that override a derived one for the
@@ -551,6 +553,7 @@ EXPORT_TARIFF_NAMES = {
     "RELE2W": "Residential Electrify",
     "SBELE": "Small Business Electrify",
     "B2R": "Business Two Rate",
+    "PRCER": "Residential CER Export",
     # Evoenergy
     "026": "Battery Feed-in Trial",
 }
