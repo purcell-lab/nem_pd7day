@@ -125,7 +125,13 @@ def _spot_to_tariff(interval_dt, distributor: str, code: str, rrp_mwh: float, **
 
 def _spot_to_feed_in_tariff(interval_dt, distributor: str, code: str, rrp_mwh: float) -> float:
     if priced_by_extension(distributor, code, export=True):
-        return tariff_extensions.spot_to_feed_in_tariff(interval_dt, distributor, code, rrp_mwh)
+        # The library's spot_to_feed_in_tariff applies its default loss
+        # factors to the spot component; an extension export must price the
+        # same way or it sits 9 per cent off the library's for the same spot.
+        return tariff_extensions.spot_to_feed_in_tariff(
+            interval_dt, distributor, code, rrp_mwh,
+            dlf=_DEFAULT_DLF, mlf=_DEFAULT_MLF, market=_DEFAULT_MARKET,
+        )
     return spot_to_feed_in_tariff(interval_dt, distributor, code, rrp_mwh)
 
 
