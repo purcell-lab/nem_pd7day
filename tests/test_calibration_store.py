@@ -999,14 +999,14 @@ def _make_store_with_calibration():
 
 def test_spike_credible_true_when_covariates_met():
     """
-    raw >= SPIKE_THRESHOLD, gas > 150 TJ, qni < -300 MW →
+    raw >= SPIKE_THRESHOLD, gas > 150 TJ, region network tight →
     spike_credible = True. Calibrated value uses isotonic (not capped).
     """
     store = _make_store_with_calibration()
     result = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=200.0,
-        qni_mwflow=-400.0,
+        network_tight=True,
     )
     assert result.get("spike_credible") is True, (
         f"Expected spike_credible=True, got {result.get('spike_credible')}"
@@ -1019,14 +1019,14 @@ def test_spike_credible_true_when_covariates_met():
 
 def test_spike_credible_false_when_covariates_not_met():
     """
-    raw >= SPIKE_THRESHOLD, low gas + high qni → spike_credible = False.
+    raw >= SPIKE_THRESHOLD, low gas and a slack network → spike_credible = False.
     Calibrated value still uses isotonic (no capping).
     """
     store = _make_store_with_calibration()
     result = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=100.0,
-        qni_mwflow=-200.0,
+        network_tight=False,
     )
     assert result.get("spike_credible") is False, (
         f"Expected spike_credible=False, got {result.get('spike_credible')}"
@@ -1052,14 +1052,14 @@ def test_spike_credible_none_when_covariates_missing():
     result2 = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=100.0,
-        qni_mwflow=None,
+        network_tight=None,
     )
     assert result2.get("spike_credible") is None
 
     result3 = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=None,
-        qni_mwflow=-200.0,
+        network_tight=False,
     )
     assert result3.get("spike_credible") is None
 
@@ -1072,7 +1072,7 @@ def test_spike_credible_absent_for_low_raw():
     result = store.apply_to_price(
         0.50, 24.0, 14,
         gas_forecast_tj=100.0,
-        qni_mwflow=-200.0,
+        network_tight=False,
     )
     assert "spike_credible" not in result, (
         f"spike_credible should not be set for low raw, got {result.get('spike_credible')}"
@@ -1089,7 +1089,7 @@ def test_spike_input_uses_isotonic_not_passthrough_high():
     result = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=200.0,
-        qni_mwflow=-400.0,
+        network_tight=True,
     )
     assert result["calibrated_source"] != "passthrough_high", (
         f"passthrough_high should no longer exist, got {result['calibrated_source']}"
@@ -1109,12 +1109,12 @@ def test_spike_calibrated_never_modified_by_gate():
     result_credible = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=200.0,
-        qni_mwflow=-400.0,
+        network_tight=True,
     )
     result_not_credible = store.apply_to_price(
         5.0, 24.0, 14,
         gas_forecast_tj=100.0,
-        qni_mwflow=-200.0,
+        network_tight=False,
     )
     assert result_credible["calibrated"] == result_not_credible["calibrated"], (
         f"Calibrated value must be identical regardless of covariates: "

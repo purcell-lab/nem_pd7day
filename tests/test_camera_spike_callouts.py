@@ -63,8 +63,9 @@ from custom_components.nem_pd7day.calibration_engine import (  # noqa: E402
 )
 from custom_components.nem_pd7day.calibration_store import CalibrationStore  # noqa: E402
 from custom_components.nem_pd7day.const import (  # noqa: E402
+    REGION_INTERCONNECTOR_SIGN,
+    SPIKE_CAPABILITY_DEPRESSION,
     SPIKE_GAS_THRESHOLD_TJ,
-    SPIKE_QNI_THRESHOLD_MW,
 )
 
 NEM_TZ = timezone(timedelta(hours=10))
@@ -150,6 +151,8 @@ class FakePeriod:
 class FakeFlow:
     time: str
     mwflow: float
+    exportlimit: float
+    importlimit: float
 
 
 @dataclass
@@ -158,17 +161,62 @@ class FakeGas:
     value_tj: float
 
 
+# Queensland imports across both its links in their nominal direction, so the
+# ceiling on imports is exportlimit on each. A run of background intervals at
+# full capability sets the median the per interval capability is judged
+# against: without them a uniformly depressed series would be its own
+# reference and would score as normal.
+FULL_CAPABILITY_MW = 1000.0
+DEPRESSED_CAPABILITY_MW = 50.0
+BACKGROUND_INTERVALS = 20
+
+
+def _qld_interconnectors(periods, tight):
+    """QLD1's own interconnector forecasts.
+
+    ``tight`` True depresses capability on the priced intervals while the
+    region is importing, which is the condition the gate looks for. False
+    leaves capability at the run median. None publishes no forecast at all,
+    which must read as unknown rather than as a confirmed negative.
+    """
+    if tight is None:
+        return {
+            ic_id: types.SimpleNamespace(forecast=[])
+            for ic_id in REGION_INTERCONNECTOR_SIGN["QLD1"]
+        }
+    capability = DEPRESSED_CAPABILITY_MW if tight else FULL_CAPABILITY_MW
+    points = [
+        FakeFlow(
+            time=p.time,
+            mwflow=400.0,
+            exportlimit=capability,
+            importlimit=-FULL_CAPABILITY_MW,
+        )
+        for p in periods
+    ]
+    last = RUN_DT + timedelta(minutes=30 * (len(periods) + 1))
+    for i in range(BACKGROUND_INTERVALS):
+        start = last + timedelta(minutes=30 * (i + 1))
+        points.append(
+            FakeFlow(
+                time=nem_iso(start),
+                mwflow=400.0,
+                exportlimit=FULL_CAPABILITY_MW,
+                importlimit=-FULL_CAPABILITY_MW,
+            )
+        )
+    return {
+        ic_id: types.SimpleNamespace(forecast=list(points))
+        for ic_id in REGION_INTERCONNECTOR_SIGN["QLD1"]
+    }
+
+
 class FakeCoordinator:
     """Coordinator stand-in exposing what calibration_inputs actually reads."""
 
-    def __init__(self, periods, gas_tj, qni_mw):
+    def __init__(self, periods, gas_tj, tight):
         price_data = types.SimpleNamespace(
             forecast=list(periods), forecast_generated_at=nem_iso(RUN_DT)
-        )
-        flows = (
-            [FakeFlow(time=p.time, mwflow=qni_mw) for p in periods]
-            if qni_mw is not None
-            else []
         )
         gas = (
             types.SimpleNamespace(
@@ -181,10 +229,11 @@ class FakeCoordinator:
         )
         self.data = types.SimpleNamespace(
             prices={"QLD1": price_data},
-            interconnectors={"NSW1-QLD1": types.SimpleNamespace(forecast=flows)},
+            interconnectors=_qld_interconnectors(periods, tight),
             market_summary=gas,
         )
         self.last_update_success = True
+        self._regions = ["QLD1"]
         self._store = None
 
     def stpasa_index(self):
@@ -232,7 +281,7 @@ def fitted_store() -> CalibrationStore:
     return store
 
 
-def make_camera(values, gas_tj=200.0, qni_mw=-500.0):
+def make_camera(values, gas_tj=200.0, tight=True):
     """A forecast chart camera over a run whose prices are ``values``."""
     periods = []
     for i, value in enumerate(values):
@@ -245,7 +294,7 @@ def make_camera(values, gas_tj=200.0, qni_mw=-500.0):
             )
         )
     store = fitted_store()
-    coordinator = FakeCoordinator(periods, gas_tj, qni_mw)
+    coordinator = FakeCoordinator(periods, gas_tj, tight)
     coordinator._store = store
 
     entry = MagicMock()
@@ -473,23 +522,28 @@ def test_camera_carries_spike_credible_into_the_chart_entry():
 
 
 def test_covariate_gate_is_what_decides_credibility():
-    """The gate is gas above 150 TJ and QNI below -300 MW, both together."""
+    """The gate is gas above 150 TJ and the region's own network tight, together.
+
+    The network half used to be a hardcoded Queensland to New South Wales flow
+    threshold applied to every region. It is now each region's own links, so
+    the case matrix drives capability depression rather than one MW figure.
+    """
     cases = {
-        (200.0, -500.0): True,
-        (100.0, -500.0): False,
-        (200.0, -100.0): False,
-        (100.0, -100.0): False,
+        (200.0, True): True,
+        (100.0, True): False,
+        (200.0, False): False,
+        (100.0, False): False,
     }
     assert SPIKE_GAS_THRESHOLD_TJ == 150.0
-    assert SPIKE_QNI_THRESHOLD_MW == -300.0
-    for (gas, qni), expected in cases.items():
-        camera = make_camera([12.0], gas_tj=gas, qni_mw=qni)
+    assert SPIKE_CAPABILITY_DEPRESSION == 0.25
+    for (gas, tight), expected in cases.items():
+        camera = make_camera([12.0], gas_tj=gas, tight=tight)
         entry = camera._build_forecast_data()[0]
         assert entry["spike_credible"] is expected, (
-            f"gas={gas} qni={qni} gave {entry['spike_credible']!r}, "
+            f"gas={gas} tight={tight} gave {entry['spike_credible']!r}, "
             f"expected {expected!r}"
         )
-    print("  PASS: the gas and QNI gate decides spike_credible")
+    print("  PASS: the gas and network gate decides spike_credible")
 
 
 def test_missing_covariate_is_none_and_never_false():
@@ -499,12 +553,12 @@ def test_missing_covariate_is_none_and_never_false():
     as False would say the market data ruled the spike out when in fact it was
     never consulted.
     """
-    for gas, qni in ((None, -500.0), (200.0, None), (None, None)):
-        camera = make_camera([12.0], gas_tj=gas, qni_mw=qni)
+    for gas, tight in ((None, True), (200.0, None), (None, None)):
+        camera = make_camera([12.0], gas_tj=gas, tight=tight)
         entry = camera._build_forecast_data()[0]
         assert "spike_credible" in entry
         assert entry["spike_credible"] is None, (
-            f"gas={gas} qni={qni} gave {entry['spike_credible']!r}, expected None"
+            f"gas={gas} tight={tight} gave {entry['spike_credible']!r}, expected None"
         )
     print("  PASS: a missing covariate carries through as None, not False")
 
@@ -555,8 +609,8 @@ def test_spike_first_run_now_distinguishes_a_repeat_from_a_new_spike():
 
 def test_an_uncredible_spike_is_not_saved_as_a_prior_spike():
     """Only True belongs in the set, so None and False stay out of it."""
-    for gas, qni in ((None, None), (100.0, -100.0)):
-        camera = make_camera([12.0], gas_tj=gas, qni_mw=qni)
+    for gas, tight in ((None, None), (100.0, False)):
+        camera = make_camera([12.0], gas_tj=gas, tight=tight)
         camera._build_forecast_data()
         assert camera._prior_spike_intervals() == set()
     print("  PASS: only a credible spike enters the prior spike set")

@@ -145,6 +145,7 @@ from custom_components.nem_pd7day.const import (
     CONF_REGION,
     DOMAIN,
     NSW1_INTERCONNECTORS,
+    REGION_INTERCONNECTOR_SIGN,
     REGION_INTERCONNECTORS,
     VIC1_INTERCONNECTORS,
 )
@@ -680,6 +681,9 @@ def test_sensor_reads_capped_value():
 
     mock_store = MagicMock()
     mock_store.calibration = MagicMock()
+    # calibrate_interval reads the region off the store, because the store is
+    # already per region and the network covariate must describe that same one.
+    mock_store._region = "QLD1"
 
     # apply_to_price should be called WITH covariate kwargs — we verify this
     # by making it return covariate_capped when called correctly
@@ -690,10 +694,10 @@ def test_sensor_reads_capped_value():
     # the covariates must still reach the store.
     def _apply(
         raw, h, hour, *,
-        gas_forecast_tj=None, qni_mwflow=None,
+        gas_forecast_tj=None, network_tight=None,
         stpasa_features=None, run_features=None,
     ):
-        if gas_forecast_tj is not None and qni_mwflow is not None:
+        if gas_forecast_tj is not None and network_tight is not None:
             return {
                 "calibrated": SPIKE_COVARIATE_CAP,
                 "p10": SPIKE_COVARIATE_CAP,
@@ -737,12 +741,27 @@ def test_sensor_reads_capped_value():
     price_data.forecast_generated_at = _iso(now - timedelta(hours=24))
     price_data.region = "QLD1"
 
-    # Set up coordinator data with QNI interconnector and market summary
-    qni_period = MagicMock()
-    qni_period.time = period.time
-    qni_period.mwflow = -200.0
-    qni_data = MagicMock()
-    qni_data.forecast = [qni_period]
+    # Set up coordinator data with QLD1's own interconnectors and market
+    # summary. The spike gate reads every link the region imports across, in
+    # that region's direction, so both QLD1 links have to be present. The
+    # second interval sits at full capability: it is what makes the run median
+    # the target interval is judged against meaningful. See issue #176.
+    def _flow(time_iso, exportlimit):
+        return types.SimpleNamespace(
+            time=time_iso,
+            mwflow=400.0,
+            exportlimit=exportlimit,
+            importlimit=-1000.0,
+        )
+
+    ic_forecast = [
+        _flow(period.time, 50.0),
+        _flow(_iso(interval_start + timedelta(hours=1)), 1000.0),
+    ]
+    qld_links = {
+        ic_id: types.SimpleNamespace(forecast=list(ic_forecast))
+        for ic_id in REGION_INTERCONNECTOR_SIGN["QLD1"]
+    }
 
     gas_period = MagicMock()
     gas_period.nemtime = _iso(interval_start)  # same date
@@ -752,7 +771,7 @@ def test_sensor_reads_capped_value():
 
     coordinator_data = MagicMock()
     coordinator_data.prices = {"QLD1": price_data}
-    coordinator_data.interconnectors = {"NSW1-QLD1": qni_data}
+    coordinator_data.interconnectors = qld_links
     coordinator_data.market_summary = market_summary
     sensor.coordinator.data = coordinator_data
 
