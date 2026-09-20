@@ -676,6 +676,12 @@ class CalibrationStore:
         # hardcoded Queensland to New South Wales flow test that scored every
         # region on one link and left three regions unable to return anything
         # but None. See issue #176.
+        #
+        # This is the raw gate result and it stays raw. The short-lead
+        # suppression that calibration called for is applied where the flag is
+        # published as a sensor attribute, not here, because the chart callout
+        # path reads this value and is deliberately left on the gate.
+        # See SPIKE_COVARIATE_MIN_HORIZON_H and sensor._published_spike_credible.
         from .calibration_engine import SPIKE_THRESHOLD
         if raw_price >= SPIKE_THRESHOLD:
             if (

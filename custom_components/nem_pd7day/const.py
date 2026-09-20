@@ -273,17 +273,33 @@ MAX_FORECAST_AGE_DAYS = 14
 MAX_HORIZON_HOURS = 168
 
 # ── Spike covariate gating (Rec 2) ──────────────────────────────────────────
-# When raw forecast > SPIKE_COVARIATE_RAW_FLOOR and the gas and network joint
-# gate is NOT met (and horizon >= SPIKE_COVARIATE_BYPASS_HORIZON_H), cap the
-# displayed value at SPIKE_COVARIATE_CAP and mark as non-passthrough.
+# When raw forecast is in spike territory, the gas and network covariates are
+# scored jointly and the result is reported as spike_credible. The gate is
+# informational only and never moves the calibrated value.
 SPIKE_GAS_THRESHOLD_TJ = 150.0       # gas_forecast_tj must exceed this
 # A link counts as depressed when its import capability for the interval falls
 # to this fraction or less of its own median capability across the run. The
 # comparison is against the link's own run median rather than a MW constant
 # because nominal capability differs by an order of magnitude between
 # Basslink and Heywood, so no single MW figure can serve every region.
+# This value is a chosen constant, not a calibrated one. Against 817 PD7DAY
+# archive runs it cannot be identified from data: every value between 0.05 and
+# 0.50 gives the same precision to within bootstrap noise, the best value
+# reverses direction between periods, and the underlying ratio is not monotonic
+# in spike risk. It is kept at 0.25 as a documented judgement.
+# See docs/spike_threshold_calibration.md.
 SPIKE_CAPABILITY_DEPRESSION = 0.25
-SPIKE_COVARIATE_BYPASS_HORIZON_H = 12.0  # within 12h, trust raw forecast regardless
+# Below this horizon spike_credible is not published on sensor attributes and
+# reports None instead. Inside 24 hours the gate selects a worse subset than
+# the raw forecast alone: across the archive it flagged 272 intervals at 15.81
+# percent precision against a 20.42 percent base rate, and in QLD1 it flagged 3
+# and got none of them right. The crossover to useful sits between 36h and 48h,
+# but 24h is the conservative edge because the 24h to 30h band is still
+# positive at 1.21x and should not be suppressed.
+# The gate itself still runs, and the camera spike callouts still read its raw
+# result, because suppressing it in the store would switch off the entire 0 to
+# 24h callout band. See sensor._published_spike_credible.
+SPIKE_COVARIATE_MIN_HORIZON_H = 24.0
 SPIKE_COVARIATE_CAP = 0.50           # $/kWh — cap when gate not met
 SPIKE_COVARIATE_RAW_FLOOR = 1.00     # $/kWh — only apply gate above this raw value
 

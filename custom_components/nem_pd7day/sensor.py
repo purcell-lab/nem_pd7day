@@ -73,6 +73,7 @@ from .const import (
     get_region,
     interconnectors_for_regions,
     REGION_DISTRIBUTORS,
+    SPIKE_COVARIATE_MIN_HORIZON_H,
 )
 from .calibration_inputs import (
     STPASA_BAND_EDGE_SLACK_H,
@@ -234,6 +235,32 @@ async def async_setup_entry(
             )
 
     async_add_entities(entities, update_before_add=True)
+
+
+def _published_spike_credible(cal: dict, horizon_h: float | None) -> bool | None:
+    """Return spike_credible as it should be published on a sensor attribute.
+
+    The covariate gate is reported unchanged beyond SPIKE_COVARIATE_MIN_HORIZON_H.
+    Inside it the gate is not published at all, because calibration against the
+    PD7DAY archive showed it selects a worse subset than the raw forecast alone
+    at short lead: it flagged 272 intervals at 15.81 percent precision against a
+    20.42 percent base rate, and in QLD1 it flagged 3 and got none of them
+    right. None here carries the meaning it already has elsewhere in this
+    attribute, no opinion, rather than a claim that the spike is not credible.
+    See docs/spike_threshold_calibration.md.
+
+    The chart callout path deliberately does not use this. It reads the gate
+    result straight off the calibration dict so callout behaviour is unchanged.
+
+    A missing horizon is not treated as short lead, because guessing would
+    suppress a flag on the strength of absent data.
+    """
+    credible = cal.get("spike_credible")
+    if credible is None or horizon_h is None:
+        return credible
+    if horizon_h < SPIKE_COVARIATE_MIN_HORIZON_H:
+        return None
+    return credible
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +755,7 @@ class PD7DayForecastSensor(
                 ATTR_CAL_BAND_SOURCE: cal.get(ATTR_CAL_BAND_SOURCE),
                 ATTR_CAL_N_OBS: cal["n_obs"],
                 "value": cal["calibrated"],
-                "spike_credible": cal.get("spike_credible"),
+                "spike_credible": _published_spike_credible(cal, h),
             }
             if cal.get("stpasa_run_at"):
                 cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
@@ -977,7 +1004,7 @@ class SpotPriceForecastDays27Sensor(
                 ATTR_CAL_BAND_SOURCE: cal.get(ATTR_CAL_BAND_SOURCE),
                 ATTR_CAL_N_OBS: cal["n_obs"],
                 "value": cal["calibrated"],
-                "spike_credible": cal.get("spike_credible"),
+                "spike_credible": _published_spike_credible(cal, h),
             }
             if cal.get("stpasa_run_at"):
                 cal_update["stpasa_run_at"] = cal["stpasa_run_at"]

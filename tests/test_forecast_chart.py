@@ -350,7 +350,7 @@ def test_covariate_constants_exist():
     from custom_components.nem_pd7day.const import (
         SPIKE_CAPABILITY_DEPRESSION,
         SPIKE_GAS_THRESHOLD_TJ,
-        SPIKE_COVARIATE_BYPASS_HORIZON_H,
+        SPIKE_COVARIATE_MIN_HORIZON_H,
         SPIKE_COVARIATE_CAP,
         SPIKE_COVARIATE_RAW_FLOOR,
     )
@@ -360,7 +360,11 @@ def test_covariate_constants_exist():
     # magnitude in capability. The network half of the gate is now a fraction
     # of each link's own run median.
     assert SPIKE_CAPABILITY_DEPRESSION == 0.25
-    assert SPIKE_COVARIATE_BYPASS_HORIZON_H == 12.0
+    # SPIKE_COVARIATE_BYPASS_HORIZON_H retired: it belonged to the capping
+    # path and was never read. Replaced by a horizon below which the gate
+    # declines to express an opinion, because calibration showed it selects a
+    # worse subset than the raw forecast alone at short lead.
+    assert SPIKE_COVARIATE_MIN_HORIZON_H == 24.0
     assert SPIKE_COVARIATE_CAP == 0.50
     assert SPIKE_COVARIATE_RAW_FLOOR == 1.00
 
