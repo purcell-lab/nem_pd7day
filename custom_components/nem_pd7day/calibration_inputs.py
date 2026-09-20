@@ -6,7 +6,7 @@ Why this module exists
 The price forecast sensor and the tariff sensors calibrate the same raw price
 for the same interval of the same run, and they used to assemble the inputs to
 ``CalibrationStore.apply_to_price`` separately. The forecast path passed STPASA
-features, run features and the gas/QNI covariates; the tariff path passed only
+features, run features and the gas and network covariates; the tariff path passed only
 raw price, horizon and hour of day, so it silently took the isotonic only
 branch and published a different spot price for the same interval. See issue
 #66, where 183 of 183 in band intervals disagreed on a live five region
@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import bisect
 import logging
+from statistics import median
 from typing import TYPE_CHECKING
 
+from .const import REGION_INTERCONNECTOR_SIGN, SPIKE_CAPABILITY_DEPRESSION
 from .nem_time import parse_iso, to_nem_iso
 
 if TYPE_CHECKING:
@@ -279,29 +281,180 @@ def stpasa_features_for_interval(
     return StpasaFeatures.from_interval(chosen)
 
 
+# ── Region network covariate ─────────────────────────────────────────────────
+# The spike gate used to read the Queensland to New South Wales flow for every
+# region, which said nothing at all about a Victorian or South Australian
+# interval and left those regions with spike_credible = None on every interval
+# that reached the threshold. What follows reads each region's own links
+# instead, in that region's own direction. See issue #176.
+
+NETWORK_COVARIATES_ABSENT: dict = {
+    "network_tight": None,
+    "network_links_used": 0,
+    "network_min_capability_ratio": None,
+    "network_net_import_mw": None,
+}
+
+
+def import_capability(point, sign: int) -> float | None:
+    """Headroom to import into the region across one link, in MW.
+
+    AEMO publishes the limits in the interconnector's nominal direction. When
+    that direction runs into the region the ceiling on imports is
+    ``exportlimit``; when it runs out of the region the ceiling is the negated
+    ``importlimit``. Returns None when the field is absent, never 0.0, because
+    a missing limit and a closed link are different statements.
+    """
+    raw = getattr(point, "exportlimit" if sign > 0 else "importlimit", None)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if sign > 0 else -value
+
+
+def network_context(interconnectors, region: str | None) -> dict | None:
+    """Per-run lookup tables for one region's own interconnectors.
+
+    Holds an interval index per link and that link's median import capability
+    across the whole run. The median is the reference the per-interval
+    capability is judged against, because nominal capability differs by an
+    order of magnitude between links and no MW constant can serve them all.
+
+    Returns None when the region has no direction mapping, which is the honest
+    answer for a region this integration does not model.
+    """
+    signs = REGION_INTERCONNECTOR_SIGN.get(region or "")
+    if not signs:
+        return None
+    index: dict[str, dict[str, object]] = {}
+    reference: dict[str, float | None] = {}
+    for ic_id, sign in signs.items():
+        series = interconnectors.get(ic_id) if interconnectors else None
+        points = getattr(series, "forecast", None) or []
+        index[ic_id] = {p.time: p for p in points}
+        caps = [
+            c for c in (import_capability(p, sign) for p in points)
+            if c is not None
+        ]
+        reference[ic_id] = median(caps) if caps else None
+    return {"signs": signs, "index": index, "reference": reference}
+
+
+def network_covariates_for_interval(context: dict | None, interval_key: str) -> dict:
+    """Whether the region's own network is tight for this interval.
+
+    Tight means the region is a net importer at this interval and at least one
+    of the links it imports across is either shut or carrying capability at or
+    below SPIKE_CAPABILITY_DEPRESSION of its own run median. The net import
+    guard is what keeps a depressed export path, which is a different market
+    condition, from reading as scarcity in the importing region.
+
+    Any missing link, flow or limit returns network_tight = None with the
+    count of links that did resolve. A partial answer is not a negative one.
+    """
+    if not context:
+        return dict(NETWORK_COVARIATES_ABSENT)
+    net_import = 0.0
+    worst_ratio: float | None = None
+    shut = False
+    used = 0
+    for ic_id, sign in context["signs"].items():
+        point = context["index"].get(ic_id, {}).get(interval_key)
+        if point is None:
+            return {**NETWORK_COVARIATES_ABSENT, "network_links_used": used}
+        flow = getattr(point, "mwflow", None)
+        capability = import_capability(point, sign)
+        if flow is None or capability is None:
+            return {**NETWORK_COVARIATES_ABSENT, "network_links_used": used}
+        used += 1
+        net_import += sign * float(flow)
+        if capability <= 0.0:
+            shut = True
+        ref = context["reference"].get(ic_id)
+        if ref is not None and ref > 0.0:
+            ratio = capability / ref
+            worst_ratio = ratio if worst_ratio is None else min(worst_ratio, ratio)
+    if used == 0:
+        return dict(NETWORK_COVARIATES_ABSENT)
+    depressed = shut or (
+        worst_ratio is not None and worst_ratio <= SPIKE_CAPABILITY_DEPRESSION
+    )
+    return {
+        "network_tight": bool(net_import > 0.0 and depressed),
+        "network_links_used": used,
+        "network_min_capability_ratio": worst_ratio,
+        "network_net_import_mw": net_import,
+    }
+
+
+def primary_region(coordinator: "PD7DayCoordinator") -> str | None:
+    """The region a coordinator was built for, or None."""
+    regions = getattr(coordinator, "_regions", None)
+    if isinstance(regions, (list, tuple)) and regions:
+        return regions[0]
+    return None
+
+
+def _network_context_cached(coordinator, interconnectors, region: str | None) -> dict | None:
+    """network_context for this run, built once per region per run.
+
+    Building the index and the medians is linear in the horizon, and the
+    serving path asks for it once per interval per sensor, so without this the
+    cost is quadratic in a hot loop. The stamp keys on the shape of the data
+    rather than a clock, so a new run invalidates it and a repeated read of
+    the same run does not.
+    """
+    if not REGION_INTERCONNECTOR_SIGN.get(region or ""):
+        return None
+    parts = []
+    for ic_id in sorted(REGION_INTERCONNECTOR_SIGN[region]):
+        series = interconnectors.get(ic_id) if interconnectors else None
+        points = getattr(series, "forecast", None) or []
+        parts.append((ic_id, len(points), points[0].time if points else ""))
+    stamp = tuple(parts)
+    cache = getattr(coordinator, "_network_context_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        try:
+            coordinator._network_context_cache = cache
+        except AttributeError:
+            return network_context(interconnectors, region)
+    hit = cache.get(region)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    context = network_context(interconnectors, region)
+    cache[region] = (stamp, context)
+    return context
+
+
 def covariates_for_interval(
-    coordinator: "PD7DayCoordinator", interval_key: str
+    coordinator: "PD7DayCoordinator",
+    interval_key: str,
+    region: str | None = None,
 ) -> dict:
-    """Extract gas_forecast_tj and qni_mwflow for an interval from coordinator data.
+    """Extract gas_forecast_tj and network_tight for an interval.
 
     These two only annotate ``spike_credible``; they never move the calibrated
     value. They are still assembled here so that one function decides the whole
     argument list and no caller can pass a subset of it.
+
+    ``region`` selects which interconnectors are read. Callers that know their
+    region pass it; the rest fall back to the coordinator's primary region,
+    which is the region it was built to serve.
     """
     gas_tj: float | None = None
-    qni_mw: float | None = None
+    if region is None:
+        region = primary_region(coordinator)
     data = getattr(coordinator, "data", None)
     if data is None:
-        return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+        return {"gas_forecast_tj": None, "network_tight": None}
 
-    # QNI MW flow lookup
-    interconnectors = getattr(data, "interconnectors", None)
-    qni_data = interconnectors.get("NSW1-QLD1") if interconnectors else None
-    if qni_data:
-        for p in qni_data.forecast:
-            if p.time == interval_key:
-                qni_mw = p.mwflow
-                break
+    interconnectors = getattr(data, "interconnectors", None) or {}
+    context = _network_context_cached(coordinator, interconnectors, region)
+    network = network_covariates_for_interval(context, interval_key)
 
     # Gas TJ lookup (daily resolution, keyed by date)
     ms = getattr(data, "market_summary", None)
@@ -312,7 +465,7 @@ def covariates_for_interval(
                 gas_tj = g.value_tj
                 break
 
-    return {"gas_forecast_tj": gas_tj, "qni_mwflow": qni_mw}
+    return {"gas_forecast_tj": gas_tj, "network_tight": network["network_tight"]}
 
 
 def run_features_for_coordinator(
@@ -357,7 +510,16 @@ def calibrate_interval(
     """
     if store is None or raw_price is None:
         return None
-    covariates = covariates_for_interval(coordinator, interval_key)
+    # The region comes from the store rather than the caller because the store
+    # is already per region: taking it from there means the network covariate
+    # and the fit being applied cannot describe two different regions. Guarded
+    # on type so a stand-in store never passes a non-region through.
+    store_region = getattr(store, "_region", None)
+    covariates = covariates_for_interval(
+        coordinator,
+        interval_key,
+        region=store_region if isinstance(store_region, str) else None,
+    )
     stpasa_features = stpasa_features_for_interval(
         coordinator, interval_key, horizon_hours_value, run_at_iso=run_at_iso
     )

@@ -46,8 +46,8 @@ from .const import (
     MAX_HORIZON_HOURS,
     MAX_TOTAL_OBS,
     NEM_TZ,
+    QNI_INTERCONNECTOR_ID,
     SPIKE_GAS_THRESHOLD_TJ,
-    SPIKE_QNI_THRESHOLD_MW,
     STORAGE_VERSION,
     storage_keys,
 )
@@ -288,7 +288,7 @@ class CalibrationStore:
                 stpasa_by_start[start_key] = si
 
         # Build per-interval lookups from the interconnector forecast
-        qni = interconnectors.get("NSW1-QLD1")
+        qni = interconnectors.get(QNI_INTERCONNECTOR_ID)
         qni_mwflow_by_time: dict[str, float | None] = {}
         qni_violation_by_time: dict[str, float | None] = {}
         if qni:
@@ -644,7 +644,7 @@ class CalibrationStore:
         hour_of_day: int,
         *,
         gas_forecast_tj: float | None = None,
-        qni_mwflow: float | None = None,
+        network_tight: bool | None = None,
         stpasa_features: "StpasaFeatures | None" = None,
         run_features: "RunFeatures | None" = None,
     ) -> dict:
@@ -667,18 +667,24 @@ class CalibrationStore:
         )
 
         # Spike credibility annotation: when raw_price is in spike territory,
-        # annotate whether the gas+QNI covariates support the spike signal.
-        # The calibrated value is NEVER modified by this gate — it always uses
-        # the isotonic result.  The gate is purely informational.
+        # annotate whether the gas and network covariates support the spike
+        # signal. The calibrated value is NEVER modified by this gate, it always
+        # uses the isotonic result. The gate is purely informational.
+        #
+        # network_tight is computed per region from that region's own
+        # interconnectors, in that region's own direction. It replaced a
+        # hardcoded Queensland to New South Wales flow test that scored every
+        # region on one link and left three regions unable to return anything
+        # but None. See issue #176.
         from .calibration_engine import SPIKE_THRESHOLD
         if raw_price >= SPIKE_THRESHOLD:
             if (
                 gas_forecast_tj is not None
-                and qni_mwflow is not None
+                and network_tight is not None
             ):
-                cal["spike_credible"] = (
+                cal["spike_credible"] = bool(
                     gas_forecast_tj > SPIKE_GAS_THRESHOLD_TJ
-                    and qni_mwflow < SPIKE_QNI_THRESHOLD_MW
+                    and network_tight
                 )
             else:
                 cal["spike_credible"] = None

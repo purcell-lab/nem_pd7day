@@ -348,14 +348,18 @@ def test_chart_renders_passthrough_high_with_horizon_gating():
 def test_covariate_constants_exist():
     """Verify spike covariate constants are defined in const.py."""
     from custom_components.nem_pd7day.const import (
+        SPIKE_CAPABILITY_DEPRESSION,
         SPIKE_GAS_THRESHOLD_TJ,
-        SPIKE_QNI_THRESHOLD_MW,
         SPIKE_COVARIATE_BYPASS_HORIZON_H,
         SPIKE_COVARIATE_CAP,
         SPIKE_COVARIATE_RAW_FLOOR,
     )
     assert SPIKE_GAS_THRESHOLD_TJ == 150.0
-    assert SPIKE_QNI_THRESHOLD_MW == -300.0
+    # SPIKE_QNI_THRESHOLD_MW retired with issue #176: one MW figure on one
+    # link cannot describe five regions whose links differ by an order of
+    # magnitude in capability. The network half of the gate is now a fraction
+    # of each link's own run median.
+    assert SPIKE_CAPABILITY_DEPRESSION == 0.25
     assert SPIKE_COVARIATE_BYPASS_HORIZON_H == 12.0
     assert SPIKE_COVARIATE_CAP == 0.50
     assert SPIKE_COVARIATE_RAW_FLOOR == 1.00

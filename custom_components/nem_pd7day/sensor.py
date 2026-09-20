@@ -646,12 +646,16 @@ class PD7DayForecastSensor(
         return forecast[0] if forecast else None
 
     def _covariates_for_interval(self, interval_key: str) -> dict:
-        """Extract gas_forecast_tj and qni_mwflow for an interval from coordinator data.
+        """Extract gas_forecast_tj and network_tight for an interval.
 
         Kept as a method because subclasses and tests reach for it by name; the
         body lives in calibration_inputs so the tariff sensors use the same one.
+        The region is passed explicitly because the network covariate is read
+        from this region's own interconnectors, not from one shared link.
         """
-        return covariates_for_interval(self.coordinator, interval_key)
+        return covariates_for_interval(
+            self.coordinator, interval_key, region=self._region
+        )
 
     @property
     def native_value(self) -> float | None:
@@ -908,7 +912,9 @@ class SpotPriceForecastDays27Sensor(
 
     def _covariates_for_interval(self, interval_key: str) -> dict:
         """Same computation as PD7DayForecastSensor, delegated to one body."""
-        return covariates_for_interval(self.coordinator, interval_key)
+        return covariates_for_interval(
+            self.coordinator, interval_key, region=self._region
+        )
 
     @property
     def native_value(self) -> float | None:
