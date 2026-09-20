@@ -291,8 +291,8 @@ def tariff_name(distributor: str, code: str, *, export: bool = False) -> str:
     a code that appears in both (SAPN RESELE) names the right program.
     """
     feed_in = dict(feed_in_tariffs(distributor) or {})
-    for ext_code, entry in tariff_extensions.feed_in_table(distributor).items():
-        feed_in.setdefault(ext_code, entry)
+    for ext_code, ext_entry in tariff_extensions.feed_in_table(distributor).items():
+        feed_in.setdefault(ext_code, ext_entry)
     tables = [import_tariffs(distributor), feed_in]
     fallbacks = [TARIFF_NAMES.get(distributor, {}).get(code), EXPORT_TARIFF_NAMES.get(code)]
     if export:
