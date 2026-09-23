@@ -142,7 +142,13 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
 
-    entities.append(PD7DayForecastSensor(coordinator, store, entry, region))
+    base_forecast_sensor = PD7DayForecastSensor(coordinator, store, entry, region)
+    entities.append(base_forecast_sensor)
+    if region == "QLD1":
+        # Local import keeps the optional overlay isolated from other regions.
+        from .scarcity_sensor import ScarcityPremiumSensor
+
+        entities.append(ScarcityPremiumSensor(coordinator, entry, base_forecast_sensor))
     entities.append(PD7DayRegionSourceFileDatetimeSensor(coordinator, entry, region))
     entities.append(PD7DayRegionDataUpdatedDatetimeSensor(coordinator, entry, region))
 
