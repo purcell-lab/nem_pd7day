@@ -88,7 +88,7 @@ Ordered so each step makes the next safer, and so the riskiest numerical code mo
 
 Steps 001 and 002 fit in one release; 003 and 004 in the next; 005 and 006 each deserve their own release and a day of shadow comparison; 007 to 009 can batch.
 
-Before 000: rebase and merge PR #169 (test rationalisation), because every later spec edits tests it has already consolidated.
+PR #169 (test rationalisation) is merged, so every spec starts from the consolidated suite and `tests/support.py`.
 
 ## 5. Done means
 
