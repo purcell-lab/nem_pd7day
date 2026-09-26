@@ -77,6 +77,7 @@ For every entity the platforms create, keyed by unique id: `entity_id` suggestio
 - Datetimes as ISO 8601 with offset; sets as sorted lists; tuples as lists.
 - The PNG hash is valid only on the pinned `matplotlib==3.11.1`; the harness asserts that version before comparing it.
 - Snapshots are recorded on CPython 3.13, the version CI and Home Assistant run. CPython 3.12 changed `sum()` of floats to compensated summation, so the product's own means differ in the last bit on 3.11; the comparison skips below 3.12 with that reason rather than carrying a tolerance.
+- `tests/conftest.py` pins the floating-point environment before numpy loads: one OpenBLAS thread, the Haswell (AVX2) kernel, and numpy capped at X86_V3. Without this the ill-conditioned stage-2 `lstsq` coefficients differ in their last bits between an AVX-512 machine and a GitHub runner.
 - Scenario inputs are built from `+ - * /` and comparisons only. libm's `sin`, `exp`, `tanh` and `log` may differ by an ulp between C libraries, and CI's first run showed such an ulp flipping a value published at six decimals.
 - Nothing is excluded. If a field turns out not to be deterministic under the frozen clock, that is a defect to fix in the harness (usually an unfrozen clock read), not a field to drop.
 

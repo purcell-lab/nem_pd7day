@@ -5,11 +5,24 @@ Provides:
   * a parent-package bootstrap so individual test files can be run standalone
   * autouse fixtures that prevent test ordering contamination
 """
-import importlib
-import importlib.machinery
 import os
-import sys
-import types
+
+# ── Portable floating point for the golden master ─────────────────────────────
+# Set before anything imports numpy. OpenBLAS picks its kernel from the CPU
+# and splits work across threads, and numpy picks AVX-512 or AVX2 paths per
+# machine, so the last bits of an ill-conditioned lstsq (the stage-2 OLS
+# coefficients) differ between this sandbox (AVX-512, 4 cores) and a GitHub
+# runner. One BLAS thread, the Haswell kernel and numpy's X86_V3 ceiling give
+# every AVX2 machine the same arithmetic. setdefault so a developer can still
+# override any of them.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_CORETYPE", "Haswell")
+os.environ.setdefault("NPY_DISABLE_CPU_FEATURES", "X86_V4")
+
+import importlib  # noqa: E402
+import importlib.machinery  # noqa: E402
+import sys  # noqa: E402
+import types  # noqa: E402
 
 import pytest
 
