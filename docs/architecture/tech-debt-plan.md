@@ -87,7 +87,7 @@ One unit of work is one specification, one agent implementation, one pull reques
 | Size | a small AST check in CI | no new function over 60 lines, no new class over 250 lines or 15 methods |
 | Live | recorded replay after deploy | inputs exported from the live install at four instants over the 24 hours after deploy, replayed through the previous and the new release, give identical outputs; the error log shows nothing new from the integration |
 
-The live gate replays rather than compares live values directly, because two consecutive days of published values differ for market reasons, and the previous release is no longer running once the new one is installed. It also has a known blind spot: a forecast mode that is not configured on the live install is not exercised by it. The v3.16.0 short-lead suppression was a case in point, verified by tests only because both live entries run in day 2-7 mode. Each spec says which scenarios cover the modes the live install does not run.
+The live gate replays rather than compares live values directly, because two consecutive days of published values differ for market reasons, and the previous release is no longer running once the new one is installed. It also has a known blind spot: a mode and region combination the live install does not run is not exercised by it. Four of the five live entries (QLD1, NSW1, SA1, VIC1) run in days 2-7 mode, so their forecasts start about 34 hours out; only TAS1 runs days 1-7, and it rarely spikes. The v3.16.0 short-lead suppression was a case in point: it was checked on QLD1 and VIC1 only, and there it rests on tests. Each spec says which scenarios cover the modes the live install does not run.
 
 ## 4. Sequence
 
