@@ -801,3 +801,56 @@ def test_apply_tariff_to_spot_passes_the_interval_end(minute, expected_end):
     end = lib.call_args.args[0]
     assert (end.hour, end.minute, end.second, end.microsecond) == (*expected_end, 0, 0)
 
+
+# ── The usage fee reaches the tariff sensors, issue #181 ──────────────────────
+# The fee number's entity id is derived by Home Assistant from its name,
+# "Additional Usage Fees"; the tariff sensors used to construct an id without
+# the final "s", found nothing, and always priced with the default. Live on
+# 26 September 2026 QLD1's number was 0.0224 and its tariff sensors reported
+# 0.0293.
+
+class _Registry:
+    def __init__(self, entity_id):
+        self._entity_id = entity_id
+
+    def async_get_entity_id(self, domain, platform, unique_id):
+        assert (domain, platform, unique_id) == ("number", "nem_pd7day", "nem_pd7day_QLD1_additional_usage_fee")
+        return self._entity_id
+
+
+def _hass_serving(states, registry_entity_id=None):
+    hass = MagicMock()
+    hass.states.get = lambda entity_id: (
+        types.SimpleNamespace(state=states[entity_id]) if entity_id in states else None
+    )
+    return hass, _Registry(registry_entity_id)
+
+
+@pytest.mark.parametrize("registry_id, states, expected", [
+    # The registry's answer wins, including an id the user renamed.
+    ("number.my_fee", {"number.my_fee": "0.0224", "number.nem_pd7day_qld1_additional_usage_fees": "0.05"}, 0.0224),
+    # No registry answer: the id Home Assistant derives from the name.
+    (None, {"number.nem_pd7day_qld1_additional_usage_fees": "0.0224"}, 0.0224),
+    # The id without the final "s", for any install that carries it.
+    (None, {"number.nem_pd7day_qld1_additional_usage_fee": "0.0224"}, 0.0224),
+    # Unavailable or unreadable falls through to the next id, then the default.
+    ("number.my_fee", {"number.my_fee": "unavailable", "number.nem_pd7day_qld1_additional_usage_fees": "0.031"}, 0.031),
+    (None, {"number.nem_pd7day_qld1_additional_usage_fees": "not a number"}, 0.0293),
+    (None, {}, 0.0293),
+], ids=["registry", "derived", "legacy", "unavailable_then_derived", "unreadable", "absent"])
+def test_read_additional_fee_resolves_the_number(registry_id, states, expected):
+    hass, registry = _hass_serving(states, registry_id)
+    with patch.object(_tariff_mod.er, "async_get", return_value=registry):
+        assert _tariff_mod.read_additional_fee(hass, "QLD1") == expected
+
+
+def test_both_tariff_classes_read_the_fee_the_same_way():
+    hass, registry = _hass_serving({"number.nem_pd7day_qld1_additional_usage_fees": "0.0224"})
+    importer = make_tariff_sensor(price_periods=[])
+    exporter = _tariff_mod.NemPd7dayExportTariffSensor.__new__(_tariff_mod.NemPd7dayExportTariffSensor)
+    exporter._region = "QLD1"
+    for sensor in (importer, exporter):
+        sensor.hass = hass
+        with patch.object(_tariff_mod.er, "async_get", return_value=registry):
+            assert sensor._get_additional_fee() == 0.0224
+

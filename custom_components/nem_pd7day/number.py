@@ -12,7 +12,7 @@ from homeassistant.components.number import NumberMode, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import DEFAULT_ADDITIONAL_FEE, DOMAIN, get_region
+from .const import DEFAULT_ADDITIONAL_FEE, DOMAIN, additional_fee_unique_id, get_region
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class AdditionalFeeNumber(RestoreNumber):
     def __init__(self, entry: ConfigEntry, region: str) -> None:
         self._entry = entry
         self._region = region
-        self._attr_unique_id = f"nem_pd7day_{region}_additional_usage_fee"
+        self._attr_unique_id = additional_fee_unique_id(region)
         self._attr_native_value = DEFAULT_ADDITIONAL_FEE
 
     @property

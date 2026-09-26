@@ -678,6 +678,18 @@ ATTR_CAL_BAND_SOURCE = "band_source"
 DEFAULT_ADDITIONAL_FEE = 0.0293
 
 
+def additional_fee_unique_id(region: str) -> str:
+    """The AdditionalFeeNumber's unique id; the entity registry maps it to its entity id."""
+    return f"nem_pd7day_{region}_additional_usage_fee"
+
+
 def additional_fee_entity_id(region: str) -> str:
-    """Return the entity_id for the AdditionalFeeNumber for a given region."""
-    return f"number.nem_pd7day_{region.lower()}_additional_usage_fee"
+    """The entity id Home Assistant derives for the AdditionalFeeNumber on a new install.
+
+    Derived from the device name plus the entity name "Additional Usage Fees".
+    It used to be written without the final "s", which no install ever had,
+    so the tariff sensors never found the number and always priced with the
+    default fee (#181). The tariff sensors resolve the number through the
+    entity registry first; this is the fallback and the id shown to users.
+    """
+    return f"number.nem_pd7day_{region.lower()}_additional_usage_fees"

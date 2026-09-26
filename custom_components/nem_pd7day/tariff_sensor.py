@@ -18,6 +18,7 @@ import datetime
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -29,6 +30,7 @@ from .const import (
     DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
     additional_fee_entity_id,
+    additional_fee_unique_id,
 )
 from .calibration_inputs import (
     calibrated_forecast_key,
@@ -145,6 +147,40 @@ def _get_daily_fee(distributor: str, code: str):
     if priced_by_extension(distributor, code):
         return tariff_extensions.get_daily_fee(distributor, code)
     return get_daily_fee(distributor, code)
+
+
+def _fee_entity_ids(hass: Any, region: str) -> list[str]:
+    """Where to read the region's usage fee, most authoritative first (#181).
+
+    The entity registry maps the number's unique id to whatever entity id it
+    has, including one the user renamed. The derived id covers a registry that
+    cannot answer, and the id without the final "s" covers any install that
+    somehow carries it.
+    """
+    ids: list[str] = []
+    try:
+        found = er.async_get(hass).async_get_entity_id("number", DOMAIN, additional_fee_unique_id(region))
+    except Exception:  # noqa: BLE001 - no registry means use the fallbacks
+        found = None
+    if isinstance(found, str):
+        ids.append(found)
+    for fallback in (additional_fee_entity_id(region), f"number.nem_pd7day_{region.lower()}_additional_usage_fee"):
+        if fallback not in ids:
+            ids.append(fallback)
+    return ids
+
+
+def read_additional_fee(hass: Any, region: str) -> float:
+    """The region's additional usage fee in $/kWh, or the default when unset or unreadable."""
+    for entity_id in _fee_entity_ids(hass, region):
+        try:
+            state = hass.states.get(entity_id)
+            if state is None or state.state in ("unknown", "unavailable"):
+                continue
+            return float(state.state)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return DEFAULT_ADDITIONAL_FEE
 
 
 def get_tariff_name(distributor_key: str, tariff_code: str) -> str:
@@ -287,16 +323,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         return forecast[0] if forecast else None
 
     def _get_additional_fee(self) -> float:
-        """Read additional usage fee from native number entity for this region."""
-        from .const import DEFAULT_ADDITIONAL_FEE, additional_fee_entity_id
-        try:
-            entity_id = additional_fee_entity_id(self._region)
-            state = self.hass.states.get(entity_id)
-            if state is not None and state.state not in ("unknown", "unavailable"):
-                return float(state.state)
-        except (ValueError, AttributeError):
-            pass
-        return DEFAULT_ADDITIONAL_FEE
+        """The region's additional usage fee, from its number entity (#181)."""
+        return read_additional_fee(self.hass, self._region)
 
     def _calibrated_value(self, period) -> float | None:
         """Return calibrated spot price $/kWh for a forecast period.
@@ -682,7 +710,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             f"structure above and is sourced from AER-approved distributor pricing. "
             f"The final price includes a 10% GST component and an additional usage fee "
             f"(currently {fee:.4f} $/kWh, configurable via the number entity "
-            f"'nem_pd7day_{region.lower()}_additional_usage_fee') added before GST. "
+            f"'{additional_fee_entity_id(region)}') added before GST. "
             f"IMPORTANT: This is a forecast only and should not be relied upon as an "
             f"accurate prediction of actual electricity costs. Spot prices are inherently "
             f"volatile and can differ significantly from forecasts, particularly beyond "
@@ -985,14 +1013,7 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         return forecast[0] if forecast else None
 
     def _get_additional_fee(self) -> float:
-        try:
-            entity_id = additional_fee_entity_id(self._region)
-            state = self.hass.states.get(entity_id)
-            if state is not None and state.state not in ("unknown", "unavailable"):
-                return float(state.state)
-        except (ValueError, AttributeError):
-            pass
-        return DEFAULT_ADDITIONAL_FEE
+        return read_additional_fee(self.hass, self._region)
 
     # One calibration implementation for both tariff classes. This used to be a
     # byte for byte copy of the import sensor's method, and issue #66 is what
