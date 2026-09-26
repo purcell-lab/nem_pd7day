@@ -1,5 +1,5 @@
 """
-Tariff sensors are enumerated from aemo_to_tariff's own catalogue.
+Tests for tariff_catalogue.py and the const.py tariff constants it falls back to.
 
 Issue #159: every tariff the integration knew about came from hard-coded
 lists in const.py, and the friendly-name lookup read a ``module.tariffs``
@@ -11,7 +11,8 @@ constants.
 
 tariff_catalogue reads the library at runtime; const.py is the fallback for a
 missing library and the source of what the library cannot say (default
-enabled set, import-to-export pairings).
+enabled set, import-to-export pairings). The library-driven tests are marked
+``needs_library``; the constant checks run either way.
 
 Run with:  python -m pytest tests/test_tariff_catalogue.py -v
 """
@@ -19,37 +20,18 @@ from __future__ import annotations
 
 import contextlib
 import importlib
-import importlib.util
 import io
-import os
-import sys
 from types import SimpleNamespace
 
 import pytest
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
+from support import load_chain
 
 # const first, so the catalogue's relative import resolves without pulling in
-# the HA-dependent package __init__.
-_const = _load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-_cat = _load(
-    "custom_components.nem_pd7day.tariff_catalogue",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "tariff_catalogue.py"),
-)
+# the HA-dependent package __init__. tariff_catalogue has no HA imports.
+_const, _cat = load_chain("const", "tariff_catalogue")
 
-aemo_to_tariff = pytest.importorskip("aemo_to_tariff")
+needs_library = pytest.mark.skipif(not _cat.library_available(), reason="aemo_to_tariff not installed")
 
 DISTRIBUTORS = sorted({d for ds in _const.REGION_DISTRIBUTORS.values() for d in ds})
 
@@ -74,10 +56,28 @@ def _lib_feed_in_table(distributor):
         return getter()
 
 
-def test_library_is_read():
-    assert _cat.library_available()
+# ── The constants ─────────────────────────────────────────────────────────────
+
+def test_region_distributor_mapping():
+    """REGION_DISTRIBUTORS lists the networks of each NEM region."""
+    assert sorted(_const.REGION_DISTRIBUTORS["QLD1"]) == ["energex", "ergon"]
+    assert sorted(_const.REGION_DISTRIBUTORS["NSW1"]) == ["ausgrid", "endeavour", "essential", "evoenergy"]
+    assert sorted(_const.REGION_DISTRIBUTORS["VIC1"]) == ["ausnet", "jemena", "powercor", "united", "victoria"]
+    assert _const.REGION_DISTRIBUTORS["SA1"] == ["sapn"]
+    assert _const.REGION_DISTRIBUTORS["TAS1"] == ["tasnetworks"]
 
 
+def test_all_distributors_have_fallback_tariffs():
+    """Every distributor in REGION_DISTRIBUTORS has entries in DISTRIBUTOR_TARIFFS."""
+    for region, distributors in _const.REGION_DISTRIBUTORS.items():
+        for dist in distributors:
+            assert dist in _const.DISTRIBUTOR_TARIFFS, f"{dist} from {region} not in DISTRIBUTOR_TARIFFS"
+            assert len(_const.DISTRIBUTOR_TARIFFS[dist]) > 0, f"{dist} has empty tariff list"
+
+
+# ── Reading the library ───────────────────────────────────────────────────────
+
+@needs_library
 def test_library_version_is_the_installed_metadata(monkeypatch):
     """The version is published so an install can be checked against the manifest floor."""
     from importlib import metadata
@@ -87,6 +87,7 @@ def test_library_version_is_the_installed_metadata(monkeypatch):
     assert _cat.library_version() is None
 
 
+@needs_library
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
 def test_import_codes_are_the_library_catalogue(distributor):
     """Every import tariff the library carries gets a sensor, and nothing else."""
@@ -95,6 +96,7 @@ def test_import_codes_are_the_library_catalogue(distributor):
     assert sorted(_cat.import_tariff_codes(distributor)) == sorted(expected)
 
 
+@needs_library
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
 def test_import_codes_keep_the_snapshot_order_then_append(distributor):
     """The first default-enabled code decides the day 2-7 default; library order must not move it."""
@@ -119,6 +121,7 @@ def test_library_order_cannot_change_the_default_tariff(monkeypatch):
     assert codes[-1] == "NEWCODE"
 
 
+@needs_library
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
 def test_feed_in_only_codes_are_not_import_sensors(distributor):
     """N61, BLNREX2 and friends were listed as import tariffs; they are feed-in tariffs."""
@@ -130,6 +133,7 @@ def test_feed_in_only_codes_are_not_import_sensors(distributor):
     assert not (feed_in_only & imports), feed_in_only & imports
 
 
+@needs_library
 def test_default_enabled_tariffs_exist_in_the_catalogue():
     """A default-enabled pair the library cannot convert would be an enabled dead sensor."""
     missing = [
@@ -139,7 +143,7 @@ def test_default_enabled_tariffs_exist_in_the_catalogue():
     assert not missing, missing
 
 
-# What the derivation yields against 0.7.27, per distributor: the import→export
+# What the derivation yields against 0.7.27, per distributor: the import->export
 # pairings and the export codes no rule could place. A library release that adds
 # a pairing fails here, which is the point: EXPORT_TARIFF_PROGRAMS (the
 # no-library fallback) must be refreshed to match.
@@ -156,6 +160,7 @@ EXPECTED_EXPORT_PROGRAMS = {
 }
 
 
+@needs_library
 @pytest.mark.parametrize("distributor", DISTRIBUTORS)
 def test_export_programs_are_derived_from_the_library(distributor):
     expected, unpaired = EXPECTED_EXPORT_PROGRAMS.get(distributor, ({}, []))
@@ -176,6 +181,7 @@ def test_export_programs_are_derived_from_the_library(distributor):
     assert all(e in _const.EXPORT_TARIFF_NAMES for e in programs.values())
 
 
+@needs_library
 def test_export_override_wins_over_the_derived_pairing(monkeypatch):
     monkeypatch.setattr(_cat, "EXPORT_TARIFF_OVERRIDES", {
         ("ergon", "ERTOUET1"): "NVGC2",   # a pairing the library cannot express
@@ -187,6 +193,7 @@ def test_export_override_wins_over_the_derived_pairing(monkeypatch):
     assert _cat.unpaired_export_codes("sapn") == ["RESELE", "SBELEX"]
 
 
+@needs_library
 def test_names_come_from_the_library_not_the_constants():
     """Energex 3900 was 'Residential Transitional Demand' in const.py; the library disagrees."""
     lib_name = _lib_import_table("energex")["3900"]["name"]
@@ -201,6 +208,7 @@ def test_names_come_from_the_library_not_the_constants():
     assert _cat.tariff_name("energex", "ZZZZZ") == "ZZZZZ"
 
 
+@needs_library
 def test_fallback_snapshot_matches_the_pinned_library():
     """DISTRIBUTOR_TARIFFS is the no-library fallback; keep it equal to the pinned catalogue."""
     for distributor in DISTRIBUTORS:

@@ -110,6 +110,23 @@ async def test_dispatch_update_cannot_fill_missing_interval_with_stale_data(adap
     assert sensor.extra_state_attributes["forecast"] == []
 
 
+@pytest.mark.parametrize("settlement", ["not a timestamp", None], ids=["malformed", "missing"])
+async def test_unparseable_dispatch_settlement_is_ignored_not_raised(adapter, settlement):
+    """A dispatch snapshot whose SETTLEMENTDATE cannot be read adds no sample
+    and does not break the refresh; the stored morning is served unchanged."""
+    from test_scarcity_premium import observations
+    control = make_sensor(adapter)
+    control._samples = observations()
+    await control._async_refresh()  # the same refresh with no dispatch price
+    sensor = make_sensor(adapter)
+    sensor._samples = observations()
+    sensor._dispatch.prices["QLD1"] = SimpleNamespace(interval_datetime=settlement, rrp=.041)
+    await sensor._async_refresh()
+    assert sensor._samples == control._samples
+    assert sensor.available
+    assert sensor.native_value == .031
+
+
 async def test_warm_failure_and_stale_coordinator_clear_forecast(adapter, monkeypatch):
     from test_scarcity_premium import observations
     sensor = make_sensor(adapter)

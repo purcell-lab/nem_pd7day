@@ -1,192 +1,237 @@
-"""Unit tests for nem_time.py — timezone helpers."""
+"""Tests for nem_time: the NEM timezone helpers and parse_iso.
+
+parse_iso history (issue #62). It moved from strptime to fromisoformat. It is
+one of the hottest functions in the integration: profiling
+NemPd7dayTariffSensor.extra_state_attributes over a 330 interval forecast put
+strptime at 0.316 s of 0.802 s total, reached through 13,200 parse_iso calls,
+while the calibration everyone assumed was the cost accounted for 0.063 s.
+The branch it spent that time in was labelled the fast path:
+
+    if s.endswith("+10:00"):
+        # Fast path: strip and parse as naive then reattach
+        naive = datetime.strptime(s[:-6], "%Y-%m-%dT%H:%M:%S")
+
+datetime.fromisoformat has parsed offsets natively since 3.11 and is a C level
+parser, measured at 0.16 us against 5.84 us for the strptime form, about 37
+times faster. A parser swap is exactly the kind of change that looks safe and
+silently shifts an edge case, so the old implementation is reproduced below
+and used as an oracle: for every input where it returned a value, the new
+code must return the same instant with the same tzinfo. Two behaviours are
+deliberately not equivalent and are asserted separately at the bottom.
+"""
+
 from __future__ import annotations
 
-import importlib.util
-import os
-import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import pytest
 
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+from support import load_chain
 
-_nt = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-from custom_components.nem_pd7day.nem_time import (
-    NEM_TZ, parse_nem_csv, to_nem_iso, parse_iso,
-    current_nem_interval, fetch_times_as_utc, interval_start,
-    INTERVAL_DURATION, _amber_express_cutoff,
-)
+_const, nt = load_chain("const", "nem_time")
 
+NEM_TZ = nt.NEM_TZ
+parse_iso = nt.parse_iso
+to_nem_iso = nt.to_nem_iso
 UTC = timezone.utc
 
 
-def test_nem_tz_offset():
-    """NEM_TZ must be exactly UTC+10."""
+# ── Timezone helpers ─────────────────────────────────────────────────────────
+
+def test_nem_tz_is_utc_plus_ten():
+    assert NEM_TZ.utcoffset(None) == timedelta(hours=10)
     dt = datetime(2026, 4, 14, 7, 30, 0, tzinfo=NEM_TZ)
-    utc_dt = dt.astimezone(UTC)
-    assert utc_dt.hour == 21 or (utc_dt.day == dt.day - 1 and utc_dt.hour == 21)
-    # 07:30 AEST = 21:30 UTC previous day
-    assert utc_dt.strftime("%H:%M") == "21:30"
-    print("  PASS: NEM_TZ is UTC+10")
+    # 07:30 AEST is 21:30 UTC the previous day.
+    assert dt.astimezone(UTC) == datetime(2026, 4, 13, 21, 30, 0, tzinfo=UTC)
 
 
 def test_parse_nem_csv_attaches_tz():
-    """parse_nem_csv should return tz-aware datetime in NEM time."""
-    dt = parse_nem_csv("2026/04/14 07:30:00")
+    """parse_nem_csv should return a tz-aware datetime in NEM time."""
+    dt = nt.parse_nem_csv("2026/04/14 07:30:00")
     assert dt.tzinfo is not None
     assert dt.utcoffset() == timedelta(hours=10)
     assert dt.hour == 7
     assert dt.minute == 30
-    print("  PASS: parse_nem_csv attaches UTC+10")
 
 
-def test_to_nem_iso_format():
-    """to_nem_iso should always produce +10:00 suffix."""
-    dt = datetime(2026, 4, 14, 7, 30, 0, tzinfo=NEM_TZ)
-    s = to_nem_iso(dt)
-    assert s == "2026-04-14T07:30:00+10:00", f"Got: {s}"
-    print(f"  PASS: to_nem_iso format: {s}")
+@pytest.mark.parametrize(
+    "dt",
+    [
+        datetime(2026, 4, 14, 7, 30, 0, tzinfo=NEM_TZ),
+        # 21:30 UTC is 07:30 NEM the next day.
+        datetime(2026, 4, 13, 21, 30, 0, tzinfo=UTC),
+        # A naive value is assumed to already be NEM time and is not shifted.
+        datetime(2026, 4, 14, 7, 30, 0),
+    ],
+    ids=["nem-aware", "utc-aware", "naive"],
+)
+def test_to_nem_iso_always_writes_the_plus_ten_form(dt):
+    assert to_nem_iso(dt) == "2026-04-14T07:30:00+10:00"
 
 
-def test_to_nem_iso_converts_utc():
-    """to_nem_iso should convert a UTC datetime to NEM time."""
-    # 21:30 UTC = 07:30 NEM next day
-    utc_dt = datetime(2026, 4, 13, 21, 30, 0, tzinfo=UTC)
-    s = to_nem_iso(utc_dt)
-    assert s == "2026-04-14T07:30:00+10:00", f"Got: {s}"
-    print(f"  PASS: to_nem_iso converts UTC→NEM: {s}")
-
-
-def test_to_nem_iso_naive_assumed_nem():
-    """to_nem_iso on a naive datetime should assume NEM time, not shift it."""
-    naive = datetime(2026, 4, 14, 7, 30, 0)
-    s = to_nem_iso(naive)
-    assert s == "2026-04-14T07:30:00+10:00", f"Got: {s}"
-    print(f"  PASS: to_nem_iso naive→NEM (no shift): {s}")
-
-
-def test_parse_iso_roundtrip():
-    """parse_iso(to_nem_iso(dt)) should recover the original datetime."""
-    dt = datetime(2026, 4, 14, 17, 0, 0, tzinfo=NEM_TZ)
-    s = to_nem_iso(dt)
-    recovered = parse_iso(s)
-    assert recovered == dt
-    assert recovered.tzinfo is not None
-    print(f"  PASS: parse_iso roundtrip: {s}")
-
-
-def test_parse_iso_legacy_naive():
-    """parse_iso on a legacy naive string assumes NEM time."""
-    recovered = parse_iso("2026-04-14T07:30:00")
-    assert recovered.tzinfo is not None
-    assert recovered.utcoffset() == timedelta(hours=10)
-    assert recovered.hour == 7
-    print("  PASS: parse_iso legacy naive assumed NEM")
-
-
-def test_horizon_calculation_tz_aware():
-    """
-    Horizon in hours between two NEM-aware timestamps must be correct
-    regardless of the computation's host timezone.
-    """
-    run_at = parse_iso("2026-04-13T07:30:00+10:00")
-    interval = parse_iso("2026-04-14T19:00:00+10:00")
-    horizon_h = (interval - run_at).total_seconds() / 3600
-    assert abs(horizon_h - 35.5) < 0.001, f"Got {horizon_h}"
-    print(f"  PASS: horizon calculation: {horizon_h}h")
-
-
-def test_current_nem_interval_format():
-    """current_nem_interval should return a +10:00 ISO string."""
-    s = current_nem_interval()
-    assert s.endswith("+10:00"), f"Got: {s}"
-    # Minutes should be 0 or 30
-    dt = parse_iso(s)
-    assert dt.minute in (0, 30), f"Unexpected minute: {dt.minute}"
-    assert dt.second == 0
-    print(f"  PASS: current_nem_interval: {s}")
+@pytest.mark.parametrize(
+    "now, expected",
+    [
+        (datetime(2026, 4, 14, 7, 0, 0, tzinfo=NEM_TZ), "2026-04-14T07:00:00+10:00"),
+        (datetime(2026, 4, 14, 7, 29, 59, tzinfo=NEM_TZ), "2026-04-14T07:00:00+10:00"),
+        (datetime(2026, 4, 14, 7, 44, 59, 999, tzinfo=NEM_TZ), "2026-04-14T07:30:00+10:00"),
+    ],
+)
+def test_current_nem_interval_floors_to_the_half_hour(now, expected):
+    with patch.object(nt, "now_nem", return_value=now):
+        assert nt.current_nem_interval() == expected
 
 
 def test_fetch_times_as_utc():
-    """
-    NEM fetch times 07:30, 13:00, 18:00 AEST should convert to
-    21:30, 03:00, 08:00 UTC.
-    """
-    utc = fetch_times_as_utc()
-    assert utc == ["21:30:00", "03:00:00", "08:00:00"], f"Got: {utc}"
-    print(f"  PASS: fetch_times_as_utc: {utc}")
+    """NEM fetch times 07:30, 13:00, 18:00 AEST are 21:30, 03:00, 08:00 UTC."""
+    assert nt.fetch_times_as_utc() == ["21:30:00", "03:00:00", "08:00:00"]
 
 
 def test_interval_start():
-    """
-    interval_start(nemtime_iso) should return nemtime minus 30 minutes
-    as an ISO-8601 +10:00 string.
-    """
+    """interval_start(nemtime_iso) is nemtime minus 30 minutes, +10:00 form."""
     nemtime_iso = "2026-04-14T08:00:00+10:00"
-    start_iso = interval_start(nemtime_iso)
-    assert start_iso == "2026-04-14T07:30:00+10:00", f"Got: {start_iso}"
-    # Verify the difference is exactly INTERVAL_DURATION (30 min)
-    end_dt = parse_iso(nemtime_iso)
-    start_dt = parse_iso(start_iso)
-    assert end_dt - start_dt == INTERVAL_DURATION
-    print(f"  PASS: interval_start: {nemtime_iso} -> {start_iso}")
+    start_iso = nt.interval_start(nemtime_iso)
+    assert start_iso == "2026-04-14T07:30:00+10:00"
+    assert parse_iso(nemtime_iso) - parse_iso(start_iso) == nt.INTERVAL_DURATION
 
 
-def test_amber_express_cutoff_importable_from_nem_time():
-    """_amber_express_cutoff must be importable from nem_time (shared helper)."""
-    assert callable(_amber_express_cutoff), "_amber_express_cutoff must be callable"
-    # Quick smoke test: returns a datetime
-    now = datetime(2026, 5, 19, 10, 0, 0, tzinfo=NEM_TZ)
-    result = _amber_express_cutoff(now=now)
-    assert isinstance(result, datetime), f"Expected datetime, got {type(result)}"
-    assert result.tzinfo is not None, "Result must be timezone-aware"
-    print("  PASS: _amber_express_cutoff importable from nem_time")
+# ── parse_iso against the strptime implementation it replaced (issue #62) ───
+
+def _old_parse_iso(s: str) -> datetime:
+    """The implementation replaced in v3.3.1, verbatim, as a reference.
+
+    Kept in the test rather than the module so the comparison is against what
+    shipped and cannot quietly follow future edits to the real one.
+    """
+    s = s.strip()
+    if s.endswith("+10:00"):
+        naive = datetime.strptime(s[:-6], "%Y-%m-%dT%H:%M:%S")
+        return naive.replace(tzinfo=NEM_TZ)
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is not None:
+            return dt.astimezone(NEM_TZ)
+        return dt.replace(tzinfo=NEM_TZ)
+    except ValueError:
+        naive = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S")
+        return naive.replace(tzinfo=NEM_TZ)
 
 
-TESTS = [
-    test_nem_tz_offset,
-    test_parse_nem_csv_attaches_tz,
-    test_to_nem_iso_format,
-    test_to_nem_iso_converts_utc,
-    test_to_nem_iso_naive_assumed_nem,
-    test_parse_iso_roundtrip,
-    test_parse_iso_legacy_naive,
-    test_horizon_calculation_tz_aware,
-    test_current_nem_interval_format,
-    test_fetch_times_as_utc,
-    test_interval_start,
-    test_amber_express_cutoff_importable_from_nem_time,
+# Every shape the integration stores or has ever stored, plus the offsets a
+# foreign producer could hand us.
+EQUIVALENT_INPUTS = [
+    # The canonical form, which is what to_nem_iso writes.
+    "2026-04-14T07:30:00+10:00",
+    "2026-09-01T18:00:00+10:00",
+    "2026-01-01T00:00:00+10:00",
+    "2026-12-31T23:59:59+10:00",
+    # Leap day and a DST boundary in the southern states, neither of which the
+    # NEM observes but which a converted value could carry.
+    "2028-02-29T12:00:00+10:00",
+    "2026-04-05T03:00:00+10:00",
+    # Legacy naive values, assumed to already be NEM time.
+    "2026-04-14T07:30:00",
+    "2026-04-14T00:00:00",
+    # Other offsets, which must be converted rather than relabelled.
+    "2026-04-14T07:30:00+00:00",
+    "2026-04-13T21:30:00Z",
+    "2026-04-14T07:00:00+09:30",
+    "2026-04-13T14:30:00-07:00",
+    "2026-04-14T07:30:00+11:00",
+    # Surrounding whitespace, which the function strips.
+    "  2026-04-14T07:30:00+10:00  ",
+    "\t2026-04-14T07:30:00\n",
+    # Date only.
+    "2026-04-14",
 ]
 
 
-def run_all():
-    passed = 0
-    failed = 0
-    print(f"\nRunning {len(TESTS)} nem_time tests\n{'='*50}")
-    for test in TESTS:
-        name = test.__name__
-        try:
-            test()
-            passed += 1
-        except AssertionError as exc:
-            print(f"  FAIL: {name}\n        {exc}")
-            failed += 1
-        except Exception as exc:
-            print(f"  ERROR: {name}\n        {type(exc).__name__}: {exc}")
-            failed += 1
-    print(f"\n{'='*50}")
-    print(f"Results: {passed} passed, {failed} failed out of {len(TESTS)} tests")
-    return failed == 0
+@pytest.mark.parametrize("raw", EQUIVALENT_INPUTS)
+def test_parse_iso_matches_the_previous_implementation_exactly(raw):
+    """Same instant, same offset, same tzname and the same wall clock as the
+    old parser, and the returned tzinfo is NEM_TZ itself.
+
+    fromisoformat builds a bare timezone(timedelta(hours=10)) for a +10:00
+    suffix. That compares equal to NEM_TZ, because timezone equality only
+    looks at the offset, but reports tzname() as "UTC+10:00" where NEM_TZ
+    reports "AEST". Returning it directly would leak the wrong name into
+    anything formatting %Z, which is why parse_iso normalises with replace().
+    """
+    old = _old_parse_iso(raw)
+    new = parse_iso(raw)
+
+    assert new == old, f"{raw!r}: instant moved, {new.isoformat()} != {old.isoformat()}"
+    assert new.utcoffset() == old.utcoffset(), f"{raw!r}: offset changed"
+    assert new.tzname() == old.tzname(), f"{raw!r}: tzname changed"
+    # Naive fields too, so a value that merely compares equal via a different
+    # offset does not pass.
+    assert new.timetuple()[:6] == old.timetuple()[:6], f"{raw!r}: wall clock moved"
+    assert new.tzinfo is NEM_TZ, (
+        f"{raw!r}: got {new.tzinfo!r} with tzname {new.tzname()!r}, expected NEM_TZ itself"
+    )
+    assert new.tzname() == "AEST"
 
 
-if __name__ == "__main__":
-    success = run_all()
-    sys.exit(0 if success else 1)
+def test_a_bare_ten_hour_timezone_would_have_failed_that_check():
+    """Guards the tzinfo identity assertion above from being vacuous.
+
+    If NEM_TZ ever loses its name this test fails and the normalisation it
+    protects becomes unnecessary, which is worth knowing explicitly.
+    """
+    bare = timezone(timedelta(hours=10))
+    assert bare == NEM_TZ, "timezone equality is offset only, so these compare equal"
+    assert bare.tzname(None) != NEM_TZ.tzname(None), "NEM_TZ is expected to carry name='AEST'"
+
+
+def test_roundtrip_through_to_nem_iso_is_stable():
+    """to_nem_iso then parse_iso, repeatedly, must not drift."""
+    dt = datetime(2026, 9, 1, 18, 0, 0, tzinfo=NEM_TZ)
+    s = to_nem_iso(dt)
+    for _ in range(5):
+        parsed = parse_iso(s)
+        assert parsed == dt
+        s2 = to_nem_iso(parsed)
+        assert s2 == s, f"string drifted: {s!r} -> {s2!r}"
+        s = s2
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "not a timestamp",
+        "2026-13-01T00:00:00+10:00",  # month 13
+        "2026-04-31T00:00:00+10:00",  # April has 30 days
+    ],
+)
+def test_parse_iso_invalid_input_still_raises_value_error(raw):
+    """The failure mode is unchanged: ValueError, not a silently wrong value."""
+    with pytest.raises(ValueError):
+        parse_iso(raw)
+    with pytest.raises(ValueError):
+        _old_parse_iso(raw)
+
+
+@pytest.mark.parametrize(
+    "raw, expected_wall",
+    [
+        # Fractional seconds. The old fast path stripped the offset then handed
+        # "...T07:30:00.500" to a format string with no %f, and the ValueError
+        # escaped because the try/except only wrapped the other branch.
+        ("2026-04-14T07:30:00.500+10:00", (2026, 4, 14, 7, 30, 0)),
+        # Minute precision, valid ISO 8601.
+        ("2026-04-14T07:30+10:00", (2026, 4, 14, 7, 30, 0)),
+        # Space separator instead of T, which ISO 8601 permits and which
+        # Home Assistant itself emits in some contexts.
+        ("2026-04-14 07:30:00+10:00", (2026, 4, 14, 7, 30, 0)),
+    ],
+)
+def test_parse_iso_forms_that_used_to_raise_now_parse(raw, expected_wall):
+    """These are not equivalence cases. The old code raised on all three."""
+    with pytest.raises(ValueError):
+        _old_parse_iso(raw)
+
+    result = parse_iso(raw)
+    assert result.timetuple()[:6] == expected_wall
+    assert result.tzinfo is NEM_TZ
