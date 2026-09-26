@@ -26,10 +26,8 @@ still reached. The STPASA runs are not thinned.
 from __future__ import annotations
 
 import hashlib
-import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from statistics import NormalDist
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 NEM = timezone(timedelta(hours=10))
@@ -180,22 +178,43 @@ def _unit(*key: Any) -> float:
     return int.from_bytes(digest, "big") / 2.0**64
 
 
-_NORMAL = NormalDist()
+# Every input below is built from +, -, *, / and comparisons only. Those are
+# correctly rounded by IEEE 754 on every machine, whereas libm's sin, exp,
+# tanh and log may differ by an ulp between C libraries, and a one-ulp input
+# difference can flip a value published at six decimals. CI caught exactly
+# that when the first version of this file used them.
 
 
 def _gauss(*key: Any) -> float:
-    """A deterministic standard normal draw keyed by ``key`` (inverse CDF of ``_unit``)."""
-    return _NORMAL.inv_cdf(min(max(_unit(*key), 1e-12), 1.0 - 1e-12))
+    """A deterministic, approximately standard normal draw keyed by ``key``.
+
+    Irwin-Hall: the sum of twelve uniforms less six has mean 0 and variance 1.
+    """
+    return sum(_unit(*key, i) for i in range(12)) - 6.0
 
 
 def _solar_frac(hour: float) -> float:
+    """A daylight bump from 0 at 06:00 to 1 at midday to 0 at 18:30 (parabola)."""
     if hour <= 6.0 or hour >= 18.5:
         return 0.0
-    return math.sin(math.pi * (hour - 6.0) / 12.5)
+    x = (hour - 6.0) / 12.5
+    return 4.0 * x * (1.0 - x)
 
 
 def _evening(hour: float) -> float:
-    return math.exp(-(((hour - 18.5) / 2.5) ** 2))
+    """An evening bump peaking at 18:30 (a Cauchy-shaped rational function)."""
+    z = (hour - 18.5) / 2.5
+    return 1.0 / (1.0 + z * z)
+
+
+def _diurnal(hour: float) -> float:
+    """A triangle wave with the phase of sin(2 pi (hour - 6) / 24): 0 at 06:00, 1 at 12:00."""
+    t = ((hour - 6.0) / 24.0) % 1.0
+    if t < 0.25:
+        return 4.0 * t
+    if t < 0.75:
+        return 2.0 - 4.0 * t
+    return 4.0 * t - 4.0
 
 
 @dataclass(frozen=True)
@@ -236,7 +255,7 @@ class SyntheticMarket:
         s_rnd = _unit(self.seed, self.region, "cloud", day.isoformat())
         d50 = dem * (0.78 + 0.22 * _evening(hour) - 0.20 * _solar_frac(hour)) * (0.95 + 0.1 * d_rnd)
         solar = solar_cap * _solar_frac(hour) * (0.6 + 0.4 * s_rnd)
-        wind = 0.2 * dem * (0.5 + 0.5 * math.sin(day.toordinal() * 0.7))
+        wind = 0.2 * dem * (0.5 + 0.5 * (2.0 * _unit(self.seed, self.region, "wind", day.isoformat()) - 1.0))
         noise = 120.0 * _gauss(self.seed, self.region, "surplus", iso(start))
         surplus = dem * 1.45 - d50 * (1.0 + 0.3 * _evening(hour)) + 0.35 * solar + noise
         return {
@@ -278,7 +297,8 @@ class SyntheticMarket:
         if key in self.price_overrides:
             return self.price_overrides[key]
         h = (start - run_at).total_seconds() / 3600.0
-        bias = 1.0 + 0.10 * math.tanh(h / 36.0)
+        r = h / 36.0
+        bias = 1.0 + 0.10 * r / (1.0 + abs(r))
         sd = 0.003 + 0.00025 * h
         noise = sd * _gauss(self.seed, self.region, "fc", key, iso(run_at))
         return round(self.true_price(start) * bias + noise, 5)
@@ -289,7 +309,7 @@ class SyntheticMarket:
         base, swing, export_lim, import_lim = _IC[ic_id]
         local = start.astimezone(NEM)
         hour = local.hour + local.minute / 60.0
-        flow = base + swing * math.sin(2 * math.pi * (hour - 6.0) / 24.0)
+        flow = base + swing * _diurnal(hour)
         flow += 25.0 * _gauss(self.seed, ic_id, "flow", iso(start))
         point = {
             "mwflow": round(flow, 3),
