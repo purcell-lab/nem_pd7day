@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+from unittest.mock import MagicMock
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -148,7 +149,7 @@ def test_the_library_wins_once_it_carries_the_code(monkeypatch, caplog):
 # ── The sensors price PRCER through the extension ─────────────────────────────
 
 from test_export_tariff import make_export_sensor  # noqa: E402
-from test_tariff_sensor import _tariff_mod, make_price_period, make_tariff_sensor  # noqa: E402
+from test_tariff_sensor import _tariff_mod, make_price_period, make_real_sensor, make_tariff_sensor  # noqa: E402
 
 
 def _sensor_module_clock(monkeypatch, sensor, when):
@@ -174,7 +175,8 @@ def test_import_sensor_prices_prcer_from_the_extension(monkeypatch):
     # tariffs and extension tariffs alike (its name says $; see #171).
     assert attrs["daily_supply_charge_$"] == pytest.approx(43.84)
     assert [p["network_rate_$/kwh"] for p in attrs["tariff_periods"]] == [0.042, 0.01, 0.2786, 0.042]
-    assert sensor._attr_name == "Powercor Residential CER Tariff (PRCER)"
+    real = make_real_sensor(_tariff_mod.NemPd7dayTariffSensor, "VIC1", "powercor", "PRCER")
+    assert real._attr_name == "Powercor Residential CER Tariff (PRCER)"
 
 
 def test_export_sensor_prices_prcer_from_the_extension(monkeypatch):
@@ -192,7 +194,8 @@ def test_export_sensor_prices_prcer_from_the_extension(monkeypatch):
     assert attrs["export_periods"] == [
         {"period": "Peak export credit", "start": "16:00", "end": "21:00", "export_adjustment_$/kwh": 0.07},
     ]
-    assert sensor._attr_name == "Powercor Residential CER Export Tariff (PRCER)"
+    real = _tariff_mod.NemPd7dayExportTariffSensor(MagicMock(data=None), MagicMock(entry_id="entry_1", options={}), "VIC1", "powercor", "PRCER", "PRCER")
+    assert real._attr_name == "Powercor Residential CER Export Tariff (PRCER)"
 
 
 def test_library_tariffs_keep_their_source_label():

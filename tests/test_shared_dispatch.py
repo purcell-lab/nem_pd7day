@@ -1,5 +1,5 @@
 """
-Shared DispatchCoordinator claim (issue #34).
+Tests for shared_dispatch.py: the single shared DispatchCoordinator claim (issue #34).
 
 Five config entries set up concurrently. Before the fix, the "is it there yet"
 check ran before an await and the assignment ran after it, so all five entries
@@ -67,10 +67,6 @@ def _reset_stub():
     _StubDispatch.reset()
 
 
-def _run(coro):
-    return asyncio.run(coro)
-
-
 async def _setup_all_concurrently(hass, lock):
     """Mimic HA setting up all five config entries concurrently."""
     return await asyncio.gather(
@@ -90,7 +86,7 @@ def test_five_concurrent_entries_create_one_coordinator():
     """The whole point of #34: one coordinator, one first refresh, one timer."""
     hass = _FakeHass()
 
-    results = _run(_setup_all_concurrently(hass, asyncio.Lock()))
+    results = asyncio.run(_setup_all_concurrently(hass, asyncio.Lock()))
 
     assert _StubDispatch.constructed == 1
     assert _StubDispatch.refreshed == 1
@@ -104,7 +100,7 @@ def test_cancel_callbacks_are_registered_once_at_domain_level():
     """Unload must be able to cancel the timer that was actually started."""
     hass = _FakeHass()
 
-    _run(_setup_all_concurrently(hass, asyncio.Lock()))
+    asyncio.run(_setup_all_concurrently(hass, asyncio.Lock()))
 
     unsubs = hass.data[DOMAIN][DISPATCH_UNSUBS_KEY]
     assert len(unsubs) == 1
@@ -118,7 +114,7 @@ def test_existing_coordinator_is_reused_without_refetching():
     hass = _FakeHass()
     lock = asyncio.Lock()
 
-    first = _run(
+    first = asyncio.run(
         async_shared_dispatch(
             hass,
             lock,
@@ -128,7 +124,7 @@ def test_existing_coordinator_is_reused_without_refetching():
     )
     assert _StubDispatch.constructed == 1
 
-    second = _run(
+    second = asyncio.run(
         async_shared_dispatch(
             hass,
             lock,
@@ -164,7 +160,7 @@ def test_unguarded_claim_would_fail_this_property():
     async def _all():
         return await asyncio.gather(*(_unguarded(r) for r in REGIONS))
 
-    _run(_all())
+    asyncio.run(_all())
 
     assert _StubDispatch.constructed == len(REGIONS)
     assert _StubDispatch.scheduled == len(REGIONS)

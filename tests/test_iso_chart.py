@@ -1,76 +1,53 @@
-"""Tests for iso_chart module and isotonic summary fields."""
+"""Tests for iso_chart.py, and the isotonic summary fields the chart reads."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from unittest.mock import patch
+
+from support import NEM_TZ, load
+
+_engine_mod = load("calibration_engine")
+_iso_chart = load("iso_chart")
+
+
+def _fitted_result():
+    """A real fit over 30 recent observations, all in one bucket.
+
+    Recent dates, so the observations fall inside the 90 day rolling window,
+    but anchored to 12:00 NEM rather than to the wall clock. The bucket key is
+    derived from solar elevation at the observation time, so whenever the
+    suite ran at a time of day near an elevation boundary these 30
+    observations split across two buckets and neither reached the 20 the
+    summary test asserts on. Midday in SE Queensland is in the solar bucket
+    all year, so all 30 land together whatever the clock says.
+    """
+    base = datetime.now(NEM_TZ).replace(hour=12, minute=0, second=0, microsecond=0)
+    obs = []
+    for i in range(30):
+        x = 0.05 + i * 0.005
+        dt = base - timedelta(days=i)
+        obs.append(_engine_mod.Observation(
+            interval_time=dt.isoformat(),
+            horizon_hours=4.0,
+            pd7day_forecast=x, actual_rrp=x * 0.75 + 0.01,
+            forecast_run_at=(dt - timedelta(hours=4)).isoformat(),
+            hour_of_day=14, day_of_week=0, month=1,
+            gas_forecast_tj=None, qni_mwflow=None,
+            qni_violation_degree=None, is_intervention=False,
+        ))
+    return _engine_mod.CalibrationEngine().fit(obs, region="QLD1")
 
 
 def test_iso_chart_renders_png():
-    """iso_chart.render_iso_chart returns valid PNG bytes."""
-    from custom_components.nem_pd7day.iso_chart import render_iso_chart
-    from custom_components.nem_pd7day.calibration_engine import (
-        CalibrationEngine, Observation,
-    )
-    from datetime import datetime, timedelta
-
-    # Use recent dates so observations fall within the 90-day rolling window
-    base = datetime.now().astimezone()
-    obs = []
-    for i in range(30):
-        x = 0.05 + i * 0.005
-        y = x * 0.75 + 0.01
-        dt = base - timedelta(days=i)
-        obs.append(Observation(
-            interval_time=dt.isoformat(),
-            horizon_hours=4.0,
-            pd7day_forecast=x, actual_rrp=y,
-            forecast_run_at=(dt - timedelta(hours=4)).isoformat(),
-            hour_of_day=14, day_of_week=0, month=1,
-            gas_forecast_tj=None, qni_mwflow=None,
-            qni_violation_degree=None, is_intervention=False,
-        ))
-
-    engine = CalibrationEngine()
-    result = engine.fit(obs, region="QLD1")
-    png = render_iso_chart(result, iso_history=[], obs_count=30, region="QLD1")
+    png = _iso_chart.render_iso_chart(_fitted_result(), iso_history=[], obs_count=30, region="QLD1")
     assert isinstance(png, bytes)
     assert len(png) > 1000
-    assert png[:4] == b'\x89PNG'
+    assert png[:4] == b"\x89PNG"
 
 
 def test_summary_isotonic_fields():
-    """summary() emits isotonic diagnostic fields per bucket."""
-    from custom_components.nem_pd7day.calibration_engine import CalibrationEngine, Observation
-    from datetime import datetime, timedelta, timezone
-
-    # Recent dates, so the observations fall inside the 90-day rolling window,
-    # but anchored to 12:00 NEM rather than to the wall clock. The bucket key
-    # is derived from solar elevation at the observation time, so whenever the
-    # suite ran at a time of day near an elevation boundary these 30
-    # observations split across two buckets and neither reached the 20 this
-    # test asserts on. Midday in SE Queensland is in the solar bucket all year,
-    # so all 30 land together whatever the clock says. NEM time is UTC+10 with
-    # no DST.
-    base = datetime.now(timezone(timedelta(hours=10))).replace(
-        hour=12, minute=0, second=0, microsecond=0
-    )
-    obs = []
-    for i in range(30):
-        x = 0.05 + i * 0.005
-        y = x * 0.75
-        dt = base - timedelta(days=i)
-        obs.append(Observation(
-            interval_time=dt.isoformat(),
-            horizon_hours=4.0,
-            pd7day_forecast=x, actual_rrp=y,
-            forecast_run_at=(dt - timedelta(hours=4)).isoformat(),
-            hour_of_day=14, day_of_week=0, month=1,
-            gas_forecast_tj=None, qni_mwflow=None,
-            qni_violation_degree=None, is_intervention=False,
-        ))
-    engine = CalibrationEngine()
-    result = engine.fit(obs, region="QLD1")
-    s = result.summary()
-    # Find a bucket with data
+    """summary() emits the isotonic diagnostic fields per bucket."""
+    s = _fitted_result().summary()
     fitted = {k: v for k, v in s["buckets"].items() if v["n"] >= 20}
     assert fitted, "Expected at least one fitted bucket"
     bucket = next(iter(fitted.values()))
@@ -84,45 +61,15 @@ def test_summary_isotonic_fields():
     assert bucket["spot_020"] is not None
 
 
-# ── Placeholder PNG / matplotlib-missing fallback ─────────────────────────────
-
 def test_iso_chart_placeholder_png_is_valid_png():
-    """_placeholder_png() returns bytes with a valid PNG signature."""
-    from custom_components.nem_pd7day.iso_chart import _placeholder_png
-
-    data = _placeholder_png()
+    data = _iso_chart._placeholder_png()
     assert isinstance(data, bytes)
-    assert data[:8] == b'\x89PNG\r\n\x1a\n'
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_iso_chart_returns_placeholder_when_matplotlib_missing():
-    """render_iso_chart falls back to a placeholder PNG when matplotlib is missing."""
-    from custom_components.nem_pd7day.iso_chart import render_iso_chart
-    from custom_components.nem_pd7day.calibration_engine import (
-        CalibrationEngine, Observation,
-    )
-    from datetime import datetime, timedelta
-
-    base = datetime.now().astimezone()
-    obs = []
-    for i in range(30):
-        x = 0.05 + i * 0.005
-        y = x * 0.75 + 0.01
-        dt = base - timedelta(days=i)
-        obs.append(Observation(
-            interval_time=dt.isoformat(),
-            horizon_hours=4.0,
-            pd7day_forecast=x, actual_rrp=y,
-            forecast_run_at=(dt - timedelta(hours=4)).isoformat(),
-            hour_of_day=14, day_of_week=0, month=1,
-            gas_forecast_tj=None, qni_mwflow=None,
-            qni_violation_degree=None, is_intervention=False,
-        ))
-
-    engine = CalibrationEngine()
-    result = engine.fit(obs, region="QLD1")
-
-    _real_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+    result = _fitted_result()
+    _real_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
 
     def _mock_import(name, *args, **kwargs):
         if name == "matplotlib" or name.startswith("matplotlib."):
@@ -130,6 +77,6 @@ def test_iso_chart_returns_placeholder_when_matplotlib_missing():
         return _real_import(name, *args, **kwargs)
 
     with patch("builtins.__import__", side_effect=_mock_import):
-        png = render_iso_chart(result, iso_history=[], obs_count=30, region="QLD1")
+        png = _iso_chart.render_iso_chart(result, iso_history=[], obs_count=30, region="QLD1")
     assert isinstance(png, bytes)
-    assert png[:4] == b'\x89PNG'
+    assert png[:4] == b"\x89PNG"

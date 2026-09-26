@@ -1,553 +1,217 @@
 """
-Tests for __init__.py lifecycle functions — scheduler wiring, _do_refit scope,
-Amber listener, and the full async_setup_entry plumbing.
+Tests for __init__.py's lifecycle wiring: the refit closure, the force_refit
+service, unload hygiene, and the integration's manifest and services files.
 
-Zero coverage previously.  The v1.7.0 bug (_do_refit NameError) would have
-been caught immediately by test_fetch_then_refit_calls_do_refit.
+async_setup_entry cannot be run outside Home Assistant, so the refit and
+service handler are checked structurally against the source. History:
+  * v1.7.0: _do_refit was defined inside _refit(), so the _fetch_then_refit
+    closure created by the publish-time scheduler raised NameError on every
+    scheduled AEMO fetch.
+  * Startup refit is unconditional when >= 10 observations exist; a
+    ``store.calibration is None`` guard left iso_model unpopulated after a
+    restart because the calibration loaded from storage but the model is not
+    persisted.
+  * Issue #106: unloading one region must pop its STPASA store (the dict was
+    only dropped when the last entry unloaded); every task is tied to the
+    entry so unload cancels in-flight work; the scheduler registers one unload
+    hook, not one per timer per day. Home Assistant 2026.9 schedules whatever
+    an on-unload callback returns as a task, so the lambda that returned the
+    popped StpasaStore raised "TypeError: a coroutine was expected" and left
+    the entry in failed_unload on the live install (QLD1, 18 September 2026).
 
-These tests mock HomeAssistant but exercise the real __init__.py code paths.
+The calibration-store summary tests at the end belong in
+test_calibration_store.py; they are kept here because that file is owned
+elsewhere.
 
 Run with:  python -m pytest tests/test_lifecycle.py -v
 """
 from __future__ import annotations
 
-import sys
+import ast
+import json
 import os
-import asyncio
-import importlib.util
-import types
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+import re
+from datetime import timedelta
+from functools import partial
+from unittest.mock import MagicMock
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import yaml
 
+import support
+from support import PKG_DIR, install_ha_stubs, load_chain
 
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+install_ha_stubs()
 
-
-def run_async(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
-
-
-NEM_TZ = timezone(timedelta(hours=10))
-
-# ── Stub all HA imports ────────────────────────────────────────────────────────
-
-sys.modules.setdefault("aiohttp", MagicMock())
-
-_Platform = MagicMock()
-_Platform.SENSOR = "sensor"
-_Platform.BINARY_SENSOR = "binary_sensor"
-
-_const_mock = MagicMock()
-_const_mock.Platform = _Platform
-_const_mock.STATE_UNAVAILABLE = "unavailable"
-_const_mock.STATE_UNKNOWN = "unknown"
-
-sys.modules["homeassistant"] = MagicMock()
-sys.modules["homeassistant.config_entries"] = MagicMock()
-sys.modules["homeassistant.const"] = _const_mock
-sys.modules["homeassistant.core"] = MagicMock()
-sys.modules["homeassistant.helpers"] = MagicMock()
-sys.modules["homeassistant.helpers.storage"] = MagicMock()
-sys.modules["homeassistant.helpers.event"] = MagicMock()
-sys.modules["homeassistant.helpers.aiohttp_client"] = MagicMock()
-sys.modules["homeassistant.helpers.update_coordinator"] = MagicMock()
-sys.modules["homeassistant.helpers.entity_platform"] = MagicMock()
-sys.modules["homeassistant.util"] = MagicMock()
-sys.modules["homeassistant.util.dt"] = MagicMock()
-
-# Load integration modules
-_nem_time = _load(
-    "custom_components.nem_pd7day.nem_time",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "nem_time.py"),
-)
-_engine_mod = _load(
-    "custom_components.nem_pd7day.calibration_engine",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_engine.py"),
+_nem_time, _engine_mod, _client_mod, _const_mod, _store_mod = load_chain(
+    "nem_time", "calibration_engine", "pd7day_client", "const", "calibration_store",
 )
 
-ha_storage_mock = MagicMock()
-class _FakeStore:
-    def __init__(self, hass, version, key): pass
-    async def async_load(self): return None
-    async def async_save(self, data): pass
-ha_storage_mock.Store = _FakeStore
-sys.modules["homeassistant.helpers.storage"] = ha_storage_mock
+# Bound to this file's module object, not the last file's (see support.py).
+make_store = partial(support.make_store, _store_mod)
 
-_store_mod = _load(
-    "custom_components.nem_pd7day.calibration_store",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "calibration_store.py"),
-)
-
-# DataUpdateCoordinator stub for coordinator
-class _FakeCoordinator:
-    def __init__(self, hass, logger, name, update_interval):
-        self.hass = hass
-        self.last_update_success = True
-        self.data = None
-
-    # Support DataUpdateCoordinator[PD7DayResult] subscript syntax
-    def __class_getitem__(cls, item):
-        return cls
-
-    async def async_config_entry_first_refresh(self): pass
-    async def async_refresh(self): pass
-
-uc_mock = MagicMock()
-uc_mock.DataUpdateCoordinator = _FakeCoordinator
-uc_mock.UpdateFailed = Exception
-sys.modules["homeassistant.helpers.update_coordinator"] = uc_mock
-
-# Stub dispatch_client and tod_stats so coordinator.py loads without __init__.py side-effects
-_dispatch_client_stub = MagicMock()
-class _DispatchPrice:
-    def __init__(self, region, rrp, price_status="FIRM"): pass
-_dispatch_client_stub.DispatchPrice = _DispatchPrice
-_dispatch_client_stub.fetch_dispatch_prices = AsyncMock(return_value={})
-sys.modules["custom_components.nem_pd7day.dispatch_client"] = _dispatch_client_stub
-sys.modules.setdefault("custom_components.nem_pd7day.tod_stats", MagicMock())
-sys.modules.setdefault("custom_components.nem_pd7day.market_notice_client", MagicMock())
-sys.modules.setdefault("custom_components.nem_pd7day.notice_store", MagicMock())
-
-_client_mod = _load(
-    "custom_components.nem_pd7day.pd7day_client",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "pd7day_client.py"),
-)
-_const_mod = _load(
-    "custom_components.nem_pd7day.const",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py"),
-)
-_coord_mod = _load(
-    "custom_components.nem_pd7day.coordinator",
-    os.path.join(_ROOT, "custom_components", "nem_pd7day", "coordinator.py"),
-)
-
-from custom_components.nem_pd7day.calibration_store import CalibrationStore
+INIT_PATH = os.path.join(PKG_DIR, "__init__.py")
 
 
-def make_store(obs_count: int = 0) -> CalibrationStore:
-    store = CalibrationStore.__new__(CalibrationStore)
-    store._hass = MagicMock()
-    store._region = "QLD1"
-    store._obs_store = MagicMock()
-    store._obs_store.async_load = AsyncMock(return_value=None)
-    store._obs_store.async_save = AsyncMock()
-    store._coeff_store = MagicMock()
-    store._coeff_store.async_load = AsyncMock(return_value=None)
-    store._coeff_store.async_save = AsyncMock()
-    store._fh_store = MagicMock()
-    store._fh_store.async_load = AsyncMock(return_value=None)
-    store._fh_store.async_save = AsyncMock()
-    from custom_components.nem_pd7day.calibration_engine import CalibrationEngine
-    store._engine = CalibrationEngine()
-    store._observations = [{"dummy": i} for i in range(obs_count)]
-    store._calibration = None
-    store._forecast_history = {}
-    store._actual_accum = {}
-    return store
+def _init_source() -> str:
+    with open(INIT_PATH) as f:
+        return f.read()
 
 
-# ── Tests: _do_refit scope ────────────────────────────────────────────────────
-
-def test_do_refit_accessible_from_fetch_then_refit():
-    """
-    BUG (v1.7.0): _do_refit was defined inside _refit(), making it inaccessible
-    from _fetch_then_refit() which is inside _on_fire().  This caused a NameError
-    at runtime on every scheduled AEMO fetch.
-
-    Test: simulate the closure chain and verify _do_refit can be called from
-    both _fetch_then_refit and _refit without NameError.
-    """
-    calls = []
-
-    # Replicate the exact structure of async_setup_entry's inner functions
-    async def _do_refit():
-        calls.append("refit")
-
-    async def _fetch_then_refit():
-        # Simulates what _on_fire creates — must be able to call _do_refit()
-        await _do_refit()
-
-    @MagicMock()
-    def _refit(_now=None):
-        # Also calls _do_refit via async_create_task
-        asyncio.get_event_loop().run_until_complete(_do_refit())
-
-    # This must not raise NameError
-    run_async(_fetch_then_refit())
-    assert "refit" in calls, "_do_refit was not called from _fetch_then_refit"
-
-
-def test_do_refit_skips_when_below_min_obs():
-    """
-    _do_refit must skip fitting when observation_count < 10.
-    Verify the logic: store.async_refit must NOT be called.
-    """
-    store = make_store(obs_count=5)  # below MIN_OBS=10
-    coordinator = MagicMock()
-    coordinator.async_refresh = AsyncMock()
-
-    refit_called = []
-
-    async def _do_refit():
-        if store.observation_count < 10:
-            return
-        await store.async_refit()
-        refit_called.append(True)
-        await coordinator.async_refresh()
-
-    run_async(_do_refit())
-    assert not refit_called, (
-        f"async_refit must not be called with only {store.observation_count} observations"
-    )
-    coordinator.async_refresh.assert_not_called()
-
-
-def test_do_refit_runs_when_above_min_obs():
-    """_do_refit must call async_refit and coordinator.async_refresh when obs >= 10."""
-    store = make_store(obs_count=15)
-    store.async_refit = AsyncMock()
-    coordinator = MagicMock()
-    coordinator.async_refresh = AsyncMock()
-    store._calibration = MagicMock()  # simulate active calibration after refit
-
-    async def _do_refit():
-        if store.observation_count < 10:
-            return
-        await store.async_refit()
-        await coordinator.async_refresh()
-
-    run_async(_do_refit())
-    store.async_refit.assert_called_once()
-    coordinator.async_refresh.assert_called_once()
-
-
-def test_fetch_then_refit_calls_coordinator_then_refit():
-    """
-    _fetch_then_refit must call coordinator.async_refresh() first, then _do_refit().
-    Order matters: the refit must see the new observations from the refresh.
-    """
-    call_order = []
-
-    async def _do_refit():
-        call_order.append("refit")
-
-    coordinator = MagicMock()
-    async def _refresh():
-        call_order.append("fetch")
-    coordinator.async_refresh = _refresh
-
-    async def _fetch_then_refit():
-        await coordinator.async_refresh()
-        await _do_refit()
-
-    run_async(_fetch_then_refit())
-    assert call_order == ["fetch", "refit"], (
-        f"Expected fetch then refit, got: {call_order}. "
-        f"Refit must see updated observations from the fetch."
+def _setup_entry_ast() -> ast.AsyncFunctionDef:
+    tree = ast.parse(_init_source())
+    return next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "async_setup_entry"
     )
 
 
-# ── Tests: scheduler ─────────────────────────────────────────────────────────
-
-def test_next_utc_fire_returns_future_time():
-    """
-    _next_utc_fire must always return a datetime in the future.
-    If the target time for today has already passed, it must schedule for tomorrow.
-    """
-    from datetime import datetime, timezone as _tz, timedelta
-
-    def _next_utc_fire(hour: int, minute: int) -> datetime:
-        now_utc = datetime.now(_tz.utc)
-        candidate = now_utc.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate <= now_utc:
-            candidate += timedelta(days=1)
-        return candidate
-
-    # Request a time 1 hour in the past (definitely past)
-    past_hour = (datetime.now(timezone.utc).hour - 1) % 24
-    result = _next_utc_fire(past_hour, 0)
-    assert result > datetime.now(timezone.utc), (
-        f"_next_utc_fire returned a past time: {result}"
+def _nested_function(scope: ast.AST, name: str) -> ast.AsyncFunctionDef | ast.FunctionDef:
+    return next(
+        node for node in ast.walk(scope)
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == name
     )
 
 
-def test_schedule_registers_three_utc_times():
-    """
-    fetch_times_as_utc() must return 3 times corresponding to
-    07:30, 13:00, 18:00 NEM → 21:30, 03:00, 08:00 UTC.
-    If this returns fewer times, some AEMO publishes are missed.
-    """
-    from custom_components.nem_pd7day.nem_time import fetch_times_as_utc
-    times = fetch_times_as_utc()
-    assert len(times) == 3, (
-        f"Expected 3 UTC fetch times, got {len(times)}: {times}"
-    )
-    # Verify the specific UTC times
-    assert "21:30:00" in times, f"07:30 NEM → 21:30 UTC missing from {times}"
-    assert "03:00:00" in times, f"13:00 NEM → 03:00 UTC missing from {times}"
-    assert "08:00:00" in times, f"18:00 NEM → 08:00 UTC missing from {times}"
+def _awaits_in_order(fn: ast.AST) -> list[str]:
+    """Source of every ``await`` expression statement in ``fn``, in order."""
+    return [
+        ast.unparse(node.value)
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Await)
+    ]
 
 
-def test_refit_interval_is_24h():
-    """
-    REFIT_INTERVAL must be 24 hours.  A shorter interval wastes CPU; a longer
-    interval means calibration summary falls further behind observation_count.
-    """
-    import_path = os.path.join(_ROOT, "custom_components", "nem_pd7day", "const.py")
-    src = open(import_path).read()
-    # Look for timedelta(hours=24) near REFIT_INTERVAL
-    assert "timedelta(hours=24)" in src, (
-        "REFIT_INTERVAL must be timedelta(hours=24)"
-    )
+# ── Refit closure ─────────────────────────────────────────────────────────────
 
-
-# ── Tests: observation_count / summary consistency ───────────────────────────
-
-def test_observation_count_property_reflects_list_length():
-    """
-    CalibrationStore.observation_count must always equal len(_observations).
-    This is the live count shown as the sensor state.
-    """
-    store = make_store(obs_count=0)
-    assert store.observation_count == 0
-    store._observations.append({"test": 1})
-    assert store.observation_count == 1
-    store._observations.append({"test": 2})
-    assert store.observation_count == 2
-
-
-def test_active_bucket_count_zero_before_calibration():
-    """active_bucket_count must be 0 when no calibration has been run."""
-    store = make_store()
-    store._calibration = None
-    assert store.active_bucket_count == 0
-
-
-def test_summary_attributes_observation_count_is_live():
-    """
-    summary_attributes()['observation_count'] must reflect live _observations,
-    not the stale count from the last refit (total_observations in summary).
-    These can diverge between refits — the live count must always be current.
-    """
-    store = make_store(obs_count=66)
-
-    # Simulate a stale calibration result fitted when obs_count was 21
-    cal = MagicMock()
-    cal.fitted_at = "2026-04-15T08:17:00+10:00"
-    cal.summary.return_value = {
-        "fitted_at": "2026-04-15T08:17:00+10:00",
-        "total_observations": 21,
-        "buckets": {},
+def test_do_refit_is_defined_at_setup_scope_and_runs_after_the_fetch():
+    """v1.7.0: _do_refit must be a direct child of async_setup_entry, not nested
+    in _refit, so the scheduled _fetch_then_refit can reach it; and the refit
+    must follow the fetch so it sees the new observations."""
+    setup = _setup_entry_ast()
+    direct_children = {
+        node.name for node in setup.body
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
     }
-    store._calibration = cal
+    assert "_do_refit" in direct_children
 
-    attrs = store.summary_attributes()
-
-    # observation_count must be live (66), not the stale 21 from summary
-    assert attrs["observation_count"] == 66, (
-        f"observation_count={attrs['observation_count']} must be live count (66), "
-        f"not stale refit count (21). Check summary_attributes() returns "
-        f"self.observation_count not self._calibration.total_observations."
-    )
+    fetch_then_refit = _nested_function(setup, "_fetch_then_refit")
+    assert _awaits_in_order(fetch_then_refit) == [
+        "await coordinator.async_refresh()",
+        "await _do_refit()",
+    ]
 
 
-# ── Tests: manifest.json version format ───────────────────────────────────────
-
-def test_manifest_version_is_semver():
-    """manifest.json version must be a valid HA version string.
-
-    Accepts stable semver (MAJOR.MINOR.PATCH) and PEP 440 pre-release
-    suffixes on the PATCH segment (e.g. 2.3.34b1, 2.3.34rc1).
-    """
-    import json
-    import re
-    manifest_path = os.path.join(
-        _ROOT, "custom_components", "nem_pd7day", "manifest.json"
-    )
-    manifest = json.load(open(manifest_path))
-    version = manifest.get("version", "")
-    # Accepts: MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCHbN / rcN / aN
-    pattern = r'^\d+\.\d+\.\d+([ab]\d+|rc\d+)?$'
-    assert re.match(pattern, version), (
-        f"Version {version!r} is not a valid HA version string "
-        f"(expected MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCHbN/rcN/aN)"
-    )
+def test_do_refit_skips_below_ten_observations_then_refits():
+    do_refit = _nested_function(_setup_entry_ast(), "_do_refit")
+    # The first statement after the docstring is the guard.
+    guard = next(stmt for stmt in do_refit.body if not isinstance(stmt, ast.Expr))
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == "store.observation_count < 10"
+    assert isinstance(guard.body[-1], ast.Return)
+    assert "await store.async_refit()" in _awaits_in_order(do_refit)
 
 
-def test_manifest_required_fields():
-    """manifest.json must have all fields required by HACS."""
-    import json
-    manifest_path = os.path.join(
-        _ROOT, "custom_components", "nem_pd7day", "manifest.json"
-    )
-    manifest = json.load(open(manifest_path))
-    required = {"domain", "name", "version", "documentation", "issue_tracker"}
-    missing = required - set(manifest.keys())
-    assert not missing, f"manifest.json missing required HACS fields: {missing}"
-
-
-# ── Tests: force_refit service ──────────────────────────────────────────────
-
-def test_force_refit_service_calls_refit_and_refresh():
-    """
-    The force_refit service handler must call store.async_refit() and
-    coordinator.async_refresh() for the matching entry.
-    """
-    store = make_store(obs_count=20)
-    store.async_refit = AsyncMock()
-    coordinator = MagicMock()
-    coordinator.async_refresh = AsyncMock()
-
-    # Simulate config entry carrying per-entry runtime data.
-    entry_id = "test_entry_123"
-    entry = MagicMock()
-    entry.entry_id = entry_id
-    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator, store=store)
-
-    async def _handle_force_refit(call_data):
-        """Replicate the handler logic from __init__.py."""
-        target_entry_id = call_data.get("entry_id")
-        entries = [entry]
-        for cfg_entry in entries:
-            if target_entry_id and cfg_entry.entry_id != target_entry_id:
-                continue
-            entry_data = getattr(cfg_entry, "runtime_data", None)
-            if not entry_data:
-                continue
-            coord = entry_data.coordinator
-            st = entry_data.store
-            await st.async_refit()
-            await coord.async_refresh()
-
-    # Call with no entry_id (refit all)
-    run_async(_handle_force_refit({}))
-    store.async_refit.assert_called_once()
-    coordinator.async_refresh.assert_called_once()
-
-
-def test_force_refit_service_filters_by_entry_id():
-    """
-    When entry_id is specified, only that entry should be refitted.
-    """
-    store1 = make_store(obs_count=20)
-    store1.async_refit = AsyncMock()
-    coord1 = MagicMock()
-    coord1.async_refresh = AsyncMock()
-
-    store2 = make_store(obs_count=15)
-    store2.async_refit = AsyncMock()
-    coord2 = MagicMock()
-    coord2.async_refresh = AsyncMock()
-
-    entry1 = MagicMock()
-    entry1.entry_id = "entry_1"
-    entry1.runtime_data = types.SimpleNamespace(coordinator=coord1, store=store1)
-    entry2 = MagicMock()
-    entry2.entry_id = "entry_2"
-    entry2.runtime_data = types.SimpleNamespace(coordinator=coord2, store=store2)
-
-    async def _handle_force_refit(call_data):
-        target_entry_id = call_data.get("entry_id")
-        entries = [entry1, entry2]
-        for cfg_entry in entries:
-            if target_entry_id and cfg_entry.entry_id != target_entry_id:
-                continue
-            entry_data = getattr(cfg_entry, "runtime_data", None)
-            if not entry_data:
-                continue
-            coord = entry_data.coordinator
-            st = entry_data.store
-            await st.async_refit()
-            await coord.async_refresh()
-
-    # Call targeting only entry_2
-    run_async(_handle_force_refit({"entry_id": "entry_2"}))
-
-    store1.async_refit.assert_not_called()
-    coord1.async_refresh.assert_not_called()
-    store2.async_refit.assert_called_once()
-    coord2.async_refresh.assert_called_once()
-
-
-def test_services_yaml_exists_and_defines_force_refit():
-    """services.yaml must exist and define the force_refit service."""
-    import yaml
-    services_path = os.path.join(
-        _ROOT, "custom_components", "nem_pd7day", "services.yaml"
-    )
-    assert os.path.exists(services_path), "services.yaml missing from integration directory"
-    with open(services_path) as f:
-        services = yaml.safe_load(f)
-    assert "force_refit" in services, "force_refit not defined in services.yaml"
-    assert "fields" in services["force_refit"], "force_refit missing fields definition"
-    assert "entry_id" in services["force_refit"]["fields"], "force_refit missing entry_id field"
-
-
-# ── Tests: startup refit is unconditional ────────────────────────────────────
-
-def test_startup_always_refits_when_obs_available():
-    """Startup refit fires unconditionally when obs >= 10, even if calibration loaded from storage."""
-    # This is a documentation/intent test — the key assertion is that the
-    # old 'store.calibration is None' guard is NOT present in __init__.py
-    import pathlib
-    src = pathlib.Path(
-        os.path.join(_ROOT, "custom_components", "nem_pd7day", "__init__.py")
-    ).read_text()
-    # Ensure the old conditional guard is gone
+def test_startup_refit_is_unconditional_when_observations_exist():
+    """The old ``store.calibration is None`` guard is gone; >= 10 observations always refit."""
+    src = _init_source()
     assert "store.calibration is None" not in src, (
-        "Startup refit must be unconditional — 'store.calibration is None' guard "
-        "prevents iso_model from being populated after HA restart"
+        "Startup refit must be unconditional; the guard leaves iso_model unpopulated after a restart"
     )
-    # Ensure the unconditional refit is present
     assert "store.observation_count >= 10" in src
     assert "_do_refit" in src
 
 
-# ── Tests: lifecycle hygiene (issue #106) ───────────────────────────────────
+def test_refit_interval_is_24h():
+    """A shorter interval wastes CPU; a longer one lets the summary fall behind observation_count."""
+    assert _const_mod.REFIT_INTERVAL == timedelta(hours=24)
 
-def _init_source() -> str:
-    import pathlib
-    return pathlib.Path(
-        os.path.join(_ROOT, "custom_components", "nem_pd7day", "__init__.py")
-    ).read_text()
 
+# ── force_refit service ──────────────────────────────────────────────────────
+
+def test_force_refit_service_handler_filters_by_entry_id_then_refits_and_refreshes():
+    setup = _setup_entry_ast()
+    assert 'hass.services.async_register(DOMAIN, "force_refit", _handle_force_refit)' in _init_source()
+
+    handler = _nested_function(setup, "_handle_force_refit")
+    assert "cfg_entry.entry_id != entry_id" in ast.unparse(handler)
+    assert _awaits_in_order(handler) == [
+        "await st.async_refit()",
+        "await coord.async_refresh()",
+    ]
+
+
+def test_services_yaml_defines_force_refit():
+    services_path = os.path.join(PKG_DIR, "services.yaml")
+    assert os.path.exists(services_path), "services.yaml missing from integration directory"
+    with open(services_path) as f:
+        services = yaml.safe_load(f)
+    assert "entry_id" in services["force_refit"]["fields"]
+
+
+# ── Unload hygiene (issue #106) ───────────────────────────────────────────────
 
 def test_stpasa_store_is_deregistered_per_entry():
-    """Unloading one region must pop its store so the central STPASA fetch
-    stops writing .storage for a region the user removed; before #106 the
-    dict was only dropped when the last entry unloaded."""
+    """Unloading one region pops its store so the central STPASA fetch stops
+    writing .storage for a region the user removed; the callback must return
+    None (HA 2026.9 schedules any return value as a task)."""
     src = _init_source()
     assert "entry.async_on_unload(_forget_stpasa_store)" in src
-    # The callback must return None. Home Assistant 2026.9 schedules whatever
-    # an on-unload callback returns as a task, so the lambda this used to be,
-    # which returned the popped StpasaStore, raised "TypeError: a coroutine
-    # was expected" and left the entry in failed_unload on the live install
-    # (QLD1, 18 September 2026).
     assert "lambda: stpasa_stores.pop" not in src
     assert "def _forget_stpasa_store() -> None:" in src
 
 
 def test_no_untracked_tasks_in_init():
-    """Every task __init__.py starts is tied to the config entry, so unload
-    cancels a refit or fetch still in flight rather than letting it write to
-    a torn-down store (issue #106)."""
-    src = _init_source()
-    assert "hass.async_create_task(" not in src, (
+    """Every task is tied to the config entry, so unload cancels a refit or
+    fetch still in flight rather than letting it write to a torn-down store."""
+    assert "hass.async_create_task(" not in _init_source(), (
         "__init__.py starts a task with hass.async_create_task; use "
         "entry.async_create_background_task so it is cancelled on unload"
     )
 
 
 def test_scheduled_fetch_registers_one_unload_hook():
-    """The publish-time scheduler registers a single cancel_all with the entry
-    rather than one cancel per timer per day."""
+    """One cancel_all for the publish-time scheduler, not one cancel per timer per day."""
     src = _init_source()
     assert "entry.async_on_unload(fetch_scheduler.cancel_all)" in src
     assert "entry.async_on_unload(cancel)" not in src
+
+
+# ── manifest.json ─────────────────────────────────────────────────────────────
+
+def test_manifest_has_hacs_fields_and_a_valid_version():
+    """HACS needs the listed fields; the version is MAJOR.MINOR.PATCH with an
+    optional PEP 440 pre-release suffix (2.3.34b1, 2.3.34rc1)."""
+    with open(os.path.join(PKG_DIR, "manifest.json")) as f:
+        manifest = json.load(f)
+    missing = {"domain", "name", "version", "documentation", "issue_tracker"} - set(manifest)
+    assert not missing, f"manifest.json missing required HACS fields: {missing}"
+    version = manifest["version"]
+    assert re.match(r"^\d+\.\d+\.\d+([ab]\d+|rc\d+)?$", version), (
+        f"Version {version!r} is not a valid HA version string"
+    )
+
+
+# ── CalibrationStore summary (belongs in test_calibration_store.py) ──────────
+
+def test_store_counts_are_live_not_from_the_last_refit():
+    """observation_count tracks _observations; active_bucket_count is 0 before
+    any fit; summary_attributes() reports the live count, not the stale
+    total_observations of the last refit, which diverge between refits."""
+    store = make_store()
+    assert store.observation_count == 0
+    assert store.active_bucket_count == 0
+    store._observations.append({"test": 1})
+    store._observations.append({"test": 2})
+    assert store.observation_count == 2
+
+    store = make_store(obs_count=66)
+    cal = MagicMock()
+    cal.fitted_at = "2026-04-15T08:17:00+10:00"
+    cal.summary.return_value = {
+        "fitted_at": "2026-04-15T08:17:00+10:00",
+        "total_observations": 21,  # stale: fitted when there were 21
+        "buckets": {},
+    }
+    store._calibration = cal
+
+    assert store.summary_attributes()["observation_count"] == 66

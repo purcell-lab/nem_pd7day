@@ -1,9 +1,16 @@
 """
-DailyFetchScheduler: one pending timer per publish slot, one cancel for all.
+Tests for fetch_scheduler.py: DailyFetchScheduler, one pending timer per
+publish slot and one cancel for all.
 
 Issue #106: the closure this replaced appended every timer's cancel to
-entry.async_on_unload, three a day and never removed. These tests drive the
-real scheduler with an injected timer registry and clock.
+entry.async_on_unload, three a day and never removed (about 550 per entry over
+six months, times five regions). Issue #140: an action that raised left its
+slot with no live timer. Issue #126: the action must reach HA as a
+callback-typed HassJob or it runs on a worker thread and the fetch task is
+destroyed while pending. These tests drive the real scheduler with an injected
+timer registry and clock; the module needs no HA stubs.
+
+Run with:  python -m pytest tests/test_fetch_scheduler.py -v
 """
 from __future__ import annotations
 
@@ -76,13 +83,6 @@ def test_next_utc_fire_rolls_to_tomorrow_when_slot_has_passed():
     assert next_utc_fire(21, 30, now) == datetime(2026, 9, 3, 21, 30, tzinfo=timezone.utc)
 
 
-def test_start_arms_one_timer_per_slot():
-    sched, timers, _, _ = _build()
-    sched.start()
-    assert sched.pending_count == 3
-    assert len(timers.live) == 3
-
-
 def test_pending_never_grows_across_days():
     """The property #106 asked for: no growth in registered cancels over time.
     Six days of firings leave exactly three live timers."""
@@ -121,11 +121,13 @@ def test_fire_after_cancel_does_not_rearm():
     assert sched.pending_count == 0
 
 
-def test_rearm_replaces_rather_than_stacks():
+def test_start_arms_one_timer_per_slot_and_rearm_replaces():
     sched, timers, _, _ = _build()
     sched.start()
-    sched.start()
     assert sched.pending_count == 3
+    assert len(timers.live) == 3
+    sched.start()
+    assert sched.pending_count == 3, "a second start must replace the timers, not stack them"
     assert len(timers.live) == 3
 
 
