@@ -3,7 +3,7 @@
 Spec 000, part A. Each scenario in tests/golden/scenarios.py is built through
 the real platform setup with the clock frozen (tests/golden/harness.py), read
 the way Home Assistant reads an entity, written as canonical JSON
-(tests/golden/snapshot.py) and compared with tests/golden/snapshots/<name>.json
+(tests/golden/snapshot.py) and compared with tests/golden/snapshots/<name>.json.gz
 with no tolerance at all: a value that moves by one ulp fails.
 
 Regenerate with::
@@ -19,6 +19,7 @@ passing on a snapshot of something else.
 """
 from __future__ import annotations
 
+import gzip
 import json
 import os
 from pathlib import Path
@@ -186,7 +187,7 @@ def _failure(name: str, lines: list[str]) -> str:
     more = len(lines) - len(shown)
     header = (
         f"golden master {name}: {len(lines)} difference(s) from "
-        f"tests/golden/snapshots/{name}.json\n"
+        f"tests/golden/snapshots/{name}.json.gz\n"
         "  unique id | attribute path | expected | actual\n  "
     )
     tail = f"\n  ... and {more} more" if more else ""
@@ -199,16 +200,19 @@ def test_golden_master(name: str) -> None:
         actual = snapshot.snapshot(built.entities, built.scenario, built.domains)
         NON_VACUITY[name](built, actual)
     text = snapshot.dumps(actual)
-    path = SNAPSHOT_DIR / f"{name}.json"
+    path = SNAPSHOT_DIR / f"{name}.json.gz"
     if UPDATE:
         SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        # Gzipped because the tariff sensors publish whole forecasts and the
+        # plain JSON is 7.8 MB; mtime=0 keeps the file bytes a pure function
+        # of the content, so regenerating an unchanged snapshot changes nothing.
+        path.write_bytes(gzip.compress(text.encode("utf-8"), mtime=0))
     assert path.exists(), f"no snapshot for {name}; run with GOLDEN_UPDATE=1"
     assert matplotlib.__version__ == snapshot.PNG_MATPLOTLIB_VERSION, (
         f"the forecast chart PNG hashes were recorded on matplotlib "
         f"{snapshot.PNG_MATPLOTLIB_VERSION}, this is {matplotlib.__version__}"
     )
-    expected = json.loads(path.read_text(encoding="utf-8"))
+    expected = json.loads(gzip.decompress(path.read_bytes()).decode("utf-8"))
     lines = snapshot.diff(expected, json.loads(text))
     if lines:
         pytest.fail(_failure(name, lines), pytrace=False)

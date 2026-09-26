@@ -1,6 +1,6 @@
 # Spec 000: Golden master and refactor gates
 
-Status: draft
+Status: approved 26 September 2026; Part A implemented (this PR)
 Plan: docs/architecture/tech-debt-plan.md, step 000
 
 ## Responsibility
@@ -35,7 +35,7 @@ tests/golden/
   recorded.py      # loads tests/golden/recorded/*.json.gz (Part B output)
   harness.py       # builds the entry, runs platform setup, collects entities
   snapshot.py      # canonical serialisation and structured diff
-  snapshots/<scenario>.json
+  snapshots/<scenario>.json.gz
 tests/test_golden_master.py   # one parametrized test per scenario
 ```
 
@@ -72,7 +72,7 @@ For every entity the platforms create, keyed by unique id: `entity_id` suggestio
 
 ### Canonical form
 
-- JSON with sorted keys and two-space indent, one file per scenario.
+- JSON with sorted keys and two-space indent, one file per scenario, gzipped with `mtime=0` so the file bytes are a pure function of the content (the tariff sensors publish whole forecasts; plain JSON was 7.8 MB, gzipped 443 KB). The test prints its own structured diff, so line-diffable files would add nothing.
 - Floats written with `repr`, so equality is exact to the last bit. No rounding, no tolerance: a refactor that moves a value by one ulp fails, on purpose.
 - Datetimes as ISO 8601 with offset; sets as sorted lists; tuples as lists.
 - The PNG hash is valid only on the pinned `matplotlib==3.11.1`; the harness asserts that version before comparing it.
@@ -165,6 +165,7 @@ The other 23 start in the lower two layers: `const`, `nem_time`, `calibration_en
 - No refactor of any source module. Where the harness finds code that is awkward to drive, it drives it anyway and the awkwardness goes into the relevant later spec.
 - No fix for anything the harness exposes. Nondeterminism in the product, or a value that looks wrong, is filed as an issue and linked here.
 - No change to #171 (`daily_supply_charge_$` in cents): the snapshot pins today's value, and the fix will be a deliberate snapshot update in its own PR.
+- Found while building Part A and pinned as they are, each to be fixed in its own PR with a deliberate snapshot update: #181 (the tariff sensors never find the usage-fee number, confirmed live) and #182 (a cancellation naming a notice id also cancels every same-level notice that day).
 
 ## Acceptance
 
