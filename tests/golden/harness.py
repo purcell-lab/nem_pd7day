@@ -164,6 +164,13 @@ class GoldenRestoreNumber(support.NumberEntity):
 
     _attr_native_value = None
 
+    @property
+    def native_value(self) -> Any:
+        # Home Assistant's NumberEntity exposes this; support.NumberEntity did
+        # not, so the fee state raised AttributeError when read and the
+        # snapshot recorded the number's state as None (#181).
+        return self._attr_native_value
+
     async def async_added_to_hass(self) -> None:
         return None
 
@@ -227,8 +234,32 @@ def _callback(func: Callable) -> Callable:
     return func
 
 
+class _EntityRegistry:
+    """The slice of Home Assistant's entity registry the integration reads:
+    unique id to entity id, filled as entities are added (#181)."""
+
+    def __init__(self) -> None:
+        self._ids: dict[tuple[str, str, str], str] = {}
+
+    def register(self, domain: str, platform: str, unique_id: str, entity_id: str) -> None:
+        self._ids[(domain, platform, unique_id)] = entity_id
+
+    def async_get_entity_id(self, domain: str, platform: str, unique_id: str) -> str | None:
+        return self._ids.get((domain, platform, unique_id))
+
+
+def _registry_for(hass: Any) -> _EntityRegistry:
+    return hass.golden_registry
+
+
 def _install_golden_stubs() -> None:
     support.install_ha_stubs()
+    registry = types.ModuleType("homeassistant.helpers.entity_registry")
+    registry.async_get = _registry_for  # type: ignore[attr-defined]
+    sys.modules["homeassistant.helpers.entity_registry"] = registry
+    # ``from homeassistant.helpers import entity_registry`` reads the attribute
+    # off the (MagicMock) helpers package before sys.modules, so set both.
+    sys.modules["homeassistant.helpers"].entity_registry = registry  # type: ignore[attr-defined]
     sys.modules["homeassistant.core"].callback = _callback  # type: ignore[attr-defined]
     uc = types.ModuleType("homeassistant.helpers.update_coordinator")
     uc.DataUpdateCoordinator = GoldenCoordinator  # type: ignore[attr-defined]
@@ -291,6 +322,7 @@ class FakeHass:
         self.data: dict[str, Any] = {}
         self.states = _States()
         self.golden_restore: dict[str, Any] = {}
+        self.golden_registry = _EntityRegistry()
         self.config_entries = MagicMock()
         self.services = MagicMock()
 
@@ -660,10 +692,12 @@ async def _setup(built: Built) -> None:
         added.extend((platform, e) for e in batch)
 
     ids = suggest_entity_ids(added)
-    fee_entity_id = const.additional_fee_entity_id(region)
     for (platform, entity), entity_id in zip(added, ids):
         entity.hass = hass
         entity.entity_id = entity_id
+        unique_id = getattr(entity, "_attr_unique_id", None) or getattr(entity, "unique_id", None)
+        if isinstance(unique_id, str):
+            hass.golden_registry.register(platform, const.DOMAIN, unique_id, entity_id)
         built.entities.append(entity)
         built.domains[id(entity)] = platform
         if platform == "number":
@@ -673,11 +707,10 @@ async def _setup(built: Built) -> None:
             def number_state(e: Any = entity) -> str:
                 return str(e.native_value)
 
+            # Served only at the id Home Assistant derives from the number's
+            # name, as on a live install. Serving it at the id the tariff
+            # sensors used to construct as well is what hid #181.
             hass.states.serve(entity_id, number_state)
-            # The tariff sensors read the fee from const.additional_fee_entity_id,
-            # which is not the id HA derives from the number's name; serve it
-            # there too so the scenario's fee reaches them.
-            hass.states.serve(fee_entity_id, number_state)
     for entity in built.entities:
         await entity.async_added_to_hass()
 

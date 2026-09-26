@@ -205,12 +205,34 @@ requires_py312_sum = pytest.mark.skipif(
 )
 
 
+def _every_tariff_reports_the_scenario_fee(built: harness.Built, actual: dict) -> None:
+    """The fee number's value reaches every tariff sensor (#181).
+
+    The fee is served only at the entity id Home Assistant derives for the
+    number, and the registry maps its unique id there, as on a live install.
+    Before #181 the tariff sensors looked up a different id and every one of
+    them reported the default whatever the number said.
+    """
+    fee = built.scenario.usage_fee
+    if fee is None:
+        return
+    reported = {
+        uid: record["extra_state_attributes"]["additional_usage_fee_$/kwh"]
+        for uid, record in actual["entities"].items()
+        if "additional_usage_fee_$/kwh" in (record.get("extra_state_attributes") or {})
+    }
+    assert reported, "no tariff sensor published additional_usage_fee_$/kwh"
+    wrong = {uid: v for uid, v in reported.items() if v != fee}
+    assert not wrong, f"tariff sensors ignored the scenario fee {fee}: {wrong}"
+
+
 @requires_py312_sum
 @pytest.mark.parametrize("name", list(SCENARIOS))
 def test_golden_master(name: str) -> None:
     with harness.build_entities(name) as built:
         actual = snapshot.snapshot(built.entities, built.scenario, built.domains)
         NON_VACUITY[name](built, actual)
+        _every_tariff_reports_the_scenario_fee(built, actual)
     text = snapshot.dumps(actual)
     path = SNAPSHOT_DIR / f"{name}.json.gz"
     if UPDATE:
