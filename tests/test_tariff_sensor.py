@@ -780,3 +780,24 @@ def test_apply_tariff_to_spot_cache_hit():
     assert result1 is not None
     assert result1 == result2
     assert mock_stt.call_count == 1
+
+
+@pytest.mark.parametrize("minute, expected_end", [
+    (12, (14, 15)),   # inside the hour: the next 5-minute boundary
+    (55, (15, 0)),    # the last 5-minute slot ends on the hour: rolls over
+    (58, (15, 0)),
+])
+def test_apply_tariff_to_spot_passes_the_interval_end(minute, expected_end):
+    """The dispatch path hands the library the interval END, rolling past the hour.
+
+    The rollover branch used to be reached only when the wall clock happened to
+    read minute 55 to 59 while the suite ran, so its coverage came and went.
+    """
+    now = datetime(2026, 5, 24, 14, minute, 30, tzinfo=NEM_TZ)
+    sensor = make_tariff_sensor(price_periods=[])
+    sensor._tariff_cache = None
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as lib:
+        assert sensor._apply_tariff_to_spot(0.10, now) is not None
+    end = lib.call_args.args[0]
+    assert (end.hour, end.minute, end.second, end.microsecond) == (*expected_end, 0, 0)
+
