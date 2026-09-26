@@ -533,7 +533,12 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                 # that now matches the price forecast sensor.
                 return None
             rrp_mwh = calibrated * 1000  # calibrated spot $/kWh -> $/MWh
-            cache_key = (period.nemtime, round(rrp_mwh, 4))
+            # The fee is part of the price, so it is part of the key: without
+            # it a price computed before the fee number was restored at start
+            # up, or before the user changed it, was served until the spot or
+            # the interval moved (#181).
+            fee = self._get_additional_fee()
+            cache_key = (period.nemtime, round(rrp_mwh, 4), fee)
             cache = getattr(self, "_period_tariff_cache", None)
             if cache is not None and cache[0] == cache_key:
                 return cache[1]
@@ -544,7 +549,6 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                     interval_dt, self._distributor, self._tariff_code, rrp_mwh,
                     dlf=_DEFAULT_DLF, mlf=_DEFAULT_MLF, market=_DEFAULT_MARKET,
                 )
-            fee = self._get_additional_fee()
             result = self._retail_price(result_c_kwh, rrp_mwh, fee)
             self._period_tariff_cache = (cache_key, result)
             return result
@@ -572,7 +576,8 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             else:
                 nemtime_dt = now_nem_dt.replace(minute=rounded_min, second=0, microsecond=0)
             rrp_mwh = rrp_kwh * 1000
-            cache_key = (nemtime_dt.isoformat(), round(rrp_mwh, 4))
+            fee = self._get_additional_fee()  # part of the key, see _compute_tariff (#181)
+            cache_key = (nemtime_dt.isoformat(), round(rrp_mwh, 4), fee)
             cache = getattr(self, "_tariff_cache", None)
             if cache is not None and cache[0] == cache_key:
                 return cache[1]
@@ -582,7 +587,6 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
                     nemtime_dt, self._distributor, self._tariff_code, rrp_mwh,
                     dlf=_DEFAULT_DLF, mlf=_DEFAULT_MLF, market=_DEFAULT_MARKET,
                 )
-            fee = self._get_additional_fee()
             result = self._retail_price(result_c_kwh, rrp_mwh, fee)
             self._tariff_cache = (cache_key, result)
             return result
