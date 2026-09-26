@@ -854,3 +854,26 @@ def test_both_tariff_classes_read_the_fee_the_same_way():
         with patch.object(_tariff_mod.er, "async_get", return_value=registry):
             assert sensor._get_additional_fee() == 0.0224
 
+
+@pytest.mark.parametrize("path", ["dispatch", "forecast"])
+def test_a_changed_fee_is_not_served_from_the_price_cache(path):
+    """The fee is part of the cache key (#181).
+
+    Live after the v3.17.1 deploy, a price computed with the default fee
+    before the fee number was restored kept being served, because the single
+    entry caches were keyed on interval and spot only.
+    """
+    now = datetime(2026, 5, 24, 14, 12, 0, tzinfo=NEM_TZ)
+    sensor = make_tariff_sensor(price_periods=[])
+    sensor._tariff_cache = None
+    sensor._period_tariff_cache = None
+    fees = iter([0.0293, 0.0224])
+    sensor._get_additional_fee = lambda: next(fees)
+    period = make_price_period(now, value=0.10)
+    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
+        if path == "dispatch":
+            first, second = (sensor._apply_tariff_to_spot(0.10, now) for _ in range(2))
+        else:
+            first, second = (sensor._compute_tariff(period, calibrated=0.10) for _ in range(2))
+    assert second == pytest.approx(first + (0.0224 - 0.0293) * 1.1)
+
