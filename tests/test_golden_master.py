@@ -22,6 +22,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -194,6 +195,17 @@ def _failure(name: str, lines: list[str]) -> str:
     return header + "\n  ".join(shown) + tail
 
 
+# CPython 3.12 changed the built-in sum() of floats to compensated summation,
+# so the product's own sum(...)/len(...) means differ in the last bit between
+# 3.11 and 3.12+, and a last bit can flip a value published at six decimals.
+# The snapshots are recorded on 3.13, the version CI and Home Assistant run.
+requires_py312_sum = pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="snapshots are recorded on CPython 3.13; sum() of floats differs before 3.12",
+)
+
+
+@requires_py312_sum
 @pytest.mark.parametrize("name", list(SCENARIOS))
 def test_golden_master(name: str) -> None:
     with harness.build_entities(name) as built:
