@@ -1,0 +1,36 @@
+-------------------------------------------------------------------
+                           MARKET NOTICE
+-------------------------------------------------------------------
+
+From :              AEMO
+To   :              NEMITWEB1
+Creation Date :     04/08/2026     08:28:13
+
+-------------------------------------------------------------------
+
+Notice ID               :         144759
+Notice Type ID          :         INTER-REGIONAL TRANSFER
+Notice Type Description :         Inter-Regional Transfer limit variation
+Issue Date              :         04/08/2026
+External Reference      :         Inter-regional transfer limit variation - constraint automation to manage Power System Security in NSW region - 04/08/2026
+
+-------------------------------------------------------------------
+
+Reason :
+
+AEMO ELECTRICITY MARKET NOTICE
+
+In order to maintain the power system in a secure operating state in the NSW region, AEMO has invoked automated constraint set CA_SYDS_59839EB2 from 0815 hrs until further notice.
+
+This constraint set contains equations with the following interconnector on the LHS;
+
+N-Q-MNSP1
+NSW1-QLD1
+
+Refer to AEMO Network Outage Scheduler (NOS) for further information.
+
+Manager NEM Real Time Operations
+
+-------------------------------------------------------------------
+END OF REPORT
+-------------------------------------------------------------------
