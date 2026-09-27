@@ -1,6 +1,6 @@
 # Spec 002: Tariff entity base
 
-Status: approved 27 September 2026; drafted against `main` at 6e25da9 (spec 001 merged)
+Status: approved 27 September 2026; implemented (this PR); drafted against `main` at 6e25da9 (spec 001 merged)
 Plan: docs/architecture/tech-debt-plan.md, step 002
 
 ## Responsibility
@@ -121,6 +121,19 @@ Rules for the hooks:
 - `_price_now` and `_price_period` are one-line delegations to the existing `_apply_*_to_spot` and `_compute_*` methods. Those methods keep their names, because tests call and patch them.
 - `_priced_code` is a property that reads `_tariff_code` or `_export_code`, so a sensor built through `__new__` needs no new instance attribute.
 - `TariffEntityBase.__init__` sets `_region`, `_distributor`, `_entry` and `_store` in the order they are set today, after `super().__init__(coordinator)`. Each subclass then sets its code fields, unique id, name and caches as today.
+
+### As implemented
+
+The interfaces above hold, with these deviations:
+
+- The hooks are declared in `TariffEntityBase` inside an `if TYPE_CHECKING:` block, not as runtime methods. The fifteen methods listed above already reach the limit of 15, so four more stub methods would have broken it; the declarations give mypy the hook signatures, and a sensor that leaves one out fails at the call rather than inheriting a stand-in. Counting the declarations, the class holds 20 `def` statements, of which 15 exist at runtime.
+- `_lookup_period_info` is declared there as a fifth hook, because `_forecast_entries` calls it. Both sensors already implement it under that name, so neither changed.
+- To bring `TariffEntityBase` under 250 lines (247, 15 methods), its docstring is one line, the `__init__` signature sits on one line and the `async_track_point_in_time` call in `_schedule_next_boundary` is on one line. The three calibrated-spot methods are byte for byte as they were.
+- The base `native_value` docstring now says it tries the dispatch price first; the code and the debug log text are unchanged. The per-key comments in `_forecast_entries` are the import loop's, so the export entries now carry them too.
+- A two-line comment above `_calibrated_value` replaces the comment block that explained the assignments.
+- `tests/test_tariff_entity_base.py` also pins that the day 2-7 dictionary equals the import one apart from the trimmed forecast, that the cutoff is not read without price data, and the key order with and without price data.
+
+Sizes after the change: `TariffEntityBase` 247 lines and 15 methods, `NemPd7dayTariffSensor` 324 and 17 (from 537 and 25; still on the baseline), `TariffForecastDays27Sensor` 35 and 3, `NemPd7dayExportTariffSensor` 175 and 11 (off the baseline). No function in the file exceeds 60 lines.
 
 ## Invariants
 
