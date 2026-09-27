@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
+from .forecast_history import ingest_run, prune_history
 from .json_repository import JsonRepository
 from .observation_log import ObservationLog
 from .calibration_engine import (
@@ -47,7 +48,6 @@ from .const import (
     MAX_HORIZON_HOURS,
     MAX_TOTAL_OBS,
     NEM_TZ,
-    QNI_INTERCONNECTOR_ID,
     SPIKE_GAS_THRESHOLD_TJ,
     STORAGE_VERSION,
     storage_keys,
@@ -276,90 +276,20 @@ class CalibrationStore:
         All interval_time keys and run_at values are ISO-8601 +10:00 strings.
         """
         run_at_str = price_data.forecast_generated_at or _now_nem().isoformat()
-        is_intervention = case.intervention if case else False
-
-        # Build an interval-START → StpasaInterval lookup for O(1) join.
-        # STPASA interval_datetime is interval-END (AEMO convention); the
-        # forecast_history key is interval-START (= END − 30 min), so we key
-        # the lookup by the START to match.
-        stpasa_by_start: dict[str, object] = {}
-        if stpasa is not None:
-            from .nem_time import interval_start
-            for si in stpasa.intervals:
-                try:
-                    start_key = interval_start(si.interval_datetime)
-                except (ValueError, TypeError):
-                    continue
-                stpasa_by_start[start_key] = si
-
-        # Build per-interval lookups from the interconnector forecast
-        qni = interconnectors.get(QNI_INTERCONNECTOR_ID)
-        qni_mwflow_by_time: dict[str, float | None] = {}
-        qni_violation_by_time: dict[str, float | None] = {}
-        if qni:
-            for p in qni.forecast:
-                qni_mwflow_by_time[p.time] = p.mwflow
-                qni_violation_by_time[p.time] = p.violationdegree
-
-        # Build a date→gas_tj lookup from market_summary for O(1) per-interval access.
-        # Gas forecast is daily resolution — key is the date portion of the AEMO nemtime.
-        # Use nemtime (interval-END / raw AEMO timestamp), NOT time (interval-START),
-        # because interval_start() subtracts 30 min, which for midnight timestamps
-        # shifts the date back by one day and breaks the lookup.
-        gas_by_date: dict[str, float | None] = {}
-        if market_summary:
-            for g in market_summary.forecast:
-                date_key = g.nemtime[:10]
-                gas_by_date[date_key] = g.value_tj
-
-        for period in price_data.forecast:
-            # Key must be ISO string — period.time is already an ISO string
-            # (interval START). current_nem_interval() also returns ISO strings
-            # so both sides of the lookup are consistent str keys.
-            key = period.time if isinstance(period.time, str) else period.time.astimezone(NEM_TZ).isoformat()
-            if key not in self._forecast_history:
-                self._forecast_history[key] = []
-
-            # Deduplicate by (interval_time, run_at): if this forecast run was
-            # already ingested (e.g. HA restarted and refetched the same AEMO
-            # file, or startup + scheduled fetch returned identical data), skip
-            # it.  Without this guard, each Amber reading would be averaged
-            # against N duplicate run_at entries and corrupt the running average.
-            if any(e["run_at"] == run_at_str for e in self._forecast_history[key]):
-                continue
-
-            # Match gas_tj by the date of the interval start
-            interval_date = key[:10]  # "YYYY-MM-DD" prefix of ISO string
-            gas_tj = gas_by_date.get(interval_date)  # None if no gas data for this date
-
-            entry: dict[str, Any] = {
-                "run_at": run_at_str,
-                "forecast_price": period.value,
-                "gas_tj": gas_tj,
-                "qni_mwflow": qni_mwflow_by_time.get(key),
-                "qni_violation": qni_violation_by_time.get(key),
-                "is_intervention": is_intervention,
-                "region": region,
-            }
-
-            # Join STPASA signals for this interval if available.
-            si = stpasa_by_start.get(key)
-            if si is not None:
-                entry["stpasa_run_at"] = si.run_datetime
-                entry["stpasa_demand10"] = si.demand10
-                entry["stpasa_demand50"] = si.demand50
-                entry["stpasa_demand90"] = si.demand90
-                entry["stpasa_surplus"] = si.surpluscapacity
-                entry["stpasa_solar"] = si.ss_solar_uigf
-                entry["stpasa_wind"] = si.ss_wind_uigf
-
-            self._forecast_history[key].append(entry)
+        ingest_run(
+            self._forecast_history,
+            region=region,
+            run_at=run_at_str,
+            price_data=price_data,
+            interconnectors=interconnectors,
+            case=case,
+            market_summary=market_summary,
+            stpasa=stpasa,
+        )
 
         # Prune old history — compare ISO strings directly (fixed offset sorts correctly)
         cutoff = (_now_nem() - timedelta(days=MAX_FORECAST_AGE_DAYS)).isoformat()
-        self._forecast_history = {
-            k: v for k, v in self._forecast_history.items() if k >= cutoff
-        }
+        self._forecast_history = prune_history(self._forecast_history, cutoff)
 
         await self._save_forecast_history()
 
