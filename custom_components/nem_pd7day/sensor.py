@@ -81,14 +81,13 @@ from .calibration_inputs import (
     STPASA_MAX_HORIZON_H,
     STPASA_MIN_HORIZON_H,
     calibrate_interval,
-    calibrated_forecast_key,
-    covariates_for_interval,
     horizon_hours,
     interval_key_for_period,
     stpasa_coverage_start,
     stpasa_effective_min_horizon_h,
     stpasa_features_for_interval,
 )
+from .calibrated_forecast import CalibratedForecast, WarmOutcome
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from .tariff_catalogue import export_program_supported, export_programs, import_tariff_codes
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
@@ -270,11 +269,158 @@ def _published_spike_credible(cal: dict, horizon_h: float | None) -> bool | None
 
 
 # ---------------------------------------------------------------------------
-# Shared state-write path for the calibration-backed sensors
+# Shared calibrated forecast and state-write path for the calibration-backed sensors
 # ---------------------------------------------------------------------------
 
 
-class CalibratedWriteMixin:
+if TYPE_CHECKING:
+    # The mixins below only ever run on a CoordinatorEntity. Declaring that as
+    # their base for the type checker gives them coordinator, hass, entity_id
+    # and async_write_ha_state. At runtime the base is object, so the MRO of
+    # the sharing classes, which the memo tests assert, does not change.
+    _CalibratedEntityBase = CoordinatorEntity[PD7DayCoordinator]
+else:
+    _CalibratedEntityBase = object
+
+
+class CalibratedForecastMixin(_CalibratedEntityBase):
+    """The calibrated forecast accessors of an entity, over ``CalibratedForecast``.
+
+    The memo protocol, the key, the slot on the coordinator, the lazy build,
+    the currency check and the guarded publish, belongs to the provider in
+    calibrated_forecast.py. Each accessor here delegates to it, under the
+    names that tests, scarcity_sensor.py and the camera tests call. The lazy
+    ``_calibrated_forecast`` itself is on ``CalibratedWriteMixin``.
+    """
+
+    if TYPE_CHECKING:
+        # Provided by the entity this mixes into.
+        _region: str
+        _store: Any
+
+        @property
+        def _price_data(self) -> Any: ...
+
+    @property
+    def _calibrated(self) -> CalibratedForecast:
+        """This region's calibrated forecast memo, as a view built on each access.
+
+        Built from ``coordinator``, ``_store`` and ``_region`` alone, so a
+        sensor built through ``__new__`` with only those works.
+        """
+        return CalibratedForecast(self.coordinator, self._store, self._region)
+
+    def _calibrated_forecast_key(self, d) -> tuple:
+        """Build the memo key for PriceData ``d``.
+
+        Split out of ``_calibrated_forecast`` so ``CalibratedWriteMixin`` can ask
+        whether the memo is current without recomputing the forecast to find
+        out. Both callers must derive the key identically or the check is
+        worthless, so there is deliberately only one implementation.
+
+        The body moved to ``calibration_inputs.calibrated_forecast_key`` when
+        the tariff sensors started reading the same memo (issue #62). A reader
+        that decided currency by its own rule while the writer stored under
+        another would publish a stale price rather than fail, which is the
+        issue #66 failure mode again.
+        """
+        return self._calibrated.key(d)
+
+    def _cached_calibrated_forecast(self, key) -> list[dict] | None:
+        """The memoised forecast for ``key``, or None if the memo does not hold it."""
+        return self._calibrated.cached(key)
+
+    def _calibrated_forecast_values(self, d) -> list[dict]:
+        """Calibrate every interval of ``d``. No cache read, no cache write.
+
+        Kept free of memo access on purpose, because this is the half that runs
+        in the executor. Whether the result is fit to publish depends on state
+        that only the event loop may read consistently, so that decision is
+        made by the caller once it is back on the loop.
+        """
+        run_at = d.forecast_generated_at
+        return [self._calibrate_period(p, run_at) for p in d.forecast]
+
+    def _calibrate_period(self, period, run_at_str: str | None) -> dict:
+        """Build the enriched forecast dict for one PricePeriod."""
+        h = _horizon_hours(run_at_str, period.time)
+        try:
+            hour = parse_iso(period.time).hour
+        except (ValueError, TypeError):
+            hour = 0
+
+        interval_key = interval_key_for_period(period)
+
+        base = {
+            "nemtime": to_nem_iso(parse_iso(period.nemtime)),
+            "time": interval_key,
+            "raw_value": period.value,
+            "horizon_hours": round(h, 1),
+        }
+
+        # run_at_str is passed on so the stage-2 band floor is resolved from
+        # this run's STPASA coverage (issue #68) rather than the static
+        # constant. It is threaded through the shared entry point, not applied
+        # here, so the tariff path gets the same floor.
+        cal = calibrate_interval(
+            self._store, self.coordinator, period.value, interval_key, h, hour,
+            run_at_iso=run_at_str,
+        )
+        if cal is not None:
+            cal_update = {
+                ATTR_CAL_CALIBRATED: cal["calibrated"],
+                ATTR_CAL_P10: cal["p10"],
+                ATTR_CAL_P50: cal["p50"],
+                ATTR_CAL_P90: cal["p90"],
+                ATTR_CAL_MAE: cal.get("ols_mae"),
+                ATTR_CAL_SOURCE: cal["calibrated_source"],
+                ATTR_CAL_BAND_SOURCE: cal.get(ATTR_CAL_BAND_SOURCE),
+                ATTR_CAL_N_OBS: cal["n_obs"],
+                "value": cal["calibrated"],
+                "spike_credible": _published_spike_credible(cal, h),
+            }
+            if cal.get("stpasa_run_at"):
+                cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
+            base.update(cal_update)
+        else:
+            # No calibration store: raw passthrough, as before. Store present
+            # but no raw price: there is no honest calibrated number, so the
+            # entry carries the raw value through and never a stand-in 0.
+            base["value"] = period.value
+
+        return base
+
+    def _calibrated_current(self, d, period) -> float | None:
+        """The published state for ``period``, the current interval of run ``d``.
+
+        Both forecast sensors' ``native_value`` fall back to this when there is
+        no dispatch price. The calibrated price when there is a store, None
+        when that interval cannot be calibrated, and the raw price without a
+        store. The hour falls back to the current NEM hour when the interval
+        start cannot be parsed.
+        """
+        if self._store:
+            h = _horizon_hours(d.forecast_generated_at, period.time)
+            try:
+                hour = parse_iso(period.time).hour
+            except (ValueError, TypeError):
+                hour = now_nem().hour
+            interval_key = interval_key_for_period(period)
+            # Same shared call as the forecast attribute path, so the published
+            # state and the forecast entry for the current interval cannot
+            # disagree. See issue #66. run_at carries through for the per-run
+            # stage-2 band floor of issue #68.
+            cal = calibrate_interval(
+                self._store, self.coordinator, period.value, interval_key, h, hour,
+                run_at_iso=d.forecast_generated_at,
+            )
+            if cal is None:
+                return None
+            return cal["calibrated"]
+        return period.value
+
+
+class CalibratedWriteMixin(CalibratedForecastMixin):
     """Warms the calibrated forecast off the loop before writing state.
 
     ``extra_state_attributes`` is a property, so it is evaluated during
@@ -303,69 +449,46 @@ class CalibratedWriteMixin:
     state write.
     """
 
-    def _calibrated_memo(self) -> dict | None:
-        """The coordinator's per region memo dict, or None if unusable.
-
-        PD7DayCoordinator initialises this dict. Check the type rather than
-        just checking for None, because the tests substitute a MagicMock
-        coordinator and attribute access on a mock invents an object instead of
-        raising, so getattr alone never reports the attribute as missing.
+    def _calibrated_forecast(self, d) -> list[dict]:
         """
-        cache = getattr(self.coordinator, "_calibrated_forecast_cache", None)
-        return cache if isinstance(cache, dict) else None
+        Return the calibrated forecast list for PriceData ``d``, memoised per
+        region on the PD7DAY run plus the STPASA index and calibration versions.
 
-    def _cached_calibrated_forecast(self, key) -> list[dict] | None:
-        """The memoised forecast for ``key``, or None if the memo does not hold it."""
-        cache = self._calibrated_memo()
-        if cache is None:
-            return None
-        entry = cache.get(self._region)
-        if not (isinstance(entry, tuple) and len(entry) == 2):
-            return None
-        cached_key, cached_val = entry
-        if cached_key != key or cached_val is None:
-            return None
-        return cached_val
+        Recomputes only when an input that affects calibration changes:
+          * ``forecast_generated_at`` and interval count (new PD7DAY run),
+          * the STPASA index cache key (new/refetched STPASA run),
+          * the calibration store's fit generation (refit or OLS stage 2).
+        Otherwise the previously computed list is returned unchanged, avoiding
+        the full per-interval recalibration on every state write.
+
+        This is the lazy fallback path and it runs on the event loop, so the
+        key cannot move between the read and the write here: there is no await
+        anywhere in it. The warm path below does have an await in the middle
+        and ``CalibratedForecast.warm`` has to guard the publish itself.
+
+        It sits on this mixin rather than on ``CalibratedForecastMixin``
+        because anything that can calibrate lazily on the loop must also warm
+        before it writes; test_calibration_memo pins that pairing.
+        """
+        return self._calibrated.forecast(d, self._calibrated_forecast_values)
 
     async def _async_warm_calibrated_forecast(self) -> None:
         """Populate the coordinator memo for this region, off the event loop.
 
-        The key is taken ONCE here, on the loop, before the executor hop, and
-        then carried through to the publish. It used to be taken inside the
-        executor job by ``_calibrated_forecast`` itself, which meant the warm
-        did not know which key it had stored under and could not tell whether
-        the world had moved while it was away. Two things went wrong with that:
-
-          * A pass that started before a refit published its result under the
-            pre refit key, unconditionally. The memo has a single slot per
-            region shared by three entity classes, so a warm that started early
-            and landed late overwrote the current entry a sibling entity had
-            just published, and the next reader of that slot paid for a full
-            rebuild on the loop.
-          * ``_calibrate_period`` reads the calibration store live, so a
-            generation change part way through a pass produced a list built
-            from two different models, stored under the key of the first.
-
-        So: take the key, compute the values with no cache access at all, then
-        publish only if the key is still the one the write will ask for. There
-        is no await between the recheck and the publish, and everything the key
-        folds in is mutated only from the loop, so the recheck cannot go stale
-        between the two. If the key did move we publish nothing and leave the
-        slot alone; ``_async_warm_until_current`` will come round again with
-        the new key.
+        ``CalibratedForecast.warm`` takes the key on the loop before the
+        executor hop and publishes only if the key is still the live one, with
+        no await between that recheck and the publish; its docstring keeps the
+        #60 / PR #76 history. This entity supplies the Home Assistant half: the
+        executor, and the two debug logs chosen from the outcome.
         """
         d = self._price_data
-        if d is None:
-            return
-        key = self._calibrated_forecast_key(d)
-        if self._cached_calibrated_forecast(key) is not None:
-            # Already warm for this key. Skipping the executor hop here is why
-            # a hit costs nothing, which matters because every dispatch tick
-            # routes five minute writes through this path.
-            return
+        calibrated = self._calibrated
         try:
-            value = await self.hass.async_add_executor_job(
-                self._calibrated_forecast_values, d
+            outcome = await calibrated.warm(
+                d,
+                self._calibrated_forecast_values,
+                lambda func, *args: self.hass.async_add_executor_job(func, *args),
+                lambda: self._price_data,
             )
         except Exception:  # noqa: BLE001 - warming is best effort
             # The lazy path inside extra_state_attributes remains as the
@@ -377,19 +500,12 @@ class CalibratedWriteMixin:
                 exc_info=True,
             )
             return
-        if self._price_data is not d or self._calibrated_forecast_key(d) != key:
-            # Superseded while we were in the executor. Publishing now would
-            # label a stale list with a key that no longer describes it, and
-            # could overwrite a fresher entry from a sibling entity.
+        if outcome is WarmOutcome.SUPERSEDED:
             _LOGGER.debug(
                 "Calibrated forecast key moved during the warm for %s, "
                 "discarding the result rather than publishing it",
                 getattr(self, "entity_id", None),
             )
-            return
-        cache = self._calibrated_memo()
-        if cache is not None:
-            cache[self._region] = (key, value)
 
     def _calibrated_cache_is_current(self) -> bool:
         """Whether the memo already holds the value this entity's write will ask for.
@@ -405,13 +521,9 @@ class CalibratedWriteMixin:
         underneath us. Introducing an await between the two would reopen the
         race this exists to close.
         """
-        d = self._price_data
-        if d is None:
-            # Nothing to calibrate, so the write cannot pay for a rebuild.
-            return True
-        return self._cached_calibrated_forecast(
-            self._calibrated_forecast_key(d)
-        ) is not None
+        # With no price data there is nothing to calibrate, so the write
+        # cannot pay for a rebuild and the provider answers True.
+        return self._calibrated.is_current(self._price_data)
 
     async def _async_warm_until_current(self) -> None:
         """Warm the memo, re-warming while the key keeps moving underneath us.
@@ -435,6 +547,7 @@ class CalibratedWriteMixin:
         costs speed, not correctness.
 
         The retry is the outer half of the guarantee. The inner half is in
+        ``CalibratedForecast.warm``, reached through
         ``_async_warm_calibrated_forecast``, which refuses to publish a result
         computed under a key that has since moved. Without that, a retry could
         still leave the slot holding the superseded list it had just written.
@@ -481,11 +594,6 @@ class CalibratedWriteMixin:
     # Class-level default so instances built without __init__ still work.
     _pending_warm_writes: set | None = None
 
-    if TYPE_CHECKING:
-        # Provided by the entity this mixes into.
-        entity_id: str
-        hass: HomeAssistant
-
     def _schedule_warm_state_write(self) -> None:
         """Warm the memo then write state, without blocking the caller.
 
@@ -511,7 +619,7 @@ class CalibratedWriteMixin:
 
     async def async_will_remove_from_hass(self) -> None:
         self._cancel_pending_warm_writes()
-        await super().async_will_remove_from_hass()  # type: ignore[misc]
+        await super().async_will_remove_from_hass()
 
     def _handle_coordinator_update(self) -> None:
         """Replaces CoordinatorEntity's direct async_write_ha_state()."""
@@ -554,79 +662,6 @@ class PD7DayForecastSensor(
             model=DEVICE_MODEL,
             configuration_url=DEVICE_CONFIGURATION_URL,
         )
-
-    # Run-keyed calibrated-forecast cache. The calibrated forecast only changes
-    # when a new PD7DAY run lands or STPASA/calibration is refit, so we memoise
-    # the per-interval calibration (the expensive path) and reuse it across
-    # state writes that carry an unchanged run.
-    #
-    # The cache lives on the coordinator, not on the entity. The coordinator is
-    # per region and so is the calibrated forecast: PD7DayForecastSensor,
-    # SpotPriceForecastDays27Sensor and PD7DayDataSensor all call this for the
-    # same region with the same coordinator and the same calibration store, and
-    # their _calibrate_period and _covariates_for_interval implementations are
-    # byte for byte the same computation. Memoising on the entity therefore ran
-    # the full recalibration of roughly 336 intervals three times per region
-    # instead of once, which is what made platform setup take 42 to 53 seconds
-    # per region.
-    def _calibrated_forecast_key(self, d) -> tuple:
-        """Build the memo key for PriceData ``d``.
-
-        Split out of ``_calibrated_forecast`` so ``CalibratedWriteMixin`` can ask
-        whether the memo is current without recomputing the forecast to find
-        out. Both callers must derive the key identically or the check is
-        worthless, so there is deliberately only one implementation.
-
-        The body moved to ``calibration_inputs.calibrated_forecast_key`` when
-        the tariff sensors started reading the same memo (issue #62). A reader
-        that decided currency by its own rule while the writer stored under
-        another would publish a stale price rather than fail, which is the
-        issue #66 failure mode again.
-        """
-        return calibrated_forecast_key(self.coordinator, self._store, self._region, d)
-
-    def _calibrated_forecast(self, d) -> list[dict]:
-        """
-        Return the calibrated forecast list for PriceData ``d``, memoised per
-        region on the PD7DAY run plus the STPASA index and calibration versions.
-
-        Recomputes only when an input that affects calibration changes:
-          * ``forecast_generated_at`` and interval count (new PD7DAY run),
-          * the STPASA index cache key (new/refetched STPASA run),
-          * the calibration store's fit generation (refit or OLS stage 2).
-        Otherwise the previously computed list is returned unchanged, avoiding
-        the full per-interval recalibration on every state write.
-
-        This is the lazy fallback path and it runs on the event loop, so the
-        key cannot move between the read and the write here: there is no await
-        anywhere in it. The warm path in ``CalibratedWriteMixin`` does have an
-        await in the middle and has to guard the publish itself.
-        """
-        key = self._calibrated_forecast_key(d)
-        cache = self._calibrated_memo()
-        if cache is None:
-            cache = {}
-            try:
-                self.coordinator._calibrated_forecast_cache = cache
-            except (AttributeError, TypeError):  # pragma: no cover - read-only mock
-                pass
-        cached = self._cached_calibrated_forecast(key)
-        if cached is not None:
-            return cached
-        value = self._calibrated_forecast_values(d)
-        cache[self._region] = (key, value)
-        return value
-
-    def _calibrated_forecast_values(self, d) -> list[dict]:
-        """Calibrate every interval of ``d``. No cache read, no cache write.
-
-        Kept free of memo access on purpose, because this is the half that runs
-        in the executor. Whether the result is fit to publish depends on state
-        that only the event loop may read consistently, so that decision is
-        made by the caller once it is back on the loop.
-        """
-        run_at = d.forecast_generated_at
-        return [self._calibrate_period(p, run_at) for p in d.forecast]
 
     @property
     def _price_data(self):
@@ -678,18 +713,6 @@ class PD7DayForecastSensor(
         # Fallback: first period (covers startup before first interval boundary)
         return forecast[0] if forecast else None
 
-    def _covariates_for_interval(self, interval_key: str) -> dict:
-        """Extract gas_forecast_tj and network_tight for an interval.
-
-        Kept as a method because subclasses and tests reach for it by name; the
-        body lives in calibration_inputs so the tariff sensors use the same one.
-        The region is passed explicitly because the network covariate is read
-        from this region's own interconnectors, not from one shared link.
-        """
-        return covariates_for_interval(
-            self.coordinator, interval_key, region=self._region
-        )
-
     @property
     def native_value(self) -> float | None:
         # Try 5-minute dispatch price first
@@ -705,74 +728,7 @@ class PD7DayForecastSensor(
         period = self._current_period(d.forecast)
         if period is None:
             return None
-        if self._store:
-            h = _horizon_hours(d.forecast_generated_at, period.time)
-            try:
-                hour = parse_iso(period.time).hour
-            except (ValueError, TypeError):
-                hour = now_nem().hour
-            interval_key = interval_key_for_period(period)
-            # Same shared call as the forecast attribute path, so the published
-            # state and the forecast entry for the current interval cannot
-            # disagree. See issue #66. run_at carries through for the per-run
-            # stage-2 band floor of issue #68.
-            cal = calibrate_interval(
-                self._store, self.coordinator, period.value, interval_key, h, hour,
-                run_at_iso=d.forecast_generated_at,
-            )
-            if cal is None:
-                return None
-            return cal["calibrated"]
-        return period.value
-
-    def _calibrate_period(self, period, run_at_str: str | None) -> dict:
-        """Build the enriched forecast dict for one PricePeriod."""
-        h = _horizon_hours(run_at_str, period.time)
-        try:
-            hour = parse_iso(period.time).hour
-        except (ValueError, TypeError):
-            hour = 0
-
-        interval_key = interval_key_for_period(period)
-
-        base = {
-            "nemtime": to_nem_iso(parse_iso(period.nemtime)),
-            "time": interval_key,
-            "raw_value": period.value,
-            "horizon_hours": round(h, 1),
-        }
-
-        # run_at_str is passed on so the stage-2 band floor is resolved from
-        # this run's STPASA coverage (issue #68) rather than the static
-        # constant. It is threaded through the shared entry point, not applied
-        # here, so the tariff path gets the same floor.
-        cal = calibrate_interval(
-            self._store, self.coordinator, period.value, interval_key, h, hour,
-            run_at_iso=run_at_str,
-        )
-        if cal is not None:
-            cal_update = {
-                ATTR_CAL_CALIBRATED: cal["calibrated"],
-                ATTR_CAL_P10: cal["p10"],
-                ATTR_CAL_P50: cal["p50"],
-                ATTR_CAL_P90: cal["p90"],
-                ATTR_CAL_MAE: cal.get("ols_mae"),
-                ATTR_CAL_SOURCE: cal["calibrated_source"],
-                ATTR_CAL_BAND_SOURCE: cal.get(ATTR_CAL_BAND_SOURCE),
-                ATTR_CAL_N_OBS: cal["n_obs"],
-                "value": cal["calibrated"],
-                "spike_credible": _published_spike_credible(cal, h),
-            }
-            if cal.get("stpasa_run_at"):
-                cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
-            base.update(cal_update)
-        else:
-            # No calibration store: raw passthrough, as before. Store present
-            # but no raw price: there is no honest calibrated number, so the
-            # entry carries the raw value through and never a stand-in 0.
-            base["value"] = period.value
-
-        return base
+        return self._calibrated_current(d, period)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -943,12 +899,6 @@ class SpotPriceForecastDays27Sensor(
                 continue
         return forecast[0] if forecast else None
 
-    def _covariates_for_interval(self, interval_key: str) -> dict:
-        """Same computation as PD7DayForecastSensor, delegated to one body."""
-        return covariates_for_interval(
-            self.coordinator, interval_key, region=self._region
-        )
-
     @property
     def native_value(self) -> float | None:
         # Same as base sensor: try dispatch first, then PD7DAY
@@ -962,73 +912,7 @@ class SpotPriceForecastDays27Sensor(
         period = self._current_period(d.forecast)
         if period is None:
             return None
-        if self._store:
-            h = _horizon_hours(d.forecast_generated_at, period.time)
-            try:
-                hour = parse_iso(period.time).hour
-            except (ValueError, TypeError):
-                hour = now_nem().hour
-            interval_key = interval_key_for_period(period)
-            cal = calibrate_interval(
-                self._store, self.coordinator, period.value, interval_key, h, hour,
-                run_at_iso=d.forecast_generated_at,
-            )
-            if cal is None:
-                return None
-            return cal["calibrated"]
-        return period.value
-
-    def _calibrate_period(self, period, run_at_str: str | None) -> dict:
-        h = _horizon_hours(run_at_str, period.time)
-        try:
-            hour = parse_iso(period.time).hour
-        except (ValueError, TypeError):
-            hour = 0
-        interval_key = interval_key_for_period(period)
-        base = {
-            "nemtime": to_nem_iso(parse_iso(period.nemtime)),
-            "time": interval_key,
-            "raw_value": period.value,
-            "horizon_hours": round(h, 1),
-        }
-        # run_at_str is passed on so the stage-2 band floor is resolved from
-        # this run's STPASA coverage (issue #68) rather than the static
-        # constant. It is threaded through the shared entry point, not applied
-        # here, so the tariff path gets the same floor.
-        cal = calibrate_interval(
-            self._store, self.coordinator, period.value, interval_key, h, hour,
-            run_at_iso=run_at_str,
-        )
-        if cal is not None:
-            cal_update = {
-                ATTR_CAL_CALIBRATED: cal["calibrated"],
-                ATTR_CAL_P10: cal["p10"],
-                ATTR_CAL_P50: cal["p50"],
-                ATTR_CAL_P90: cal["p90"],
-                ATTR_CAL_MAE: cal.get("ols_mae"),
-                ATTR_CAL_SOURCE: cal["calibrated_source"],
-                ATTR_CAL_BAND_SOURCE: cal.get(ATTR_CAL_BAND_SOURCE),
-                ATTR_CAL_N_OBS: cal["n_obs"],
-                "value": cal["calibrated"],
-                "spike_credible": _published_spike_credible(cal, h),
-            }
-            if cal.get("stpasa_run_at"):
-                cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
-            base.update(cal_update)
-        else:
-            # No calibration store: raw passthrough, as before. Store present
-            # but no raw price: there is no honest calibrated number, so the
-            # entry carries the raw value through and never a stand-in 0.
-            base["value"] = period.value
-        return base
-
-    # Run-keyed calibrated-forecast cache (shared implementation). Memoises the
-    # per-interval calibration so unchanged runs are not recomputed on every
-    # state write. The key builder must come with it, or CalibratedWriteMixin
-    # would check currency against a different key than the memo stored.
-    _calibrated_forecast_key = PD7DayForecastSensor._calibrated_forecast_key
-    _calibrated_forecast_values = PD7DayForecastSensor._calibrated_forecast_values
-    _calibrated_forecast = PD7DayForecastSensor._calibrated_forecast
+        return self._calibrated_current(d, period)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -1655,13 +1539,6 @@ class PD7DayDataSensor(
             "interval_count": len(forecast),
             ATTR_FORECAST: forecast,
         }
-
-    # Reuse the calibration logic from PD7DayForecastSensor for a single period.
-    _covariates_for_interval = PD7DayForecastSensor._covariates_for_interval
-    _calibrate_period = PD7DayForecastSensor._calibrate_period
-    _calibrated_forecast_key = PD7DayForecastSensor._calibrated_forecast_key
-    _calibrated_forecast_values = PD7DayForecastSensor._calibrated_forecast_values
-    _calibrated_forecast = PD7DayForecastSensor._calibrated_forecast
 
 
 class StpasaDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):

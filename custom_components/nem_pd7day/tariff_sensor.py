@@ -30,12 +30,7 @@ from .const import (
     additional_fee_entity_id,
     additional_fee_unique_id,
 )
-from .calibration_inputs import (
-    calibrated_forecast_key,
-    calibrated_spot_for_period,
-    calibrated_spot_map,
-    interval_key_for_period,
-)
+from .calibrated_forecast import CalibratedForecast
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from . import tariff_pricing
 from .tariff_catalogue import library_version, priced_by_extension, tariff_name as catalogue_tariff_name
@@ -208,8 +203,10 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         """The region's additional usage fee, from its number entity (#181)."""
         return read_additional_fee(self.hass, self._region)
 
-    # The calibrated spot, moved here unchanged; spec 003 moves it on. The export
-    # sensor used to take these by assignment, which is how #66 happened.
+    # The calibrated spot. The export sensor used to take these by assignment,
+    # which is how #66 happened. Since spec 003 each one delegates to the
+    # region's CalibratedForecast, the view of the memo the price forecast
+    # sensors fill, built on each call from the coordinator, store and region.
     def _calibrated_value(self, period) -> float | None:
         """Return calibrated spot price $/kWh for a forecast period.
 
@@ -234,13 +231,9 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         the tariff path would keep the wider band and the two would disagree
         again on intervals below coverage.
         """
-        if not self._store:
-            return period.value
         d = self._price_data
         run_at = d.forecast_generated_at if d else None
-        return calibrated_spot_for_period(
-            self._store, self.coordinator, period, run_at
-        )
+        return CalibratedForecast(self.coordinator, self._store, self._region).spot(period, run_at)
 
     def _calibrated_value_memoised(self, period, spot_map: dict | None) -> float | None:
         """Calibrated spot for a period, from the per run memo when it holds it.
@@ -256,17 +249,17 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         safety argument for issue #62: it rests on there being one body, not on
         two bodies agreeing today.
         """
-        if spot_map is not None:
-            interval_key = interval_key_for_period(period)
-            if interval_key in spot_map:
-                return spot_map[interval_key]
+        hit, spot = CalibratedForecast(self.coordinator, self._store, self._region).spot_memoised(period, spot_map)
+        if hit:
+            return spot
         return self._calibrated_value(period)
 
     def _calibrated_spot_map(self, d) -> dict | None:
         """The per run calibrated spot memo for this region, or None.
 
         Called once per attribute build, on the event loop, and the key is taken
-        here and passed down rather than being derived inside the memo helper:
+        in this call, by ``CalibratedForecast.spot_map``, and passed down rather
+        than being derived inside the memo helper:
         that is the rule PR #76 established after a key taken inside executor
         work was used to publish a result computed under a key that had already
         moved. This path does no executor work at all, so there is no window
@@ -276,15 +269,8 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         None when there is no calibration store, because then every interval is
         a raw passthrough and there is nothing to memoise.
         """
-        if not self._store or d is None:
-            return None
         try:
-            key = calibrated_forecast_key(
-                self.coordinator, self._store, self._region, d
-            )
-            return calibrated_spot_map(
-                self._store, self.coordinator, self._region, d, key
-            )
+            return CalibratedForecast(self.coordinator, self._store, self._region).spot_map(d)
         except Exception:  # noqa: BLE001 - a memo must never break a state write
             _LOGGER.debug(
                 "calibrated spot memo unavailable for %s, calibrating inline",

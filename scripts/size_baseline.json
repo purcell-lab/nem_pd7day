@@ -20,10 +20,6 @@
       "lines": 255,
       "methods": 6
     },
-    "sensor:PD7DayForecastSensor": {
-      "lines": 308,
-      "methods": 12
-    },
     "tariff_sensor:NemPd7dayTariffSensor": {
       "lines": 324,
       "methods": 17
@@ -61,7 +57,6 @@
     "nemweb_retry:fetch_with_retry": 97,
     "pd7day_client:PD7DayClient.fetch_all": 77,
     "pd7day_client:_parse_all_tables": 112,
-    "sensor:CalibratedWriteMixin._async_warm_calibrated_forecast": 63,
     "sensor:async_setup_entry": 110,
     "stpasa_client:_parse_all_regions": 80,
     "stpasa_client:_parse_regionsolution": 77,
