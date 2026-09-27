@@ -1,6 +1,6 @@
 # Spec 003: Calibrated forecast provider
 
-Status: draft, 27 September 2026, against `main` at a6b8838 (v3.17.4)
+Status: approved 27 September 2026; drafted against `main` at a6b8838 (v3.17.4)
 Plan: docs/architecture/tech-debt-plan.md, step 003
 
 ## Responsibility
