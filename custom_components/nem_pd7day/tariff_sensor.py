@@ -8,6 +8,7 @@ Attributes: full 7-day tariff forecast as a list of {interval_time, tariff_$/kwh
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, cast
 
 import datetime
@@ -99,14 +100,7 @@ def get_export_tariff_name(distributor_key: str, export_code: str) -> str:
 
 
 class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
-    """Lifecycle, device, price data, usage fee and calibrated spot for one region's tariff entity.
-
-    The import and export tariff sensors used to carry a copy each of this
-    lifecycle, and the export sensor took the calibration methods from the
-    import sensor by assignment, which is how issue #66 happened. Each sensor
-    now keeps only its identity, its pricing and its attributes, and prices
-    through the hooks below.
-    """
+    """Lifecycle, device, price data, usage fee and calibrated spot for one region's tariff entity."""
 
     _attr_state_class = None
     _attr_native_unit_of_measurement = "$/kWh"
@@ -120,29 +114,17 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     _BOUNDARY_DELAY = datetime.timedelta(seconds=5)
 
     if TYPE_CHECKING:
-        # Hooks each tariff sensor implements. Declared for the type checker
-        # only, so a sensor that leaves one out fails at the call rather than
-        # silently inheriting a stand-in.
-        def _pricing_bound(self) -> bool:
-            """The library function this sensor prices with is bound."""
-            ...
-
+        # Hooks each tariff sensor implements, declared for the type checker
+        # only, so that a sensor missing one fails at the call.
+        def _pricing_bound(self) -> bool: ...  # the library function it prices with is bound
         @property
-        def _priced_code(self) -> str:
-            """The tariff code named in the fallback debug log."""
-            ...
-
+        def _priced_code(self) -> str: ...  # the code named in the fallback debug log
         def _price_now(self, rrp_kwh: float, now: datetime.datetime) -> float | None: ...
-
         def _price_period(self, period: Any, calibrated: float | None = None) -> float | None: ...
+        def _lookup_period_info(self, period: Any) -> tuple[str | None, float | None]: ...
 
     def __init__(
-        self,
-        coordinator: PD7DayCoordinator,
-        entry: ConfigEntry,
-        region: str,
-        distributor: str,
-        store: Any = None,
+        self, coordinator: PD7DayCoordinator, entry: ConfigEntry, region: str, distributor: str, store: Any = None,
     ) -> None:
         super().__init__(coordinator)
         self._region = region
@@ -181,11 +163,7 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     def _schedule_next_boundary(self) -> None:
         """Schedule a one-shot callback at the next NEM interval boundary."""
         self.async_on_remove(
-            async_track_point_in_time(
-                self.hass,
-                self._handle_interval_tick,
-                self._next_nem_boundary(),
-            )
+            async_track_point_in_time(self.hass, self._handle_interval_tick, self._next_nem_boundary())
         )
 
     async def _handle_interval_tick(self, _now: datetime.datetime) -> None:
@@ -230,6 +208,8 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         """The region's additional usage fee, from its number entity (#181)."""
         return read_additional_fee(self.hass, self._region)
 
+    # The calibrated spot, moved here unchanged; spec 003 moves it on. The export
+    # sensor used to take these by assignment, which is how #66 happened.
     def _calibrated_value(self, period) -> float | None:
         """Return calibrated spot price $/kWh for a forecast period.
 
@@ -339,6 +319,33 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         if period is None:
             return None
         return self._price_period(period)
+
+    def _forecast_entries(self, d: Any, periods: Iterable[Any]) -> list[dict[str, Any]]:
+        """One forecast attribute entry per interval of ``periods``, from run ``d``."""
+        # One memo read for the whole build, taken on the loop. Every
+        # tariff entity of this region, and the price forecast sensor,
+        # calibrate the same intervals of the same run, so the second and
+        # later builds of a run do no calibration at all. See issue #62.
+        spot_map = self._calibrated_spot_map(d)
+        entries: list[dict[str, Any]] = []
+        for period in periods:
+            # Calibrate once and reuse for both the price and the spot key.
+            # A None spot means the interval could not be calibrated, so
+            # both keys stay None rather than being filled with a raw or
+            # zero stand-in.
+            spot = self._calibrated_value_memoised(period, spot_map)
+            value = None if spot is None else self._price_period(period, calibrated=spot)
+            period_name, network_rate = self._lookup_period_info(period)
+            entries.append({
+                "time": period.time,           # interval START (nemtime - 30 min)
+                "nemtime": period.nemtime,     # interval END (AEMO convention)
+                "spot_raw": round(period.value, 6),  # uncalibrated spot price $/kWh
+                "spot": None if spot is None else round(spot, 6),  # calibrated spot $/kWh
+                "value": value,                # spot + network ToU component $/kWh
+                "period": period_name,         # tariff period name for this interval
+                "network_rate": network_rate,  # network component $/kWh for this interval
+            })
+        return entries
 
 
 class NemPd7dayTariffSensor(TariffEntityBase):
@@ -613,38 +620,17 @@ class NemPd7dayTariffSensor(TariffEntityBase):
             f"demand, or feed-in components not captured here."
         )
 
+    def _forecast_periods(self, d: Any) -> list[Any]:
+        """The intervals the forecast attribute lists: all of day 1 to 7."""
+        return d.forecast
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Full 7-day tariff forecast with rich metadata."""
         d = self._price_data
-        forecast_list: list[dict[str, Any]] = []
-        if d is not None:
-            # One memo read for the whole build, taken on the loop. Every
-            # tariff entity of this region, and the price forecast sensor,
-            # calibrate the same intervals of the same run, so the second and
-            # later builds of a run do no calibration at all. See issue #62.
-            spot_map = self._calibrated_spot_map(d)
-            # Base tariff sensor always provides full day 1-7 forecast
-            for period in d.forecast:
-                # Calibrate once and reuse for both the tariff and the spot key.
-                # A None spot means the interval could not be calibrated, so
-                # both keys stay None rather than being filled with a raw or
-                # zero stand-in.
-                spot = self._calibrated_value_memoised(period, spot_map)
-                tariff_val = (
-                    None if spot is None
-                    else self._compute_tariff(period, calibrated=spot)
-                )
-                period_name, network_rate = self._lookup_period_info(period)
-                forecast_list.append({
-                    "time": period.time,           # interval START (nemtime - 30 min)
-                    "nemtime": period.nemtime,     # interval END (AEMO convention)
-                    "spot_raw": round(period.value, 6),  # uncalibrated spot price $/kWh
-                    "spot": None if spot is None else round(spot, 6),  # calibrated spot $/kWh
-                    "value": tariff_val,           # spot + network ToU component $/kWh
-                    "period": period_name,         # tariff period name for this interval
-                    "network_rate": network_rate,  # network component $/kWh for this interval
-                })
+        forecast_list: list[dict[str, Any]] = (
+            [] if d is None else self._forecast_entries(d, self._forecast_periods(d))
+        )
 
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
             self._distributor, self._distributor.title(),
@@ -717,73 +703,12 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
     def entity_registry_enabled_default(self) -> bool:
         return True
 
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Day 2-7 tariff forecast with amber_express_cutoff trim."""
-        d = self._price_data
-        forecast_list: list[dict[str, Any]] = []
-        if d is not None:
-            cutoff_dt = _amber_express_cutoff()
-            filtered_periods = [
-                p for p in d.forecast if parse_iso(p.time) > cutoff_dt
-            ]
-            # The memo covers the whole run, so the day 2 to 7 trim shares the
-            # slot the day 1 to 7 sensor of the same region filled.
-            spot_map = self._calibrated_spot_map(d)
-            for period in filtered_periods:
-                # Calibrate once and reuse for both the tariff and the spot key.
-                # A None spot means the interval could not be calibrated, so
-                # both keys stay None rather than being filled with a raw or
-                # zero stand-in.
-                spot = self._calibrated_value_memoised(period, spot_map)
-                tariff_val = (
-                    None if spot is None
-                    else self._compute_tariff(period, calibrated=spot)
-                )
-                period_name, network_rate = self._lookup_period_info(period)
-                forecast_list.append({
-                    "time": period.time,
-                    "nemtime": period.nemtime,
-                    "spot_raw": round(period.value, 6),
-                    "spot": None if spot is None else round(spot, 6),
-                    "value": tariff_val,
-                    "period": period_name,
-                    "network_rate": network_rate,
-                })
-
-        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
-            self._distributor, self._distributor.title(),
-        )
-        tariff_name = get_tariff_name(self._distributor, self._tariff_code)
-
-        combined = tariff_pricing.COMBINED_LOSS_MULTIPLIER
-
-        fee = self._get_additional_fee()
-
-        return {
-            "tariff_code": self._tariff_code,
-            **staleness_attributes(self.coordinator),
-            "tariff_name": tariff_name,
-            "distributor": distributor_display,
-            "region": self._region,
-            "network": self._distributor,
-            "tariff_periods": self._tariff_periods_for_attrs(),
-            "daily_supply_charge_$": getattr(self, "_cached_daily_supply_charge", self._get_daily_supply_charge()),
-            "demand_charge": None,
-            "distribution_loss_factor_dlf": tariff_pricing.DEFAULT_DLF,
-            "metering_loss_factor_mlf": tariff_pricing.DEFAULT_MLF,
-            "market_loss_factor": tariff_pricing.DEFAULT_MARKET,
-            "combined_loss_multiplier": combined,
-            "additional_usage_fee_$/kwh": fee,
-            "gst_multiplier": tariff_pricing.GST,
-            "library_version": library_version(),
-            "tariff_source": tariff_pricing.pricer_for(self._distributor, self._tariff_code).source,
-            "forecast_description": self._build_forecast_description(
-                distributor_display, tariff_name,
-                tariff_pricing.DEFAULT_DLF, tariff_pricing.DEFAULT_MLF, combined, fee, self._region,
-            ),
-            "forecast": forecast_list,
-        }
+    def _forecast_periods(self, d: Any) -> list[Any]:
+        """The intervals the day 2-7 forecast lists: those after the amber_express_cutoff."""
+        cutoff_dt = _amber_express_cutoff()
+        # The memo covers the whole run, so the day 2 to 7 trim shares the
+        # slot the day 1 to 7 sensor of the same region filled.
+        return [p for p in d.forecast if parse_iso(p.time) > cutoff_dt]
 
 
 class NemPd7dayExportTariffSensor(TariffEntityBase):
@@ -931,28 +856,8 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         d = self._price_data
-        forecast_list: list[dict[str, Any]] = []
-        if d is not None:
-            # Same per region memo the import tariff sensors read. See #62.
-            spot_map = self._calibrated_spot_map(d)
-            for period in d.forecast:
-                # Calibrate once and reuse for both the tariff and the spot key.
-                # See the import loop for why a None spot stays None.
-                spot = self._calibrated_value_memoised(period, spot_map)
-                tariff_val = (
-                    None if spot is None
-                    else self._compute_export_tariff(period, calibrated=spot)
-                )
-                period_name, network_rate = self._lookup_period_info(period)
-                forecast_list.append({
-                    "time": period.time,
-                    "nemtime": period.nemtime,
-                    "spot_raw": round(period.value, 6),  # uncalibrated spot price $/kWh
-                    "spot": None if spot is None else round(spot, 6),  # calibrated spot $/kWh
-                    "value": tariff_val,
-                    "period": period_name,
-                    "network_rate": network_rate,
-                })
+        # Same per region memo the import tariff sensors read. See #62.
+        forecast_list = [] if d is None else self._forecast_entries(d, d.forecast)
 
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
             self._distributor, self._distributor.title(),
