@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
+from .actual_recorder import rebuild_accumulator, record_actual
 from .forecast_history import ingest_run, prune_history
 from .json_repository import JsonRepository
 from .observation_log import ObservationLog
@@ -38,15 +39,12 @@ from .calibration_engine import (
     RunFeatures,
     StpasaFeatures,
     all_bucket_keys,
-    stpasa_feature_values,
 )
 from .const import (
     _LEGACY_COEFF_KEY,
     _LEGACY_FH_KEY,
     _LEGACY_OBS_KEY,
     MAX_FORECAST_AGE_DAYS,
-    MAX_HORIZON_HOURS,
-    MAX_TOTAL_OBS,
     NEM_TZ,
     SPIKE_GAS_THRESHOLD_TJ,
     STORAGE_VERSION,
@@ -100,14 +98,6 @@ class CalibrationStore:
     Coordinates observation logging, coefficient persistence, and
     forecast history caching for the calibration pipeline.
     """
-
-    @staticmethod
-    def _parse_nem_iso(s: str) -> datetime:
-        """Parse an ISO-8601 NEM time string to a tz-aware datetime."""
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=NEM_TZ)
-        return dt
 
     def __init__(self, hass: HomeAssistant, region: str) -> None:
         self._hass = hass
@@ -240,18 +230,8 @@ class CalibrationStore:
 
         self._forecast_history = (fh_data or {}).get("forecast_history", {})
 
-        # Rebuild the in-memory accumulator from observations. It holds the
-        # observation dict itself, not its position: positions shift when the
-        # log is pruned and the accumulator was never rebuilt (issue #132).
-        self._actual_accum = {
-            (o["interval_time"], o["forecast_run_at"]): {
-                "sum": o["actual_rrp"],
-                "count": 1,
-                "obs": o,
-            }
-            for o in self._observations
-            if "interval_time" in o and "forecast_run_at" in o
-        }
+        # Rebuild the in-memory accumulator from observations (issue #132).
+        self._actual_accum = rebuild_accumulator(self._observations)
 
         _LOGGER.info(
             "CalibrationStore loaded: %d observations, %d forecast history keys (region=%s)",
@@ -310,105 +290,17 @@ class CalibrationStore:
         that covered it.  Horizon is computed from tz-aware datetimes so it
         is accurate regardless of system timezone.
         """
-        forecasts = self._forecast_history.get(interval_time, [])
-        if not forecasts:
-            _LOGGER.debug(
-                "No forecast history for interval %s — skipping", interval_time
-            )
-            return 0
-
-        interval_dt = self._parse_nem_iso(interval_time)
-        new_count = 0
-
-        for fc in forecasts:
-            if calibration_region and fc.get("region") != calibration_region:
-                continue
-
-            try:
-                run_dt = self._parse_nem_iso(fc["run_at"])
-            except (ValueError, KeyError):
-                continue
-
-            # Both datetimes are tz-aware (UTC+10) — subtraction is unambiguous
-            horizon_h = (interval_dt - run_dt).total_seconds() / 3600
-            if horizon_h < 0 or horizon_h > MAX_HORIZON_HOURS:
-                continue
-
-            pair_key = (interval_time, fc["run_at"])
-
-            if pair_key in self._actual_accum:
-                # Subsequent Amber 5-min reading within same 30-min interval.
-                # Update the running average in the existing observation in-place.
-                acc = self._actual_accum[pair_key]
-                acc["sum"] += actual_rrp
-                acc["count"] += 1
-                new_avg = acc["sum"] / acc["count"]
-                acc["obs"]["actual_rrp"] = round(new_avg, 6)
-                self._log.touch(acc["obs"])
-                _LOGGER.debug(
-                    "Updated actual_rrp for interval %s run_at %s: "
-                    "avg=%.4f over %d readings",
-                    interval_time, fc["run_at"], new_avg, acc["count"],
-                )
-                new_count += 1   # signal that a save is needed
-                continue
-
-            # First Amber reading for this pair — create a new observation.
-            obs = {
-                "interval_time": interval_time,
-                "horizon_hours": round(horizon_h, 2),
-                "pd7day_forecast": fc["forecast_price"],
-                "actual_rrp": actual_rrp,
-                "forecast_run_at": fc["run_at"],
-                "hour_of_day": interval_dt.hour,   # NEM local hour (UTC+10)
-                "day_of_week": interval_dt.weekday(),
-                "month": interval_dt.month,
-                "gas_forecast_tj": fc.get("gas_tj"),
-                "qni_mwflow": fc.get("qni_mwflow"),
-                "qni_violation_degree": fc.get("qni_violation"),
-                "is_intervention": fc.get("is_intervention", False),
-                "actual_source": source,
-            }
-
-            # Derive STPASA features only when this forecast entry carries every
-            # input. A missing MW field is now None rather than 0.0, and the
-            # previous `.get(key, 0.0)` defaults would have turned that back
-            # into a zero and fed it to the fit as a real observation. An
-            # incomplete interval is omitted from the fit instead. See #43.
-            # The transform itself lives in calibration_engine so the training
-            # and serving sides cannot drift apart; it also returns None for a
-            # demand50 below its floor, where the features are degenerate
-            # (issue #147).
-            values = stpasa_feature_values(
-                fc.get("stpasa_surplus"),
-                fc.get("stpasa_solar"),
-                fc.get("stpasa_demand50"),
-                fc.get("stpasa_demand10"),
-                fc.get("stpasa_demand90"),
-            )
-            if values is not None:
-                (
-                    obs["stpasa_log_surplus"],
-                    obs["stpasa_log_solar"],
-                    obs["stpasa_log_demand"],
-                    obs["stpasa_poe_spread_n"],
-                ) = values
-                obs["stpasa_run_at"] = fc.get("stpasa_run_at", "")
-
-            self._log.append(obs)
-            self._actual_accum[pair_key] = {
-                "sum": actual_rrp,
-                "count": 1,
-                "obs": obs,
-            }
-            new_count += 1
+        new_count = record_actual(
+            self._forecast_history,
+            self._actual_accum,
+            self._log,
+            interval_time=interval_time,
+            actual_rrp=actual_rrp,
+            calibration_region=calibration_region,
+            source=source,
+        )
 
         if new_count:
-            for dropped in self._log.prune(MAX_TOTAL_OBS):
-                interval = dropped.get("interval_time")
-                run_at = dropped.get("forecast_run_at")
-                if isinstance(interval, str) and isinstance(run_at, str):
-                    self._actual_accum.pop((interval, run_at), None)
             await self._save_observations()
             _LOGGER.debug(
                 "Logged %d observations for interval %s (total=%d)",
