@@ -1,6 +1,6 @@
 # Spec 002: Tariff entity base
 
-Status: draft, 27 September 2026, against `main` at 6e25da9 (spec 001 merged)
+Status: approved 27 September 2026; drafted against `main` at 6e25da9 (spec 001 merged)
 Plan: docs/architecture/tech-debt-plan.md, step 002
 
 ## Responsibility
