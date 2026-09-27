@@ -54,7 +54,7 @@ What is pinned, so the output is deterministic:
 Nothing here is random. Usage:
 
     python scripts/record_calibration_store_io.py          # write the fixture
-    python scripts/record_calibration_store_io.py --check  # compare, exit 1 on a difference
+    python scripts/record_calibration_store_io.py --check  # compare as the test does, exit 1 on a difference
 """
 from __future__ import annotations
 
@@ -517,12 +517,23 @@ def record() -> dict[str, Any]:
     }
 
 
+def comparable(recording: dict[str, Any]) -> dict[str, Any]:
+    """The recording without logger names, which may change when a log call
+    moves to another module of the package; everything else must match."""
+    out = json.loads(json.dumps(recording))
+    for step in out["steps"]:
+        for log in step["logs"]:
+            log.pop("logger", None)
+    return out
+
+
 def main(argv: list[str]) -> int:
     recording = record()
     text = json.dumps(recording, indent=1) + "\n"
     if "--check" in argv:
-        if FIXTURE.read_text(encoding="utf-8") == text:
-            print("record_calibration_store_io: identical")
+        expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        if comparable(expected) == comparable(recording):
+            print("record_calibration_store_io: identical apart from logger names")
             return 0
         print("record_calibration_store_io: differs from the fixture")
         return 1
