@@ -1,6 +1,6 @@
 # Spec 005: Serving gate pipeline
 
-Status: draft, 27 September 2026, against `main` at d3023fb (v3.17.6)
+Status: approved 27 September 2026; drafted against `main` at d3023fb (v3.17.6)
 Plan: docs/architecture/tech-debt-plan.md, step 005
 
 ## Responsibility
