@@ -15,3 +15,5 @@ PyYAML==6.0.1
 # (issue #159); the tests assert against the pinned catalogue.
 aemo-to-tariff==0.7.27
 tzdata==2025.2
+# Coverage comparison gate (spec 000 part C, scripts/cov_compare.py).
+pytest-cov==7.1.0

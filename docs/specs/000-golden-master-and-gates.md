@@ -1,6 +1,6 @@
 # Spec 000: Golden master and refactor gates
 
-Status: approved 26 September 2026; Part A implemented (this PR)
+Status: approved 26 September 2026; Part A implemented (PR #183); Part C implemented (this PR); Part B not started
 Plan: docs/architecture/tech-debt-plan.md, step 000
 
 ## Responsibility
@@ -145,15 +145,25 @@ The response is one JSON object for the entry: the payloads exactly as each stor
 |---|---|---|
 | Coverage comparison | `scripts/cov_compare.py` | new job on pull requests: run the suite with `--cov` on the base and on the head in parallel, fail if any line executed on the base is unexecuted on the head |
 | Size ratchet | `scripts/size_check.py`, `scripts/size_baseline.json` | fail on a new function over 60 lines or class over 250 lines or 15 methods; the baseline lists today's offenders with their sizes, and an entry may shrink or disappear but never grow or be added |
-| Import contract | `.importlinter`, `import-linter` pinned in `requirements-test.txt` | `lint-imports` runs and reports; `continue-on-error` until spec 008 turns it into a failure |
+| Import contract | `.importlinter`, `import-linter` pinned in `requirements-lint.txt` (it is a lint tool and runs in the lint job) | `lint-imports` runs and reports; `continue-on-error` until spec 008 turns it into a failure |
 | Golden untouched | `scripts/check_golden_untouched.py` | on a PR titled `refactor:`, fail if `tests/golden/snapshots/` differs from the base |
 | mypy ratchet | existing | unchanged |
+
+### As implemented
+
+- `scripts/cov_compare.py` maps every executed base line to its head line through a diff of the two versions of the file, so code a change moves is not reported as lost, and executed lines the change edits or deletes are listed but do not fail. The CI job runs the suite with `--cov` on the head, then on the base in a worktree with the same tooling, then compares.
+- `scripts/size_check.py` measures functions (methods and nested functions included) and classes by AST. `scripts/size_baseline.json` holds today's 39 functions and 8 classes over the limits; `--update` tightens it and refuses to loosen it, and on a pull request `--base-baseline` fails a baseline that adds or grows an entry against the base branch's copy.
+- `.importlinter` is rooted at `custom_components`, because grimp accepts only a top-level package; the contracts name `custom_components.nem_pd7day.*` modules. A second, forbidden-import contract states the plan's rule directly: nothing below the adapter layer imports `homeassistant`.
+- `scripts/check_golden_untouched.py` reads the pull request title from the environment, never inline, and fails a `refactor:` pull request that changes anything under `tests/golden/snapshots/`.
+- `tests/test_gate_scripts.py` shows each gate failing on a deliberate violation and passing on clean input.
 
 ### Initial layer map
 
 Measured on `main` after #169. The 17 modules that import `homeassistant` start in the adapter layer: `__init__`, `actual_price_service`, `binary_sensor`, `calibration_store`, `camera`, `config_flow`, `coordinator`, `diagnostics`, `fetch_scheduler`, `forecast_store`, `notice_store`, `number`, `observation_log`, `scarcity_sensor`, `sensor`, `stpasa_store`, `tariff_sensor`.
 
 The other 23 start in the lower two layers: `const`, `nem_time`, `calibration_engine`, `tariff_catalogue`, `tariff_extensions`, `scarcity_premium` and `tod_stats` in the domain layer; the rest in services. The report run is expected to show violations, for example `calibration_inputs` (services) importing `coordinator` (adapters); each one is a known item for a later spec, recorded in the first report and not fixed here.
+
+The first report (`docs/architecture/import-report-000.txt`) finds three layer violations: `calibration_inputs` and `shared_dispatch` import `coordinator`, and `calibration_engine` imports `stpasa_client`; the first two also reach `homeassistant` through `coordinator`.
 
 ## Migration
 

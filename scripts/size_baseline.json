@@ -1,0 +1,77 @@
+{
+  "classes": {
+    "calibration_engine:CalibrationEngine": {
+      "lines": 498,
+      "methods": 4
+    },
+    "calibration_engine:CalibrationResult": {
+      "lines": 302,
+      "methods": 5
+    },
+    "calibration_store:CalibrationStore": {
+      "lines": 702,
+      "methods": 24
+    },
+    "coordinator:PD7DayCoordinator": {
+      "lines": 405,
+      "methods": 10
+    },
+    "market_notice_client:MarketNoticeClient": {
+      "lines": 255,
+      "methods": 6
+    },
+    "sensor:PD7DayForecastSensor": {
+      "lines": 308,
+      "methods": 12
+    },
+    "tariff_sensor:NemPd7dayExportTariffSensor": {
+      "lines": 315,
+      "methods": 17
+    },
+    "tariff_sensor:NemPd7dayTariffSensor": {
+      "lines": 597,
+      "methods": 25
+    }
+  },
+  "functions": {
+    "__init__:async_setup_entry": 474,
+    "bias_chart:render_chart": 221,
+    "calibration_engine:BucketModel.apply_all": 104,
+    "calibration_engine:CalibrationEngine.fit": 157,
+    "calibration_engine:CalibrationEngine.fit_ols_stage2": 224,
+    "calibration_engine:CalibrationResult.apply": 169,
+    "calibration_engine:CalibrationResult.summary": 85,
+    "calibration_engine:_quantile_regression": 86,
+    "calibration_inputs:stpasa_features_for_interval": 98,
+    "calibration_store:CalibrationStore.async_load": 99,
+    "calibration_store:CalibrationStore.async_record_actual": 118,
+    "calibration_store:CalibrationStore.async_refit": 62,
+    "calibration_store:CalibrationStore.ingest_forecast": 100,
+    "camera:NemPd7dayForecastChartCamera._build_forecast_data": 110,
+    "config_flow:PD7DayConfigFlow.async_step_reconfigure": 74,
+    "config_flow:PD7DayOptionsFlow.async_step_init": 75,
+    "coordinator:DispatchCoordinator._async_update_data": 79,
+    "coordinator:PD7DayCoordinator._async_update_data": 90,
+    "coordinator:PD7DayCoordinator.stpasa_index": 61,
+    "dispatch_client:fetch_dispatch_prices": 84,
+    "forecast_chart:_place_spike_callouts": 80,
+    "forecast_chart:_plan_callout_placements": 96,
+    "forecast_chart:_plan_label_placements": 85,
+    "forecast_chart:place_movable_labels": 95,
+    "forecast_chart:render_forecast_chart": 490,
+    "iso_chart:render_iso_chart": 66,
+    "market_notice_client:MarketNoticeClient.fetch_new_notices": 137,
+    "market_notice_client:_parse_notice_body": 153,
+    "nemweb_retry:fetch_with_retry": 97,
+    "pd7day_client:PD7DayClient.fetch_all": 77,
+    "pd7day_client:_parse_all_tables": 112,
+    "sensor:CalibratedWriteMixin._async_warm_calibrated_forecast": 63,
+    "sensor:async_setup_entry": 110,
+    "stpasa_client:_parse_all_regions": 80,
+    "stpasa_client:_parse_regionsolution": 77,
+    "tariff_sensor:NemPd7dayTariffSensor.extra_state_attributes": 72,
+    "tariff_sensor:TariffForecastDays27Sensor.extra_state_attributes": 66,
+    "tod_stats:compute": 103,
+    "tod_stats:render_chart": 95
+  }
+}
