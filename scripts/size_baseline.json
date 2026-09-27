@@ -25,11 +25,11 @@
       "methods": 12
     },
     "tariff_sensor:NemPd7dayExportTariffSensor": {
-      "lines": 315,
+      "lines": 304,
       "methods": 17
     },
     "tariff_sensor:NemPd7dayTariffSensor": {
-      "lines": 597,
+      "lines": 537,
       "methods": 25
     }
   },
