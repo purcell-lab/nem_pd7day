@@ -29,6 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The base branch is needed to check the size baseline and the
+          # golden snapshots against it.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -45,6 +49,70 @@ jobs:
       # release workflow checks the tag against them too.
       - name: Version lockstep
         run: python scripts/version_lockstep.py
+
+      # Spec 000 part C: no new function over 60 lines or class over 250
+      # lines or 15 methods, and today's offenders may only shrink. On a pull
+      # request the baseline itself may not be loosened against the base.
+      - name: Size ratchet
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git show "origin/$BASE_REF:scripts/size_baseline.json" > /tmp/base_size_baseline.json 2>/dev/null || true
+            python scripts/size_check.py --base-baseline /tmp/base_size_baseline.json
+          else
+            python scripts/size_check.py
+          fi
+
+      # A pull request titled "refactor:" may not change a golden snapshot.
+      # The title goes through the environment, never into the script inline.
+      - name: Golden snapshots untouched by a refactor
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.base_ref }}
+        run: python scripts/check_golden_untouched.py --base "origin/$BASE_REF"
+
+      # Reported, not enforced, until spec 008. The first report is
+      # docs/architecture/import-report-000.txt.
+      - name: Import contracts (report only)
+        continue-on-error: true
+        run: lint-imports
+
+  # Spec 000 part C: no source line the base branch's tests executed may go
+  # unexecuted on the head. Both runs use the head's tooling; the comparison
+  # maps lines through the diff, so moved code is not reported as lost.
+  coverage:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
+
+      - name: Coverage on the head
+        run: pytest -q -p no:cacheprovider --cov=custom_components/nem_pd7day --cov-report=json:/tmp/cov_head.json
+
+      - name: Coverage on the base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git worktree add /tmp/base "origin/$BASE_REF"
+          cd /tmp/base
+          pytest -q -p no:cacheprovider --cov=custom_components/nem_pd7day --cov-report=json:/tmp/cov_base.json
+
+      - name: Compare
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python scripts/cov_compare.py /tmp/cov_base.json /tmp/cov_head.json --base-ref "origin/$BASE_REF"
 
   typecheck:
     runs-on: ubuntu-latest

@@ -1,0 +1,63 @@
+Import contract report, spec 000 part C, first run on main at v3.17.3 (import-linter 2.15).
+Reported in CI, not enforced; each violation below is a known item for a later spec (see docs/architecture/tech-debt-plan.md).
+
+---------
+Contracts
+---------
+
+Analyzed 75 files, 367 dependencies.
+------------------------------------
+
+Adapters above services above domain BROKEN
+Nothing below the adapter layer imports Home Assistant BROKEN
+
+Contracts: 0 kept, 2 broken.
+
+
+----------------
+Broken contracts
+----------------
+
+Adapters above services above domain
+------------------------------------
+
+custom_components.nem_pd7day.calibration_inputs is not allowed to import 
+custom_components.nem_pd7day.coordinator:
+
+- custom_components.nem_pd7day.calibration_inputs -> 
+custom_components.nem_pd7day.coordinator (l.38)
+
+
+custom_components.nem_pd7day.calibration_engine is not allowed to import 
+custom_components.nem_pd7day.stpasa_client:
+
+- custom_components.nem_pd7day.calibration_engine -> 
+custom_components.nem_pd7day.stpasa_client (l.98)
+
+
+custom_components.nem_pd7day.shared_dispatch is not allowed to import 
+custom_components.nem_pd7day.coordinator:
+
+- custom_components.nem_pd7day.shared_dispatch -> 
+custom_components.nem_pd7day.coordinator (l.28, l.49)
+
+
+Nothing below the adapter layer imports Home Assistant
+------------------------------------------------------
+
+custom_components.nem_pd7day.calibration_inputs is not allowed to import 
+homeassistant:
+
+-   custom_components.nem_pd7day.calibration_inputs -> 
+custom_components.nem_pd7day.coordinator (l.38)
+l.14, l.15)
+
+
+custom_components.nem_pd7day.shared_dispatch is not allowed to import 
+homeassistant:
+
+-   custom_components.nem_pd7day.shared_dispatch -> 
+custom_components.nem_pd7day.coordinator (l.28, l.49)
+l.14, l.15)
+
+

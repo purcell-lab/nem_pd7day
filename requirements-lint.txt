@@ -1,2 +1,4 @@
 # Pinned linter for the lint job; bump deliberately (issue #107 follow-up).
 ruff==0.15.8
+# Import contracts for the technical debt plan (spec 000 part C); reported, not yet enforced.
+import-linter==2.15

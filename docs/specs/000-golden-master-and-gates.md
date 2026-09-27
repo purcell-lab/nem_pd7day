@@ -1,6 +1,6 @@
 # Spec 000: Golden master and refactor gates
 
-Status: approved 26 September 2026; Part A implemented (#183); Parts B and C to come; Part D proposed 27 September 2026, inputs harvested
+Status: approved 26 September 2026; Part A implemented (#183); Part C implemented (#191) apart from the assertions and per-module mypy checks; Part B not started; Part D proposed 27 September 2026, inputs harvested
 Plan: docs/architecture/tech-debt-plan.md, step 000
 Measured on: `main` at `1179345` (v3.17.0 plus #169); Part A as merged at `d9f5392`
 Depends on: Parts B and C follow the housekeeping PR in plan section 4 (dead spike constants removed, stale `camera._build_forecast_data` docstring rewritten, `mypy_baseline.txt` at 59), so their baselines are taken after it. The constants are unused, so the Part A snapshots do not move.
@@ -214,12 +214,21 @@ Each carries a non-vacuity assertion like the synthetic ones: the named interval
 
 | Tool | File | CI behaviour |
 |---|---|---|
-| Coverage comparison | `scripts/cov_compare.py` | new job on pull requests: run the suite with `--cov` on the base and on the head in parallel, fail if any line executed on the base is unexecuted on the head. Line numbers change when code moves, so the comparison is per function, keyed by qualified name, and reads an optional move map (`old.module:qualname -> new.module:qualname`) from a fenced block in the spec the PR names |
+| Coverage comparison | `scripts/cov_compare.py` | new job on pull requests: run the suite with `--cov` on the base and on the head, fail if any line executed on the base is unexecuted on the head. Line numbers change when code moves, so each base line is mapped to its head line through a diff of the two versions of its file. Executed lines the change deletes or edits are listed but do not fail, so code moved to another module is checked by the coverage of the module it moves to |
 | Size ratchet | `scripts/size_check.py`, `scripts/size_baseline.json` | fail on a new function over 60 lines or class over 250 lines or 15 methods; the baseline lists today's offenders with their sizes (39 functions and 8 classes at `1179345`), and an entry may shrink or disappear but never grow or be added |
-| Import contract | `.importlinter`, `import-linter` pinned in `requirements-test.txt` | `lint-imports` runs and reports; `continue-on-error` until spec 008 turns it into a failure |
+| Import contract | `.importlinter`, `import-linter` pinned in `requirements-lint.txt` (it is a lint tool and runs in the lint job) | `lint-imports` runs and reports; `continue-on-error` until spec 008 turns it into a failure |
 | Golden untouched | `scripts/check_golden_untouched.py` | on a PR titled `refactor:`, fail if `tests/golden/snapshots/` differs from the base |
 | Assertions untouched | `scripts/check_assertions_untouched.py` | on a PR titled `refactor:`, fail if any `assert` statement or `pytest.raises` block in `tests/` differs from the base, compared by AST per test function; patch targets and imports may change, and each changed one must appear in the spec's retarget list |
 | mypy ratchet | existing `scripts/mypy_ratchet.py`, extended | the total still may not rise; the script also writes per-module counts, so the plan's "strictly lower where the spec's modules carry errors" and "zero in new modules" are checked against the base run rather than by eye |
+
+### As implemented
+
+- `scripts/cov_compare.py` maps every executed base line to its head line through a diff of the two versions of the file, so code a change moves is not reported as lost, and executed lines the change edits or deletes are listed but do not fail. The CI job runs the suite with `--cov` on the head, then on the base in a worktree with the same tooling, then compares.
+- `scripts/size_check.py` measures functions (methods and nested functions included) and classes by AST. `scripts/size_baseline.json` holds today's 39 functions and 8 classes over the limits; `--update` tightens it and refuses to loosen it, and on a pull request `--base-baseline` fails a baseline that adds or grows an entry against the base branch's copy.
+- `.importlinter` is rooted at `custom_components`, because grimp accepts only a top-level package; the contracts name `custom_components.nem_pd7day.*` modules. A second, forbidden-import contract states the plan's rule directly: nothing below the adapter layer imports `homeassistant`.
+- `scripts/check_golden_untouched.py` reads the pull request title from the environment, never inline, and fails a `refactor:` pull request that changes anything under `tests/golden/snapshots/`.
+- `tests/test_gate_scripts.py` shows each gate failing on a deliberate violation and passing on clean input.
+- Not built yet: `scripts/check_assertions_untouched.py` and the per-module counts in `mypy_ratchet.py`, both added to this table by #186 after #191 was written. Until they land, the verifier of each refactor PR checks both by hand: the assertion diff against the spec's retarget list, and the mypy count per touched module against a base run.
 
 ### Initial layer map
 
@@ -231,12 +240,14 @@ The remaining 16 start in the lower two layers. Domain: `const`, `nem_time`, `ca
 
 The report run is expected to show violations, for example `calibration_inputs` (services) importing `coordinator` (adapters); each one is a known item for a later spec, recorded in the first report and not fixed here.
 
+The first report (`docs/architecture/import-report-000.txt`) finds three layer violations: `calibration_inputs` and `shared_dispatch` import `coordinator`, and `calibration_engine` imports `stpasa_client`; the first two also reach `homeassistant` through `coordinator`.
+
 ## Migration
 
 0. Confirm the housekeeping PR is merged, so the baselines below are taken without the dead spike constants and with `mypy_baseline.txt` at 59, and confirm the Part A snapshots did not move.
 1. Done (#183): `tests/golden/` with the clock, the harness, the snapshot code and the twelve scenarios, snapshots generated on `main` and committed.
 2. Run the golden master twice in a row and in reverse scenario order; both must pass without regeneration, which proves determinism.
-3. Add the Part C scripts and CI jobs, with import-linter in report mode.
+3. Done (#191), apart from the assertions check and per-module mypy counts: the Part C scripts and CI jobs, with import-linter in report mode.
 4. Add the Part B service and recorder, with tests that it is read-only and additive.
 5. Deploy, call the service for each of the five live entries, record, add one recorded scenario per region, and commit their snapshots.
 6. Run `golden_replay.py` over the five exports with the release before this spec and the release that carries it; the diff must be empty (the new service adds no entity, so it does not appear in a snapshot), which proves the replay tool before any refactor relies on it.
@@ -264,7 +275,7 @@ The report run is expected to show violations, for example `calibration_inputs` 
 - [ ] mypy count does not rise; zero errors in the new service code.
 - [ ] `size_baseline.json` matches today's offenders (39 functions, 8 classes); `check_golden_untouched.py`, `check_assertions_untouched.py` and `cov_compare.py` each fail on a deliberate violation in a scratch branch, and `cov_compare.py` passes a scratch branch that only moves one function under a move map.
 - [ ] `mypy_ratchet.py` writes per-module counts, and its total equals the value in `mypy_baseline.txt`.
-- [ ] Import-linter's first report committed as `docs/architecture/import-report-000.txt`.
+- [x] Import-linter's first report committed as `docs/architecture/import-report-000.txt`.
 - [ ] `export_golden_inputs` is read-only (a test asserts no store is saved and no task scheduled) and returns the documented keys.
 - [ ] Five recorded scenarios, one per live region, each passing, together under 2 MB.
 - [ ] `golden_replay.py` gives an empty diff between the release before this spec and the release that carries it.
