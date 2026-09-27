@@ -1,6 +1,6 @@
 # Spec 001: Tariff pricing
 
-Status: approved 27 September 2026; drafted against `main` at 2d6a315 (v3.17.3)
+Status: approved 27 September 2026; implemented (this PR); drafted against `main` at 2d6a315 (v3.17.3)
 Plan: docs/architecture/tech-debt-plan.md, step 001
 
 ## Responsibility
@@ -141,6 +141,14 @@ Changes to `tariff_sensor.py`:
 | attribute builders | read `tariff_pricing.DEFAULT_*`, `COMBINED_LOSS_MULTIPLIER` and `GST`; `tariff_source` is `pricer_for(...).source` |
 
 Also in `tariff_sensor.py`: `_tariff_periods_for_attrs` gets a typed sentinel or a `cast`, so `tariff_sensor.py:639` stops being a mypy error.
+
+### As implemented
+
+- `TariffPricer` declares `distributor`, `code` and `source` as read-only properties rather than plain attributes, because mypy does not accept a frozen dataclass field as an implementation of a settable protocol attribute. Callers see no difference.
+- Migration steps 2 and 3 are one commit. The two parametrised seams (`test_calibration_memo.py:1135`, `test_tariff_calibration_parity.py:365`) drive the import and export sensors through one variable, so they can be retargeted only once both sensors have moved.
+- The two `available` properties read `tariff_pricing.spot_to_tariff` and `tariff_pricing.spot_to_feed_in_tariff`, keeping their exact old meaning. The table above did not list them.
+- The "aemo_to_tariff not installed" warning moved into `tariff_pricing.py` word for word.
+- `mypy_baseline.txt` read 60 against a measured 59; it now reads 58.
 
 ## Invariants
 
