@@ -761,8 +761,8 @@ def vic_prcer_extension(mods: Any) -> Scenario:
 def qld_lor2_notice(mods: Any) -> Scenario:
     """A current LOR2 on the binary sensor and chart, an LOR1 two days out, and
     an SA MSL1 that QLD1 must not show. The cancellation of 150200 names it by
-    id and by date, and the store's date match also cancels 150215, the other
-    LOR1 on 25/09: that is today's behaviour, and the snapshot pins it."""
+    id and by date; it cancels 150200 only, and 150215, the other LOR1 on
+    25/09, stays active (#182: the date match used to cancel it too)."""
     notices = [
         (150200, _lor_notice(150200, "23/09/2026 16:02:11", 1, "QLD", "25/09/2026", [("0600", "25/09/2026", "0700", "25/09/2026")], 820, 790)),
         (150211, _lor_notice(150211, "24/09/2026 14:52:10", 2, "QLD", "24/09/2026", [("1700", "24/09/2026", "2000", "24/09/2026")], 905, 640)),

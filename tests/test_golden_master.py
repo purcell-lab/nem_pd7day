@@ -159,10 +159,12 @@ def _lor2(built: harness.Built, snap: dict) -> None:
     assert stress["state"] is True
     assert stress["extra_state_attributes"]["stress_level"] == 2
     notices = _one(snap, "_grid_notices")
-    assert notices["state"] == 2
+    # The cancellation names 150200 only; 150215, a different LOR1 on the same
+    # day, stays active. Before #182 the date match cancelled it too.
+    assert notices["state"] == 3
     listed = notices["extra_state_attributes"]["notices"]
     assert {n["region"] for n in listed} == {"QLD1"}
-    assert {n["notice_id"] for n in listed} == {150211, 150218}
+    assert {n["notice_id"] for n in listed} == {150211, 150215, 150218}
 
 
 NON_VACUITY: dict[str, Callable[[harness.Built, dict], None]] = {
