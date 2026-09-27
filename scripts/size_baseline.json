@@ -24,13 +24,9 @@
       "lines": 308,
       "methods": 12
     },
-    "tariff_sensor:NemPd7dayExportTariffSensor": {
-      "lines": 304,
-      "methods": 17
-    },
     "tariff_sensor:NemPd7dayTariffSensor": {
-      "lines": 537,
-      "methods": 25
+      "lines": 324,
+      "methods": 17
     }
   },
   "functions": {
@@ -69,8 +65,6 @@
     "sensor:async_setup_entry": 110,
     "stpasa_client:_parse_all_regions": 80,
     "stpasa_client:_parse_regionsolution": 77,
-    "tariff_sensor:NemPd7dayTariffSensor.extra_state_attributes": 72,
-    "tariff_sensor:TariffForecastDays27Sensor.extra_state_attributes": 66,
     "tod_stats:compute": 103,
     "tod_stats:render_chart": 95
   }
