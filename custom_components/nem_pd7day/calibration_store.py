@@ -31,11 +31,16 @@ from .actual_recorder import rebuild_accumulator, record_actual
 from .forecast_history import ingest_run, prune_history
 from .json_repository import JsonRepository
 from .observation_log import ObservationLog
+from .refit_service import (
+    ISO_HISTORY_LIMIT,
+    engine_observations,
+    iso_history_record,
+    stpasa_feature_map,
+)
 from .calibration_engine import (
     OBSERVATION_WINDOW_DAYS,
     CalibrationEngine,
     CalibrationResult,
-    Observation,
     RunFeatures,
     StpasaFeatures,
     all_bucket_keys,
@@ -329,51 +334,12 @@ class CalibrationStore:
         Key = interval_time + "|" + forecast_run_at — matches the lookup key used
         by CalibrationEngine.fit_ols_stage2().
         """
-        out: dict[str, StpasaFeatures] = {}
-        for o in self._observations:
-            # Require every derived feature rather than defaulting absent ones
-            # to 0.0. Observations recorded before #43 may hold a partial set,
-            # and a zero standing in for a missing feature becomes a training
-            # input rather than a skipped interval.
-            features = (
-                o.get("stpasa_log_surplus"),
-                o.get("stpasa_log_solar"),
-                o.get("stpasa_log_demand"),
-                o.get("stpasa_poe_spread_n"),
-            )
-            if None in features:
-                continue
-            log_surplus, log_solar, log_demand, poe_spread_n = features
-            key = f"{o['interval_time']}|{o['forecast_run_at']}"
-            out[key] = StpasaFeatures(
-                log_surplus=log_surplus,
-                log_solar=log_solar,
-                log_demand=log_demand,
-                poe_spread_n=poe_spread_n,
-                stpasa_run_at=o.get("stpasa_run_at", ""),
-            )
-        return out
+        return stpasa_feature_map(self._observations)
 
     # ── Calibration fitting ───────────────────────────────────────────────────
 
     async def async_refit(self) -> CalibrationResult:
-        obs_list = [
-            Observation(
-                interval_time=o["interval_time"],
-                horizon_hours=o["horizon_hours"],
-                pd7day_forecast=o["pd7day_forecast"],
-                actual_rrp=o["actual_rrp"],
-                forecast_run_at=o["forecast_run_at"],
-                hour_of_day=o["hour_of_day"],
-                day_of_week=o["day_of_week"],
-                month=o["month"],
-                gas_forecast_tj=o.get("gas_forecast_tj"),
-                qni_mwflow=o.get("qni_mwflow"),
-                qni_violation_degree=o.get("qni_violation_degree"),
-                is_intervention=o.get("is_intervention", False),
-            )
-            for o in self._observations
-        ]
+        obs_list = engine_observations(self._observations)
 
         result = await self._hass.async_add_executor_job(
             self._engine.fit, obs_list, self._region
@@ -404,18 +370,9 @@ class CalibrationStore:
         await _coefficient_file(self).save(self._engine.to_storage(result))
 
         # Append compression_ratio snapshot to rolling iso_history.
-        summary = result.summary()
-        history_record = {
-            "fitted_at": result.fitted_at,
-            "buckets": {
-                key: bucket["compression_ratio"]
-                for key, bucket in summary["buckets"].items()
-            },
-        }
-        self._iso_history.append(history_record)
-        # Keep at most 48 records (48 × 8h fetches ≈ 16 days).
-        if len(self._iso_history) > 48:
-            self._iso_history = self._iso_history[-48:]
+        self._iso_history.append(iso_history_record(result))
+        if len(self._iso_history) > ISO_HISTORY_LIMIT:
+            self._iso_history = self._iso_history[-ISO_HISTORY_LIMIT:]
 
         return result
 
