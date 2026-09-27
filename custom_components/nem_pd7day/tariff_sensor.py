@@ -879,11 +879,11 @@ class NemPd7dayExportTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEn
         period/rate API, so we deliberately return an empty list — which
         makes ``_lookup_period_info`` resolve to ``(None, None)``.
         """
-        # An extension export tariff does publish its windows: the credit or
-        # charge rows in force this month, rate in $/kWh added to the price
-        # paid. A library pricer has none and returns no rows. No library
-        # guard: the extension's rows do not depend on the library.
         pricer = tariff_pricing.pricer_for(self._distributor, self._export_code, export=True)
+        if pricer.source != tariff_pricing.SOURCE_EXTENSION:
+            return []
+        # An extension export tariff publishes the credit or charge rows in
+        # force this month, in $/kWh, with no library guard (spec 001).
         return tariff_pricing.feed_in_period_attributes(pricer.feed_in_rows(now_nem()))
 
     def _lookup_period_info(self, period) -> tuple[str | None, float | None]:
