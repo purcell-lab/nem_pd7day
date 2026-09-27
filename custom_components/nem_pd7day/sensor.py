@@ -81,7 +81,6 @@ from .calibration_inputs import (
     STPASA_MAX_HORIZON_H,
     STPASA_MIN_HORIZON_H,
     calibrate_interval,
-    calibrated_forecast_key,
     covariates_for_interval,
     horizon_hours,
     interval_key_for_period,
@@ -89,6 +88,7 @@ from .calibration_inputs import (
     stpasa_effective_min_horizon_h,
     stpasa_features_for_interval,
 )
+from .calibrated_forecast import CalibratedForecast, WarmOutcome
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from .tariff_catalogue import export_program_supported, export_programs, import_tariff_codes
 from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
@@ -270,11 +270,52 @@ def _published_spike_credible(cal: dict, horizon_h: float | None) -> bool | None
 
 
 # ---------------------------------------------------------------------------
-# Shared state-write path for the calibration-backed sensors
+# Shared calibrated forecast and state-write path for the calibration-backed sensors
 # ---------------------------------------------------------------------------
 
 
-class CalibratedWriteMixin:
+if TYPE_CHECKING:
+    # The mixins below only ever run on a CoordinatorEntity. Declaring that as
+    # their base for the type checker gives them coordinator, hass, entity_id
+    # and async_write_ha_state. At runtime the base is object, so the MRO of
+    # the sharing classes, which the memo tests assert, does not change.
+    _CalibratedEntityBase = CoordinatorEntity[PD7DayCoordinator]
+else:
+    _CalibratedEntityBase = object
+
+
+class CalibratedForecastMixin(_CalibratedEntityBase):
+    """The calibrated forecast accessors of an entity, over ``CalibratedForecast``.
+
+    The memo protocol, the key, the slot on the coordinator, the lazy build,
+    the currency check and the guarded publish, belongs to the provider in
+    calibrated_forecast.py. Each accessor here delegates to it, under the
+    names that tests, scarcity_sensor.py and the camera tests call.
+    """
+
+    if TYPE_CHECKING:
+        # Provided by the entity this mixes into.
+        _region: str
+        _store: Any
+
+        @property
+        def _price_data(self) -> Any: ...
+
+    @property
+    def _calibrated(self) -> CalibratedForecast:
+        """This region's calibrated forecast memo, as a view built on each access.
+
+        Built from ``coordinator``, ``_store`` and ``_region`` alone, so a
+        sensor built through ``__new__`` with only those works.
+        """
+        return CalibratedForecast(self.coordinator, self._store, self._region)
+
+    def _cached_calibrated_forecast(self, key) -> list[dict] | None:
+        """The memoised forecast for ``key``, or None if the memo does not hold it."""
+        return self._calibrated.cached(key)
+
+
+class CalibratedWriteMixin(CalibratedForecastMixin):
     """Warms the calibrated forecast off the loop before writing state.
 
     ``extra_state_attributes`` is a property, so it is evaluated during
@@ -303,69 +344,23 @@ class CalibratedWriteMixin:
     state write.
     """
 
-    def _calibrated_memo(self) -> dict | None:
-        """The coordinator's per region memo dict, or None if unusable.
-
-        PD7DayCoordinator initialises this dict. Check the type rather than
-        just checking for None, because the tests substitute a MagicMock
-        coordinator and attribute access on a mock invents an object instead of
-        raising, so getattr alone never reports the attribute as missing.
-        """
-        cache = getattr(self.coordinator, "_calibrated_forecast_cache", None)
-        return cache if isinstance(cache, dict) else None
-
-    def _cached_calibrated_forecast(self, key) -> list[dict] | None:
-        """The memoised forecast for ``key``, or None if the memo does not hold it."""
-        cache = self._calibrated_memo()
-        if cache is None:
-            return None
-        entry = cache.get(self._region)
-        if not (isinstance(entry, tuple) and len(entry) == 2):
-            return None
-        cached_key, cached_val = entry
-        if cached_key != key or cached_val is None:
-            return None
-        return cached_val
-
     async def _async_warm_calibrated_forecast(self) -> None:
         """Populate the coordinator memo for this region, off the event loop.
 
-        The key is taken ONCE here, on the loop, before the executor hop, and
-        then carried through to the publish. It used to be taken inside the
-        executor job by ``_calibrated_forecast`` itself, which meant the warm
-        did not know which key it had stored under and could not tell whether
-        the world had moved while it was away. Two things went wrong with that:
-
-          * A pass that started before a refit published its result under the
-            pre refit key, unconditionally. The memo has a single slot per
-            region shared by three entity classes, so a warm that started early
-            and landed late overwrote the current entry a sibling entity had
-            just published, and the next reader of that slot paid for a full
-            rebuild on the loop.
-          * ``_calibrate_period`` reads the calibration store live, so a
-            generation change part way through a pass produced a list built
-            from two different models, stored under the key of the first.
-
-        So: take the key, compute the values with no cache access at all, then
-        publish only if the key is still the one the write will ask for. There
-        is no await between the recheck and the publish, and everything the key
-        folds in is mutated only from the loop, so the recheck cannot go stale
-        between the two. If the key did move we publish nothing and leave the
-        slot alone; ``_async_warm_until_current`` will come round again with
-        the new key.
+        ``CalibratedForecast.warm`` takes the key on the loop before the
+        executor hop and publishes only if the key is still the live one, with
+        no await between that recheck and the publish; its docstring keeps the
+        #60 / PR #76 history. This entity supplies the Home Assistant half: the
+        executor, and the two debug logs chosen from the outcome.
         """
         d = self._price_data
-        if d is None:
-            return
-        key = self._calibrated_forecast_key(d)
-        if self._cached_calibrated_forecast(key) is not None:
-            # Already warm for this key. Skipping the executor hop here is why
-            # a hit costs nothing, which matters because every dispatch tick
-            # routes five minute writes through this path.
-            return
+        calibrated = self._calibrated
         try:
-            value = await self.hass.async_add_executor_job(
-                self._calibrated_forecast_values, d
+            outcome = await calibrated.warm(
+                d,
+                self._calibrated_forecast_values,
+                lambda func, *args: self.hass.async_add_executor_job(func, *args),
+                lambda: self._price_data,
             )
         except Exception:  # noqa: BLE001 - warming is best effort
             # The lazy path inside extra_state_attributes remains as the
@@ -377,19 +372,12 @@ class CalibratedWriteMixin:
                 exc_info=True,
             )
             return
-        if self._price_data is not d or self._calibrated_forecast_key(d) != key:
-            # Superseded while we were in the executor. Publishing now would
-            # label a stale list with a key that no longer describes it, and
-            # could overwrite a fresher entry from a sibling entity.
+        if outcome is WarmOutcome.SUPERSEDED:
             _LOGGER.debug(
                 "Calibrated forecast key moved during the warm for %s, "
                 "discarding the result rather than publishing it",
                 getattr(self, "entity_id", None),
             )
-            return
-        cache = self._calibrated_memo()
-        if cache is not None:
-            cache[self._region] = (key, value)
 
     def _calibrated_cache_is_current(self) -> bool:
         """Whether the memo already holds the value this entity's write will ask for.
@@ -405,13 +393,9 @@ class CalibratedWriteMixin:
         underneath us. Introducing an await between the two would reopen the
         race this exists to close.
         """
-        d = self._price_data
-        if d is None:
-            # Nothing to calibrate, so the write cannot pay for a rebuild.
-            return True
-        return self._cached_calibrated_forecast(
-            self._calibrated_forecast_key(d)
-        ) is not None
+        # With no price data there is nothing to calibrate, so the write
+        # cannot pay for a rebuild and the provider answers True.
+        return self._calibrated.is_current(self._price_data)
 
     async def _async_warm_until_current(self) -> None:
         """Warm the memo, re-warming while the key keeps moving underneath us.
@@ -481,11 +465,6 @@ class CalibratedWriteMixin:
     # Class-level default so instances built without __init__ still work.
     _pending_warm_writes: set | None = None
 
-    if TYPE_CHECKING:
-        # Provided by the entity this mixes into.
-        entity_id: str
-        hass: HomeAssistant
-
     def _schedule_warm_state_write(self) -> None:
         """Warm the memo then write state, without blocking the caller.
 
@@ -511,7 +490,7 @@ class CalibratedWriteMixin:
 
     async def async_will_remove_from_hass(self) -> None:
         self._cancel_pending_warm_writes()
-        await super().async_will_remove_from_hass()  # type: ignore[misc]
+        await super().async_will_remove_from_hass()
 
     def _handle_coordinator_update(self) -> None:
         """Replaces CoordinatorEntity's direct async_write_ha_state()."""
@@ -583,7 +562,7 @@ class PD7DayForecastSensor(
         another would publish a stale price rather than fail, which is the
         issue #66 failure mode again.
         """
-        return calibrated_forecast_key(self.coordinator, self._store, self._region, d)
+        return self._calibrated.key(d)
 
     def _calibrated_forecast(self, d) -> list[dict]:
         """
@@ -602,20 +581,7 @@ class PD7DayForecastSensor(
         anywhere in it. The warm path in ``CalibratedWriteMixin`` does have an
         await in the middle and has to guard the publish itself.
         """
-        key = self._calibrated_forecast_key(d)
-        cache = self._calibrated_memo()
-        if cache is None:
-            cache = {}
-            try:
-                self.coordinator._calibrated_forecast_cache = cache
-            except (AttributeError, TypeError):  # pragma: no cover - read-only mock
-                pass
-        cached = self._cached_calibrated_forecast(key)
-        if cached is not None:
-            return cached
-        value = self._calibrated_forecast_values(d)
-        cache[self._region] = (key, value)
-        return value
+        return self._calibrated.forecast(d, self._calibrated_forecast_values)
 
     def _calibrated_forecast_values(self, d) -> list[dict]:
         """Calibrate every interval of ``d``. No cache read, no cache write.
