@@ -1,6 +1,6 @@
 # Spec 004: Calibration store split
 
-Status: draft, 27 September 2026, against `main` at 72a0e59 (v3.17.5)
+Status: approved 27 September 2026; drafted against `main` at 72a0e59 (v3.17.5)
 Plan: docs/architecture/tech-debt-plan.md, step 004
 
 ## Responsibility
