@@ -12,6 +12,18 @@ Manages two persistent JSON files in HA's .storage directory:
     Serialised CalibrationResult produced by CalibrationEngine.fit().
     Written every time a refit completes (default: every 24 hours).
 
+Structure (spec 004)
+--------------------
+CalibrationStore is the facade every caller uses. It holds the state, reads
+the clock (``_now_nem`` below, which tests replace module-wide), bumps the fit
+generation and owns the order of every await. The work is done by units that
+do not import Home Assistant: ``json_repository`` (the coefficient and
+forecast history files with their legacy-key migration), ``forecast_history``
+(ingest and pruning), ``actual_recorder`` (matching and averaging actuals),
+``refit_service`` (fit inputs and the iso history record) and
+``calibration_summary`` (the diagnostics). The observation log is
+``observation_log`` (issue #130).
+
 Timezone policy
 ---------------
 All stored datetime strings are ISO-8601 with explicit +10:00 offset
@@ -28,23 +40,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .actual_recorder import rebuild_accumulator, record_actual
-from .forecast_history import ingest_run, prune_history
-from .json_repository import JsonRepository
-from .observation_log import ObservationLog
-from .refit_service import (
-    ISO_HISTORY_LIMIT,
-    engine_observations,
-    iso_history_record,
-    stpasa_feature_map,
-)
 from .calibration_engine import (
-    OBSERVATION_WINDOW_DAYS,
     CalibrationEngine,
     CalibrationResult,
     RunFeatures,
     StpasaFeatures,
-    all_bucket_keys,
 )
+from .calibration_summary import effective_window_days as _effective_window_days
+from .calibration_summary import oldest_observation as _oldest_observation
+from .calibration_summary import summary_attributes as _summary_attributes
 from .const import (
     _LEGACY_COEFF_KEY,
     _LEGACY_FH_KEY,
@@ -54,6 +58,15 @@ from .const import (
     SPIKE_GAS_THRESHOLD_TJ,
     STORAGE_VERSION,
     storage_keys,
+)
+from .forecast_history import ingest_run, prune_history
+from .json_repository import JsonRepository
+from .observation_log import ObservationLog
+from .refit_service import (
+    ISO_HISTORY_LIMIT,
+    engine_observations,
+    iso_history_record,
+    stpasa_feature_map,
 )
 
 if TYPE_CHECKING:
@@ -482,37 +495,10 @@ class CalibrationStore:
 
         return cal
 
-    def apply_calibration(
-        self,
-        raw_price: float,
-        horizon_hours: float,
-        hour_of_day: int,
-        stpasa_features: "StpasaFeatures | None" = None,
-        run_features: "RunFeatures | None" = None,
-    ) -> dict:
-        """
-        Apply calibration with optional STPASA OLS stage2 correction.
-
-        Wraps apply_to_price(): isotonic-only when STPASA features are absent
-        or the horizon is outside the OLS band; otherwise applies the 9-feature
-        OLS correction.  Passthrough when no calibration is loaded.
-        """
-        return self.apply_to_price(
-            raw_price,
-            horizon_hours,
-            hour_of_day,
-            stpasa_features=stpasa_features,
-            run_features=run_features,
-        )
-
     @property
     def oldest_observation(self) -> str | None:
         """Interval time of the oldest retained observation, or None."""
-        for obs in self._observations:
-            value = obs.get("interval_time")
-            if value:
-                return str(value)
-        return None
+        return _oldest_observation(self._observations)
 
     @property
     def effective_window_days(self) -> float | None:
@@ -520,33 +506,13 @@ class CalibrationStore:
         oldest = self.oldest_observation
         if oldest is None:
             return None
-        try:
-            oldest_dt = datetime.fromisoformat(oldest)
-        except ValueError:
-            return None
-        if oldest_dt.tzinfo is None:
-            oldest_dt = oldest_dt.replace(tzinfo=NEM_TZ)
-        return round((_now_nem() - oldest_dt).total_seconds() / 86400.0, 1)
+        return _effective_window_days(oldest, _now_nem())
 
     def summary_attributes(self) -> dict:
-        if not self._calibration:
-            return {
-                "status": "no_calibration",
-                "observation_count": self.observation_count,
-                "active_buckets": 0,
-            }
-        return {
-            "status": "active",
-            "fitted_at": self._calibration.fitted_at,
-            "observation_count": self.observation_count,
-            "observation_window_days": OBSERVATION_WINDOW_DAYS,
-            # What the fit could actually see: the age of the oldest retained
-            # observation. Shorter than the window whenever MAX_TOTAL_OBS
-            # binds (issue #127), and the only honest number to publish.
-            "oldest_observation": self.oldest_observation,
-            "effective_window_days": self.effective_window_days,
-            "observations_in_window": self._calibration.observations_in_window,
-            "active_buckets": self.active_bucket_count,
-            "total_buckets": len(all_bucket_keys()),
-            "summary": self._calibration.summary(),
-        }
+        return _summary_attributes(
+            self._calibration,
+            observation_count=self.observation_count,
+            oldest=self.oldest_observation,
+            window_days=self.effective_window_days,
+            active_buckets=self.active_bucket_count,
+        )
