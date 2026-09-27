@@ -1,0 +1,43 @@
+-------------------------------------------------------------------
+                           MARKET NOTICE
+-------------------------------------------------------------------
+
+From :              AEMO
+To   :              NEMITWEB1
+Creation Date :     03/08/2026     07:23:52
+
+-------------------------------------------------------------------
+
+Notice ID               :         144723
+Notice Type ID          :         RECLASSIFY CONTINGENCY
+Notice Type Description :         Reclassify contingency events
+Issue Date              :         03/08/2026
+External Reference      :         Cancellation of a Non-Credible Contingency Event: Sheffield - George Town 1 & 2 220kV line and  line in TAS1 due to Lightning.
+
+-------------------------------------------------------------------
+
+Reason :
+
+AEMO ELECTRICITY MARKET NOTICE
+
+Cancellation of reclassification of a Non-Credible Contingency Event as a Credible Contingency Event due to Lightning. AEMO considers the simultaneous trip of the following circuits is no longer reasonably possible. There is no longer any lightning activity in the vicinity of the following lines. Accordingly its classification has reverted to a non-credible contingency event.
+
+Region: TAS1
+
+Lines: Sheffield - George Town 1 & 2 220kV and 
+
+Cancellation time: 03/08/2026 07:23
+
+Constraint set(s) revoked: 
+		T-GTSH_N-2 Constraint set contains the following interconnector(s) on the left hand side:
+				T-V-MNSP1
+
+
+Refer AEMO Electricity Market Notice 144718
+
+Auto-generated on behalf of Manager NEM Real Time Operations
+
+
+-------------------------------------------------------------------
+END OF REPORT
+-------------------------------------------------------------------

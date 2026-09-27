@@ -1,0 +1,43 @@
+-------------------------------------------------------------------
+                           MARKET NOTICE
+-------------------------------------------------------------------
+
+From :              AEMO
+To   :              NEMITWEB1
+Creation Date :     03/08/2026     07:30:33
+
+-------------------------------------------------------------------
+
+Notice ID               :         144724
+Notice Type ID          :         RECLASSIFY CONTINGENCY
+Notice Type Description :         Reclassify contingency events
+Issue Date              :         03/08/2026
+External Reference      :         Cancellation of a Non-Credible Contingency Event: Palmerston - Hadspen 3 & 4 110kV line and  line in TAS1 due to Lightning.
+
+-------------------------------------------------------------------
+
+Reason :
+
+AEMO ELECTRICITY MARKET NOTICE
+
+Cancellation of reclassification of a Non-Credible Contingency Event as a Credible Contingency Event due to Lightning. AEMO considers the simultaneous trip of the following circuits is no longer reasonably possible. There is no longer any lightning activity in the vicinity of the following lines. Accordingly its classification has reverted to a non-credible contingency event.
+
+Region: TAS1
+
+Lines: Palmerston - Hadspen 3 & 4 110kV and 
+
+Cancellation time: 03/08/2026 07:30
+
+Constraint set(s) revoked: 
+		T-HAPM_110_N-2 Constraint set contains the following interconnector(s) on the left hand side:
+				NONE
+
+
+Refer AEMO Electricity Market Notice 144720
+
+Auto-generated on behalf of Manager NEM Real Time Operations
+
+
+-------------------------------------------------------------------
+END OF REPORT
+-------------------------------------------------------------------

@@ -1,0 +1,36 @@
+-------------------------------------------------------------------
+                           MARKET NOTICE
+-------------------------------------------------------------------
+
+From :              AEMO
+To   :              NEMITWEB1
+Creation Date :     03/08/2026     16:35:17
+
+-------------------------------------------------------------------
+
+Notice ID               :         144736
+Notice Type ID          :         NON-CONFORMANCE
+Notice Type Description :         Details of Non-conformance/Conformance
+Issue Date              :         03/08/2026
+External Reference      :         NON-CONFORMANCE Region QLD1 Monday, 3 August 2026
+
+-------------------------------------------------------------------
+
+Reason :
+
+AEMO ELECTRICITY MARKET NOTICE
+
+NON-CONFORMANCE QLD1 Region Sunday, 2 August 2026
+
+AEMO has declared the following unit as non-conforming under clause 3.8.23 of the National Electricity Rules:
+
+Unit:      GUSF1
+Duration:   02/08/2026 14:55 to 03/08/2026 16:35
+Amount:     84 MW
+Constraint: NC-Q_GUSF1
+
+Auto-generated on behalf of Manager NEM Real Time Operations
+
+-------------------------------------------------------------------
+END OF REPORT
+-------------------------------------------------------------------
