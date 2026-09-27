@@ -1,0 +1,506 @@
+{
+ "about": "Storage writes, log lines and fit generations of a fixed CalibrationStore sequence (spec 004, invariant 2). Written by scripts/record_calibration_store_io.py on the base commit; compared by tests/test_calibration_store_io.py.",
+ "max_total_obs": 36,
+ "steps": [
+  {
+   "step": "load_legacy",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-16",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-16T10:00:00+10:00\", \"horizon_hours\": 21.0, \"pd7day_forecast\": 0.101, \"actual_rrp\": 0.095, \"forecast_run_at\": \"2026-09-15T13:00:00+10:00\", \"hour_of_day\": 10, \"day_of_week\": 2, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-16T10:30:00+10:00\", \"horizon_hours\": 21.5, \"pd7day_forecast\": 0.104, \"actual_rrp\": 0.099, \"forecast_run_at\": \"2026-09-15T13:00:00+10:00\", \"hour_of_day\": 10, \"day_of_week\": 2, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-16T11:00:00+10:00\", \"horizon_hours\": 22.0, \"pd7day_forecast\": 0.108, \"actual_rrp\": 0.1025, \"forecast_run_at\": \"2026-09-15T13:00:00+10:00\", \"hour_of_day\": 11, \"day_of_week\": 2, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}]}"
+    },
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-17",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 20.0, \"pd7day_forecast\": 0.05859375, \"actual_rrp\": 0.05859375, \"forecast_run_at\": \"2026-09-16T07:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.0, \"stpasa_log_solar\": 0.0, \"stpasa_log_demand\": 8.6, \"stpasa_poe_spread_n\": -0.15, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 20.5, \"pd7day_forecast\": 0.0615234375, \"actual_rrp\": 0.0556640625, \"forecast_run_at\": \"2026-09-16T07:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.01, \"stpasa_log_solar\": 0.5, \"stpasa_log_demand\": 8.605, \"stpasa_poe_spread_n\": -0.152, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 21.0, \"pd7day_forecast\": 0.064453125, \"actual_rrp\": 0.05859375, \"forecast_run_at\": \"2026-09-16T06:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.02, \"stpasa_log_solar\": 1.0, \"stpasa_log_demand\": 8.61, \"stpasa_poe_spread_n\": -0.154, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 21.5, \"pd7day_forecast\": 0.0673828125, \"actual_rrp\": 0.0673828125, \"forecast_run_at\": \"2026-09-16T06:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.03, \"stpasa_log_solar\": 1.5, \"stpasa_log_demand\": 8.615, \"stpasa_poe_spread_n\": -0.156, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 22.0, \"pd7day_forecast\": 0.0703125, \"actual_rrp\": 0.064453125, \"forecast_run_at\": \"2026-09-16T05:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.04, \"stpasa_log_solar\": 0.0, \"stpasa_log_demand\": 8.62, \"stpasa_poe_spread_n\": -0.158, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 22.5, \"pd7day_forecast\": 0.0732421875, \"actual_rrp\": 0.0673828125, \"forecast_run_at\": \"2026-09-16T05:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.05, \"stpasa_log_solar\": 0.5, \"stpasa_log_demand\": 8.625, \"stpasa_poe_spread_n\": -0.16, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 23.0, \"pd7day_forecast\": 0.076171875, \"actual_rrp\": 0.076171875, \"forecast_run_at\": \"2026-09-16T04:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.06, \"stpasa_log_solar\": 1.0, \"stpasa_log_demand\": 8.63, \"stpasa_poe_spread_n\": -0.162, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 23.5, \"pd7day_forecast\": 0.0791015625, \"actual_rrp\": 0.0732421875, \"forecast_run_at\": \"2026-09-16T04:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.07, \"stpasa_log_solar\": 1.5, \"stpasa_log_demand\": 8.635, \"stpasa_poe_spread_n\": -0.164, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 24.0, \"pd7day_forecast\": 0.08203125, \"actual_rrp\": 0.076171875, \"forecast_run_at\": \"2026-09-16T03:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.08, \"stpasa_log_solar\": 0.0, \"stpasa_log_demand\": 8.64, \"stpasa_poe_spread_n\": -0.166, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 24.5, \"pd7day_forecast\": 0.0849609375, \"actual_rrp\": 0.0849609375, \"forecast_run_at\": \"2026-09-16T03:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.09, \"stpasa_log_solar\": 0.5, \"stpasa_log_demand\": 8.645, \"stpasa_poe_spread_n\": -0.168, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 25.0, \"pd7day_forecast\": 0.087890625, \"actual_rrp\": 0.08203125, \"forecast_run_at\": \"2026-09-16T02:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.1, \"stpasa_log_solar\": 1.0, \"stpasa_log_demand\": 8.65, \"stpasa_poe_spread_n\": -0.17, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 25.5, \"pd7day_forecast\": 0.0908203125, \"actual_rrp\": 0.0849609375, \"forecast_run_at\": \"2026-09-16T02:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.11, \"stpasa_log_solar\": 1.5, \"stpasa_log_demand\": 8.655, \"stpasa_poe_spread_n\": -0.172, \"stpasa_run_at\": \"2026-09-16T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 26.0, \"pd7day_forecast\": 0.09375, \"actual_rrp\": 0.09375, \"forecast_run_at\": \"2026-09-16T01:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 26.5, \"pd7day_forecast\": 0.0966796875, \"actual_rrp\": 0.0908203125, \"forecast_run_at\": \"2026-09-16T01:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 27.0, \"pd7day_forecast\": 0.099609375, \"actual_rrp\": 0.09375, \"forecast_run_at\": \"2026-09-16T00:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 27.5, \"pd7day_forecast\": 0.1025390625, \"actual_rrp\": 0.1025390625, \"forecast_run_at\": \"2026-09-16T00:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 28.0, \"pd7day_forecast\": 0.10546875, \"actual_rrp\": 0.099609375, \"forecast_run_at\": \"2026-09-15T23:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 28.5, \"pd7day_forecast\": 0.1083984375, \"actual_rrp\": 0.1025390625, \"forecast_run_at\": \"2026-09-15T23:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 29.0, \"pd7day_forecast\": 0.111328125, \"actual_rrp\": 0.111328125, \"forecast_run_at\": \"2026-09-15T22:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 29.5, \"pd7day_forecast\": 0.1142578125, \"actual_rrp\": 0.1083984375, \"forecast_run_at\": \"2026-09-15T22:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 30.0, \"pd7day_forecast\": 0.1171875, \"actual_rrp\": 0.111328125, \"forecast_run_at\": \"2026-09-15T21:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 30.5, \"pd7day_forecast\": 0.1201171875, \"actual_rrp\": 0.1201171875, \"forecast_run_at\": \"2026-09-15T21:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 31.0, \"pd7day_forecast\": 0.123046875, \"actual_rrp\": 0.1171875, \"forecast_run_at\": \"2026-09-15T20:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 31.5, \"pd7day_forecast\": 0.1259765625, \"actual_rrp\": 0.1201171875, \"forecast_run_at\": \"2026-09-15T20:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 32.0, \"pd7day_forecast\": 0.12890625, \"actual_rrp\": 0.12890625, \"forecast_run_at\": \"2026-09-15T19:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 32.5, \"pd7day_forecast\": 0.1318359375, \"actual_rrp\": 0.1259765625, \"forecast_run_at\": \"2026-09-15T19:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 33.0, \"pd7day_forecast\": 0.134765625, \"actual_rrp\": 0.12890625, \"forecast_run_at\": \"2026-09-15T18:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 33.5, \"pd7day_forecast\": 0.1376953125, \"actual_rrp\": 0.1376953125, \"forecast_run_at\": \"2026-09-15T18:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:00:00+10:00\", \"horizon_hours\": 34.0, \"pd7day_forecast\": 0.140625, \"actual_rrp\": 0.134765625, \"forecast_run_at\": \"2026-09-15T17:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-17T03:30:00+10:00\", \"horizon_hours\": 34.5, \"pd7day_forecast\": 0.1435546875, \"actual_rrp\": 0.1376953125, \"forecast_run_at\": \"2026-09-15T17:00:00+10:00\", \"hour_of_day\": 3, \"day_of_week\": 3, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}]}"
+    },
+    {
+     "key": "nem_pd7day.qld1.observation_segments",
+     "op": "save",
+     "json": "{\"dates\": [\"2026-09-16\", \"2026-09-17\"]}"
+    },
+    {
+     "key": "nem_pd7day.observation_log",
+     "op": "remove",
+     "json": ""
+    },
+    {
+     "key": "nem_pd7day.qld1.calibration_coefficients",
+     "op": "save",
+     "json": "{\"fitted_at\": \"2026-09-15T08:00:00+10:00\", \"total_observations\": 33, \"observations_in_window\": 33, \"models\": {\"h12_24_shoulder\": {\"ols\": {\"a\": 0.93, \"b\": 0.004, \"n\": 20, \"mae\": 0.006, \"rmse\": 0.008}, \"q10\": {\"a\": 0.81, \"b\": -0.002, \"n\": 20, \"pl\": 0.001}, \"q50\": {\"a\": 0.92, \"b\": 0.003, \"n\": 20, \"pl\": 0.002}, \"q90\": {\"a\": 1.05, \"b\": 0.009, \"n\": 20, \"pl\": 0.001}}}, \"ols_models\": {}}"
+    },
+    {
+     "key": "nem_pd7day.qld1.forecast_history",
+     "op": "save",
+     "json": "{\"forecast_history\": {\"2026-09-01T10:00:00+10:00\": [{\"run_at\": \"2026-08-31T13:00:00+10:00\", \"forecast_price\": 0.2, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-16T10:00:00+10:00\": [{\"run_at\": \"2026-09-15T13:00:00+10:00\", \"forecast_price\": 0.101, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-15T18:00:00+10:00\", \"forecast_price\": 0.097, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"NSW1\"}, {\"run_at\": \"not a time\", \"forecast_price\": 0.099, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}]}}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.observation_log",
+     "message": "Observation log QLD1: splitting 33 observations from the single file store into daily segments (issue #130)"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Migrating calibration coefficients from legacy storage key to nem_pd7day.qld1.calibration_coefficients"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "PD7DAY calibration: restored coefficients fitted at 2026-09-15T08:00:00+10:00 (33 obs)"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Migrating forecast history from legacy storage key to nem_pd7day.qld1.forecast_history"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "CalibrationStore loaded: 33 observations, 2 forecast history keys (region=QLD1)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": {
+    "observations": 33,
+    "history": 2
+   }
+  },
+  {
+   "step": "ingest_run1",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.forecast_history",
+     "op": "save",
+     "json": "{\"forecast_history\": {\"2026-09-16T10:00:00+10:00\": [{\"run_at\": \"2026-09-15T13:00:00+10:00\", \"forecast_price\": 0.101, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-15T18:00:00+10:00\", \"forecast_price\": 0.097, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"NSW1\"}, {\"run_at\": \"not a time\", \"forecast_price\": 0.099, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-19T12:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.09, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T18:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.112, \"gas_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": 5600.0, \"stpasa_demand50\": 6100.0, \"stpasa_demand90\": 6650.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": 0.0, \"stpasa_wind\": 420.0}], \"2026-09-20T18:30:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.118, \"gas_tj\": 131.4, \"qni_mwflow\": -498.0, \"qni_violation\": 1.5, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": -2.0, \"stpasa_demand50\": -5.0, \"stpasa_demand90\": -9.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": 0.0, \"stpasa_wind\": 420.0}], \"2026-09-20T09:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.064, \"gas_tj\": 131.4, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": 5600.0, \"stpasa_demand50\": 6100.0, \"stpasa_demand90\": 6650.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": null, \"stpasa_wind\": 420.0}], \"2026-09-27T14:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.15, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}]}}"
+    }
+   ],
+   "logs": [],
+   "fit_generation": 1,
+   "result": [
+    "2026-09-16T10:00:00+10:00",
+    "2026-09-19T12:00:00+10:00",
+    "2026-09-20T09:00:00+10:00",
+    "2026-09-20T18:00:00+10:00",
+    "2026-09-20T18:30:00+10:00",
+    "2026-09-27T14:00:00+10:00"
+   ]
+  },
+  {
+   "step": "ingest_run2",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.forecast_history",
+     "op": "save",
+     "json": "{\"forecast_history\": {\"2026-09-16T10:00:00+10:00\": [{\"run_at\": \"2026-09-15T13:00:00+10:00\", \"forecast_price\": 0.101, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-15T18:00:00+10:00\", \"forecast_price\": 0.097, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"NSW1\"}, {\"run_at\": \"not a time\", \"forecast_price\": 0.099, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-19T12:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.09, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.091, \"gas_tj\": 127.0, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T18:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.112, \"gas_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": 5600.0, \"stpasa_demand50\": 6100.0, \"stpasa_demand90\": 6650.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": 0.0, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.109, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T18:30:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.118, \"gas_tj\": 131.4, \"qni_mwflow\": -498.0, \"qni_violation\": 1.5, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": -2.0, \"stpasa_demand50\": -5.0, \"stpasa_demand90\": -9.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": 0.0, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.121, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T09:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.064, \"gas_tj\": 131.4, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": 5600.0, \"stpasa_demand50\": 6100.0, \"stpasa_demand90\": 6650.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": null, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.066, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-27T14:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.15, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.149, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}]}}"
+    }
+   ],
+   "logs": [],
+   "fit_generation": 1,
+   "result": [
+    "2026-09-16T10:00:00+10:00",
+    "2026-09-19T12:00:00+10:00",
+    "2026-09-20T09:00:00+10:00",
+    "2026-09-20T18:00:00+10:00",
+    "2026-09-20T18:30:00+10:00",
+    "2026-09-27T14:00:00+10:00"
+   ]
+  },
+  {
+   "step": "ingest_run2_duplicate",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.forecast_history",
+     "op": "save",
+     "json": "{\"forecast_history\": {\"2026-09-16T10:00:00+10:00\": [{\"run_at\": \"2026-09-15T13:00:00+10:00\", \"forecast_price\": 0.101, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-15T18:00:00+10:00\", \"forecast_price\": 0.097, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"NSW1\"}, {\"run_at\": \"not a time\", \"forecast_price\": 0.099, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-19T12:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.09, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.091, \"gas_tj\": 127.0, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T18:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.112, \"gas_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": 5600.0, \"stpasa_demand50\": 6100.0, \"stpasa_demand90\": 6650.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": 0.0, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.109, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T18:30:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.118, \"gas_tj\": 131.4, \"qni_mwflow\": -498.0, \"qni_violation\": 1.5, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": -2.0, \"stpasa_demand50\": -5.0, \"stpasa_demand90\": -9.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": 0.0, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.121, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T09:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.064, \"gas_tj\": 131.4, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": 5600.0, \"stpasa_demand50\": 6100.0, \"stpasa_demand90\": 6650.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": null, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.066, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-27T14:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.15, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.149, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}]}}"
+    }
+   ],
+   "logs": [],
+   "fit_generation": 1,
+   "result": [
+    "2026-09-16T10:00:00+10:00",
+    "2026-09-19T12:00:00+10:00",
+    "2026-09-20T09:00:00+10:00",
+    "2026-09-20T18:00:00+10:00",
+    "2026-09-20T18:30:00+10:00",
+    "2026-09-27T14:00:00+10:00"
+   ]
+  },
+  {
+   "step": "actual_repeat_of_loaded_pair",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-16",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-16T10:00:00+10:00\", \"horizon_hours\": 21.0, \"pd7day_forecast\": 0.101, \"actual_rrp\": 0.1525, \"forecast_run_at\": \"2026-09-15T13:00:00+10:00\", \"hour_of_day\": 10, \"day_of_week\": 2, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-16T10:30:00+10:00\", \"horizon_hours\": 21.5, \"pd7day_forecast\": 0.104, \"actual_rrp\": 0.099, \"forecast_run_at\": \"2026-09-15T13:00:00+10:00\", \"hour_of_day\": 10, \"day_of_week\": 2, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-16T11:00:00+10:00\", \"horizon_hours\": 22.0, \"pd7day_forecast\": 0.108, \"actual_rrp\": 0.1025, \"forecast_run_at\": \"2026-09-15T13:00:00+10:00\", \"hour_of_day\": 11, \"day_of_week\": 2, \"month\": 9, \"gas_forecast_tj\": 120.0, \"qni_mwflow\": -300.0, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\"}]}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Updated actual_rrp for interval 2026-09-16T10:00:00+10:00 run_at 2026-09-15T13:00:00+10:00: avg=0.1525 over 2 readings"
+    },
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Logged 1 observations for interval 2026-09-16T10:00:00+10:00 (total=33)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": 1
+  },
+  {
+   "step": "actual_first",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-20",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 29.0, \"pd7day_forecast\": 0.112, \"actual_rrp\": 0.11, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.208600337960199, \"stpasa_log_solar\": 0.0, \"stpasa_log_demand\": 8.716044050161402, \"stpasa_poe_spread_n\": -0.1721311475409836, \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 24.0, \"pd7day_forecast\": 0.109, \"actual_rrp\": 0.11, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"amber\"}]}"
+    },
+    {
+     "key": "nem_pd7day.qld1.observation_segments",
+     "op": "save",
+     "json": "{\"dates\": [\"2026-09-16\", \"2026-09-17\", \"2026-09-20\"]}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Logged 2 observations for interval 2026-09-20T18:00:00+10:00 (total=35)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": 2
+  },
+  {
+   "step": "actual_repeat",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-20",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 29.0, \"pd7day_forecast\": 0.112, \"actual_rrp\": 0.12, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.208600337960199, \"stpasa_log_solar\": 0.0, \"stpasa_log_demand\": 8.716044050161402, \"stpasa_poe_spread_n\": -0.1721311475409836, \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 24.0, \"pd7day_forecast\": 0.109, \"actual_rrp\": 0.12, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"amber\"}]}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Updated actual_rrp for interval 2026-09-20T18:00:00+10:00 run_at 2026-09-19T13:00:00+10:00: avg=0.1200 over 2 readings"
+    },
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Updated actual_rrp for interval 2026-09-20T18:00:00+10:00 run_at 2026-09-19T18:00:00+10:00: avg=0.1200 over 2 readings"
+    },
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Logged 2 observations for interval 2026-09-20T18:00:00+10:00 (total=35)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": 2
+  },
+  {
+   "step": "actual_region_mismatch",
+   "calls": [],
+   "logs": [],
+   "fit_generation": 1,
+   "result": 0
+  },
+  {
+   "step": "actual_negative_horizon",
+   "calls": [],
+   "logs": [],
+   "fit_generation": 1,
+   "result": 0
+  },
+  {
+   "step": "actual_beyond_horizon",
+   "calls": [],
+   "logs": [],
+   "fit_generation": 1,
+   "result": 0
+  },
+  {
+   "step": "actual_no_history",
+   "calls": [],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "No forecast history for interval 2026-09-20T23:00:00+10:00 \u2014 skipping"
+    }
+   ],
+   "fit_generation": 1,
+   "result": 0
+  },
+  {
+   "step": "actual_first_prunes_oldest_day",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-20",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 29.0, \"pd7day_forecast\": 0.112, \"actual_rrp\": 0.12, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.208600337960199, \"stpasa_log_solar\": 0.0, \"stpasa_log_demand\": 8.716044050161402, \"stpasa_poe_spread_n\": -0.1721311475409836, \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 24.0, \"pd7day_forecast\": 0.109, \"actual_rrp\": 0.12, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-20T18:30:00+10:00\", \"horizon_hours\": 29.5, \"pd7day_forecast\": 0.118, \"actual_rrp\": 0.095, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": -498.0, \"qni_violation_degree\": 1.5, \"is_intervention\": false, \"actual_source\": \"dispatch\"}, {\"interval_time\": \"2026-09-20T18:30:00+10:00\", \"horizon_hours\": 24.5, \"pd7day_forecast\": 0.121, \"actual_rrp\": 0.095, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"dispatch\"}]}"
+    },
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-16",
+     "op": "remove",
+     "json": ""
+    },
+    {
+     "key": "nem_pd7day.qld1.observation_segments",
+     "op": "save",
+     "json": "{\"dates\": [\"2026-09-17\", \"2026-09-20\"]}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Logged 2 observations for interval 2026-09-20T18:30:00+10:00 (total=34)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": 2
+  },
+  {
+   "step": "actual_after_prune_recreates_pair",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-16",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-16T10:00:00+10:00\", \"horizon_hours\": 21.0, \"pd7day_forecast\": 0.101, \"actual_rrp\": 0.25, \"forecast_run_at\": \"2026-09-15T13:00:00+10:00\", \"hour_of_day\": 10, \"day_of_week\": 2, \"month\": 9, \"gas_forecast_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"unknown\"}, {\"interval_time\": \"2026-09-16T10:00:00+10:00\", \"horizon_hours\": 16.0, \"pd7day_forecast\": 0.097, \"actual_rrp\": 0.25, \"forecast_run_at\": \"2026-09-15T18:00:00+10:00\", \"hour_of_day\": 10, \"day_of_week\": 2, \"month\": 9, \"gas_forecast_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"unknown\"}]}"
+    },
+    {
+     "key": "nem_pd7day.qld1.observation_segments",
+     "op": "save",
+     "json": "{\"dates\": [\"2026-09-16\", \"2026-09-17\", \"2026-09-20\"]}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Logged 2 observations for interval 2026-09-16T10:00:00+10:00 (total=36)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": 2
+  },
+  {
+   "step": "actual_first_prunes_again",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-20",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 29.0, \"pd7day_forecast\": 0.112, \"actual_rrp\": 0.12, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.208600337960199, \"stpasa_log_solar\": 0.0, \"stpasa_log_demand\": 8.716044050161402, \"stpasa_poe_spread_n\": -0.1721311475409836, \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 24.0, \"pd7day_forecast\": 0.109, \"actual_rrp\": 0.12, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-20T18:30:00+10:00\", \"horizon_hours\": 29.5, \"pd7day_forecast\": 0.118, \"actual_rrp\": 0.095, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": -498.0, \"qni_violation_degree\": 1.5, \"is_intervention\": false, \"actual_source\": \"dispatch\"}, {\"interval_time\": \"2026-09-20T18:30:00+10:00\", \"horizon_hours\": 24.5, \"pd7day_forecast\": 0.121, \"actual_rrp\": 0.095, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"dispatch\"}, {\"interval_time\": \"2026-09-20T09:00:00+10:00\", \"horizon_hours\": 20.0, \"pd7day_forecast\": 0.064, \"actual_rrp\": 0.3, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 9, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"unknown\"}, {\"interval_time\": \"2026-09-20T09:00:00+10:00\", \"horizon_hours\": 15.0, \"pd7day_forecast\": 0.066, \"actual_rrp\": 0.3, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 9, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"unknown\"}]}"
+    },
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-16",
+     "op": "remove",
+     "json": ""
+    },
+    {
+     "key": "nem_pd7day.qld1.observation_segments",
+     "op": "save",
+     "json": "{\"dates\": [\"2026-09-17\", \"2026-09-20\"]}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Logged 2 observations for interval 2026-09-20T09:00:00+10:00 (total=36)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": 2
+  },
+  {
+   "step": "refit_with_stage2",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.calibration_coefficients",
+     "op": "save",
+     "json": "{\"fitted_at\": \"2026-09-15T12:00:00+10:00\", \"total_observations\": 36, \"observations_in_window\": 36, \"models\": {\"h00_06__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h00_06__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h00_06__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h00_06__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h06_12__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h06_12__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h06_12__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h06_12__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h12_24__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 8, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 8, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 8, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 8, \"pl\": null}}, \"h12_24__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h12_24__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 2, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 2, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 2, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 2, \"pl\": null}}, \"h12_24__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h24_48__shoulder\": {\"ols\": {\"a\": 0.9920948616600791, \"b\": -0.0031033843873517837, \"n\": 22, \"mae\": 0.002535, \"rmse\": 0.002725}, \"q10\": {\"a\": 0.999722, \"b\": -0.005851, \"n\": 22, \"pl\": 0.000189}, \"q50\": {\"a\": 0.999834, \"b\": -0.005781, \"n\": 22, \"pl\": 0.000941}, \"q90\": {\"a\": 0.999969, \"b\": -5e-06, \"n\": 22, \"pl\": 0.000405}}, \"h24_48__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h24_48__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h24_48__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 4, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 4, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 4, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 4, \"pl\": null}}, \"h48_96__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h48_96__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h48_96__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h48_96__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h96plus__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h96plus__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h96plus__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h96plus__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}}, \"ols_models\": {\"h12_24__shoulder\": {\"coef\": [], \"n_train\": 0, \"r2\": 0.0, \"feature_min\": [], \"feature_max\": []}, \"h24_48__peak\": {\"coef\": [], \"n_train\": 0, \"r2\": 0.0, \"feature_min\": [], \"feature_max\": []}}}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_engine",
+     "message": "Bucket h24_48__shoulder: n=22 isotonic+OLS(a=0.992, b=-0.0031) MAE=0.0025 Q10(a=1.000) Q90(a=1.000)"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_engine",
+     "message": "Calibration fit complete: 36 observations in 90-day window (36 total stored), 1 buckets active"
+    },
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_engine",
+     "message": "Bucket h24_48__shoulder: n=22 isotonic+OLS(a=0.992, b=-0.0031) MAE=0.0025 Q10(a=1.000) Q90(a=1.000)"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_engine",
+     "message": "Calibration fit complete: 36 observations in 90-day window (36 total stored), 1 buckets active"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_engine",
+     "message": "OLS stage2 fit: 2 buckets evaluated (0 with sufficient STPASA obs, 0 with stage-2 residual quantiles), 0 rows excluded below the stage-1 domain, 0 high-leverage rows screened"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "OLS stage2 fit: 2 buckets with STPASA data"
+    }
+   ],
+   "fit_generation": 3,
+   "result": {
+    "fitted_at": "2026-09-15T12:00:00+10:00",
+    "ols_models": [
+     "h12_24__shoulder",
+     "h24_48__peak"
+    ],
+    "iso_history": "[{\"fitted_at\": \"2026-09-15T12:00:00+10:00\", \"buckets\": {\"h00_06__shoulder\": null, \"h00_06__morning_ramp\": null, \"h00_06__solar\": null, \"h00_06__peak\": null, \"h06_12__shoulder\": null, \"h06_12__morning_ramp\": null, \"h06_12__solar\": null, \"h06_12__peak\": null, \"h12_24__shoulder\": null, \"h12_24__morning_ramp\": null, \"h12_24__solar\": null, \"h12_24__peak\": null, \"h24_48__shoulder\": 1.0, \"h24_48__morning_ramp\": null, \"h24_48__solar\": null, \"h24_48__peak\": null, \"h48_96__shoulder\": null, \"h48_96__morning_ramp\": null, \"h48_96__solar\": null, \"h48_96__peak\": null, \"h96plus__shoulder\": null, \"h96plus__morning_ramp\": null, \"h96plus__solar\": null, \"h96plus__peak\": null}}]",
+    "summary_attributes": "{\"status\": \"active\", \"fitted_at\": \"2026-09-15T12:00:00+10:00\", \"observation_count\": 36, \"observation_window_days\": 90, \"oldest_observation\": \"2026-09-17T03:00:00+10:00\", \"effective_window_days\": 3.4, \"observations_in_window\": 36, \"active_buckets\": 1, \"total_buckets\": 24, \"summary\": {\"fitted_at\": \"2026-09-15T12:00:00+10:00\", \"total_observations\": 36, \"observation_window_days\": 90, \"observations_in_window\": 36, \"buckets\": {\"h00_06__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__shoulder\": {\"n\": 8, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__solar\": {\"n\": 2, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__shoulder\": {\"n\": 22, \"ols_a\": 0.9921, \"iso_n_steps\": 15, \"x_min\": 0.082, \"x_max\": 0.1436, \"compression_ratio\": 1.0, \"iso_mae\": 0.003995, \"spot_010\": 0.0947, \"spot_020\": 0.1377, \"q10_a\": 0.9997, \"q90_a\": 1.0}, \"h24_48__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__peak\": {\"n\": 4, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}}, \"stage2\": {}}}"
+   }
+  },
+  {
+   "step": "refit_stage2_fails",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.calibration_coefficients",
+     "op": "save",
+     "json": "{\"fitted_at\": \"2026-09-15T13:00:00+10:00\", \"total_observations\": 36, \"observations_in_window\": 36, \"models\": {\"h00_06__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h00_06__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h00_06__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h00_06__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h06_12__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h06_12__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h06_12__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h06_12__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h12_24__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 8, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 8, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 8, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 8, \"pl\": null}}, \"h12_24__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h12_24__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 2, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 2, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 2, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 2, \"pl\": null}}, \"h12_24__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h24_48__shoulder\": {\"ols\": {\"a\": 0.9920948616600791, \"b\": -0.0031033843873517837, \"n\": 22, \"mae\": 0.002535, \"rmse\": 0.002725}, \"q10\": {\"a\": 0.999722, \"b\": -0.005851, \"n\": 22, \"pl\": 0.000189}, \"q50\": {\"a\": 0.999834, \"b\": -0.005781, \"n\": 22, \"pl\": 0.000941}, \"q90\": {\"a\": 0.999969, \"b\": -5e-06, \"n\": 22, \"pl\": 0.000405}}, \"h24_48__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h24_48__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h24_48__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 4, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 4, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 4, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 4, \"pl\": null}}, \"h48_96__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h48_96__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h48_96__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h48_96__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h96plus__shoulder\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h96plus__morning_ramp\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h96plus__solar\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}, \"h96plus__peak\": {\"ols\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"mae\": null, \"rmse\": null}, \"q10\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q50\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}, \"q90\": {\"a\": 1.0, \"b\": 0.0, \"n\": 0, \"pl\": null}}}, \"ols_models\": {}}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_engine",
+     "message": "Bucket h24_48__shoulder: n=22 isotonic+OLS(a=0.992, b=-0.0031) MAE=0.0025 Q10(a=1.000) Q90(a=1.000)"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_engine",
+     "message": "Calibration fit complete: 36 observations in 90-day window (36 total stored), 1 buckets active"
+    },
+    {
+     "level": "WARNING",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "OLS stage2 fit failed (non-fatal): stage 2 unavailable"
+    }
+   ],
+   "fit_generation": 4,
+   "result": {
+    "fitted_at": "2026-09-15T13:00:00+10:00",
+    "ols_models": [],
+    "iso_history": "[{\"fitted_at\": \"2026-09-15T12:00:00+10:00\", \"buckets\": {\"h00_06__shoulder\": null, \"h00_06__morning_ramp\": null, \"h00_06__solar\": null, \"h00_06__peak\": null, \"h06_12__shoulder\": null, \"h06_12__morning_ramp\": null, \"h06_12__solar\": null, \"h06_12__peak\": null, \"h12_24__shoulder\": null, \"h12_24__morning_ramp\": null, \"h12_24__solar\": null, \"h12_24__peak\": null, \"h24_48__shoulder\": 1.0, \"h24_48__morning_ramp\": null, \"h24_48__solar\": null, \"h24_48__peak\": null, \"h48_96__shoulder\": null, \"h48_96__morning_ramp\": null, \"h48_96__solar\": null, \"h48_96__peak\": null, \"h96plus__shoulder\": null, \"h96plus__morning_ramp\": null, \"h96plus__solar\": null, \"h96plus__peak\": null}}, {\"fitted_at\": \"2026-09-15T13:00:00+10:00\", \"buckets\": {\"h00_06__shoulder\": null, \"h00_06__morning_ramp\": null, \"h00_06__solar\": null, \"h00_06__peak\": null, \"h06_12__shoulder\": null, \"h06_12__morning_ramp\": null, \"h06_12__solar\": null, \"h06_12__peak\": null, \"h12_24__shoulder\": null, \"h12_24__morning_ramp\": null, \"h12_24__solar\": null, \"h12_24__peak\": null, \"h24_48__shoulder\": 1.0, \"h24_48__morning_ramp\": null, \"h24_48__solar\": null, \"h24_48__peak\": null, \"h48_96__shoulder\": null, \"h48_96__morning_ramp\": null, \"h48_96__solar\": null, \"h48_96__peak\": null, \"h96plus__shoulder\": null, \"h96plus__morning_ramp\": null, \"h96plus__solar\": null, \"h96plus__peak\": null}}]",
+    "summary_attributes": "{\"status\": \"active\", \"fitted_at\": \"2026-09-15T13:00:00+10:00\", \"observation_count\": 36, \"observation_window_days\": 90, \"oldest_observation\": \"2026-09-17T03:00:00+10:00\", \"effective_window_days\": 3.4, \"observations_in_window\": 36, \"active_buckets\": 1, \"total_buckets\": 24, \"summary\": {\"fitted_at\": \"2026-09-15T13:00:00+10:00\", \"total_observations\": 36, \"observation_window_days\": 90, \"observations_in_window\": 36, \"buckets\": {\"h00_06__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__shoulder\": {\"n\": 8, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__solar\": {\"n\": 2, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__shoulder\": {\"n\": 22, \"ols_a\": 0.9921, \"iso_n_steps\": 15, \"x_min\": 0.082, \"x_max\": 0.1436, \"compression_ratio\": 1.0, \"iso_mae\": 0.003995, \"spot_010\": 0.0947, \"spot_020\": 0.1377, \"q10_a\": 0.9997, \"q90_a\": 1.0}, \"h24_48__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__peak\": {\"n\": 4, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}}, \"stage2\": {}}}"
+   }
+  },
+  {
+   "step": "restart_load_scoped",
+   "calls": [],
+   "logs": [
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "PD7DAY calibration: restored coefficients fitted at 2026-09-15T13:00:00+10:00 (36 obs)"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "CalibrationStore loaded: 36 observations, 6 forecast history keys (region=QLD1)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": {
+    "observations": 36,
+    "history": 6,
+    "summary_attributes": "{\"status\": \"active\", \"fitted_at\": \"2026-09-15T13:00:00+10:00\", \"observation_count\": 36, \"observation_window_days\": 90, \"oldest_observation\": \"2026-09-17T03:00:00+10:00\", \"effective_window_days\": 3.5, \"observations_in_window\": 36, \"active_buckets\": 1, \"total_buckets\": 24, \"summary\": {\"fitted_at\": \"2026-09-15T13:00:00+10:00\", \"total_observations\": 36, \"observation_window_days\": 90, \"observations_in_window\": 36, \"buckets\": {\"h00_06__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h00_06__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h06_12__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__shoulder\": {\"n\": 8, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__solar\": {\"n\": 2, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h12_24__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__shoulder\": {\"n\": 22, \"ols_a\": 0.9921, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 0.9997, \"q90_a\": 1.0}, \"h24_48__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h24_48__peak\": {\"n\": 4, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h48_96__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__shoulder\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__morning_ramp\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__solar\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}, \"h96plus__peak\": {\"n\": 0, \"ols_a\": 1.0, \"iso_n_steps\": null, \"x_min\": null, \"x_max\": null, \"compression_ratio\": null, \"iso_mae\": null, \"spot_010\": null, \"spot_020\": null, \"q10_a\": 1.0, \"q90_a\": 1.0}}, \"stage2\": {}}}"
+   }
+  },
+  {
+   "step": "restart_repeat_reading",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.observations.2026-09-20",
+     "op": "save",
+     "json": "{\"observations\": [{\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 29.0, \"pd7day_forecast\": 0.112, \"actual_rrp\": 0.12, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation_degree\": 0.0, \"is_intervention\": false, \"actual_source\": \"amber\", \"stpasa_log_surplus\": 7.208600337960199, \"stpasa_log_solar\": 0.0, \"stpasa_log_demand\": 8.716044050161402, \"stpasa_poe_spread_n\": -0.1721311475409836, \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\"}, {\"interval_time\": \"2026-09-20T18:00:00+10:00\", \"horizon_hours\": 24.0, \"pd7day_forecast\": 0.109, \"actual_rrp\": 0.12, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"amber\"}, {\"interval_time\": \"2026-09-20T18:30:00+10:00\", \"horizon_hours\": 29.5, \"pd7day_forecast\": 0.118, \"actual_rrp\": 0.095, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": -498.0, \"qni_violation_degree\": 1.5, \"is_intervention\": false, \"actual_source\": \"dispatch\"}, {\"interval_time\": \"2026-09-20T18:30:00+10:00\", \"horizon_hours\": 24.5, \"pd7day_forecast\": 0.121, \"actual_rrp\": 0.095, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 18, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"dispatch\"}, {\"interval_time\": \"2026-09-20T09:00:00+10:00\", \"horizon_hours\": 20.0, \"pd7day_forecast\": 0.064, \"actual_rrp\": 0.3, \"forecast_run_at\": \"2026-09-19T13:00:00+10:00\", \"hour_of_day\": 9, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 131.4, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"unknown\"}, {\"interval_time\": \"2026-09-20T09:00:00+10:00\", \"horizon_hours\": 15.0, \"pd7day_forecast\": 0.066, \"actual_rrp\": 0.3, \"forecast_run_at\": \"2026-09-19T18:00:00+10:00\", \"hour_of_day\": 9, \"day_of_week\": 6, \"month\": 9, \"gas_forecast_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation_degree\": null, \"is_intervention\": false, \"actual_source\": \"unknown\"}]}"
+    }
+   ],
+   "logs": [
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Updated actual_rrp for interval 2026-09-20T18:00:00+10:00 run_at 2026-09-19T13:00:00+10:00: avg=0.1200 over 2 readings"
+    },
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Updated actual_rrp for interval 2026-09-20T18:00:00+10:00 run_at 2026-09-19T18:00:00+10:00: avg=0.1200 over 2 readings"
+    },
+    {
+     "level": "DEBUG",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "Logged 2 observations for interval 2026-09-20T18:00:00+10:00 (total=36)"
+    }
+   ],
+   "fit_generation": 1,
+   "result": 2
+  },
+  {
+   "step": "restart_ingest_without_run_time",
+   "calls": [
+    {
+     "key": "nem_pd7day.qld1.forecast_history",
+     "op": "save",
+     "json": "{\"forecast_history\": {\"2026-09-16T10:00:00+10:00\": [{\"run_at\": \"2026-09-15T13:00:00+10:00\", \"forecast_price\": 0.101, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-15T18:00:00+10:00\", \"forecast_price\": 0.097, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"NSW1\"}, {\"run_at\": \"not a time\", \"forecast_price\": 0.099, \"gas_tj\": 118.0, \"qni_mwflow\": -410.5, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-19T12:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.09, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.091, \"gas_tj\": 127.0, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T18:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.112, \"gas_tj\": 131.4, \"qni_mwflow\": -512.25, \"qni_violation\": 0.0, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": 5600.0, \"stpasa_demand50\": 6100.0, \"stpasa_demand90\": 6650.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": 0.0, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.109, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T18:30:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.118, \"gas_tj\": 131.4, \"qni_mwflow\": -498.0, \"qni_violation\": 1.5, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": -2.0, \"stpasa_demand50\": -5.0, \"stpasa_demand90\": -9.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": 0.0, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.121, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-20T09:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.064, \"gas_tj\": 131.4, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\", \"stpasa_run_at\": \"2026-09-19T07:25:07+10:00\", \"stpasa_demand10\": 5600.0, \"stpasa_demand50\": 6100.0, \"stpasa_demand90\": 6650.0, \"stpasa_surplus\": 1350.0, \"stpasa_solar\": null, \"stpasa_wind\": 420.0}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.066, \"gas_tj\": 133.9, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-20T14:30:00+10:00\", \"forecast_price\": 0.07, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-27T14:00:00+10:00\": [{\"run_at\": \"2026-09-19T13:00:00+10:00\", \"forecast_price\": 0.15, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}, {\"run_at\": \"2026-09-19T18:00:00+10:00\", \"forecast_price\": 0.149, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}], \"2026-09-21T02:00:00+10:00\": [{\"run_at\": \"2026-09-20T14:30:00+10:00\", \"forecast_price\": 0.105, \"gas_tj\": null, \"qni_mwflow\": null, \"qni_violation\": null, \"is_intervention\": false, \"region\": \"QLD1\"}]}}"
+    }
+   ],
+   "logs": [],
+   "fit_generation": 1,
+   "result": [
+    "2026-09-16T10:00:00+10:00",
+    "2026-09-19T12:00:00+10:00",
+    "2026-09-20T09:00:00+10:00",
+    "2026-09-20T18:00:00+10:00",
+    "2026-09-20T18:30:00+10:00",
+    "2026-09-21T02:00:00+10:00",
+    "2026-09-27T14:00:00+10:00"
+   ]
+  },
+  {
+   "step": "load_corrupt_coefficients",
+   "calls": [],
+   "logs": [
+    {
+     "level": "WARNING",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "PD7DAY calibration: could not restore coefficients: 'q10'"
+    },
+    {
+     "level": "INFO",
+     "logger": "custom_components.nem_pd7day.calibration_store",
+     "message": "CalibrationStore loaded: 36 observations, 0 forecast history keys (region=QLD1)"
+    }
+   ],
+   "fit_generation": 0,
+   "result": {
+    "calibration": false,
+    "history": 0,
+    "summary_attributes": "{\"status\": \"no_calibration\", \"observation_count\": 36, \"active_buckets\": 0}"
+   }
+  }
+ ]
+}

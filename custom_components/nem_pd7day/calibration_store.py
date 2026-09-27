@@ -12,6 +12,18 @@ Manages two persistent JSON files in HA's .storage directory:
     Serialised CalibrationResult produced by CalibrationEngine.fit().
     Written every time a refit completes (default: every 24 hours).
 
+Structure (spec 004)
+--------------------
+CalibrationStore is the facade every caller uses. It holds the state, reads
+the clock (``_now_nem`` below, which tests replace module-wide), bumps the fit
+generation and owns the order of every await. The work is done by units that
+do not import Home Assistant: ``json_repository`` (the coefficient and
+forecast history files with their legacy-key migration), ``forecast_history``
+(ingest and pruning), ``actual_recorder`` (matching and averaging actuals),
+``refit_service`` (fit inputs and the iso history record) and
+``calibration_summary`` (the diagnostics). The observation log is
+``observation_log`` (issue #130).
+
 Timezone policy
 ---------------
 All stored datetime strings are ISO-8601 with explicit +10:00 offset
@@ -27,29 +39,34 @@ from typing import TYPE_CHECKING, Any, Sequence
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .observation_log import ObservationLog
+from .actual_recorder import rebuild_accumulator, record_actual
 from .calibration_engine import (
-    OBSERVATION_WINDOW_DAYS,
     CalibrationEngine,
     CalibrationResult,
-    Observation,
     RunFeatures,
     StpasaFeatures,
-    all_bucket_keys,
-    stpasa_feature_values,
 )
+from .calibration_summary import effective_window_days as _effective_window_days
+from .calibration_summary import oldest_observation as _oldest_observation
+from .calibration_summary import summary_attributes as _summary_attributes
 from .const import (
     _LEGACY_COEFF_KEY,
     _LEGACY_FH_KEY,
     _LEGACY_OBS_KEY,
     MAX_FORECAST_AGE_DAYS,
-    MAX_HORIZON_HOURS,
-    MAX_TOTAL_OBS,
     NEM_TZ,
-    QNI_INTERCONNECTOR_ID,
     SPIKE_GAS_THRESHOLD_TJ,
     STORAGE_VERSION,
     storage_keys,
+)
+from .forecast_history import ingest_run, prune_history
+from .json_repository import JsonRepository
+from .observation_log import ObservationLog
+from .refit_service import (
+    ISO_HISTORY_LIMIT,
+    engine_observations,
+    iso_history_record,
+    stpasa_feature_map,
 )
 
 if TYPE_CHECKING:
@@ -58,10 +75,40 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+_COEFF_MIGRATION = (
+    "Migrating calibration coefficients from legacy storage key to "
+    "nem_pd7day.%s.calibration_coefficients"
+)
+_FH_MIGRATION = (
+    "Migrating forecast history from legacy storage key to "
+    "nem_pd7day.%s.forecast_history"
+)
+
 
 def _now_nem() -> datetime:
     """Return the current time in NEM timezone (AEST, UTC+10)."""
     return datetime.now(NEM_TZ)
+
+
+# The coefficient and forecast history files are built on access from the
+# store's ``_coeff_store`` and ``_fh_store``, not held, so a store made through
+# ``__new__`` with only those attributes set (as the tests do) works. The
+# legacy Store is built only when the scoped key turns out to be empty.
+
+def _coefficient_file(store: CalibrationStore) -> JsonRepository:
+    return JsonRepository(
+        store._coeff_store,
+        lambda: Store(store._hass, STORAGE_VERSION, _LEGACY_COEFF_KEY),
+        _COEFF_MIGRATION,
+    )
+
+
+def _history_file(store: CalibrationStore) -> JsonRepository:
+    return JsonRepository(
+        store._fh_store,
+        lambda: Store(store._hass, STORAGE_VERSION, _LEGACY_FH_KEY),
+        _FH_MIGRATION,
+    )
 
 
 class CalibrationStore:
@@ -69,14 +116,6 @@ class CalibrationStore:
     Coordinates observation logging, coefficient persistence, and
     forecast history caching for the calibration pipeline.
     """
-
-    @staticmethod
-    def _parse_nem_iso(s: str) -> datetime:
-        """Parse an ISO-8601 NEM time string to a tz-aware datetime."""
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=NEM_TZ)
-        return dt
 
     def __init__(self, hass: HomeAssistant, region: str) -> None:
         self._hass = hass
@@ -157,7 +196,6 @@ class CalibrationStore:
 
     async def async_load(self) -> None:
         """Load calibration state from storage, migrating legacy keys if needed."""
-
         # ── Load observations ────────────────────────────────────────────────
         # Daily segments are the current format. With no manifest the single
         # file store is split into segments and removed, and before that the
@@ -188,21 +226,7 @@ class CalibrationStore:
                 await store.async_remove()
 
         # ── Load coefficients ────────────────────────────────────────────────
-        coeff_data = await self._coeff_store.async_load()
-
-        if coeff_data is None:
-            legacy_coeff_store: Store[dict[str, Any]] = Store(
-                self._hass, STORAGE_VERSION, _LEGACY_COEFF_KEY
-            )
-            legacy_data = await legacy_coeff_store.async_load()
-            if legacy_data:
-                _LOGGER.info(
-                    "Migrating calibration coefficients from legacy storage key to "
-                    "nem_pd7day.%s.calibration_coefficients", self._region.lower()
-                )
-                await self._coeff_store.async_save(legacy_data)
-                coeff_data = legacy_data
-
+        coeff_data = await _coefficient_file(self).load(self._region)
         if coeff_data:
             try:
                 self._calibration = self._engine.from_storage(coeff_data)
@@ -218,35 +242,11 @@ class CalibrationStore:
                 )
 
         # ── Load forecast history ─────────────────────────────────────────────
-        fh_data = await self._fh_store.async_load()
-
-        if fh_data is None:
-            legacy_fh_store: Store[dict[str, Any]] = Store(
-                self._hass, STORAGE_VERSION, _LEGACY_FH_KEY
-            )
-            legacy_data = await legacy_fh_store.async_load()
-            if legacy_data:
-                _LOGGER.info(
-                    "Migrating forecast history from legacy storage key to "
-                    "nem_pd7day.%s.forecast_history", self._region.lower()
-                )
-                await self._fh_store.async_save(legacy_data)
-                fh_data = legacy_data
-
+        fh_data = await _history_file(self).load(self._region)
         self._forecast_history = (fh_data or {}).get("forecast_history", {})
 
-        # Rebuild the in-memory accumulator from observations. It holds the
-        # observation dict itself, not its position: positions shift when the
-        # log is pruned and the accumulator was never rebuilt (issue #132).
-        self._actual_accum = {
-            (o["interval_time"], o["forecast_run_at"]): {
-                "sum": o["actual_rrp"],
-                "count": 1,
-                "obs": o,
-            }
-            for o in self._observations
-            if "interval_time" in o and "forecast_run_at" in o
-        }
+        # Rebuild the in-memory accumulator from observations (issue #132).
+        self._actual_accum = rebuild_accumulator(self._observations)
 
         _LOGGER.info(
             "CalibrationStore loaded: %d observations, %d forecast history keys (region=%s)",
@@ -271,95 +271,25 @@ class CalibrationStore:
         All interval_time keys and run_at values are ISO-8601 +10:00 strings.
         """
         run_at_str = price_data.forecast_generated_at or _now_nem().isoformat()
-        is_intervention = case.intervention if case else False
-
-        # Build an interval-START → StpasaInterval lookup for O(1) join.
-        # STPASA interval_datetime is interval-END (AEMO convention); the
-        # forecast_history key is interval-START (= END − 30 min), so we key
-        # the lookup by the START to match.
-        stpasa_by_start: dict[str, object] = {}
-        if stpasa is not None:
-            from .nem_time import interval_start
-            for si in stpasa.intervals:
-                try:
-                    start_key = interval_start(si.interval_datetime)
-                except (ValueError, TypeError):
-                    continue
-                stpasa_by_start[start_key] = si
-
-        # Build per-interval lookups from the interconnector forecast
-        qni = interconnectors.get(QNI_INTERCONNECTOR_ID)
-        qni_mwflow_by_time: dict[str, float | None] = {}
-        qni_violation_by_time: dict[str, float | None] = {}
-        if qni:
-            for p in qni.forecast:
-                qni_mwflow_by_time[p.time] = p.mwflow
-                qni_violation_by_time[p.time] = p.violationdegree
-
-        # Build a date→gas_tj lookup from market_summary for O(1) per-interval access.
-        # Gas forecast is daily resolution — key is the date portion of the AEMO nemtime.
-        # Use nemtime (interval-END / raw AEMO timestamp), NOT time (interval-START),
-        # because interval_start() subtracts 30 min, which for midnight timestamps
-        # shifts the date back by one day and breaks the lookup.
-        gas_by_date: dict[str, float | None] = {}
-        if market_summary:
-            for g in market_summary.forecast:
-                date_key = g.nemtime[:10]
-                gas_by_date[date_key] = g.value_tj
-
-        for period in price_data.forecast:
-            # Key must be ISO string — period.time is already an ISO string
-            # (interval START). current_nem_interval() also returns ISO strings
-            # so both sides of the lookup are consistent str keys.
-            key = period.time if isinstance(period.time, str) else period.time.astimezone(NEM_TZ).isoformat()
-            if key not in self._forecast_history:
-                self._forecast_history[key] = []
-
-            # Deduplicate by (interval_time, run_at): if this forecast run was
-            # already ingested (e.g. HA restarted and refetched the same AEMO
-            # file, or startup + scheduled fetch returned identical data), skip
-            # it.  Without this guard, each Amber reading would be averaged
-            # against N duplicate run_at entries and corrupt the running average.
-            if any(e["run_at"] == run_at_str for e in self._forecast_history[key]):
-                continue
-
-            # Match gas_tj by the date of the interval start
-            interval_date = key[:10]  # "YYYY-MM-DD" prefix of ISO string
-            gas_tj = gas_by_date.get(interval_date)  # None if no gas data for this date
-
-            entry: dict[str, Any] = {
-                "run_at": run_at_str,
-                "forecast_price": period.value,
-                "gas_tj": gas_tj,
-                "qni_mwflow": qni_mwflow_by_time.get(key),
-                "qni_violation": qni_violation_by_time.get(key),
-                "is_intervention": is_intervention,
-                "region": region,
-            }
-
-            # Join STPASA signals for this interval if available.
-            si = stpasa_by_start.get(key)
-            if si is not None:
-                entry["stpasa_run_at"] = si.run_datetime
-                entry["stpasa_demand10"] = si.demand10
-                entry["stpasa_demand50"] = si.demand50
-                entry["stpasa_demand90"] = si.demand90
-                entry["stpasa_surplus"] = si.surpluscapacity
-                entry["stpasa_solar"] = si.ss_solar_uigf
-                entry["stpasa_wind"] = si.ss_wind_uigf
-
-            self._forecast_history[key].append(entry)
+        ingest_run(
+            self._forecast_history,
+            region=region,
+            run_at=run_at_str,
+            price_data=price_data,
+            interconnectors=interconnectors,
+            case=case,
+            market_summary=market_summary,
+            stpasa=stpasa,
+        )
 
         # Prune old history — compare ISO strings directly (fixed offset sorts correctly)
         cutoff = (_now_nem() - timedelta(days=MAX_FORECAST_AGE_DAYS)).isoformat()
-        self._forecast_history = {
-            k: v for k, v in self._forecast_history.items() if k >= cutoff
-        }
+        self._forecast_history = prune_history(self._forecast_history, cutoff)
 
         await self._save_forecast_history()
 
     async def _save_forecast_history(self) -> None:
-        await self._fh_store.async_save({"forecast_history": self._forecast_history})
+        await _history_file(self).save({"forecast_history": self._forecast_history})
 
     # ── Observation logging ───────────────────────────────────────────────────
 
@@ -375,105 +305,17 @@ class CalibrationStore:
         that covered it.  Horizon is computed from tz-aware datetimes so it
         is accurate regardless of system timezone.
         """
-        forecasts = self._forecast_history.get(interval_time, [])
-        if not forecasts:
-            _LOGGER.debug(
-                "No forecast history for interval %s — skipping", interval_time
-            )
-            return 0
-
-        interval_dt = self._parse_nem_iso(interval_time)
-        new_count = 0
-
-        for fc in forecasts:
-            if calibration_region and fc.get("region") != calibration_region:
-                continue
-
-            try:
-                run_dt = self._parse_nem_iso(fc["run_at"])
-            except (ValueError, KeyError):
-                continue
-
-            # Both datetimes are tz-aware (UTC+10) — subtraction is unambiguous
-            horizon_h = (interval_dt - run_dt).total_seconds() / 3600
-            if horizon_h < 0 or horizon_h > MAX_HORIZON_HOURS:
-                continue
-
-            pair_key = (interval_time, fc["run_at"])
-
-            if pair_key in self._actual_accum:
-                # Subsequent Amber 5-min reading within same 30-min interval.
-                # Update the running average in the existing observation in-place.
-                acc = self._actual_accum[pair_key]
-                acc["sum"] += actual_rrp
-                acc["count"] += 1
-                new_avg = acc["sum"] / acc["count"]
-                acc["obs"]["actual_rrp"] = round(new_avg, 6)
-                self._log.touch(acc["obs"])
-                _LOGGER.debug(
-                    "Updated actual_rrp for interval %s run_at %s: "
-                    "avg=%.4f over %d readings",
-                    interval_time, fc["run_at"], new_avg, acc["count"],
-                )
-                new_count += 1   # signal that a save is needed
-                continue
-
-            # First Amber reading for this pair — create a new observation.
-            obs = {
-                "interval_time": interval_time,
-                "horizon_hours": round(horizon_h, 2),
-                "pd7day_forecast": fc["forecast_price"],
-                "actual_rrp": actual_rrp,
-                "forecast_run_at": fc["run_at"],
-                "hour_of_day": interval_dt.hour,   # NEM local hour (UTC+10)
-                "day_of_week": interval_dt.weekday(),
-                "month": interval_dt.month,
-                "gas_forecast_tj": fc.get("gas_tj"),
-                "qni_mwflow": fc.get("qni_mwflow"),
-                "qni_violation_degree": fc.get("qni_violation"),
-                "is_intervention": fc.get("is_intervention", False),
-                "actual_source": source,
-            }
-
-            # Derive STPASA features only when this forecast entry carries every
-            # input. A missing MW field is now None rather than 0.0, and the
-            # previous `.get(key, 0.0)` defaults would have turned that back
-            # into a zero and fed it to the fit as a real observation. An
-            # incomplete interval is omitted from the fit instead. See #43.
-            # The transform itself lives in calibration_engine so the training
-            # and serving sides cannot drift apart; it also returns None for a
-            # demand50 below its floor, where the features are degenerate
-            # (issue #147).
-            values = stpasa_feature_values(
-                fc.get("stpasa_surplus"),
-                fc.get("stpasa_solar"),
-                fc.get("stpasa_demand50"),
-                fc.get("stpasa_demand10"),
-                fc.get("stpasa_demand90"),
-            )
-            if values is not None:
-                (
-                    obs["stpasa_log_surplus"],
-                    obs["stpasa_log_solar"],
-                    obs["stpasa_log_demand"],
-                    obs["stpasa_poe_spread_n"],
-                ) = values
-                obs["stpasa_run_at"] = fc.get("stpasa_run_at", "")
-
-            self._log.append(obs)
-            self._actual_accum[pair_key] = {
-                "sum": actual_rrp,
-                "count": 1,
-                "obs": obs,
-            }
-            new_count += 1
+        new_count = record_actual(
+            self._forecast_history,
+            self._actual_accum,
+            self._log,
+            interval_time=interval_time,
+            actual_rrp=actual_rrp,
+            calibration_region=calibration_region,
+            source=source,
+        )
 
         if new_count:
-            for dropped in self._log.prune(MAX_TOTAL_OBS):
-                interval = dropped.get("interval_time")
-                run_at = dropped.get("forecast_run_at")
-                if isinstance(interval, str) and isinstance(run_at, str):
-                    self._actual_accum.pop((interval, run_at), None)
             await self._save_observations()
             _LOGGER.debug(
                 "Logged %d observations for interval %s (total=%d)",
@@ -502,51 +344,12 @@ class CalibrationStore:
         Key = interval_time + "|" + forecast_run_at — matches the lookup key used
         by CalibrationEngine.fit_ols_stage2().
         """
-        out: dict[str, StpasaFeatures] = {}
-        for o in self._observations:
-            # Require every derived feature rather than defaulting absent ones
-            # to 0.0. Observations recorded before #43 may hold a partial set,
-            # and a zero standing in for a missing feature becomes a training
-            # input rather than a skipped interval.
-            features = (
-                o.get("stpasa_log_surplus"),
-                o.get("stpasa_log_solar"),
-                o.get("stpasa_log_demand"),
-                o.get("stpasa_poe_spread_n"),
-            )
-            if None in features:
-                continue
-            log_surplus, log_solar, log_demand, poe_spread_n = features
-            key = f"{o['interval_time']}|{o['forecast_run_at']}"
-            out[key] = StpasaFeatures(
-                log_surplus=log_surplus,
-                log_solar=log_solar,
-                log_demand=log_demand,
-                poe_spread_n=poe_spread_n,
-                stpasa_run_at=o.get("stpasa_run_at", ""),
-            )
-        return out
+        return stpasa_feature_map(self._observations)
 
     # ── Calibration fitting ───────────────────────────────────────────────────
 
     async def async_refit(self) -> CalibrationResult:
-        obs_list = [
-            Observation(
-                interval_time=o["interval_time"],
-                horizon_hours=o["horizon_hours"],
-                pd7day_forecast=o["pd7day_forecast"],
-                actual_rrp=o["actual_rrp"],
-                forecast_run_at=o["forecast_run_at"],
-                hour_of_day=o["hour_of_day"],
-                day_of_week=o["day_of_week"],
-                month=o["month"],
-                gas_forecast_tj=o.get("gas_forecast_tj"),
-                qni_mwflow=o.get("qni_mwflow"),
-                qni_violation_degree=o.get("qni_violation_degree"),
-                is_intervention=o.get("is_intervention", False),
-            )
-            for o in self._observations
-        ]
+        obs_list = engine_observations(self._observations)
 
         result = await self._hass.async_add_executor_job(
             self._engine.fit, obs_list, self._region
@@ -574,21 +377,12 @@ class CalibrationStore:
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("OLS stage2 fit failed (non-fatal): %s", exc)
 
-        await self._coeff_store.async_save(self._engine.to_storage(result))
+        await _coefficient_file(self).save(self._engine.to_storage(result))
 
         # Append compression_ratio snapshot to rolling iso_history.
-        summary = result.summary()
-        history_record = {
-            "fitted_at": result.fitted_at,
-            "buckets": {
-                key: bucket["compression_ratio"]
-                for key, bucket in summary["buckets"].items()
-            },
-        }
-        self._iso_history.append(history_record)
-        # Keep at most 48 records (48 × 8h fetches ≈ 16 days).
-        if len(self._iso_history) > 48:
-            self._iso_history = self._iso_history[-48:]
+        self._iso_history.append(iso_history_record(result))
+        if len(self._iso_history) > ISO_HISTORY_LIMIT:
+            self._iso_history = self._iso_history[-ISO_HISTORY_LIMIT:]
 
         return result
 
@@ -698,37 +492,10 @@ class CalibrationStore:
 
         return cal
 
-    def apply_calibration(
-        self,
-        raw_price: float,
-        horizon_hours: float,
-        hour_of_day: int,
-        stpasa_features: "StpasaFeatures | None" = None,
-        run_features: "RunFeatures | None" = None,
-    ) -> dict:
-        """
-        Apply calibration with optional STPASA OLS stage2 correction.
-
-        Wraps apply_to_price(): isotonic-only when STPASA features are absent
-        or the horizon is outside the OLS band; otherwise applies the 9-feature
-        OLS correction.  Passthrough when no calibration is loaded.
-        """
-        return self.apply_to_price(
-            raw_price,
-            horizon_hours,
-            hour_of_day,
-            stpasa_features=stpasa_features,
-            run_features=run_features,
-        )
-
     @property
     def oldest_observation(self) -> str | None:
         """Interval time of the oldest retained observation, or None."""
-        for obs in self._observations:
-            value = obs.get("interval_time")
-            if value:
-                return str(value)
-        return None
+        return _oldest_observation(self._observations)
 
     @property
     def effective_window_days(self) -> float | None:
@@ -736,33 +503,13 @@ class CalibrationStore:
         oldest = self.oldest_observation
         if oldest is None:
             return None
-        try:
-            oldest_dt = datetime.fromisoformat(oldest)
-        except ValueError:
-            return None
-        if oldest_dt.tzinfo is None:
-            oldest_dt = oldest_dt.replace(tzinfo=NEM_TZ)
-        return round((_now_nem() - oldest_dt).total_seconds() / 86400.0, 1)
+        return _effective_window_days(oldest, _now_nem())
 
     def summary_attributes(self) -> dict:
-        if not self._calibration:
-            return {
-                "status": "no_calibration",
-                "observation_count": self.observation_count,
-                "active_buckets": 0,
-            }
-        return {
-            "status": "active",
-            "fitted_at": self._calibration.fitted_at,
-            "observation_count": self.observation_count,
-            "observation_window_days": OBSERVATION_WINDOW_DAYS,
-            # What the fit could actually see: the age of the oldest retained
-            # observation. Shorter than the window whenever MAX_TOTAL_OBS
-            # binds (issue #127), and the only honest number to publish.
-            "oldest_observation": self.oldest_observation,
-            "effective_window_days": self.effective_window_days,
-            "observations_in_window": self._calibration.observations_in_window,
-            "active_buckets": self.active_bucket_count,
-            "total_buckets": len(all_bucket_keys()),
-            "summary": self._calibration.summary(),
-        }
+        return _summary_attributes(
+            self._calibration,
+            observation_count=self.observation_count,
+            oldest=self.oldest_observation,
+            window_days=self.effective_window_days,
+            active_buckets=self.active_bucket_count,
+        )

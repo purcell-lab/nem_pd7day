@@ -9,8 +9,8 @@
       "methods": 5
     },
     "calibration_store:CalibrationStore": {
-      "lines": 702,
-      "methods": 24
+      "lines": 402,
+      "methods": 22
     },
     "coordinator:PD7DayCoordinator": {
       "lines": 405,
@@ -35,10 +35,6 @@
     "calibration_engine:CalibrationResult.summary": 85,
     "calibration_engine:_quantile_regression": 86,
     "calibration_inputs:stpasa_features_for_interval": 98,
-    "calibration_store:CalibrationStore.async_load": 99,
-    "calibration_store:CalibrationStore.async_record_actual": 118,
-    "calibration_store:CalibrationStore.async_refit": 62,
-    "calibration_store:CalibrationStore.ingest_forecast": 100,
     "camera:NemPd7dayForecastChartCamera._build_forecast_data": 110,
     "config_flow:PD7DayConfigFlow.async_step_reconfigure": 74,
     "config_flow:PD7DayOptionsFlow.async_step_init": 75,
