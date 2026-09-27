@@ -230,52 +230,6 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         """The region's additional usage fee, from its number entity (#181)."""
         return read_additional_fee(self.hass, self._region)
 
-
-class NemPd7dayTariffSensor(TariffEntityBase):
-    """One sensor per (distributor, tariff_code) for the regional device."""
-
-    def __init__(
-        self,
-        coordinator: PD7DayCoordinator,
-        entry: ConfigEntry,
-        region: str,
-        distributor: str,
-        tariff_code: str,
-        store=None,
-    ) -> None:
-        super().__init__(coordinator, entry, region, distributor, store)
-        self._tariff_code = tariff_code
-        self._attr_unique_id = (
-            f"{entry.entry_id}_{region}_{distributor}_{tariff_code}_tariff"
-        )
-        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
-        tariff_name = get_tariff_name(distributor, tariff_code)
-        self._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
-        # Per-instance single-entry caches: (cache_key_tuple, result_float)
-        self._tariff_cache: tuple[tuple, float] | None = None
-        self._period_tariff_cache: tuple[tuple, float] | None = None
-        # Static tariff structure — computed once at construction, never changes at runtime
-        self._cached_tariff_periods: list[dict[str, Any]] = self._get_tariff_periods()
-        self._cached_daily_supply_charge: float | None = self._get_daily_supply_charge()
-
-    @property
-    def entity_registry_enabled_default(self) -> bool:
-        """Base tariff sensors always use DEFAULT_ENABLED_TARIFFS for visibility."""
-        return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
-
-    def _pricing_bound(self) -> bool:
-        return tariff_pricing.spot_to_tariff is not None
-
-    @property
-    def _priced_code(self) -> str:
-        return self._tariff_code
-
-    def _price_now(self, rrp_kwh: float, now: datetime.datetime) -> float | None:
-        return self._apply_tariff_to_spot(rrp_kwh, now)
-
-    def _price_period(self, period: Any, calibrated: float | None = None) -> float | None:
-        return self._compute_tariff(period, calibrated=calibrated)
-
     def _calibrated_value(self, period) -> float | None:
         """Return calibrated spot price $/kWh for a forecast period.
 
@@ -358,6 +312,52 @@ class NemPd7dayTariffSensor(TariffEntityBase):
                 exc_info=True,
             )
             return None
+
+
+class NemPd7dayTariffSensor(TariffEntityBase):
+    """One sensor per (distributor, tariff_code) for the regional device."""
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+        distributor: str,
+        tariff_code: str,
+        store=None,
+    ) -> None:
+        super().__init__(coordinator, entry, region, distributor, store)
+        self._tariff_code = tariff_code
+        self._attr_unique_id = (
+            f"{entry.entry_id}_{region}_{distributor}_{tariff_code}_tariff"
+        )
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+        tariff_name = get_tariff_name(distributor, tariff_code)
+        self._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
+        # Per-instance single-entry caches: (cache_key_tuple, result_float)
+        self._tariff_cache: tuple[tuple, float] | None = None
+        self._period_tariff_cache: tuple[tuple, float] | None = None
+        # Static tariff structure — computed once at construction, never changes at runtime
+        self._cached_tariff_periods: list[dict[str, Any]] = self._get_tariff_periods()
+        self._cached_daily_supply_charge: float | None = self._get_daily_supply_charge()
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        """Base tariff sensors always use DEFAULT_ENABLED_TARIFFS for visibility."""
+        return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
+
+    def _pricing_bound(self) -> bool:
+        return tariff_pricing.spot_to_tariff is not None
+
+    @property
+    def _priced_code(self) -> str:
+        return self._tariff_code
+
+    def _price_now(self, rrp_kwh: float, now: datetime.datetime) -> float | None:
+        return self._apply_tariff_to_spot(rrp_kwh, now)
+
+    def _price_period(self, period: Any, calibrated: float | None = None) -> float | None:
+        return self._compute_tariff(period, calibrated=calibrated)
 
     def _tariff_windows(self, tariff_periods) -> tariff_pricing.TouWindows:
         """Parse the period start/end strings into ``time`` objects, once.
@@ -835,18 +835,6 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
 
     def _price_period(self, period: Any, calibrated: float | None = None) -> float | None:
         return self._compute_export_tariff(period, calibrated=calibrated)
-
-    # One calibration implementation for both tariff classes. This used to be a
-    # byte for byte copy of the import sensor's method, and issue #66 is what
-    # happens when a copy drifts: fixing one call site would have left the
-    # export tariff on the weaker calibration. Bound the same way sensor.py
-    # binds _calibrate_period across its classes.
-    _calibrated_value = NemPd7dayTariffSensor._calibrated_value
-    # The memo accessor comes with it. A class that took the value method
-    # without the memo would calibrate every interval inline while the import
-    # sensors of the same region read the slot, which is the cost this fixes.
-    _calibrated_spot_map = NemPd7dayTariffSensor._calibrated_spot_map
-    _calibrated_value_memoised = NemPd7dayTariffSensor._calibrated_value_memoised
 
     def _get_tariff_periods(self) -> list[dict[str, Any]]:
         """Export tariffs have no TOU period structure in aemo_to_tariff.

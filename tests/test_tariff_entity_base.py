@@ -171,7 +171,6 @@ def test_the_module_defines_the_tariff_classes():
     }
 
 
-@pytest.mark.xfail(strict=True, reason="the export sensor still borrows three methods until step 2")
 def test_no_method_is_shared_by_assignment():
     """Every function a class holds was defined on that class (#66)."""
     borrowed = [
