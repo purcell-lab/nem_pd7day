@@ -1,6 +1,6 @@
 # Spec 003: Calibrated forecast provider
 
-Status: approved 27 September 2026; drafted against `main` at a6b8838 (v3.17.4)
+Status: approved 27 September 2026; implemented (this PR); drafted against `main` at a6b8838 (v3.17.4)
 Plan: docs/architecture/tech-debt-plan.md, step 003
 
 ## Responsibility
@@ -101,6 +101,19 @@ In `sensor.py`, the mixin is split into two parts:
 - The attributes the mixins rely on (`coordinator`, `_region`, `_store`, `_price_data`, `hass`, `entity_id`, `async_write_ha_state`) are declared for the type checker, so the `attr-defined` errors at `sensor.py:314-479` go.
 
 In `tariff_sensor.py`, the `TariffEntityBase` methods `_calibrated_value`, `_calibrated_value_memoised` and `_calibrated_spot_map` keep their names and signatures and delegate to `CalibratedForecast`. The `try`/`except` and its debug log stay in `_calibrated_spot_map`. `_calibrated_value_memoised` still falls through to `self._calibrated_value(period)` on a miss, because a test patches that on the class.
+
+### As implemented
+
+The interfaces above hold, with these differences:
+
+- `_calibrated_forecast`, the lazy build, is on `CalibratedWriteMixin`, not `CalibratedForecastMixin`. `test_calibration_memo.py::test_every_calibrated_sensor_uses_the_warm_write_path` requires every class defined in `sensor.py` that has `_calibrated_forecast` to subclass `CalibratedWriteMixin`. `CalibratedForecastMixin` is that class's base, so it cannot carry the method without an edit to that test. The pairing the test pins is the right one anyway: anything that can calibrate lazily on the loop must also warm before it writes. Everything else listed for `CalibratedForecastMixin` is on it, including the single `_calibrate_period`, whose globals are `sensor.py`'s.
+- All three definitions of `_covariates_for_interval` are deleted: the assignment on `PD7DayDataSensor` and the two methods it and its copy came from on `PD7DayForecastSensor` and `SpotPriceForecastDays27Sensor`. Nothing called any of them. `sensor.py` no longer imports `covariates_for_interval`.
+- `TariffEntityBase` has no `_calibrated` property. Each of its three methods builds `CalibratedForecast(self.coordinator, self._store, self._region)` in the call, because a property would take the class to 16 methods, a new size offender. The raw passthrough without a store, and the None from `_calibrated_spot_map` without a store or data, now come from the provider.
+- `publish` writes into the region's slot only when the memo dict exists. Only `forecast`, the lazy build, creates it on the coordinator, and it tolerates a coordinator that refuses the attribute. That is what the warm and the lazy path did before.
+- The entity passes the executor to `warm` as `lambda func, *args: self.hass.async_add_executor_job(func, *args)`, so `hass` is read only when a build runs, as before. The mixin's `try` wraps the whole `warm` call. An exception from taking the key, which `calibrated_forecast_key` already makes unlikely by swallowing STPASA index errors, is now logged as a failed warm instead of leaving the warm. The currency check takes the same key straight after and raises it as before.
+- The provider imports `CALIBRATED_FORECAST_MEMO_ATTR` only. The spot memo's attribute name is used inside `calibrated_spot_map`, which the provider calls.
+- The mixin base for the type checker is `CoordinatorEntity[PD7DayCoordinator]`, and `object` at runtime. That removed the 12 `attr-defined` and `misc` errors on the mixin and made the `type: ignore[misc]` on its `async_will_remove_from_hass` unnecessary, so it is gone. With the 2 "Invalid self argument" errors, mypy is at 41.
+- Import contracts: the forbidden contract now lists `calibrated_forecast` as well, through the existing `calibration_inputs -> coordinator` import (a `TYPE_CHECKING` import at `calibration_inputs.py:38`). There is no new import edge, and the layers contract reports what it reported before.
 
 ## Invariants
 
