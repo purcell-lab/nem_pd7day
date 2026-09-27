@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
+from .json_repository import JsonRepository
 from .observation_log import ObservationLog
 from .calibration_engine import (
     OBSERVATION_WINDOW_DAYS,
@@ -58,10 +59,40 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+_COEFF_MIGRATION = (
+    "Migrating calibration coefficients from legacy storage key to "
+    "nem_pd7day.%s.calibration_coefficients"
+)
+_FH_MIGRATION = (
+    "Migrating forecast history from legacy storage key to "
+    "nem_pd7day.%s.forecast_history"
+)
+
 
 def _now_nem() -> datetime:
     """Return the current time in NEM timezone (AEST, UTC+10)."""
     return datetime.now(NEM_TZ)
+
+
+# The coefficient and forecast history files are built on access from the
+# store's ``_coeff_store`` and ``_fh_store``, not held, so a store made through
+# ``__new__`` with only those attributes set (as the tests do) works. The
+# legacy Store is built only when the scoped key turns out to be empty.
+
+def _coefficient_file(store: CalibrationStore) -> JsonRepository:
+    return JsonRepository(
+        store._coeff_store,
+        lambda: Store(store._hass, STORAGE_VERSION, _LEGACY_COEFF_KEY),
+        _COEFF_MIGRATION,
+    )
+
+
+def _history_file(store: CalibrationStore) -> JsonRepository:
+    return JsonRepository(
+        store._fh_store,
+        lambda: Store(store._hass, STORAGE_VERSION, _LEGACY_FH_KEY),
+        _FH_MIGRATION,
+    )
 
 
 class CalibrationStore:
@@ -188,20 +219,7 @@ class CalibrationStore:
                 await store.async_remove()
 
         # ── Load coefficients ────────────────────────────────────────────────
-        coeff_data = await self._coeff_store.async_load()
-
-        if coeff_data is None:
-            legacy_coeff_store: Store[dict[str, Any]] = Store(
-                self._hass, STORAGE_VERSION, _LEGACY_COEFF_KEY
-            )
-            legacy_data = await legacy_coeff_store.async_load()
-            if legacy_data:
-                _LOGGER.info(
-                    "Migrating calibration coefficients from legacy storage key to "
-                    "nem_pd7day.%s.calibration_coefficients", self._region.lower()
-                )
-                await self._coeff_store.async_save(legacy_data)
-                coeff_data = legacy_data
+        coeff_data = await _coefficient_file(self).load(self._region)
 
         if coeff_data:
             try:
@@ -218,20 +236,7 @@ class CalibrationStore:
                 )
 
         # ── Load forecast history ─────────────────────────────────────────────
-        fh_data = await self._fh_store.async_load()
-
-        if fh_data is None:
-            legacy_fh_store: Store[dict[str, Any]] = Store(
-                self._hass, STORAGE_VERSION, _LEGACY_FH_KEY
-            )
-            legacy_data = await legacy_fh_store.async_load()
-            if legacy_data:
-                _LOGGER.info(
-                    "Migrating forecast history from legacy storage key to "
-                    "nem_pd7day.%s.forecast_history", self._region.lower()
-                )
-                await self._fh_store.async_save(legacy_data)
-                fh_data = legacy_data
+        fh_data = await _history_file(self).load(self._region)
 
         self._forecast_history = (fh_data or {}).get("forecast_history", {})
 
@@ -359,7 +364,7 @@ class CalibrationStore:
         await self._save_forecast_history()
 
     async def _save_forecast_history(self) -> None:
-        await self._fh_store.async_save({"forecast_history": self._forecast_history})
+        await _history_file(self).save({"forecast_history": self._forecast_history})
 
     # ── Observation logging ───────────────────────────────────────────────────
 
@@ -574,7 +579,7 @@ class CalibrationStore:
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("OLS stage2 fit failed (non-fatal): %s", exc)
 
-        await self._coeff_store.async_save(self._engine.to_storage(result))
+        await _coefficient_file(self).save(self._engine.to_storage(result))
 
         # Append compression_ratio snapshot to rolling iso_history.
         summary = result.summary()
