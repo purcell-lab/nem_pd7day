@@ -110,7 +110,7 @@ def test_export_native_value_is_the_raw_feed_in_rate():
     sensor = make_export_sensor(price_periods=[period])
     feed_in_rate_c = 14.77
 
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=feed_in_rate_c) as mock_fit:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=feed_in_rate_c) as mock_fit:
         val = sensor.native_value
 
     mock_fit.assert_called_once()
@@ -131,7 +131,7 @@ def test_export_tariff_stdout_suppressed():
 
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured), \
-            patch.object(_tariff_mod, "spot_to_feed_in_tariff", side_effect=noisy_feed_in):
+            patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", side_effect=noisy_feed_in):
         assert sensor.native_value is not None
     assert captured.getvalue() == "", f"Expected no stdout but got: {captured.getvalue()!r}"
 
@@ -201,7 +201,7 @@ def test_export_programs_registered_in_setup():
 def test_export_tariff_uses_calibrated_price():
     """Export tariff passes calibrated $/MWh (not raw) to spot_to_feed_in_tariff."""
     sensor, _period, _store = make_calibrated_export_sensor(raw_value=0.01745, calibrated_value=0.01425)
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
         assert sensor.native_value is not None
     rrp = mock_fit.call_args[0][3]
     assert abs(rrp - 14.25) < 1e-6, f"Expected calibrated RRP 14.25 $/MWh, got {rrp}"
@@ -210,7 +210,7 @@ def test_export_tariff_uses_calibrated_price():
 def test_export_tariff_forecast_spot_shows_calibrated():
     """Export forecast 'spot' is the calibrated value; 'spot_raw' the input; period fields present."""
     sensor, _period, _store = make_calibrated_export_sensor(raw_value=0.01745, calibrated_value=0.01425)
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=10.0):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=10.0):
         forecast = sensor.extra_state_attributes["forecast"]
     assert forecast
     for entry in forecast:
@@ -234,7 +234,7 @@ def test_export_loop_calibrates_each_interval_once():
         calls.append(args)
         return original(self, *args, **kwargs)
 
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=8.0), \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=8.0), \
             patch.object(type(sensor), "_calibrated_value", wrapper):
         attrs = sensor.extra_state_attributes
 
@@ -263,7 +263,7 @@ def test_export_spot_key_is_the_value_that_was_fed_to_the_tariff():
         fed.append(calibrated)
         return original(self, period, calibrated=calibrated)
 
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=15.5), \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=15.5), \
             patch.object(type(sensor), "_calibrated_value", fake_calibrate), \
             patch.object(type(sensor), "_compute_export_tariff", spy):
         attrs = sensor.extra_state_attributes
@@ -282,7 +282,7 @@ def test_export_compute_still_calibrates_when_not_given_a_value():
         calls.append(p)
         return 0.42
 
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=15.5) as lib, \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=15.5) as lib, \
             patch.object(type(sensor), "_calibrated_value", fake_calibrate):
         sensor._compute_export_tariff(period)
 
@@ -297,7 +297,7 @@ def test_export_compute_uses_the_supplied_value_and_does_not_calibrate():
     def boom(self, p):
         raise AssertionError("_calibrated_value must not be called")
 
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=15.5) as lib, \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=15.5) as lib, \
             patch.object(type(sensor), "_calibrated_value", boom):
         sensor._compute_export_tariff(period, calibrated=0.77)
 
@@ -312,7 +312,7 @@ def test_compute_export_tariff_cache_hit():
     sensor = make_export_sensor(price_periods=[period])
     sensor._period_export_tariff_cache = None
 
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
         result1 = sensor._compute_export_tariff(period)
         result2 = sensor._compute_export_tariff(period)
     assert result1 is not None
@@ -326,7 +326,7 @@ def test_apply_export_tariff_to_spot_cache_hit():
     sensor = make_export_sensor(price_periods=[])
     sensor._export_tariff_cache = None
 
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=14.77) as mock_fit:
         result1 = sensor._apply_export_tariff_to_spot(0.10, now)
         result2 = sensor._apply_export_tariff_to_spot(0.10, now)
     assert result1 is not None
@@ -348,7 +348,7 @@ def test_apply_export_tariff_to_spot_passes_the_interval_end(minute, expected_en
     now = datetime(2026, 5, 24, 14, minute, 30, tzinfo=NEM_TZ)
     sensor = make_export_sensor(price_periods=[])
     sensor._export_tariff_cache = None
-    with patch.object(_tariff_mod, "spot_to_feed_in_tariff", return_value=15.5) as lib:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=15.5) as lib:
         assert sensor._apply_export_tariff_to_spot(0.10, now) is not None
     end = lib.call_args.args[0]
     assert (end.hour, end.minute, end.second, end.microsecond) == (*expected_end, 0, 0)

@@ -559,8 +559,8 @@ def expected_import_price(tariff_mod: types.ModuleType, lib_c_kwh, rrp_mwh, fee=
     ``tariff_mod`` is the tariff_sensor module object the constants are read from.
     """
     tm = tariff_mod
-    spot_c = rrp_mwh * tm._DEFAULT_DLF * tm._DEFAULT_MLF * tm._DEFAULT_MARKET / 10
+    spot_c = rrp_mwh * tm.tariff_pricing.DEFAULT_DLF * tm.tariff_pricing.DEFAULT_MLF * tm.tariff_pricing.DEFAULT_MARKET / 10
     network_c = lib_c_kwh - spot_c
-    if distributor in tm._LIB_APPLIES_GST:
-        network_c /= tm.GST
-    return round(((spot_c + network_c) / 100 + fee) * tm.GST, 6)
+    if distributor in tm.tariff_pricing.LIB_APPLIES_GST:
+        network_c /= tm.tariff_pricing.GST
+    return round(((spot_c + network_c) / 100 + fee) * tm.tariff_pricing.GST, 6)

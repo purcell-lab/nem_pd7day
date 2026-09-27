@@ -198,7 +198,7 @@ def test_tariff_sensor_current_value():
     # spot_to_tariff returns 15.5 c/kWh, of which the spot component is
     # 100 $/MWh through the loss factors; the rest is Energex network rate,
     # which the library has already grossed up.
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5) as mock_stt:
         val = sensor.native_value
     assert val is not None
     expected = expected_import_price(15.5, 100.0)
@@ -213,7 +213,7 @@ def test_tariff_sensor_forecast_attribute():
     periods = [make_price_period(base + timedelta(minutes=30 * i), value=0.05 + i * 0.01) for i in range(5)]
     sensor = make_tariff_sensor(price_periods=periods)
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=10.0):
         attrs = sensor.extra_state_attributes
     assert attrs["distributor"] == "Energex"
     assert attrs["network"] == "energex"
@@ -239,7 +239,7 @@ def test_native_value_none_without_a_current_period(price_periods):
 def test_tariff_sensor_handles_spot_to_tariff_exception():
     """spot_to_tariff raises -> native_value returns None (no crash)."""
     sensor = make_tariff_sensor(price_periods=[current_interval_period()])
-    with patch.object(_tariff_mod, "spot_to_tariff", side_effect=ValueError("unknown tariff")):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", side_effect=ValueError("unknown tariff")):
         assert sensor.native_value is None
 
 
@@ -269,7 +269,7 @@ def test_forecast_length_by_sensor_kind(factory, expected):
         for i in range(367)
     ]
     sensor = factory(price_periods=periods)
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0), \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=10.0), \
             patch.object(_tariff_mod, "_amber_express_cutoff", return_value=base + timedelta(hours=24)):
         forecast = sensor.extra_state_attributes["forecast"]
     assert len(forecast) == expected
@@ -293,9 +293,9 @@ def test_stdout_suppressed_during_tariff_calculation():
 
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured), \
-            patch.object(_tariff_mod, "spot_to_tariff", side_effect=noisy_spot_to_tariff), \
-            patch.object(_tariff_mod, "get_periods", side_effect=noisy_get_periods), \
-            patch.object(_tariff_mod, "get_daily_fee", side_effect=noisy_get_daily_fee):
+            patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", side_effect=noisy_spot_to_tariff), \
+            patch.object(_tariff_mod.tariff_pricing, "get_periods", side_effect=noisy_get_periods), \
+            patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", side_effect=noisy_get_daily_fee):
         # Every code path that calls into aemo_to_tariff
         assert sensor.native_value is not None
         attrs = sensor.extra_state_attributes
@@ -386,8 +386,8 @@ def test_tariff_periods_in_attributes():
     period = make_price_period(datetime(2026, 9, 2, 10, 30, tzinfo=NEM_TZ), value=0.05)
     sensor = make_tariff_sensor(price_periods=[period])
 
-    with patch.object(_tariff_mod, "get_periods", return_value=PEAK_OFFPEAK_TUPLES), \
-            patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=PEAK_OFFPEAK_TUPLES), \
+            patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=10.0):
         tp = sensor.extra_state_attributes["tariff_periods"]
     assert isinstance(tp, list)
     assert len(tp) == 2
@@ -404,7 +404,7 @@ def test_unsupported_tariff_code_caches_empty_and_is_silent():
     not support (e.g. essential/BLNREX2, endeavour/N61). The cache must hold []
     so subsequent lookups return immediately without re-calling get_periods.
     """
-    with patch.object(_tariff_mod, "get_periods", side_effect=ValueError("Unknown tariff code")) as mock_gp:
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", side_effect=ValueError("Unknown tariff code")) as mock_gp:
         sensor = make_tariff_sensor(price_periods=None)
         sensor._cached_tariff_periods = sensor._get_tariff_periods()
         assert sensor._cached_tariff_periods == []
@@ -427,7 +427,7 @@ def test_sapn_none_window_period_skipped_silently():
         ("Off-peak", None, None, None, 10.34),
     ]
     sensor = make_tariff_sensor(price_periods=None)
-    with patch.object(_tariff_mod, "get_periods", return_value=fake_periods), \
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=fake_periods), \
             patch.object(_tariff_mod._LOGGER, "debug") as mock_log:
         tp = sensor._get_tariff_periods()
     assert len(tp) == 2
@@ -443,8 +443,8 @@ def test_forecast_period_and_network_rate(nemtime_hour, value, period_name, rate
     """Forecast entries resolve period name + network_rate from get_periods output."""
     period = make_price_period(datetime(2026, 9, 2, nemtime_hour, 0, tzinfo=NEM_TZ), value=value)
     sensor = make_tariff_sensor(price_periods=[period])
-    with patch.object(_tariff_mod, "get_periods", return_value=PEAK_OFFPEAK_TUPLES), \
-            patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=PEAK_OFFPEAK_TUPLES), \
+            patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=10.0):
         entry = sensor.extra_state_attributes["forecast"][0]
     assert entry["spot_raw"] == round(value, 6)
     assert entry["period"] == period_name
@@ -567,7 +567,7 @@ def test_periods_attribute_shape_is_unchanged():
     periods = make_forecast(4)
     sensor = make_tariff_sensor(price_periods=periods)
     sensor._cached_tariff_periods = WINDOW_SETS["three_band"]
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5):
         attrs = sensor.extra_state_attributes
     assert attrs["tariff_periods"] == WINDOW_SETS["three_band"]
     for entry in attrs["tariff_periods"]:
@@ -580,8 +580,8 @@ def test_periods_attribute_shape_is_unchanged():
 def test_loss_factors_in_attributes():
     """dlf/mlf/combined present and combined = dlf * mlf * market."""
     sensor = make_tariff_sensor(price_periods=None)
-    with patch.object(_tariff_mod, "get_periods", return_value=[]), \
-            patch.object(_tariff_mod, "get_daily_fee", return_value=None):
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=[]), \
+            patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", return_value=None):
         attrs = sensor.extra_state_attributes
     dlf = attrs["distribution_loss_factor_dlf"]
     mlf = attrs["metering_loss_factor_mlf"]
@@ -596,8 +596,8 @@ def test_loss_factors_in_attributes():
 def test_forecast_description_in_attributes():
     """Description mentions forecast, DLF, MLF, GST and the additional usage fee entity."""
     sensor = make_tariff_sensor(price_periods=None)
-    with patch.object(_tariff_mod, "get_periods", return_value=[]), \
-            patch.object(_tariff_mod, "get_daily_fee", return_value=None):
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=[]), \
+            patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", return_value=None):
         desc = sensor.extra_state_attributes["forecast_description"]
     assert isinstance(desc, str)
     assert "forecast" in desc.lower()
@@ -612,14 +612,14 @@ def test_forecast_description_in_attributes():
 def test_daily_supply_charge_in_attributes():
     """daily_supply_charge_$ is the library's float, or None when it raises."""
     sensor = make_tariff_sensor(price_periods=None)
-    with patch.object(_tariff_mod, "get_periods", return_value=[]), \
-            patch.object(_tariff_mod, "get_daily_fee", return_value=0.556):
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=[]), \
+            patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", return_value=0.556):
         charge = sensor.extra_state_attributes["daily_supply_charge_$"]
     assert isinstance(charge, float)
     assert abs(charge - 0.556) < 1e-6
 
-    with patch.object(_tariff_mod, "get_periods", return_value=[]), \
-            patch.object(_tariff_mod, "get_daily_fee", side_effect=ValueError("nope")):
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=[]), \
+            patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", side_effect=ValueError("nope")):
         assert sensor.extra_state_attributes["daily_supply_charge_$"] is None
 
 
@@ -631,7 +631,7 @@ def test_daily_supply_charge_in_attributes():
 def test_tariff_uses_calibrated_price_not_raw():
     """_compute_tariff passes calibrated $/MWh (not raw) to spot_to_tariff."""
     sensor, _period, _store = make_calibrated_tariff_sensor(raw_value=0.01745, calibrated_value=0.01425)
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5) as mock_stt:
         assert sensor.native_value is not None
     rrp = mock_stt.call_args[0][3]
     assert abs(rrp - 14.25) < 1e-6, f"Expected calibrated RRP 14.25 $/MWh, got {rrp}"
@@ -641,7 +641,7 @@ def test_tariff_uses_calibrated_price_not_raw():
 def test_tariff_forecast_spot_shows_calibrated():
     """Forecast 'spot' is the calibrated value, 'spot_raw' the uncalibrated one."""
     sensor, _period, _store = make_calibrated_tariff_sensor(raw_value=0.01745, calibrated_value=0.01425)
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=10.0):
         forecast = sensor.extra_state_attributes["forecast"]
     assert forecast
     for entry in forecast:
@@ -652,7 +652,7 @@ def test_tariff_forecast_spot_shows_calibrated():
 def test_uncalibratable_interval_degrades_to_none_not_zero():
     """A store that cannot produce a number means None on both keys, never 0 or raw."""
     sensor, _period, _store = make_calibrated_tariff_sensor(raw_value=0.12093, calibrated_value=None)
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5):
         forecast = sensor.extra_state_attributes["forecast"]
     assert forecast
     for entry in forecast:
@@ -671,7 +671,7 @@ def test_attribute_loop_calibrates_each_interval_once(factory):
     sensor._cached_tariff_periods = WINDOW_SETS["two_band"]
 
     wrapper, calls = count_calls(sensor, "_calibrated_value")
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5), \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5), \
             patch.object(_tariff_mod, "_amber_express_cutoff", return_value=NO_CUTOFF), \
             patch.object(type(sensor), "_calibrated_value", wrapper):
         attrs = sensor.extra_state_attributes
@@ -703,7 +703,7 @@ def test_spot_key_is_the_value_that_was_fed_to_the_tariff(factory):
         fed.append(calibrated)
         return original(self, period, calibrated=calibrated)
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5), \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5), \
             patch.object(type(sensor), "_calibrated_value", fake_calibrate), \
             patch.object(type(sensor), "_compute_tariff", spy), \
             patch.object(_tariff_mod, "_amber_express_cutoff", return_value=NO_CUTOFF):
@@ -726,7 +726,7 @@ def test_compute_still_calibrates_when_not_given_a_value():
         calls.append(p)
         return 0.42
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as lib, \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5) as lib, \
             patch.object(type(sensor), "_calibrated_value", fake_calibrate):
         sensor._compute_tariff(period)
 
@@ -745,7 +745,7 @@ def test_compute_uses_the_supplied_value_and_does_not_calibrate(calibrated, rrp_
     def boom(self, p):
         raise AssertionError("_calibrated_value must not be called")
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as lib, \
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5) as lib, \
             patch.object(type(sensor), "_calibrated_value", boom):
         sensor._compute_tariff(period, calibrated=calibrated)
 
@@ -760,7 +760,7 @@ def test_compute_tariff_cache_hit():
     sensor = make_tariff_sensor(price_periods=[period])
     sensor._period_tariff_cache = None
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5) as mock_stt:
         result1 = sensor._compute_tariff(period)
         result2 = sensor._compute_tariff(period)
     assert result1 is not None
@@ -774,7 +774,7 @@ def test_apply_tariff_to_spot_cache_hit():
     sensor = make_tariff_sensor(price_periods=[])
     sensor._tariff_cache = None
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as mock_stt:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5) as mock_stt:
         result1 = sensor._apply_tariff_to_spot(0.10, now)
         result2 = sensor._apply_tariff_to_spot(0.10, now)
     assert result1 is not None
@@ -796,7 +796,7 @@ def test_apply_tariff_to_spot_passes_the_interval_end(minute, expected_end):
     now = datetime(2026, 5, 24, 14, minute, 30, tzinfo=NEM_TZ)
     sensor = make_tariff_sensor(price_periods=[])
     sensor._tariff_cache = None
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as lib:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5) as lib:
         assert sensor._apply_tariff_to_spot(0.10, now) is not None
     end = lib.call_args.args[0]
     assert (end.hour, end.minute, end.second, end.microsecond) == (*expected_end, 0, 0)
@@ -870,7 +870,7 @@ def test_a_changed_fee_is_not_served_from_the_price_cache(path):
     fees = iter([0.0293, 0.0224])
     sensor._get_additional_fee = lambda: next(fees)
     period = make_price_period(now, value=0.10)
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5):
         if path == "dispatch":
             first, second = (sensor._apply_tariff_to_spot(0.10, now) for _ in range(2))
         else:
