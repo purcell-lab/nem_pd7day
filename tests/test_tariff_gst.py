@@ -51,11 +51,11 @@ _const_mod, _nem_time, _client_mod, _store_mod, _coord_mod, tariff_catalogue, _t
     "tariff_catalogue", "tariff_sensor",
 )
 
-GST = _tariff_mod.GST
-_DEFAULT_DLF = _tariff_mod._DEFAULT_DLF
-_DEFAULT_MARKET = _tariff_mod._DEFAULT_MARKET
-_DEFAULT_MLF = _tariff_mod._DEFAULT_MLF
-_LIB_APPLIES_GST = _tariff_mod._LIB_APPLIES_GST
+GST = _tariff_mod.tariff_pricing.GST
+_DEFAULT_DLF = _tariff_mod.tariff_pricing.DEFAULT_DLF
+_DEFAULT_MARKET = _tariff_mod.tariff_pricing.DEFAULT_MARKET
+_DEFAULT_MLF = _tariff_mod.tariff_pricing.DEFAULT_MLF
+_LIB_APPLIES_GST = _tariff_mod.tariff_pricing.LIB_APPLIES_GST
 NemPd7dayTariffSensor = _tariff_mod.NemPd7dayTariffSensor
 
 pytest.importorskip("aemo_to_tariff")
@@ -242,7 +242,7 @@ def test_library_gst_grouping_matches_constant(distributor):
     assert observed == expected, (
         f"{distributor} applies a network GST factor of {observed} but "
         f"_LIB_APPLIES_GST implies {expected}. aemo_to_tariff has changed its GST "
-        f"treatment for this network; update _LIB_APPLIES_GST in tariff_sensor.py "
+        f"treatment for this network; update _LIB_APPLIES_GST in tariff_pricing.py "
         f"or every price on it will be wrong by 10 percent of the network rate."
     )
 

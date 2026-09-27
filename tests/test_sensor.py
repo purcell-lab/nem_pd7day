@@ -815,7 +815,7 @@ def test_tariff_forecast_is_untrimmed_in_every_mode(mode):
     periods = [make_price_period(base + timedelta(minutes=30 * (i + 1)), value=0.05) for i in range(100)]
     sensor = make_tariff_sensor(price_periods=periods, mode=mode)
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=10.0):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=10.0):
         attrs = sensor.extra_state_attributes
 
     assert len(attrs["forecast"]) == 100
@@ -836,7 +836,7 @@ def test_tariff_native_value_prefers_dispatch_then_pd7day(dispatch_prices, lib_c
     dispatch.prices = dispatch_prices
     sensor._entry.runtime_data.dispatch = dispatch
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=lib_c_kwh):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=lib_c_kwh):
         val = sensor.native_value
 
     assert val is not None

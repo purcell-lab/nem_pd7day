@@ -166,7 +166,7 @@ def test_import_sensor_prices_prcer_from_the_extension(monkeypatch):
     sensor = make_tariff_sensor(region="VIC1", distributor="powercor", tariff_code="PRCER", price_periods=[period])
     sensor._get_additional_fee = lambda: 0.0293
     value = sensor._compute_tariff(period, calibrated=0.10)
-    spot = 100.0 * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
+    spot = 100.0 * _tariff_mod.tariff_pricing.DEFAULT_DLF * _tariff_mod.tariff_pricing.DEFAULT_MLF * _tariff_mod.tariff_pricing.DEFAULT_MARKET / 10
     assert value == pytest.approx(round(((spot + 27.86) / 100 + 0.0293) * 1.1, 6))
     _sensor_module_clock(monkeypatch, sensor, end)
     attrs = sensor.extra_state_attributes
@@ -185,7 +185,7 @@ def test_export_sensor_prices_prcer_from_the_extension(monkeypatch):
     sensor = make_export_sensor(region="VIC1", distributor="powercor", import_code="PRCER", export_code="PRCER", price_periods=[period])
     value = sensor._compute_export_tariff(period, calibrated=0.10)
     # Same spot composition as the library's feed-in path: loss factors on spot.
-    spot = 100.0 * _tariff_mod._DEFAULT_DLF * _tariff_mod._DEFAULT_MLF * _tariff_mod._DEFAULT_MARKET / 10
+    spot = 100.0 * _tariff_mod.tariff_pricing.DEFAULT_DLF * _tariff_mod.tariff_pricing.DEFAULT_MLF * _tariff_mod.tariff_pricing.DEFAULT_MARKET / 10
     assert value == pytest.approx(round((spot + 7.0) / 100, 6))
     assert value != pytest.approx(round((10.0 + 7.0) / 100, 6))
     _sensor_module_clock(monkeypatch, sensor, end)

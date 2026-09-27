@@ -1132,7 +1132,7 @@ def attrs_of(sensor, memoised: bool):
         if isinstance(sensor, _tariff_mod.NemPd7dayExportTariffSensor)
         else "spot_to_tariff"
     )
-    with patch.object(_tariff_mod, library, return_value=15.5):
+    with patch.object(_tariff_mod.tariff_pricing, library, return_value=15.5):
         if memoised:
             return sensor.extra_state_attributes["forecast"]
         with patch.object(type(sensor), "_calibrated_spot_map", lambda self, d: None):
@@ -1415,7 +1415,7 @@ def test_cold_tariff_write_computes_run_features_once():
         return real(price_data)
 
     with real_run_features(coord, periods, "QLD1"), \
-         patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5), \
+         patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5), \
          patch.object(type(coord), "_compute_run_features", staticmethod(counting)):
         clear_memos(coord)
         attrs = tariff.extra_state_attributes

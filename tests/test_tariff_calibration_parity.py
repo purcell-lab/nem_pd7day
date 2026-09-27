@@ -362,7 +362,7 @@ def test_tariff_spot_matches_forecast_value(kind, library):
     )
 
     sensor = tariff if kind == "import" else export
-    with patch.object(_tariff_mod, library, return_value=15.5):
+    with patch.object(_tariff_mod.tariff_pricing, library, return_value=15.5):
         entries = sensor.extra_state_attributes["forecast"]
 
     assert entries, "no tariff forecast entries built"
@@ -403,7 +403,7 @@ def test_parity_sweep_over_a_full_run():
     forecast, tariff, _export, _coord, _store = make_sensors(periods, stpasa)
     ff = forecast_entries_by_time(forecast)
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5):
         entries = tariff.extra_state_attributes["forecast"]
 
     assert len(entries) == 336, f"expected 336 intervals, got {len(entries)}"
@@ -436,7 +436,7 @@ def test_tariff_value_is_the_shared_spot_with_network_applied():
     forecast, tariff, _export, _coord, _store = make_sensors(periods, stpasa)
     ff = forecast_entries_by_time(forecast)
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5) as stt:
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5) as stt:
         entries = tariff.extra_state_attributes["forecast"]
 
     fee = tariff._get_additional_fee()
@@ -481,7 +481,7 @@ def test_tariff_path_gets_the_per_run_band_floor():
     h = (parse_iso(periods[0].time) - run_dt).total_seconds() / 3600.0
     assert 22.0 < h < 36.0, f"probe must be inside the static band, got h{h}"
 
-    with patch.object(_tariff_mod, "spot_to_tariff", return_value=15.5):
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5):
         entries = tariff.extra_state_attributes["forecast"]
     assert len(entries) == 1
 

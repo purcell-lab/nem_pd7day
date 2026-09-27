@@ -14,7 +14,8 @@ pin the module's contract directly, without the HA stubs:
   * the library call signatures (import with the loss factors, feed-in
     without) and the extension feed-in with the defaults;
   * period row normalisation, the feed-in window rows, and TouWindows;
-  * library_available and stdout suppression.
+  * library_available and stdout suppression;
+  * the sensors' library-missing guard, which no test pinned before.
 
 Run with:  python -m pytest tests/test_tariff_pricing.py -v
 """
@@ -30,7 +31,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from support import PKG_DIR, load_chain
+from support import PKG_DIR, install_ha_stubs, load_chain, make_price_period
 
 # Standalone copy, per the spec: tariff_pricing needs only the catalogue and
 # the extension table, and no HA stubs at all.
@@ -387,3 +388,93 @@ def test_tariff_pricing_imports_neither_homeassistant_nor_nem_time():
                 imported.update("." + alias.name for alias in node.names)
     assert not any(name.split(".")[0] == "homeassistant" for name in imported), imported
     assert not any("nem_time" in name for name in imported), imported
+
+
+# ── The sensors without the library ──────────────────────────────────────────
+#
+# When aemo_to_tariff is not importable every guarded tariff sensor method
+# returns None or [], extension codes included; only the extension's export
+# windows, which never needed the library, are still published. The sensors
+# bind tariff_pricing through the tariff_sensor module loaded here, so that
+# copy is the one patched.
+
+install_ha_stubs()
+_sensor_chain = load_chain("const", "nem_time", "pd7day_client", "calibration_store", "coordinator", "tariff_sensor")
+_tariff_mod = _sensor_chain[-1]
+
+WINTER_NOW = datetime.datetime(2026, 7, 15, 12, 0, tzinfo=NEM)
+WINTER_END = datetime.datetime(2026, 7, 15, 18, 0, tzinfo=NEM)
+
+
+def _sensor(cls, distributor: str, code: str):
+    sensor = cls.__new__(cls)
+    sensor.coordinator = MagicMock(data=None, last_update_success=True)
+    sensor._region = "VIC1"
+    sensor._distributor = distributor
+    sensor._tariff_code = code
+    sensor._import_code = code
+    sensor._export_code = code
+    sensor._entry = MagicMock(entry_id="entry_1", options={}, runtime_data=None)
+    sensor._store = None
+    sensor.hass = MagicMock()
+    sensor.hass.states.get.return_value = None
+    return sensor
+
+
+def _guarded_results(distributor: str, code: str) -> dict[str, object]:
+    importer = _sensor(_tariff_mod.NemPd7dayTariffSensor, distributor, code)
+    exporter = _sensor(_tariff_mod.NemPd7dayExportTariffSensor, distributor, code)
+    period = make_price_period(WINTER_END, value=0.10)
+    return {
+        "_compute_tariff": importer._compute_tariff(period, calibrated=0.10),
+        "_apply_tariff_to_spot": importer._apply_tariff_to_spot(0.10, WINTER_END),
+        "_get_tariff_periods": importer._get_tariff_periods(),
+        "_get_daily_supply_charge": importer._get_daily_supply_charge(),
+        "_compute_export_tariff": exporter._compute_export_tariff(period, calibrated=0.10),
+        "_apply_export_tariff_to_spot": exporter._apply_export_tariff_to_spot(0.10, WINTER_END),
+        "export _get_tariff_periods": exporter._get_tariff_periods(),
+    }
+
+
+@contextlib.contextmanager
+def _library(bound: bool):
+    """The four library names as working mocks, or all None as when the import failed."""
+    pricing = _tariff_mod.tariff_pricing
+    values = {
+        "spot_to_tariff": MagicMock(return_value=15.5),
+        "spot_to_feed_in_tariff": MagicMock(return_value=6.0),
+        "get_periods": MagicMock(return_value=[("Peak", datetime.time(16), datetime.time(20), 25.0)]),
+        "get_daily_fee": MagicMock(return_value=55.6),
+    }
+    with contextlib.ExitStack() as stack:
+        for name, value in values.items():
+            stack.enter_context(patch.object(pricing, name, value if bound else None))
+        stack.enter_context(patch.object(_tariff_mod, "now_nem", return_value=WINTER_NOW))
+        yield
+
+
+@pytest.mark.parametrize("distributor, code", [("energex", "6900"), ("powercor", "PRCER")])
+def test_every_guarded_sensor_method_gives_nothing_without_the_library(distributor, code):
+    if code == "PRCER" and not _cat.priced_by_extension(distributor, code):
+        pytest.skip("the installed library carries powercor PRCER")
+    with _library(bound=True):
+        # Control: with the library bound, every method produces a value, so
+        # the None and [] below come from the guard and nothing else.
+        present = _guarded_results(distributor, code)
+    for name, value in present.items():
+        if name == "export _get_tariff_periods" and code != "PRCER":
+            assert value == [], name
+        else:
+            assert value not in (None, []), name
+
+    with _library(bound=False):
+        assert _tariff_mod.tariff_pricing.library_available() is False
+        missing = _guarded_results(distributor, code)
+    assert missing["_compute_tariff"] is None
+    assert missing["_apply_tariff_to_spot"] is None
+    assert missing["_get_tariff_periods"] == []
+    assert missing["_get_daily_supply_charge"] is None
+    assert missing["_compute_export_tariff"] is None
+    assert missing["_apply_export_tariff_to_spot"] is None
+    # The extension's export windows do not depend on the library.
+    assert missing["export _get_tariff_periods"] == present["export _get_tariff_periods"]
