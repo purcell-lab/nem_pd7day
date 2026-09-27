@@ -196,7 +196,6 @@ class CalibrationStore:
 
     async def async_load(self) -> None:
         """Load calibration state from storage, migrating legacy keys if needed."""
-
         # ── Load observations ────────────────────────────────────────────────
         # Daily segments are the current format. With no manifest the single
         # file store is split into segments and removed, and before that the
@@ -228,7 +227,6 @@ class CalibrationStore:
 
         # ── Load coefficients ────────────────────────────────────────────────
         coeff_data = await _coefficient_file(self).load(self._region)
-
         if coeff_data:
             try:
                 self._calibration = self._engine.from_storage(coeff_data)
@@ -245,7 +243,6 @@ class CalibrationStore:
 
         # ── Load forecast history ─────────────────────────────────────────────
         fh_data = await _history_file(self).load(self._region)
-
         self._forecast_history = (fh_data or {}).get("forecast_history", {})
 
         # Rebuild the in-memory accumulator from observations (issue #132).
