@@ -313,6 +313,33 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             )
             return None
 
+    @property
+    def native_value(self) -> float | None:
+        """Current interval tariff price in $/kWh: dispatch first, then the PD7DAY forecast."""
+        # Try 5-minute dispatch price first
+        runtime_data = getattr(self._entry, "runtime_data", None)
+        dispatch = runtime_data.dispatch if runtime_data else None
+        if dispatch and dispatch.prices.get(self._region):
+            rrp_kwh = dispatch.prices[self._region].rrp
+            tariff_val = self._price_now(rrp_kwh, now_nem())
+            if tariff_val is not None:
+                return round(tariff_val, 6)
+
+        # Fallback: current interval from PD7DAY forecast
+        _LOGGER.debug(
+            "%s/%s: no dispatch price for %s — falling back to PD7DAY forecast",
+            self._distributor,
+            self._priced_code,
+            self._region,
+        )
+        d = self._price_data
+        if d is None:
+            return None
+        period = self._current_period(d.forecast)
+        if period is None:
+            return None
+        return self._price_period(period)
+
 
 class NemPd7dayTariffSensor(TariffEntityBase):
     """One sensor per (distributor, tariff_code) for the regional device."""
@@ -510,33 +537,6 @@ class NemPd7dayTariffSensor(TariffEntityBase):
                 exc_info=True,
             )
             return None
-
-    @property
-    def native_value(self) -> float | None:
-        """Current interval tariff price in $/kWh."""
-        # Try 5-minute dispatch price first
-        runtime_data = getattr(self._entry, "runtime_data", None)
-        dispatch = runtime_data.dispatch if runtime_data else None
-        if dispatch and dispatch.prices.get(self._region):
-            rrp_kwh = dispatch.prices[self._region].rrp
-            tariff_val = self._apply_tariff_to_spot(rrp_kwh, now_nem())
-            if tariff_val is not None:
-                return round(tariff_val, 6)
-
-        # Fallback: current interval from PD7DAY forecast
-        _LOGGER.debug(
-            "%s/%s: no dispatch price for %s — falling back to PD7DAY forecast",
-            self._distributor,
-            self._tariff_code,
-            self._region,
-        )
-        d = self._price_data
-        if d is None:
-            return None
-        period = self._current_period(d.forecast)
-        if period is None:
-            return None
-        return self._compute_tariff(period)
 
     def _tariff_periods_for_attrs(self) -> list[dict[str, Any]]:
         """Tariff period structure for state attributes.
@@ -927,30 +927,6 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
                 exc_info=True,
             )
             return None
-
-    @property
-    def native_value(self) -> float | None:
-        runtime_data = getattr(self._entry, "runtime_data", None)
-        dispatch = runtime_data.dispatch if runtime_data else None
-        if dispatch and dispatch.prices.get(self._region):
-            rrp_kwh = dispatch.prices[self._region].rrp
-            tariff_val = self._apply_export_tariff_to_spot(rrp_kwh, now_nem())
-            if tariff_val is not None:
-                return round(tariff_val, 6)
-
-        _LOGGER.debug(
-            "%s/%s: no dispatch price for %s — falling back to PD7DAY forecast",
-            self._distributor,
-            self._export_code,
-            self._region,
-        )
-        d = self._price_data
-        if d is None:
-            return None
-        period = self._current_period(d.forecast)
-        if period is None:
-            return None
-        return self._compute_export_tariff(period)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
