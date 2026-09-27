@@ -121,6 +121,29 @@ def test_add_notices_cancels_by_region_level_and_date():
     assert store.get_active_notices("NSW1") == [nsw_lor1]
 
 
+def test_a_cancellation_naming_a_notice_cancels_only_that_notice():
+    """AEMO's referenced format names one notice and also carries a date, the
+    time the cancellation takes effect. The date match must not run on it, or
+    every other notice of the same type and level that day is cancelled too
+    (#182: cancelling 150200 also cancelled 150215 in the golden master)."""
+    start = datetime(2026, 5, 18, 16, 0, tzinfo=NEM_TZ)
+    store = GridNoticeStore(MagicMock())
+    named = _notice(150200, region="QLD1", level=1, period_from=start,
+                    period_to=datetime(2026, 5, 18, 19, 0, tzinfo=NEM_TZ))
+    same_day = _notice(150215, region="QLD1", level=1,
+                       period_from=datetime(2026, 5, 18, 17, 30, tzinfo=NEM_TZ),
+                       period_to=datetime(2026, 5, 18, 20, 30, tzinfo=NEM_TZ))
+    store.add_notices([named, same_day])
+
+    store.add_notices([_cancellation(
+        150230, region="QLD1", level=1, cancels_notice_id=150200, cancellation_date=date(2026, 5, 18),
+    )])
+
+    assert named.is_cancelled
+    assert not same_day.is_cancelled
+    assert store.get_active_notices("QLD1") == [same_day]
+
+
 def test_last_fetched_at_is_stamped_by_mark_fetched_not_by_add_notices():
     """last_fetched_at means "NEMWEB was polled", not "a notice was stored"
     (issue #139)."""

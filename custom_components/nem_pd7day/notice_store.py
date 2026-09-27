@@ -96,11 +96,17 @@ class GridNoticeStore:
 
     def add_notices(self, notices: list[GridNoticeAnnotation]) -> None:
         """
-        Add new notices. Apply cancellations in two ways:
-        1. By explicit cancels_notice_id (if present)
-        2. By matching (region, level, cancellation_date) against stored notices'
-           period_from date — handles AEMO cancellation notices that don't
-           reference a specific notice ID.
+        Add new notices. Apply cancellations in one of two ways:
+        1. By explicit cancels_notice_id, when the cancellation names one.
+        2. Otherwise by matching (region, type, level, cancellation_date)
+           against stored notices' period_from date, for AEMO's PDPASA
+           cancellations, which name no notice.
+
+        The two are exclusive (#182). AEMO's referenced format ("Cancellation
+        - Forecast MSL1 - VIC Region at 1400 hrs 13/02/2025. Refer to Market
+        Notice 124467") also carries a date, the time the cancellation takes
+        effect; running the date match on it cancelled every other notice of
+        the same type and level that day, which the cancellation never named.
         """
         for notice in notices:
             region = notice.region
@@ -118,8 +124,9 @@ class GridNoticeStore:
                                 notice.cancels_notice_id, notice.notice_id,
                             )
 
-                # Path 2: cancel by (region, level, date) matching
-                if notice.cancellation_date:
+                # Path 2: cancel by (region, type, level, date), only when no
+                # notice is named
+                elif notice.cancellation_date:
                     for existing in self._notices.get(region, []):
                         if (
                             not existing.is_cancelled
