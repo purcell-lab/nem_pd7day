@@ -7,11 +7,8 @@ Attributes: full 7-day tariff forecast as a list of {interval_time, tariff_$/kwh
 """
 from __future__ import annotations
 
-import contextlib
-import io
 import logging
-import sys
-from typing import Any
+from typing import Any, cast
 
 import datetime
 
@@ -39,114 +36,16 @@ from .calibration_inputs import (
     interval_key_for_period,
 )
 from .coordinator import PD7DayCoordinator, staleness_attributes
-from . import tariff_extensions, tariff_pricing
+from . import tariff_pricing
 from .tariff_catalogue import library_version, priced_by_extension, tariff_name as catalogue_tariff_name
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
 
 
-@contextlib.contextmanager
-def _suppress_stdout():
-    """Suppress stdout to silence debug print() calls in aemo_to_tariff library."""
-    old_stdout = sys.stdout
-    sys.stdout = io.StringIO()
-    try:
-        yield
-    finally:
-        sys.stdout = old_stdout
-
-
-try:
-    from aemo_to_tariff import get_daily_fee, get_periods, spot_to_tariff, spot_to_feed_in_tariff
-    import aemo_to_tariff as _att
-except ImportError:
-    spot_to_tariff = None  # type: ignore[assignment]
-    spot_to_feed_in_tariff = None  # type: ignore[assignment]
-    get_periods = None  # type: ignore[assignment]
-    get_daily_fee = None  # type: ignore[assignment]
-    _att = None  # type: ignore[assignment]
-    _LOGGER.warning("aemo_to_tariff not installed — tariff sensors will be unavailable")
-
 # Sentinel distinguishing "tariff period cache not yet populated" from an
 # empty list (unsupported tariff code). Only the former triggers a lazy lookup.
 _MISSING = object()
-
-# Default loss factors used by aemo_to_tariff library (Energex defaults).
-# These are passed to the library explicitly rather than relying on its own
-# defaults, because _split_spot_and_network below reconstructs the spot
-# component from them and the two sides have to agree. If the library ever
-# changes its defaults, an implicit match would break the split silently.
-_DEFAULT_DLF = 1.05905
-_DEFAULT_MLF = 1.0154
-_DEFAULT_MARKET = 1.0154
-
-# GST multiplier applied to the final retail price.
-GST = 1.1
-
-# Distributor modules inside aemo_to_tariff that apply GST to the network rate
-# themselves, returning "spot (GST exclusive) + network rate * 1.1". The other
-# supported modules apply no GST at all and return both components GST
-# exclusive. The library is simply not consistent about this, so we cannot
-# apply one uniform multiply to its output without double counting GST on the
-# network component for the distributors listed here. See issue #158.
-#
-# Keys are const.py distributor keys, which are what gets passed to the
-# library; it recognises "sapn" directly and routes it to its sapower module.
-#
-# This restates a fact about a pinned third party library, so
-# tests/test_tariff_gst.py probes the installed library at test time and fails
-# if a distributor moves between the two groups rather than trusting this set.
-# The probe is behavioural, comparing the library's network component against
-# the rates in its own tariff table, because a source scan for "GST" gets this
-# wrong: evoenergy applies GST through a lower case local named "gst" and would
-# be misclassified as not applying it.
-_LIB_APPLIES_GST = frozenset(
-    {"energex", "ergon", "ausgrid", "endeavour", "essential", "evoenergy", "sapn"}
-)
-
-# Map const.py distributor keys to aemo_to_tariff module names
-_DISTRIBUTOR_LIB_MAP = {
-    "sapn": "sapower",
-}
-
-
-def _tariff_source(distributor: str, code: str, *, export: bool = False) -> str:
-    """Where the network rates come from: the library, or tariff_extensions (#170)."""
-    if priced_by_extension(distributor, code, export=export):
-        return "nem_pd7day extension"
-    return "aemo-to-tariff"
-
-
-def _spot_to_tariff(interval_dt, distributor: str, code: str, rrp_mwh: float, **factors) -> float:
-    """The library's spot_to_tariff, or the extension table's for a code the library lacks."""
-    if priced_by_extension(distributor, code):
-        return tariff_extensions.spot_to_tariff(interval_dt, distributor, code, rrp_mwh, **factors)
-    return spot_to_tariff(interval_dt, distributor, code, rrp_mwh, **factors)
-
-
-def _spot_to_feed_in_tariff(interval_dt, distributor: str, code: str, rrp_mwh: float) -> float:
-    if priced_by_extension(distributor, code, export=True):
-        # The library's spot_to_feed_in_tariff applies its default loss
-        # factors to the spot component; an extension export must price the
-        # same way or it sits 9 per cent off the library's for the same spot.
-        return tariff_extensions.spot_to_feed_in_tariff(
-            interval_dt, distributor, code, rrp_mwh,
-            dlf=_DEFAULT_DLF, mlf=_DEFAULT_MLF, market=_DEFAULT_MARKET,
-        )
-    return spot_to_feed_in_tariff(interval_dt, distributor, code, rrp_mwh)
-
-
-def _get_periods(distributor: str, code: str):
-    if priced_by_extension(distributor, code):
-        return tariff_extensions.get_periods(distributor, code, now_nem())
-    return get_periods(distributor, code)
-
-
-def _get_daily_fee(distributor: str, code: str):
-    if priced_by_extension(distributor, code):
-        return tariff_extensions.get_daily_fee(distributor, code)
-    return get_daily_fee(distributor, code)
 
 
 def _fee_entity_ids(hass: Any, region: str) -> list[str]:
@@ -599,7 +498,7 @@ class NemPd7dayTariffSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             # An extension tariff's windows can change with the season, so the
             # construction-time cache is not served for one.
             return self._get_tariff_periods()
-        return cached or []
+        return cast("list[dict[str, Any]]", cached) or []
 
     def _get_tariff_periods(self) -> list[dict[str, Any]]:
         """Return tariff period structure with rates converted to $/kWh.
