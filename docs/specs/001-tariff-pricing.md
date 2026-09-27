@@ -1,6 +1,6 @@
 # Spec 001: Tariff pricing
 
-Status: draft, 27 September 2026, against `main` at 2d6a315 (v3.17.3)
+Status: approved 27 September 2026; drafted against `main` at 2d6a315 (v3.17.3)
 Plan: docs/architecture/tech-debt-plan.md, step 001
 
 ## Responsibility
