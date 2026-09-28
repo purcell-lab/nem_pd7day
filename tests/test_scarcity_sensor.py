@@ -87,7 +87,7 @@ async def test_live_refresh_duplicate_does_not_inflate_sample_count(adapter):
     await sensor._async_refresh()
     assert sensor.available
     assert sensor.native_value == .031
-    assert len(sensor._samples) == 36
+    assert len(sensor._samples) == 6
     attrs = sensor.extra_state_attributes
     assert attrs["base_entity"] == "sensor.qld1_price"
     assert attrs["interpolation_mode"] == "previous"
@@ -96,24 +96,39 @@ async def test_live_refresh_duplicate_does_not_inflate_sample_count(adapter):
     assert sensor._storage.async_delay_save.call_count == 1
 
 
-async def test_dispatch_update_cannot_fill_missing_interval_with_stale_data(adapter):
-    from test_scarcity_premium import observations
+async def test_stale_dispatch_snapshot_is_not_counted_as_recent(adapter):
     sensor = make_sensor(adapter)
-    sensor._samples = observations()
-    del sensor._samples["2026-09-23T07:05:00+10:00"]
     sensor._dispatch.prices["QLD1"] = SimpleNamespace(
         interval_datetime="2026-09-23T07:05:00", rrp=.041
     )
     await sensor._async_refresh()
+    assert sensor._samples == {}
     assert not sensor.available
-    assert sensor.extra_state_attributes["status"] == "incomplete_morning"
+    assert sensor.extra_state_attributes["status"] == "no_recent_dispatch"
     assert sensor.extra_state_attributes["forecast"] == []
+
+
+async def test_one_live_dispatch_price_is_enough_after_a_restart(adapter):
+    """No stored samples at all, as after a restart that lost them: the
+    current ELEC_NEM_SUMMARY price alone makes the sensor available, instead
+    of leaving it unavailable until 14:00."""
+    sensor = make_sensor(adapter)
+    sensor._dispatch.prices["QLD1"] = SimpleNamespace(
+        interval_datetime="2026-09-23T10:05:00", rrp=.041
+    )
+    await sensor._async_refresh()
+    assert sensor.available
+    assert sensor.native_value == .031
+    attrs = sensor.extra_state_attributes
+    assert attrs["status"] == "active"
+    assert attrs["signal_samples"] == 1
+    assert attrs["signal_mean_mwh"] == 41.0
 
 
 @pytest.mark.parametrize("settlement", ["not a timestamp", None], ids=["malformed", "missing"])
 async def test_unparseable_dispatch_settlement_is_ignored_not_raised(adapter, settlement):
     """A dispatch snapshot whose SETTLEMENTDATE cannot be read adds no sample
-    and does not break the refresh; the stored morning is served unchanged."""
+    and does not break the refresh; the stored samples are served unchanged."""
     from test_scarcity_premium import observations
     control = make_sensor(adapter)
     control._samples = observations()
@@ -151,7 +166,7 @@ async def test_startup_restores_samples_and_registers_both_listeners(adapter, mo
     sensor._dispatch.async_add_listener = MagicMock(return_value=lambda: None)
     await sensor.async_added_to_hass()
     assert sensor.available
-    assert sensor.extra_state_attributes["morning_samples"] == 36
+    assert sensor.extra_state_attributes["signal_samples"] == 6
     assert sensor._dispatch.async_add_listener.call_count == 1
     assert sensor.async_on_remove.call_count == 2
 

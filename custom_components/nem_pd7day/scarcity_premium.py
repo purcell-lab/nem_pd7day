@@ -1,7 +1,13 @@
-"""Experimental QLD morning-price overlay. All internal prices are $/kWh.
+"""Experimental QLD recent-price overlay. All internal prices are $/kWh.
 
 This is an explicit policy heuristic, NOT a fitted expected forecast error.
 No Home Assistant dependencies, network IO or use of future observations.
+
+The signal is the mean of the QLD1 dispatch prices (ELEC_NEM_SUMMARY, one per
+five-minute interval) whose settlement ends fall in the last 30 minutes. It
+replaced a mean of all 36 prices from 07:00 to 10:00, which needed every one
+of them observed live and left the sensor unavailable for the whole
+application window after any restart or missed interval that morning.
 """
 from __future__ import annotations
 
@@ -15,6 +21,11 @@ UTC = timezone.utc
 TRIGGER = 0.030
 FLOOR_CAP = 0.065
 PREMIUM_CAP = 0.065
+# The signal averages the dispatch prices of the last 30 minutes, and is used
+# only while its newest price is at most 10 minutes old: two missed polls, not
+# a stale snapshot standing in for the current market.
+SIGNAL_WINDOW = timedelta(minutes=30)
+SIGNAL_FRESHNESS = timedelta(minutes=10)
 
 
 def aware_time(value: str) -> datetime:
@@ -35,23 +46,36 @@ def finite_price(value: object) -> float:
     return result
 
 
-def morning_samples(
+def recent_samples(
     samples: Mapping[str, object], now: datetime
 ) -> dict[str, float]:
-    """Keep unique, completed 5-min ends for today's 07:00-10:00 NEM window."""
-    local = now.astimezone(NEM)
-    start = local.replace(hour=7, minute=0, second=0, microsecond=0)
-    end = start.replace(hour=10)
+    """Keep unique, completed 5-min ends in the 30 minutes up to ``now``.
+
+    Keys are normalised to UTC ISO strings, so the same instant written with
+    another offset is one sample, not two. Anything older, in the future, off
+    the five-minute grid, or not a finite number is dropped.
+    """
+    start = now - SIGNAL_WINDOW
     clean: dict[str, float] = {}
     for stamp, value in samples.items():
         try:
-            t = aware_time(stamp).astimezone(NEM)
+            t = aware_time(stamp)
             price = finite_price(value)
         except (ValueError, TypeError):
             continue
-        if start < t <= min(now, end) and t.minute % 5 == 0 and not t.second and not t.microsecond:
+        if start < t <= now and t.minute % 5 == 0 and not t.second and not t.microsecond:
             clean[t.astimezone(UTC).isoformat()] = price
     return clean
+
+
+def signal_mean(samples: Mapping[str, float], now: datetime) -> float | None:
+    """Mean of the recent samples, or None when the newest is not fresh."""
+    if not samples:
+        return None
+    newest = max(aware_time(stamp) for stamp in samples)
+    if now - newest > SIGNAL_FRESHNESS:
+        return None
+    return round(math.fsum(samples.values()) / len(samples), 12)
 
 
 @dataclass(frozen=True)
@@ -59,7 +83,7 @@ class PremiumResult:
     status: str
     forecast: list[dict]
     count: int
-    morning_mean: float | None
+    signal_mean: float | None
     target_floor: float | None
 
     @property
@@ -76,22 +100,22 @@ def build_premium(
 ) -> PremiumResult:
     """Build seven days of half-hour additions plus an explicit zero endpoint.
 
-    Missing morning data inside 10:00-14:00 means unavailable, not zero.
+    No fresh dispatch price inside 10:00-14:00 means unavailable, not zero.
     Outside that window zero means "policy inactive", not "forecast certain".
-    Next-day premiums are zero pending that day's completed morning window.
+    Later days are zero: the signal describes the market now, not then.
     """
     if now.tzinfo is None:
         raise ValueError("Timezone required")
     local = now.astimezone(NEM)
-    samples = morning_samples(samples, now)
+    samples = recent_samples(samples, now)
     count = len(samples)
-    mean = round(math.fsum(samples.values()) / 36, 12) if count == 36 else None
+    mean = signal_mean(samples, now)
     floor = min(mean, FLOOR_CAP) if mean is not None and mean > TRIGGER else None
     active_window = 10 <= local.hour < 14
-    status = "waiting_for_morning" if local.hour < 10 else "outside_window"
+    status = "before_window" if local.hour < 10 else "outside_window"
     if active_window:
         if mean is None:
-            return PremiumResult("incomplete_morning", [], count, None, None)
+            return PremiumResult("no_recent_dispatch", [], count, None, None)
         status = "signal_below_threshold" if floor is None else "active"
         if floor is not None and not base_fresh:
             return PremiumResult("base_forecast_stale", [], count, mean, floor)

@@ -677,7 +677,7 @@ def qld_short_lead_spike(mods: Any) -> Scenario:
 
 def qld_negative_midday(mods: Any) -> Scenario:
     """Negative midday prices below the fitted domain, a market-floor interval,
-    and a complete morning window so the QLD1 scarcity premium is active (#114)."""
+    and six recent dispatch prices so the QLD1 scarcity premium is active (#114)."""
     run_at = nem(2026, 9, 20, 7, 30)
     overrides: dict[str, float] = {}
     for day in (20, 21):
@@ -685,9 +685,11 @@ def qld_negative_midday(mods: Any) -> Scenario:
             overrides[iso(nem(2026, 9, day, 10, 30) + i * HALF_HOUR)] = value
     overrides[iso(nem(2026, 9, 21, 13, 30))] = -1.0
     market = SyntheticMarket(seed=17, region="QLD1", price_overrides=overrides, midday_depth=0.06)
+    # The last 30 minutes of QLD1 dispatch prices before the scenario clock,
+    # settlement ends 10:45 to 11:10: the scarcity premium's rolling signal.
     samples = {}
-    for i in range(36):
-        stamp = nem(2026, 9, 20, 7, 5) + timedelta(minutes=5 * i)
+    for i in range(6):
+        stamp = nem(2026, 9, 20, 10, 45) + timedelta(minutes=5 * i)
         samples[stamp.astimezone(UTC).isoformat()] = round(0.048 + 0.0009 * (i % 7), 6)
     return _common(
         mods, "qld_negative_midday", market,

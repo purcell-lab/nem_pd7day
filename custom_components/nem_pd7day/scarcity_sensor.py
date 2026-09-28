@@ -20,8 +20,10 @@ from .scarcity_premium import (
     TRIGGER,
     PremiumResult,
     build_premium,
+    SIGNAL_FRESHNESS,
+    SIGNAL_WINDOW,
     finite_price,
-    morning_samples,
+    recent_samples,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,26 +69,27 @@ class ScarcityPremiumSensor(CoordinatorEntity, SensorEntity):
             "region": "QLD1",
             "status": result.status,
             "experimental": True,
-            "model": "morning_price_floor_v1_unvalidated",
+            "model": "recent_price_floor_v2_unvalidated",
             "base_entity": self._base.entity_id,
             "base_value_field": "forecast.value",
-            "morning_samples": result.count,
-            "required_samples": 36,
-            "morning_mean_mwh": round(result.morning_mean * 1000, 3) if result.morning_mean is not None else None,
+            "signal_samples": result.count,
+            "signal_window_minutes": int(SIGNAL_WINDOW.total_seconds() // 60),
+            "signal_freshness_minutes": int(SIGNAL_FRESHNESS.total_seconds() // 60),
+            "signal_source": "QLD1 dispatch price (ELEC_NEM_SUMMARY)",
+            "signal_mean_mwh": round(result.signal_mean * 1000, 3) if result.signal_mean is not None else None,
             "target_floor_mwh": round(result.target_floor * 1000, 3) if result.target_floor is not None else None,
             "trigger_mwh": TRIGGER * 1000,
             "floor_cap_mwh": FLOOR_CAP * 1000,
             "premium_cap_mwh": PREMIUM_CAP * 1000,
-            "signal_window_nem": "07:00-10:00",
             "application_window_nem": "10:00-14:00",
-            "future_day_policy": "zero_pending_that_days_morning_observations",
+            "future_day_policy": "zero_outside_todays_application_window",
         }
 
     async def async_added_to_hass(self) -> None:
         self._storage = Store(self.hass, 1, f"{self._attr_unique_id}_samples")
         restored = await self._storage.async_load()
         if isinstance(restored, dict):
-            self._samples = morning_samples(restored, datetime.now(timezone.utc))
+            self._samples = recent_samples(restored, datetime.now(timezone.utc))
         await super().async_added_to_hass()
         if self._dispatch is not None:
             self.async_on_remove(self._dispatch.async_add_listener(self._queue_refresh))
@@ -116,7 +119,7 @@ class ScarcityPremiumSensor(CoordinatorEntity, SensorEntity):
     async def _async_refresh(self) -> None:
         async with self._lock:
             now = datetime.now(timezone.utc)
-            samples = morning_samples(self._samples, now)
+            samples = recent_samples(self._samples, now)
             price = self._dispatch.prices.get("QLD1") if self._dispatch is not None else None
             if price is not None:
                 try:
@@ -126,15 +129,16 @@ class ScarcityPremiumSensor(CoordinatorEntity, SensorEntity):
                         samples[stamp.astimezone(timezone.utc).isoformat()] = finite_price(price.rrp)
                 except (TypeError, ValueError):
                     pass
-            samples = morning_samples(samples, now)
+            samples = recent_samples(samples, now)
             if samples != self._samples:
                 self._samples = samples
                 if self._storage is not None:
                     self._storage.async_delay_save(lambda: dict(self._samples), 5)
             base_rows = []
             fresh = False
-            # Before the signal is ready there is no need to warm a forecast.
-            if 10 <= now.astimezone(NEM_TZ).hour < 14 and len(samples) == 36:
+            # Outside the application window, or with no recent price, there is
+            # no premium to apply, so no need to warm a forecast.
+            if 10 <= now.astimezone(NEM_TZ).hour < 14 and samples:
                 try:
                     await self._base._async_warm_calibrated_forecast()
                     data = self._base._price_data
