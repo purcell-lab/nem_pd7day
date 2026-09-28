@@ -1,0 +1,65 @@
+name: Library latest
+
+# #167: the integration pins aemo-to-tariff, and its GST correction
+# (tariff_pricing.LIB_APPLIES_GST) restates how that version treats each
+# network. The library is migrating networks to GST inclusive rates, so a new
+# release can make the table wrong. This job runs the behavioural library
+# probes against the newest release on PyPI and opens (or comments on) an
+# issue when they fail, so a migration is seen before the pin is bumped.
+
+on:
+  schedule:
+    - cron: "17 20 * * *"   # 06:17 AEST daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install test dependencies, then the newest aemo-to-tariff
+        run: |
+          pip install -r requirements-test.txt
+          pip install --upgrade aemo-to-tariff
+          python -c "import importlib.metadata as m; print('aemo-to-tariff', m.version('aemo-to-tariff'))" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The GST probes classify every network against the library's own
+      # tables and check every tariff is spot plus network (#158, #165); the
+      # pricing and catalogue tests check the library's call contract. The
+      # pin and fallback snapshot tests compare against the pinned version by
+      # design, so they are left out.
+      - name: Library probes
+        id: probes
+        run: >
+          pytest -q -p no:cacheprovider
+          tests/test_tariff_gst.py tests/test_tariff_pricing.py
+          tests/test_tariff_catalogue.py tests/test_tariff_extensions.py
+          -k "not fallback_snapshot and not manifest_pins"
+
+      - name: Open or update the drift issue
+        if: failure() && steps.probes.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          version=$(python -c "import importlib.metadata as m; print(m.version('aemo-to-tariff'))")
+          title="aemo-to-tariff ${version} fails the library probes"
+          body="The scheduled library-latest job ran the library probes against aemo-to-tariff ${version}, the newest release on PyPI, and they failed: ${RUN_URL}
+
+          The integration pins an older version, so installs are unaffected until the pin in manifest.json and requirements-test.txt is bumped. Check the failing probe before bumping: a GST classification failure means tariff_pricing.LIB_APPLIES_GST no longer matches the library (#167)."
+          existing=$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing: ${RUN_URL}"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
