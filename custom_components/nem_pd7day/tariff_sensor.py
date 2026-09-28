@@ -33,7 +33,7 @@ from .const import (
 from .calibrated_forecast import CalibratedForecast
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from . import tariff_pricing
-from .tariff_catalogue import library_version, priced_by_extension, tariff_name as catalogue_tariff_name
+from .tariff_catalogue import library_version, seasonal as seasonal_tariff, tariff_name as catalogue_tariff_name
 from .nem_time import _amber_express_cutoff, now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
@@ -357,7 +357,8 @@ class NemPd7dayTariffSensor(TariffEntityBase):
         # Per-instance single-entry caches: (cache_key_tuple, result_float)
         self._tariff_cache: tuple[tuple, float] | None = None
         self._period_tariff_cache: tuple[tuple, float] | None = None
-        # Static tariff structure — computed once at construction, never changes at runtime
+        # Computed once at construction; a seasonal tariff's periods are recomputed on read.
+        self._seasonal_periods = seasonal_tariff(distributor, tariff_code)
         self._cached_tariff_periods: list[dict[str, Any]] = self._get_tariff_periods()
         self._cached_daily_supply_charge: float | None = self._get_daily_supply_charge()
 
@@ -538,8 +539,8 @@ class NemPd7dayTariffSensor(TariffEntityBase):
         attribute is absent (e.g. when bypassing __init__ in tests).
         """
         cached = getattr(self, "_cached_tariff_periods", _MISSING)
-        if cached is _MISSING or priced_by_extension(self._distributor, self._tariff_code):
-            # An extension tariff's windows can change with the season, so the
+        if cached is _MISSING or getattr(self, "_seasonal_periods", False):
+            # A seasonal tariff's windows change with the date, so the
             # construction-time cache is not served for one.
             return self._get_tariff_periods()
         return cast("list[dict[str, Any]]", cached) or []
@@ -547,8 +548,7 @@ class NemPd7dayTariffSensor(TariffEntityBase):
     def _get_tariff_periods(self) -> list[dict[str, Any]]:
         """Return tariff period structure with rates converted to $/kWh.
 
-        An extension tariff's rows follow the season, so the pricer is given
-        the time; the library's rows take none.
+        The pricer is given the time, which picks the price year and any season.
         """
         if not tariff_pricing.library_available():
             return []
@@ -748,19 +748,16 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
         return self._compute_export_tariff(period, calibrated=calibrated)
 
     def _get_tariff_periods(self) -> list[dict[str, Any]]:
-        """Export tariffs have no TOU period structure in aemo_to_tariff.
+        """The ``export_periods`` attribute: credit or charge windows, not TOU periods.
 
         ``get_periods()`` only understands import tariff codes; passing an
         export code (e.g. Essential Energy ``BLNREX2``, Endeavour ``N61``)
-        raises ``ValueError: Unknown tariff code``. There is no feed-in
-        period/rate API, so we deliberately return an empty list — which
-        makes ``_lookup_period_info`` resolve to ``(None, None)``.
+        raises ``ValueError: Unknown tariff code``, so none is asked for.
         """
         pricer = tariff_pricing.pricer_for(self._distributor, self._export_code, export=True)
-        if pricer.source != tariff_pricing.SOURCE_EXTENSION:
-            return []
-        # An extension export tariff publishes the credit or charge rows in
-        # force this month, in $/kWh, with no library guard (spec 001).
+        # The credit or charge rows in force this month, in $/kWh, with no
+        # library guard (spec 001): an extension's, or a library table's
+        # month-gated rows (Powercor PRCER); every other export tariff has none.
         return tariff_pricing.feed_in_period_attributes(pricer.feed_in_rows(now_nem()))
 
     def _lookup_period_info(self, period) -> tuple[str | None, float | None]:

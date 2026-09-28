@@ -31,7 +31,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from support import PKG_DIR, install_ha_stubs, load_chain, make_price_period
+from support import EXTENSION_CODE as XCER, PKG_DIR, install_extension_fixture, load_chain, make_price_period, install_ha_stubs
 
 # Standalone copy, per the spec: tariff_pricing needs only the catalogue and
 # the extension table, and no HA stubs at all.
@@ -120,7 +120,9 @@ def test_export_dollars_is_a_plain_conversion():
 # ── Invariant 2: routing follows the catalogue ────────────────────────────────
 
 @pytest.mark.parametrize("export", [False, True], ids=["import", "export"])
-def test_pricer_for_makes_the_catalogue_decision_for_every_code(export):
+def test_pricer_for_makes_the_catalogue_decision_for_every_code(monkeypatch, export):
+    # The shipped table is empty (#165); the fixture entry keeps both kinds present.
+    install_extension_fixture(monkeypatch, tp)
     decisions = set()
     for distributor, code in _catalogue_codes(export):
         pricer = tp.pricer_for(distributor, code, export=export)
@@ -129,11 +131,8 @@ def test_pricer_for_makes_the_catalogue_decision_for_every_code(export):
         assert isinstance(pricer, tp.ExtensionPricer if by_extension else tp.LibraryPricer), (distributor, code)
         assert (pricer.distributor, pricer.code) == (distributor, code)
         assert pricer.source == ("nem_pd7day extension" if by_extension else "aemo-to-tariff")
-    # Non-vacuity: the catalogue carries both kinds while the library lacks PRCER.
-    assert False in decisions
-    if not _cat.priced_by_extension("powercor", "PRCER", export=export):
-        pytest.skip("the installed library carries powercor PRCER")
-    assert True in decisions
+    # Non-vacuity: the catalogue carries both kinds.
+    assert decisions == {False, True}
 
 
 def test_pricer_for_follows_priced_by_extension_when_it_changes_its_mind():
@@ -161,7 +160,7 @@ def test_library_feed_in_passes_no_loss_factors():
     lib.assert_called_once_with(END, "energex", "6900X", 87.5)
 
 
-def test_library_periods_ignore_the_time_and_daily_fee_takes_the_code():
+def test_library_periods_take_the_time_and_daily_fee_takes_the_code():
     rows = [("Peak", datetime.time(16), datetime.time(20), 25.0)]
     with patch.object(tp, "get_periods", return_value=iter(rows)) as periods, \
             patch.object(tp, "get_daily_fee", return_value=55.6) as fee:
@@ -169,7 +168,8 @@ def test_library_periods_ignore_the_time_and_daily_fee_takes_the_code():
         assert pricer.period_rows(END) == rows
         assert pricer.daily_fee() == 55.6
         assert pricer.feed_in_rows(END) == []
-    periods.assert_called_once_with("energex", "6900")
+    # The time picks the price year and a seasonal tariff's season (#165).
+    periods.assert_called_once_with("energex", "6900", END)
     fee.assert_called_once_with("energex", "6900")
 
 
@@ -181,27 +181,30 @@ def test_pricers_raise_what_the_underlying_call_raises():
         tp.ExtensionPricer("energex", "9999").daily_fee()
 
 
-def test_extension_feed_in_passes_the_default_loss_factors():
+def test_extension_feed_in_passes_the_default_loss_factors(monkeypatch):
     """#174: an extension export prices its spot the way the library's feed-in does."""
+    install_extension_fixture(monkeypatch, tp)
     real = tp.tariff_extensions.spot_to_feed_in_tariff
     winter_end = datetime.datetime(2026, 7, 15, 18, 0, tzinfo=NEM)
     with patch.object(tp.tariff_extensions, "spot_to_feed_in_tariff", side_effect=real) as ext:
-        value = tp.ExtensionPricer("powercor", "PRCER").feed_in_c_kwh(winter_end, 100.0)
-    ext.assert_called_once_with(winter_end, "powercor", "PRCER", 100.0, dlf=1.05905, mlf=1.0154, market=1.0154)
+        value = tp.ExtensionPricer("powercor", XCER).feed_in_c_kwh(winter_end, 100.0)
+    ext.assert_called_once_with(winter_end, "powercor", XCER, 100.0, dlf=1.05905, mlf=1.0154, market=1.0154)
     # A July evening interval carries the peak export credit.
     assert value == 100.0 * 1.05905 * 1.0154 * 1.0154 / 10 + 7.0
 
 
-def test_extension_import_passes_the_default_loss_factors():
+def test_extension_import_passes_the_default_loss_factors(monkeypatch):
+    install_extension_fixture(monkeypatch, tp)
     real = tp.tariff_extensions.spot_to_tariff
     with patch.object(tp.tariff_extensions, "spot_to_tariff", side_effect=real) as ext:
-        value = tp.ExtensionPricer("powercor", "PRCER").import_c_kwh(END, 100.0)
-    ext.assert_called_once_with(END, "powercor", "PRCER", 100.0, dlf=1.05905, mlf=1.0154, market=1.0154)
+        value = tp.ExtensionPricer("powercor", XCER).import_c_kwh(END, 100.0)
+    ext.assert_called_once_with(END, "powercor", XCER, 100.0, dlf=1.05905, mlf=1.0154, market=1.0154)
     assert value == 100.0 * 1.05905 * 1.0154 * 1.0154 / 10 + 20.80
 
 
-def test_extension_rows_and_fee_come_from_the_table_at_the_time_given():
-    pricer = tp.ExtensionPricer("powercor", "PRCER")
+def test_extension_rows_and_fee_come_from_the_table_at_the_time_given(monkeypatch):
+    install_extension_fixture(monkeypatch, tp)
+    pricer = tp.ExtensionPricer("powercor", XCER)
     winter = datetime.datetime(2026, 7, 15, 12, 0, tzinfo=NEM)
     autumn = datetime.datetime(2027, 4, 15, 12, 0, tzinfo=NEM)
     assert [row[-1] for row in pricer.period_rows(winter)] == [4.20, 1.00, 27.86, 4.20]
@@ -453,16 +456,15 @@ def _library(bound: bool):
         yield
 
 
-@pytest.mark.parametrize("distributor, code", [("energex", "6900"), ("powercor", "PRCER")])
-def test_every_guarded_sensor_method_gives_nothing_without_the_library(distributor, code):
-    if code == "PRCER" and not _cat.priced_by_extension(distributor, code):
-        pytest.skip("the installed library carries powercor PRCER")
+@pytest.mark.parametrize("distributor, code", [("energex", "6900"), ("powercor", XCER)])
+def test_every_guarded_sensor_method_gives_nothing_without_the_library(monkeypatch, distributor, code):
+    install_extension_fixture(monkeypatch, _tariff_mod)
     with _library(bound=True):
         # Control: with the library bound, every method produces a value, so
         # the None and [] below come from the guard and nothing else.
         present = _guarded_results(distributor, code)
     for name, value in present.items():
-        if name == "export _get_tariff_periods" and code != "PRCER":
+        if name == "export _get_tariff_periods" and code != XCER:
             assert value == [], name
         else:
             assert value not in (None, []), name

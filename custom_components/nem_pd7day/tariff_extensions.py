@@ -87,49 +87,9 @@ class ExtensionTariff:
         return 0.0
 
 
-def _t(h: int, m: int = 0) -> datetime.time:
-    return datetime.time(h, m)
-
-
-_PRCER_PEAK_SEASON = (12, 1, 2, 6, 7, 8)
-_PRCER_SHOULDER_SEASON = (3, 4, 5, 9, 10, 11)
-_PRCER_SAVER_EXPORT_MONTHS = (9, 10, 11, 12, 1, 2, 3, 4, 5)
-
-EXTENSIONS: dict[tuple[str, str], ExtensionTariff] = {
-    # Powercor Residential CER, the opt-in two-way tariff. Powercor 2026-27
-    # Tariff Summary (7 May 2026), sheet PAL_2026-27_NUOS, row "Residential
-    # CER", GST exclusive. The 1 kWh/day free export allowance on the saver
-    # export charge is a daily quantity and is not modelled per interval.
-    ("powercor", "PRCER"): ExtensionTariff(
-        distributor="powercor",
-        code="PRCER",
-        name="Residential CER",
-        timezone="Australia/Melbourne",
-        daily_fee_c=43.84,
-        seasons={
-            "peak_season": [
-                ("Off-peak", _t(0), _t(11), 4.20),
-                ("Saver", _t(11), _t(16), 1.00),
-                ("Peak", _t(16), _t(21), 27.86),
-                ("Off-peak", _t(21), _t(23, 59), 4.20),
-            ],
-            "shoulder_season": [
-                ("Off-peak", _t(0), _t(11), 4.20),
-                ("Saver", _t(11), _t(16), 1.00),
-                ("Peak", _t(16), _t(21), 20.80),
-                ("Off-peak", _t(21), _t(23, 59), 4.20),
-            ],
-        },
-        season_months={"peak_season": _PRCER_PEAK_SEASON, "shoulder_season": _PRCER_SHOULDER_SEASON},
-        feed_in_name="Residential CER Export",
-        feed_in_periods=[
-            ("Peak export credit", _t(16), _t(21), _PRCER_PEAK_SEASON, 7.00),
-            ("Saver export charge", _t(11), _t(16), _PRCER_SAVER_EXPORT_MONTHS, -1.00),
-        ],
-        source="Powercor 2026-27 Tariff Summary, 7 May 2026",
-        remove_when="aemo-to-tariff carries powercor PRCER (purcell-lab/aemo_to_tariff branch powercor-prcer)",
-    ),
-}
+# Empty while the installed library carries every tariff the integration
+# prices. Powercor PRCER lived here (#170) until aemo-to-tariff 0.7.28.
+EXTENSIONS: dict[tuple[str, str], ExtensionTariff] = {}
 
 
 def get(distributor: str, code: str) -> ExtensionTariff | None:

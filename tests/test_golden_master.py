@@ -146,12 +146,16 @@ def _stale(built: harness.Built, snap: dict) -> None:
 
 
 def _prcer(built: harness.Built, snap: dict) -> None:
-    extension = [
-        r for r in snap["entities"].values()
-        if (r.get("extra_state_attributes") or {}).get("tariff_source") == "nem_pd7day extension"
+    # The library prices PRCER from 0.7.28 (#165); September is shoulder
+    # season, so the export side carries only the saver export charge.
+    prcer = [
+        r["extra_state_attributes"] for r in snap["entities"].values()
+        if (r.get("extra_state_attributes") or {}).get("tariff_code") == "PRCER"
     ]
-    codes = {(r["extra_state_attributes"]["tariff_code"], "import_tariff_code" in r["extra_state_attributes"]) for r in extension}
-    assert ("PRCER", False) in codes and ("PRCER", True) in codes, codes
+    assert {a["tariff_source"] for a in prcer} == {"aemo-to-tariff"}, prcer
+    export = [a for a in prcer if "import_tariff_code" in a]
+    assert len(export) == 1 and len(prcer) > len(export), prcer
+    assert [p["period"] for p in export[0]["export_periods"]] == ["Saver export charge"]
 
 
 def _lor2(built: harness.Built, snap: dict) -> None:
