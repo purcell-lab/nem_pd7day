@@ -27,52 +27,67 @@ START in UTC; application hours are fixed NEM time, UTC+10 without DST.
 The series has 336 half-hour intervals plus a terminal zero boundary, covering
 seven days from the current half-hour. Step interpolation prevents ramps
 across boundaries. Zero outside today's application window means this policy
-does not apply a premium, not a prediction that tomorrow has no scarcity.
+does not apply a premium, not a prediction that later days have no scarcity:
+the signal describes the market now, not then.
 
 ## Explicit heuristic
 
-1. Capture all 36 unique five-minute dispatch prices for the physical window
-   07:00 to 10:00 NEM time. Dispatch interval ends are 07:05 through 10:00,
-   inclusive. Average them once each. No partial windows or future samples.
-2. Only after the complete window is available, activate if the mean is
-   strictly above $30/MWh.
-3. Target floor = lesser of that morning mean and $65/MWh.
-4. For today's 10:00 to 14:00 half-hours:
+1. Take the QLD1 dispatch prices (ELEC_NEM_SUMMARY, one per five-minute
+   interval, already fetched by the integration's dispatch coordinator) whose
+   settlement ends fall in the last 30 minutes: at most six. Average them.
+2. Use that mean only while its newest price is at most 10 minutes old.
+3. Activate if the mean is strictly above $30/MWh.
+4. Target floor = lesser of that mean and $65/MWh.
+5. For today's 10:00 to 14:00 half-hours, from the current one on:
    `premium = min(65, max(0, target_floor - base_forecast))`, in $/MWh.
-5. Divide by 1,000 for the published $/kWh series. Outside that window, zero.
+6. Divide by 1,000 for the published $/kWh series. Outside that window, zero.
 
-Example: morning mean $41/MWh and base forecast $10/MWh produces a $31/MWh
+The mean rolls: it is recomputed on every dispatch update and on a one-minute
+clock, so through the window the floor follows the market of the last half
+hour rather than a figure fixed at 10:00.
+
+Example: a recent mean of $41/MWh and base forecast $10/MWh produces a $31/MWh
 addition, published as `0.031`. If the forecast rises to $45/MWh, the premium
 is zero. The $65/MWh addition cap also applies to negative base prices, so the
 target floor is not guaranteed to be reached on deeply negative intervals.
 
-The trigger, floor cap and premium cap are named constants in
-`scarcity_premium.py`. They are policy choices, not fitted coefficients.
-The previous exploratory backtest did not establish an expected additive
-premium: it mixed interval resolutions, included an incomplete day in some
-statistics, and used an in-sample daytime price threshold rather than a
-forecast-error outcome. Its reported precision/recall are not deployment
-validation. The 07:00-10:00 signal is not available at 07:00.
+The trigger, floor cap, premium cap, 30-minute window and 10-minute freshness
+limit are named constants in `scarcity_premium.py`. They are policy choices,
+not fitted coefficients. The previous exploratory backtest did not establish
+an expected additive premium: it mixed interval resolutions, included an
+incomplete day in some statistics, and used an in-sample daytime price
+threshold rather than a forecast-error outcome. Its reported precision/recall
+are not deployment validation.
+
+### Why 30 minutes, not the 07:00-10:00 morning
+
+The first version averaged all 36 dispatch prices from 07:00 to 10:00 and
+used nothing unless every one had been observed live. A restart or a missed
+interval during that morning left the sensor unavailable for the whole
+10:00-14:00 window, as happened on 28 September 2026. The last 30 minutes of
+ELEC_NEM_SUMMARY is a simpler approximation of the same "is the market
+running hot" signal, and it recovers within one dispatch interval.
 
 ## Availability and persistence
 
 The sensor reuses the integration's existing five-minute dispatch coordinator;
-it makes no additional market requests. Samples are deduplicated by settlement
-end, saved to Home Assistant storage, restored after restart and reset by NEM
-calendar date. It must run through the full morning window; there is no
-historical backfill. First installation after 07:05 or a missed interval can
-therefore make it unavailable during today's 10:00-14:00 window.
+it makes no additional market requests. Prices are deduplicated by settlement
+end, kept for 30 minutes, saved to Home Assistant storage and restored after
+a restart. A partial window averages the prices present; `signal_samples`
+says how many. With no price newer than 10 minutes inside the application
+window the sensor is unavailable (`no_recent_dispatch`), not a zero premium;
+one fresh dispatch price makes it available again.
 
-Incomplete observations are unavailable during the application window, not
-a zero premium. An active signal also requires a fresh calibrated base
-forecast with every remaining application interval present. A stale forecast,
-missing interval or invalid numeric value suppresses the entire series.
-Before 10:00 and after 14:00, zero is an explicit inactive policy result.
-One-minute clock updates ensure the 14:00 and midnight transitions do not
-depend on receipt of a new market forecast.
+An active signal also requires a fresh calibrated base forecast with every
+remaining application interval present. A stale forecast, missing interval or
+invalid numeric value suppresses the entire series. Before 10:00 and after
+14:00, zero is an explicit inactive policy result. One-minute clock updates
+ensure the 14:00 and midnight transitions do not depend on receipt of a new
+market forecast.
 
-`status`, `morning_samples`, `required_samples`, `morning_mean_mwh`,
-`target_floor_mwh`, and `experimental` expose the decision inputs. The large
+`status`, `signal_samples`, `signal_window_minutes`,
+`signal_freshness_minutes`, `signal_source`, `signal_mean_mwh`,
+`target_floor_mwh` and `experimental` expose the decision inputs. The large
 forecast attribute is excluded from recorder history.
 
 ## HAEO connection
