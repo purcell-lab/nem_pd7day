@@ -101,7 +101,7 @@ from astral import LocationInfo
 from astral.sun import elevation as solar_elevation
 
 from .const import (
-    MARKET_PRICE_FLOOR,
+    MARKET_PRICE_FLOOR as MARKET_PRICE_FLOOR,  # importable from here, used in serving.py
     NEM_TZ,
     HORIZON_EDGES,
     HORIZON_LABELS,
@@ -116,23 +116,29 @@ from .const import (
     TOD_LABELS,
 )
 # The serving path (spec 005). The band provenance labels, the stage-1 source
-# and feature keys and the band helpers are defined there, once; the names
-# are imported here too so every caller that imports them from this module
-# keeps working.
+# and feature keys, the OLS horizon band, the stage-2 feature helper and the
+# band helpers are defined there, once; the names are imported here too so
+# every caller that imports them from this module keeps working.
 from .serving import (
-    BAND_SOURCE_KEY,
+    BAND_SOURCE_KEY as BAND_SOURCE_KEY,
     BAND_SOURCE_PASSTHROUGH as BAND_SOURCE_PASSTHROUGH,
     BAND_SOURCE_STAGE1 as BAND_SOURCE_STAGE1,
     BAND_SOURCE_STAGE1_RAW as BAND_SOURCE_STAGE1_RAW,
-    BAND_SOURCE_STAGE2,
-    BAND_SOURCE_STAGE2_FALLBACK,
-    ISO_FEATURE_KEY,
-    SOURCE_ISOTONIC_BELOW_DOMAIN,
-    _clamp_band,
+    BAND_SOURCE_STAGE2 as BAND_SOURCE_STAGE2,
+    BAND_SOURCE_STAGE2_FALLBACK as BAND_SOURCE_STAGE2_FALLBACK,
+    ISO_FEATURE_KEY as ISO_FEATURE_KEY,
+    OLS_MAX_HORIZON_H,
+    OLS_MIN_HORIZON_H,
+    SERVING_GATES,
+    SOURCE_ISOTONIC_BELOW_DOMAIN as SOURCE_ISOTONIC_BELOW_DOMAIN,
+    Stage2Context,
+    _clamp_band as _clamp_band,
     _order_band as _order_band,
     stage1_below_domain,
     stage1_isotonic,
     stage1_passthrough,
+    stage2_iso_feature,
+    stage2_result,
 )
 # ── Pure-numpy isotonic regression ───────────────────────────────────────────
 # Replaces sklearn.isotonic.IsotonicRegression to avoid a heavy optional
@@ -250,43 +256,6 @@ _LOGGER = logging.getLogger(__name__)
 SPIKE_THRESHOLD = 3.00  # $/kWh
 
 
-
-def stage2_iso_feature(calibrated: dict, forecast: float) -> float:
-    """The stage-1 value that stage 2 takes as its first OLS feature.
-
-    One definition, read by the stage-2 training path
-    (CalibrationEngine.fit_ols_stage2) and the serving path
-    (CalibrationResult.apply), so a row is fitted from the same number the
-    same interval would be served from. Drift between those two is the #68 bug
-    class, which is why this is a helper rather than a dict lookup written out
-    twice.
-
-    History: apply_all used to floor the published isotonic prediction at
-    0.0. For a mildly negative raw forecast, inside the fitted domain and so
-    genuinely served by stage 2, that floor set the
-    feature to exactly 0.0 while the settled actual was negative, and the
-    fitted iso_cal coefficient absorbed the error: +8.1 per cent from one such
-    row in a 78 row bucket, +87.5 per cent from sixteen. Issue #85 unfloored
-    the feature and kept the floor on the published price. Issue #114 then
-    removed the published floor as well: the isotonic model is fitted on
-    negative actuals like any other, so a negative prediction is a fitted
-    value, and publishing 0.0 in its place turned "paid to consume" into
-    "free" on about one interval in nine on the live install.
-
-    The feature and the published price are now the same number on the
-    isotonic path. The separate key is kept so a store or caller from before
-    the split keeps working, and so the two cannot drift apart again if a
-    floor is ever reintroduced on one side.
-
-    The dict fallbacks are for a caller holding a result dict built before this
-    split existed, which degrades to the previous behaviour instead of raising.
-    """
-    value = calibrated.get(ISO_FEATURE_KEY)
-    if value is None:
-        value = calibrated.get("calibrated", forecast)
-    return float(value)
-
-
 # ── Rolling observation window ────────────────────────────────────────────────
 # Only observations within the last N days are used when fitting the
 # calibration model.  This prevents stale/seasonal data from corrupting the
@@ -328,25 +297,8 @@ class Observation(NamedTuple):
     is_intervention: bool
 
 
-# ── STPASA OLS stage2 horizon gate ───────────────────────────────────────────
-# OLS residual correction is applied only inside this horizon band.  Below
-# OLS_MIN_HORIZON_H, Amber/CSIRO short-term forecasts dominate; above
-# OLS_MAX_HORIZON_H STPASA is empirically counterproductive (backtest).
-#
-# These stay static deliberately. STPASA coverage begins at a trading day
-# boundary, so the horizon at which it begins moves with run time, and the
-# serving path narrows its band per run in
-# sensor._stpasa_effective_min_horizon_h. The fit must not: its rows span many
-# historical runs with different coverage, so filtering them by the current
-# run's coverage would drop training data that was genuinely covered when it
-# was recorded. The fit already excludes uncovered intervals structurally,
-# because it joins on an exact interval_time|run_at key and skips rows with no
-# STPASA match.
-OLS_MIN_HORIZON_H = 22.0
-OLS_MAX_HORIZON_H = 120.0
-
 # Stage-2 feature order, after the intercept. Shared by fit_ols_stage2, the
-# serving path in CalibrationResult.apply and the diagnostic summary, so the
+# serving path in serving.FeatureDomainGate and the diagnostic summary, so the
 # ranges published on the calibration sensor are keyed by the name of the
 # feature they bound (issue #147).
 STAGE2_FEATURE_NAMES = (
@@ -832,8 +784,16 @@ class CalibrationResult:
     ols_models: dict[str, OlsModel] = field(default_factory=dict)
 
     def get_bucket(self, horizon_hours: float, hour_of_day: int) -> BucketModel:
-        key = _bucket_key(horizon_hours, hour_of_day)
-        return self.models.get(key, BucketModel(bucket_key=key))
+        return self._bucket_for(_bucket_key(horizon_hours, hour_of_day))
+
+    def _bucket_for(self, key: str) -> BucketModel:
+        # The same answer as models.get(key, BucketModel(bucket_key=key)), but
+        # the default, four dataclasses deep, is built only when the key is
+        # missing rather than on every interval served (spec 005 benchmark).
+        models = self.models
+        if key in models:
+            return models[key]
+        return BucketModel(bucket_key=key)
 
     def apply(
         self,
@@ -843,167 +803,31 @@ class CalibrationResult:
         stpasa: "StpasaFeatures | None" = None,
         run_features: "RunFeatures | None" = None,
     ) -> dict:
-        # 1. Isotonic (existing) result.
-        bucket = self.get_bucket(horizon_hours, hour_of_day)
-        result = bucket.apply_all(forecast)
+        """Calibrated price, band and labels for one interval.
 
-        # 2a. Gate: never override a below-domain clip.
-        #
-        #     WHY: below the bucket's fitted domain the stage-1 value is the
-        #     edge level, not a fit at this forecast, and the stage-2 OLS was
-        #     fitted on rows inside that domain, so a prediction there is
-        #     extrapolation on both features. It also carries an asymmetric cost: a positive
-        #     prediction over a deeply negative raw forecast flips the
-        #     published sign, turning "paid to consume" into "pay to consume",
-        #     which is the one error a battery or controllable load schedule
-        #     cannot absorb. The sign-disagreement fallback in step 6 protects
-        #     the served region; this gate protects the region the fit never
-        #     covered. See #73, #114 and #117.
-        if result.get("calibrated_source") == SOURCE_ISOTONIC_BELOW_DOMAIN:
-            return result
-
-        # 2b. Gate: STPASA correction only inside the OLS horizon band, and only
-        #    when both feature groups are present.
-        if (
-            stpasa is None
-            or run_features is None
-            or horizon_hours < OLS_MIN_HORIZON_H
-            or horizon_hours > OLS_MAX_HORIZON_H
-        ):
-            return result
-
-        # 3. Look up the OLS model for this bucket.
+        Stage 1 is the bucket's apply_all. Stage 2, the STPASA correction,
+        replaces it only when every gate in serving.SERVING_GATES admits the
+        interval; the first gate that refuses serves the stage 1 dict itself,
+        unchanged. See serving.py (spec 005) for each gate and its issues.
+        """
+        # 1. Isotonic (existing) result. The key routes both stages, as
+        #    get_bucket and the stage 2 model lookup each computed it before.
         key = _bucket_key(horizon_hours, hour_of_day)
-        ols = self.ols_models.get(key)
-        if ols is None or len(ols.coef) < 2:
-            return result
+        bucket = self._bucket_for(key)
+        stage1 = bucket.apply_all(forecast)
 
-        # 4. Build the 8-feature vector (intercept handled inside predict()).
-        #    The feature is the unfloored stage-1 value, which differs from the
-        #    published one only inside the floored band, and is read through
-        #    the same helper fit_ols_stage2 uses. See issue #85.
-        iso_cal = stage2_iso_feature(result, forecast)
-        feature_vec = [
-            float(iso_cal),
-            run_features.run_max_h6_rrp,
-            run_features.run_mean_rrp,
-            run_features.run_spread,
-            horizon_hours / 168.0,
-            stpasa.log_surplus,
-            stpasa.log_solar,
-            stpasa.log_demand,
-            stpasa.poe_spread_n,
-        ]
-
-        # 5a. Gate: serve stage 2 only where its extrapolation is within the
-        #     uncertainty the bucket already publishes. #123's principle
-        #     applied to stage 2: below the evidence, publish the evidence.
-        #     A feature outside its training range means the prediction is an
-        #     extrapolation of a linear model, and the sign and floor gates
-        #     below cannot tell a plausible extrapolation from a blow-up that
-        #     happens to land between the floor and zero, which is exactly
-        #     what -$0.86 for a raw -$0.10 was (#147). The excursion is
-        #     weighed by the coefficient it multiplies against half the
-        #     bucket's residual spread (#153), so a hairline excursion on a
-        #     feature the model barely uses does not cost the row its
-        #     correction while the #147 case still cannot be served. See
-        #     OlsModel.serves.
-        if not ols.serves(feature_vec):
-            return result
-
-        # 5b. Predict.
-        prediction = ols.predict(feature_vec)
-
-        # 6. Fall back to the isotonic result when stage 2 disagrees with it on
-        #    sign. Before issue #114 this was `prediction <= 0.0`, which existed
-        #    to stop a positive stage-1 value being flipped negative and, as a
-        #    side effect, made stage 2 unable to publish a negative at all. Now
-        #    that stage 1 publishes negatives, the protection is symmetric: a
-        #    negative stage-1 value is not flipped positive, which is the error
-        #    #73 called out ("paid to consume" becoming "pay to consume"), and
-        #    a non-negative one is not flipped negative. Where both agree on
-        #    sign, including both negative, the stage-2 value is served.
-        iso_value = float(result["calibrated"])
-        if (prediction < 0.0) != (iso_value < 0.0):
-            return result
-        #    Below the market floor is not a price; treat it like the sign
-        #    disagreement rather than publishing it.
-        if prediction < MARKET_PRICE_FLOOR:
-            return result
-
-        # 7. Replace the point estimate, then re-clamp the band around it.
-        #
-        #    apply_all() in step 1 clamped the band against the *isotonic*
-        #    value.  Replacing the point estimate and inheriting that band
-        #    published a value outside its own p10 to p90 whenever the stage-2
-        #    prediction moved past a stage-1 bound, which on a five-region
-        #    snapshot was 522 of 3075 intervals across 9 sensors (issue #69).
-        #
-        #    The band is re-derived from the unclamped quantile fits rather
-        #    than from the already-clamped stage-1 band, so the result is
-        #    exactly what apply_all() would have returned had the stage-2
-        #    value been the point estimate all along.  Re-clamping the clamped
-        #    band instead would inherit a p10 pulled down to the isotonic
-        #    value and publish a looser interval than the fits support.
-        #
-        #    Re-clamping made the triple self-consistent; it did not make the
-        #    band a stage-2 interval.  The quantile fits know nothing about the
-        #    STPASA features, so where the prediction landed outside them the
-        #    nearer bound was pulled onto the point estimate, reporting zero
-        #    uncertainty on that side.  On the first live measurement, a single
-        #    residential premises in SE Queensland, QLD1, the run at
-        #    2026-09-03T07:30:00+10:00, that was 98 of 330 intervals, up from 36
-        #    before the re-clamp, and strongly one-sided: 82 onto p10 against 16
-        #    onto p90.  The band also did not tighten, median width 0.035764 to
-        #    0.036862 $/kWh.  See issue #72.
-        #
-        #    So the band is now built from the stage-2 model's own residual
-        #    quantiles when the bucket has them: prediction plus the 10th, 50th
-        #    and 90th percentile of its leave-one-out residuals.  That band is
-        #    centred on the prediction by construction, so it contains it
-        #    without any clamping and cannot collapse.
-        #
-        #    _clamp_band is still applied on top, for two reasons that are not
-        #    about containment: it floors p10 at the market price floor, the
-        #    same floor every other published lower bound carries, and it is
-        #    the one place the ordering and containment invariants are enforced,
-        #    so leaving it out would make this the only published triple not
-        #    passing through them.  On the residual path it is a no-op except
-        #    for that floor.
-        out = dict(result)
-        out["calibrated"] = round(prediction, 6)
-        out["calibrated_source"] = "isotonic+stpasa"
-        out["stpasa_run_at"] = stpasa.stpasa_run_at
-
-        resid_band = ols.residual_band(prediction)
-        if resid_band is not None:
-            raw_p10, raw_p50, raw_p90 = resid_band
-            band_source = BAND_SOURCE_STAGE2
-        else:
-            # Fallback: a bucket with coefficients but no usable residual
-            # quantiles.  Reached by a store written before issue #72, until the
-            # next engine fit rewrites it, and by a bucket whose residual sample
-            # failed the validity check in ResidualQuantiles.is_fitted.
-            #
-            # WHY the old behaviour rather than something safer: the choice is
-            # between publishing v3.4.0's re-clamped stage-1 band, which is
-            # self-consistent but can collapse a bound, and withholding the
-            # stage-2 point estimate entirely, which would move the published
-            # price on a path that is otherwise working.  Moving the price to
-            # improve the band is the larger change of the two, so the point
-            # estimate is kept and the band is labelled.  This is a judgement
-            # call and it is written up on the pull request: nothing collapses
-            # silently, because BAND_SOURCE_STAGE2_FALLBACK is published on the
-            # interval and the fit logs a warning naming the buckets.
-            raw_p10, raw_p50, raw_p90 = bucket.raw_band(forecast)
-            band_source = BAND_SOURCE_STAGE2_FALLBACK
-
-        p10, p50, p90 = _clamp_band(prediction, raw_p10, raw_p50, raw_p90)
-        out["p10"] = round(p10, 6) if p10 is not None else None
-        out["p50"] = round(p50, 6) if p50 is not None else None
-        out["p90"] = round(p90, 6) if p90 is not None else None
-        out[BAND_SOURCE_KEY] = band_source
-        return out
+        # 2. The gates, in order; then the stage 2 result. Positional, in
+        #    Stage2Context's field order: keywords cost a third of the
+        #    pipeline's overhead on the serving hot path.
+        ctx = Stage2Context(
+            forecast, horizon_hours, hour_of_day, stage1, bucket, stpasa, run_features, key
+        )
+        for gate in SERVING_GATES:
+            admitted = gate(ctx, self.ols_models)
+            if admitted is None:
+                return stage1
+            ctx = admitted
+        return stage2_result(ctx)
 
     def summary(self) -> dict[str, Any]:
         """Compact summary for diagnostic sensor attributes.
