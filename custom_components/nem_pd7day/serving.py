@@ -33,7 +33,18 @@ from typing import Final, Mapping, Protocol
 
 import numpy as np
 
-from .const import ATTR_CAL_BAND_SOURCE, MARKET_PRICE_FLOOR
+from .const import ATTR_CAL_BAND_SOURCE, MARKET_PRICE_FLOOR, SPIKE_GAS_THRESHOLD_TJ
+
+# ── Spike regime threshold ────────────────────────────────────────────────────
+# SPIKE_THRESHOLD applies to observation training only:
+#   Observations where EITHER actual_rrp OR pd7day_forecast >= threshold are
+#   excluded from isotonic/quantile fitting.  Spike actuals poison the y-side
+#   of the fit; spike forecasts are extreme x leverage points that collapse
+#   slopes at non-spike forecast levels.
+# All inputs (including spikes) proceed through the isotonic model at calibration
+# time; out_of_bounds='clip' returns the training-range maximum for spike inputs.
+# $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
+SPIKE_THRESHOLD = 3.00  # $/kWh
 
 # ── Below-domain clip ────────────────────────────────────────────────────────
 # A raw forecast below the smallest forecast a bucket was fitted on is outside
@@ -688,3 +699,62 @@ def stage2_result(ctx: Stage2Context) -> dict:
     out["p90"] = round(p90, 6) if p90 is not None else None
     out[BAND_SOURCE_KEY] = band_source
     return out
+
+
+# ── CalibrationStore.apply_to_price ─────────────────────────────────────────
+
+def passthrough_result(raw_price: float) -> dict:
+    """What apply_to_price publishes when nothing is fitted or restored yet."""
+    return {
+        "calibrated": round(raw_price, 6),
+        "p10": None,
+        "p50": None,
+        "p90": None,
+        "ols_mae": None,
+        "calibrated_source": "passthrough",
+        "n_obs": 0,
+    }
+
+
+def annotate_spike(
+    cal: dict,
+    raw_price: float,
+    gas_forecast_tj: float | None,
+    network_tight: bool | None,
+) -> dict:
+    """Add ``spike_credible`` to ``cal`` in spike territory; mutates and returns it.
+
+    Not a serving gate: it never refuses and never changes a published value,
+    so it runs after the pipeline, on whatever the pipeline served, including
+    the stage 1 dict a gate returned.
+    """
+    # Spike credibility annotation: when raw_price is in spike territory,
+    # annotate whether the gas and network covariates support the spike
+    # signal. The calibrated value is NEVER modified by this gate, it always
+    # uses the isotonic result. The gate is purely informational.
+    #
+    # network_tight is computed per region from that region's own
+    # interconnectors, in that region's own direction. It replaced a
+    # hardcoded Queensland to New South Wales flow test that scored every
+    # region on one link and left three regions unable to return anything
+    # but None. See issue #176.
+    #
+    # This is the raw gate result and it stays raw. The short-lead
+    # suppression that calibration called for is applied where the flag is
+    # published as a sensor attribute, not here, because the chart callout
+    # path reads this value and is deliberately left on the gate.
+    # See SPIKE_COVARIATE_MIN_HORIZON_H and sensor._published_spike_credible.
+    if raw_price >= SPIKE_THRESHOLD:
+        if (
+            gas_forecast_tj is not None
+            and network_tight is not None
+        ):
+            cal["spike_credible"] = bool(
+                gas_forecast_tj > SPIKE_GAS_THRESHOLD_TJ
+                and network_tight
+            )
+        else:
+            cal["spike_credible"] = None
+    # else: raw below spike territory — no spike_credible key
+
+    return cal

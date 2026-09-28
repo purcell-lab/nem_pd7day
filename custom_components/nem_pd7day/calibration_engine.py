@@ -116,9 +116,10 @@ from .const import (
     TOD_LABELS,
 )
 # The serving path (spec 005). The band provenance labels, the stage-1 source
-# and feature keys, the OLS horizon band, the stage-2 feature helper and the
-# band helpers are defined there, once; the names are imported here too so
-# every caller that imports them from this module keeps working.
+# and feature keys, the spike threshold, the OLS horizon band, the stage-2
+# feature helper and the band helpers are defined there, once; the names are
+# imported here too so every caller that imports them from this module keeps
+# working.
 from .serving import (
     BAND_SOURCE_KEY as BAND_SOURCE_KEY,
     BAND_SOURCE_PASSTHROUGH as BAND_SOURCE_PASSTHROUGH,
@@ -131,6 +132,7 @@ from .serving import (
     OLS_MIN_HORIZON_H,
     SERVING_GATES,
     SOURCE_ISOTONIC_BELOW_DOMAIN as SOURCE_ISOTONIC_BELOW_DOMAIN,
+    SPIKE_THRESHOLD,
     Stage2Context,
     _clamp_band as _clamp_band,
     _order_band as _order_band,
@@ -243,18 +245,6 @@ class IsotonicRegression:
 
 
 _LOGGER = logging.getLogger(__name__)
-
-# ── Spike regime threshold ────────────────────────────────────────────────────
-# SPIKE_THRESHOLD applies to observation training only:
-#   Observations where EITHER actual_rrp OR pd7day_forecast >= threshold are
-#   excluded from isotonic/quantile fitting.  Spike actuals poison the y-side
-#   of the fit; spike forecasts are extreme x leverage points that collapse
-#   slopes at non-spike forecast levels.
-# All inputs (including spikes) proceed through the isotonic model at calibration
-# time; out_of_bounds='clip' returns the training-range maximum for spike inputs.
-# $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
-SPIKE_THRESHOLD = 3.00  # $/kWh
-
 
 # ── Rolling observation window ────────────────────────────────────────────────
 # Only observations within the last N days are used when fitting the
