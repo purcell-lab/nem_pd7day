@@ -573,7 +573,7 @@ class NemPd7dayTariffSensor(TariffEntityBase):
         if not tariff_pricing.library_available():
             return None
         try:
-            return tariff_pricing.pricer_for(self._distributor, self._tariff_code).daily_fee()
+            return tariff_pricing.dollars_per_day(tariff_pricing.pricer_for(self._distributor, self._tariff_code).daily_fee())
         except Exception:
             return None
 

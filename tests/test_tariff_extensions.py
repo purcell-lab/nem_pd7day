@@ -223,9 +223,8 @@ def test_import_sensor_prices_the_cer_schedule(sensor_fixture_entry, monkeypatch
     _sensor_module_clock(monkeypatch, sensor, end)
     attrs = sensor.extra_state_attributes
     assert attrs["tariff_source"] == source
-    # The attribute carries what get_daily_fee returns, c/day, for library
-    # tariffs and extension tariffs alike (its name says $; see #171).
-    assert attrs["daily_supply_charge_$"] == pytest.approx(43.84)
+    # The schedule's 43.84 c/day, published in $/day (#171).
+    assert attrs["daily_supply_charge_$"] == 0.4384
     # The season at the sensor's clock, not the wall clock's.
     assert [p["network_rate_$/kwh"] for p in attrs["tariff_periods"]] == [0.042, 0.01, 0.2786, 0.042]
     _sensor_module_clock(monkeypatch, sensor, _end(10, 12))

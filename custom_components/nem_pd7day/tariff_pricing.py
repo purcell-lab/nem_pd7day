@@ -305,6 +305,11 @@ def period_attributes(rows: Iterable[PeriodRow]) -> list[dict[str, Any]]:
     return periods
 
 
+def dollars_per_day(fee_c_day: float | None) -> float | None:
+    """A pricer's daily fee, which is c/day as the library returns it, in $/day (#171)."""
+    return None if fee_c_day is None else round(fee_c_day / 100, 6)
+
+
 def feed_in_period_attributes(rows: Iterable[FeedInRow]) -> list[dict[str, Any]]:
     """Feed-in rows as the ``export_periods`` attribute.
 
