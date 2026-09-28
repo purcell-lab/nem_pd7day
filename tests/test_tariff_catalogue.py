@@ -215,6 +215,25 @@ def test_fallback_snapshot_matches_the_pinned_library():
         assert sorted(_const.DISTRIBUTOR_TARIFFS[distributor]) == sorted(_lib_import_table(distributor)), distributor
 
 
+def test_the_manifest_pins_the_library_version_ci_tests():
+    """#167: GST handling and the catalogue restate a pinned library, so installs get that version.
+
+    A floor let Home Assistant resolve a newer release than CI had tested; the
+    per-network GST table (tariff_pricing.LIB_APPLIES_GST) would then quietly
+    double count again on any network the library migrates. The pin moves only
+    with requirements-test.txt; library-latest.yml probes the newest release.
+    """
+    import json
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    manifest = json.loads((root / "custom_components" / "nem_pd7day" / "manifest.json").read_text())
+    pins = [r for r in manifest["requirements"] if r.startswith("aemo-to-tariff")]
+    tested = re.search(r"^aemo-to-tariff==(\S+)$", (root / "requirements-test.txt").read_text(), re.M)
+    assert tested and pins == [f"aemo-to-tariff=={tested.group(1)}"], (pins, tested)
+
+
 def test_without_the_library_the_constants_are_used(monkeypatch):
     monkeypatch.setattr(_cat, "_att", None)
     assert not _cat.library_available()
