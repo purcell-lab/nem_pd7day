@@ -55,7 +55,6 @@ from .const import (
     _LEGACY_OBS_KEY,
     MAX_FORECAST_AGE_DAYS,
     NEM_TZ,
-    SPIKE_GAS_THRESHOLD_TJ,
     STORAGE_VERSION,
     storage_keys,
 )
@@ -68,6 +67,7 @@ from .refit_service import (
     iso_history_record,
     stpasa_feature_map,
 )
+from .serving import annotate_spike, passthrough_result
 
 if TYPE_CHECKING:
     from .pd7day_client import PD7DayData, InterconnectorData, CaseSolutionData, MarketSummaryData
@@ -443,15 +443,7 @@ class CalibrationStore:
         run_features: "RunFeatures | None" = None,
     ) -> dict:
         if self._calibration is None:
-            return {
-                "calibrated": round(raw_price, 6),
-                "p10": None,
-                "p50": None,
-                "p90": None,
-                "ols_mae": None,
-                "calibrated_source": "passthrough",
-                "n_obs": 0,
-            }
+            return passthrough_result(raw_price)
         cal = self._calibration.apply(
             raw_price,
             horizon_hours,
@@ -459,38 +451,8 @@ class CalibrationStore:
             stpasa=stpasa_features,
             run_features=run_features,
         )
-
-        # Spike credibility annotation: when raw_price is in spike territory,
-        # annotate whether the gas and network covariates support the spike
-        # signal. The calibrated value is NEVER modified by this gate, it always
-        # uses the isotonic result. The gate is purely informational.
-        #
-        # network_tight is computed per region from that region's own
-        # interconnectors, in that region's own direction. It replaced a
-        # hardcoded Queensland to New South Wales flow test that scored every
-        # region on one link and left three regions unable to return anything
-        # but None. See issue #176.
-        #
-        # This is the raw gate result and it stays raw. The short-lead
-        # suppression that calibration called for is applied where the flag is
-        # published as a sensor attribute, not here, because the chart callout
-        # path reads this value and is deliberately left on the gate.
-        # See SPIKE_COVARIATE_MIN_HORIZON_H and sensor._published_spike_credible.
-        from .calibration_engine import SPIKE_THRESHOLD
-        if raw_price >= SPIKE_THRESHOLD:
-            if (
-                gas_forecast_tj is not None
-                and network_tight is not None
-            ):
-                cal["spike_credible"] = bool(
-                    gas_forecast_tj > SPIKE_GAS_THRESHOLD_TJ
-                    and network_tight
-                )
-            else:
-                cal["spike_credible"] = None
-        # else: raw below spike territory — no spike_credible key
-
-        return cal
+        # The spike credibility annotation (#176), informational only.
+        return annotate_spike(cal, raw_price, gas_forecast_tj, network_tight)
 
     @property
     def oldest_observation(self) -> str | None:

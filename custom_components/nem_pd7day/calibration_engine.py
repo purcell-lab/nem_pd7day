@@ -101,9 +101,8 @@ from astral import LocationInfo
 from astral.sun import elevation as solar_elevation
 
 from .const import (
-    MARKET_PRICE_FLOOR,
+    MARKET_PRICE_FLOOR as MARKET_PRICE_FLOOR,  # importable from here, used in serving.py
     NEM_TZ,
-    ATTR_CAL_BAND_SOURCE,
     HORIZON_EDGES,
     HORIZON_LABELS,
     IRLS_EPS,
@@ -115,6 +114,33 @@ from .const import (
     STAGE2_LEVERAGE_MULTIPLE,
     QUANTILES,
     TOD_LABELS,
+)
+# The serving path (spec 005). The band provenance labels, the stage-1 source
+# and feature keys, the spike threshold, the OLS horizon band, the stage-2
+# feature helper and the band helpers are defined there, once; the names are
+# imported here too so every caller that imports them from this module keeps
+# working.
+from .serving import (
+    BAND_SOURCE_KEY as BAND_SOURCE_KEY,
+    BAND_SOURCE_PASSTHROUGH as BAND_SOURCE_PASSTHROUGH,
+    BAND_SOURCE_STAGE1 as BAND_SOURCE_STAGE1,
+    BAND_SOURCE_STAGE1_RAW as BAND_SOURCE_STAGE1_RAW,
+    BAND_SOURCE_STAGE2 as BAND_SOURCE_STAGE2,
+    BAND_SOURCE_STAGE2_FALLBACK as BAND_SOURCE_STAGE2_FALLBACK,
+    ISO_FEATURE_KEY as ISO_FEATURE_KEY,
+    OLS_MAX_HORIZON_H,
+    OLS_MIN_HORIZON_H,
+    SERVING_GATES,
+    SOURCE_ISOTONIC_BELOW_DOMAIN as SOURCE_ISOTONIC_BELOW_DOMAIN,
+    SPIKE_THRESHOLD,
+    Stage2Context,
+    _clamp_band as _clamp_band,
+    _order_band as _order_band,
+    stage1_below_domain,
+    stage1_isotonic,
+    stage1_passthrough,
+    stage2_iso_feature,
+    stage2_result,
 )
 # ── Pure-numpy isotonic regression ───────────────────────────────────────────
 # Replaces sklearn.isotonic.IsotonicRegression to avoid a heavy optional
@@ -220,108 +246,6 @@ class IsotonicRegression:
 
 _LOGGER = logging.getLogger(__name__)
 
-# ── Spike regime threshold ────────────────────────────────────────────────────
-# SPIKE_THRESHOLD applies to observation training only:
-#   Observations where EITHER actual_rrp OR pd7day_forecast >= threshold are
-#   excluded from isotonic/quantile fitting.  Spike actuals poison the y-side
-#   of the fit; spike forecasts are extreme x leverage points that collapse
-#   slopes at non-spike forecast levels.
-# All inputs (including spikes) proceed through the isotonic model at calibration
-# time; out_of_bounds='clip' returns the training-range maximum for spike inputs.
-# $3.00/kWh = $3,000/MWh — well above typical peak volatility, below genuine spike territory.
-SPIKE_THRESHOLD = 3.00  # $/kWh
-
-# ── Below-domain clip ────────────────────────────────────────────────────────
-# A raw forecast below the smallest forecast a bucket was fitted on is outside
-# the isotonic model's domain, and there is no settled actual in the window
-# near it, so the raw value is not relied on. The bucket answers as if the
-# forecast were at its floor:
-#
-#     calibrated(x) = iso(x_min)                             for x < x_min
-#     band(x)       = quantile lines at x_min, clamped to contain it
-#
-# labelled SOURCE_ISOTONIC_BELOW_DOMAIN. This is out_of_bounds="clip", the
-# isotonic model's own behaviour, applied to the band as well as the point, so
-# the published triple below the floor is the published triple at the floor.
-# Continuous, monotone, no constant, and independent of how deep AEMO went.
-# The raw value stays available as raw_rrp on every forecast entry.
-#
-# History. A fixed NEGATIVE_PASSTHROUGH_THRESHOLD of -0.10 $/kWh sent every
-# forecast at or below it straight through with a zero-width band (issue
-# #117). v3.8.0 replaced it with a raw passthrough below the bucket's domain,
-# which put a step at the domain floor on every QLD1 morning ramp (issue
-# #120). v3.8.1 shifted the raw value by the edge correction, which removed
-# the step but kept AEMO's depth: a -0.667 $/kWh PD7DAY value six days out,
-# in a bucket with evidence down to -0.10, was published as -0.639 (issue
-# #123). Below the evidence, publish the evidence.
-SOURCE_ISOTONIC_BELOW_DOMAIN = "isotonic_below_domain"
-
-
-# Key under which BucketModel.apply_all publishes the stage-1 value that stage 2
-# uses as its first feature. It is deliberately NOT the published "calibrated"
-# price: see stage2_iso_feature below and issue #85.
-ISO_FEATURE_KEY = "iso_feature"
-
-# ── Band provenance ──────────────────────────────────────────────────────────
-# Which model produced the published p10/p50/p90, published alongside them
-# because the answer is no longer always "the stage-1 quantile lines" and a
-# consumer cannot tell from the numbers themselves. Issue #72 asked for this
-# explicitly: the fallback band and the stage-2 band look identical in the
-# attributes and mean quite different things.
-# One definition, imported from const so the engine and the sensor attribute
-# cannot drift apart the way the calibration inputs did in issue #66.
-BAND_SOURCE_KEY = ATTR_CAL_BAND_SOURCE
-# The three stage-1 quantile lines, clamped to contain the isotonic value.
-BAND_SOURCE_STAGE1 = "stage1_quantile"
-# Same lines, unclamped, on the passthrough path. See apply_all.
-BAND_SOURCE_STAGE1_RAW = "stage1_quantile_unclamped"
-# No fitted quantile line to build a band from on the below-domain path.
-BAND_SOURCE_PASSTHROUGH = "raw_passthrough"
-# Stage-2 leave-one-out residual quantiles added to the stage-2 prediction.
-BAND_SOURCE_STAGE2 = "stage2_residual"
-# Stage-2 point estimate with the stage-1 lines re-clamped around it, which is
-# what v3.4.0 always published. Now reached only when a bucket has OLS
-# coefficients but no usable residual quantiles, and a bound can still collapse
-# onto the point estimate here.
-BAND_SOURCE_STAGE2_FALLBACK = "stage1_quantile_reclamped"
-
-
-def stage2_iso_feature(calibrated: dict, forecast: float) -> float:
-    """The stage-1 value that stage 2 takes as its first OLS feature.
-
-    One definition, read by the stage-2 training path
-    (CalibrationEngine.fit_ols_stage2) and the serving path
-    (CalibrationResult.apply), so a row is fitted from the same number the
-    same interval would be served from. Drift between those two is the #68 bug
-    class, which is why this is a helper rather than a dict lookup written out
-    twice.
-
-    History: apply_all used to floor the published isotonic prediction at
-    0.0. For a mildly negative raw forecast, inside the fitted domain and so
-    genuinely served by stage 2, that floor set the
-    feature to exactly 0.0 while the settled actual was negative, and the
-    fitted iso_cal coefficient absorbed the error: +8.1 per cent from one such
-    row in a 78 row bucket, +87.5 per cent from sixteen. Issue #85 unfloored
-    the feature and kept the floor on the published price. Issue #114 then
-    removed the published floor as well: the isotonic model is fitted on
-    negative actuals like any other, so a negative prediction is a fitted
-    value, and publishing 0.0 in its place turned "paid to consume" into
-    "free" on about one interval in nine on the live install.
-
-    The feature and the published price are now the same number on the
-    isotonic path. The separate key is kept so a store or caller from before
-    the split keeps working, and so the two cannot drift apart again if a
-    floor is ever reintroduced on one side.
-
-    The dict fallbacks are for a caller holding a result dict built before this
-    split existed, which degrades to the previous behaviour instead of raising.
-    """
-    value = calibrated.get(ISO_FEATURE_KEY)
-    if value is None:
-        value = calibrated.get("calibrated", forecast)
-    return float(value)
-
-
 # ── Rolling observation window ────────────────────────────────────────────────
 # Only observations within the last N days are used when fitting the
 # calibration model.  This prevents stale/seasonal data from corrupting the
@@ -363,25 +287,8 @@ class Observation(NamedTuple):
     is_intervention: bool
 
 
-# ── STPASA OLS stage2 horizon gate ───────────────────────────────────────────
-# OLS residual correction is applied only inside this horizon band.  Below
-# OLS_MIN_HORIZON_H, Amber/CSIRO short-term forecasts dominate; above
-# OLS_MAX_HORIZON_H STPASA is empirically counterproductive (backtest).
-#
-# These stay static deliberately. STPASA coverage begins at a trading day
-# boundary, so the horizon at which it begins moves with run time, and the
-# serving path narrows its band per run in
-# sensor._stpasa_effective_min_horizon_h. The fit must not: its rows span many
-# historical runs with different coverage, so filtering them by the current
-# run's coverage would drop training data that was genuinely covered when it
-# was recorded. The fit already excludes uncovered intervals structurally,
-# because it joins on an exact interval_time|run_at key and skips rows with no
-# STPASA match.
-OLS_MIN_HORIZON_H = 22.0
-OLS_MAX_HORIZON_H = 120.0
-
 # Stage-2 feature order, after the intercept. Shared by fit_ols_stage2, the
-# serving path in CalibrationResult.apply and the diagnostic summary, so the
+# serving path in serving.FeatureDomainGate and the diagnostic summary, so the
 # ranges published on the calibration sensor are keyed by the name of the
 # feature they bound (issue #147).
 STAGE2_FEATURE_NAMES = (
@@ -763,68 +670,6 @@ class QuantileCoeff:
         return self.a * x + self.b
 
 
-def _order_band(
-    p10: float | None, p50: float | None, p90: float | None
-) -> tuple[float | None, float | None, float | None]:
-    """Sort the fitted quantile values so that ``p10 <= p50 <= p90``.
-
-    The three quantile lines are fitted independently, so ``a * x + b`` can
-    invert for a negative forecast: with slopes 0.4 and 0.7 and x = -0.076 the
-    p10 line returns -0.030 while the p90 line returns -0.053.  Ordering is a
-    property of a band that holds regardless of how the point estimate was
-    produced, so it is enforced separately from containment (see _clamp_band).
-
-    Levels that were not fitted stay ``None`` and keep their slot; the fitted
-    values are redistributed across the remaining slots in ascending order.
-    """
-    fitted = sorted(v for v in (p10, p50, p90) if v is not None)
-    ordered = iter(fitted)
-    return tuple(  # type: ignore[return-value]
-        next(ordered) if level is not None else None for level in (p10, p50, p90)
-    )
-
-
-def _clamp_band(
-    calibrated: float,
-    p10: float | None,
-    p50: float | None,
-    p90: float | None,
-) -> tuple[float | None, float | None, float | None]:
-    """Clamp a quantile band so it contains ``calibrated`` and stays ordered.
-
-    Quantile IRLS sorts slopes but not intercepts, so the fitted lines can
-    cross near the x-axis intercept and produce p10 > p90, or a band that does
-    not contain the published point estimate.  This enforcement guarantees the
-    published triple satisfies ``p10 <= calibrated <= p90`` and
-    ``p10 <= p50 <= p90``.
-
-    A fitted p10 is first floored at MARKET_PRICE_FLOOR, -$1000/MWh, the only
-    price the market cannot go below, and then clamped down to ``calibrated``.
-    The floor used to be 0.0, which clamped every lower bound up onto a
-    negative point estimate and hid mild negative prices (issue #114). The
-    order matters: flooring first and clamping second means a negative point
-    estimate below the floor still gets a lower bound no higher than itself.
-
-    A ``None`` quantile means that level was not fitted (fewer than MIN_OBS
-    observations) and stays ``None`` rather than being invented.
-
-    Every published point estimate must be clamped through this function.
-    Stage 2 originally clamped only against the isotonic value and then
-    replaced the point estimate without re-clamping, which published a value
-    outside its own band on roughly one interval in six (issue #69).
-    """
-    if p10 is not None:
-        p10 = min(max(MARKET_PRICE_FLOOR, p10), calibrated)
-    if p90 is not None:
-        p90 = max(calibrated, p90)
-    if p50 is not None:
-        # Same floor reasoning as p10 when there is no fitted p10 to bound by.
-        p50_lo = p10 if p10 is not None else min(MARKET_PRICE_FLOOR, calibrated)
-        p50_hi = p90 if p90 is not None else float("inf")
-        p50 = max(p50_lo, min(p50_hi, p50))
-    return p10, p50, p90
-
-
 @dataclass
 class BucketModel:
     """All models for one (horizon, tod) bucket."""
@@ -909,96 +754,14 @@ class BucketModel:
                                      Spike inputs (>= SPIKE_THRESHOLD) are handled by
                                      out_of_bounds='clip', returning the training-range
                                      maximum — a clean normal-market estimate.
+
+        Each path is built by its function in serving.py (spec 005).
         """
         if self.iso_model is None:
-            # Isotonic model not available (< MIN_OBS or not persisted) —
-            # pass raw forecast through but still compute quantile intervals
-            # if the quantile coefficients are fitted (they survive serialisation).
-            # Deliberately NOT clamped against x.  On this path the point
-            # estimate is the un-calibrated raw forecast, while the band comes
-            # from quantile fits that did survive serialisation, so the two can
-            # legitimately disagree: a fitted p10 above the raw forecast is the
-            # calibration saying the forecast is too low.  Clamping would erase
-            # that signal.  This is the one path where the published value may
-            # sit outside its own band, and it is transient — the next
-            # engine.fit() restores the isotonic model.
-            # Ordering is still enforced: the fitted lines invert for a
-            # negative forecast, which no reading of the band can justify.
-            p10, p50, p90 = _order_band(*self.raw_band(x))
-            return {
-                "calibrated": round(x, 6),
-                "p10": round(p10, 6) if p10 is not None else None,
-                "p50": round(p50, 6) if p50 is not None else None,
-                "p90": round(p90, 6) if p90 is not None else None,
-                # No isotonic model, so there is nothing to floor and the
-                # feature is the raw forecast, exactly as the point estimate is.
-                ISO_FEATURE_KEY: round(x, 6),
-                BAND_SOURCE_KEY: BAND_SOURCE_STAGE1_RAW,
-                "calibrated_source": "passthrough",
-                "n_obs": self.ols.n,
-            }
-
+            return stage1_passthrough(self, x)
         if self.is_below_domain(x):
-            # No evidence below the floor, so the raw value is not relied on:
-            # the point and the band are the bucket's answer at its floor
-            # (see SOURCE_ISOTONIC_BELOW_DOMAIN). Clamped to contain the point
-            # like every other published triple; None only when no line is
-            # fitted.
-            lo = self.domain_min
-            assert lo is not None
-            calibrated = max(self.edge_value, MARKET_PRICE_FLOOR)
-            p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(lo))
-            fitted = any(v is not None for v in (p10, p50, p90))
-            return {
-                "calibrated": round(calibrated, 6),
-                "p10": round(p10, 6) if p10 is not None else None,
-                "p50": round(p50, 6) if p50 is not None else None,
-                "p90": round(p90, 6) if p90 is not None else None,
-                # The published value is the feature too; stage 2 never
-                # consults this result (see apply, gate 2a).
-                ISO_FEATURE_KEY: round(calibrated, 6),
-                BAND_SOURCE_KEY: BAND_SOURCE_STAGE1 if fitted else BAND_SOURCE_PASSTHROUGH,
-                "calibrated_source": SOURCE_ISOTONIC_BELOW_DOMAIN,
-                "n_obs": self.ols.n,
-            }
-
-        # ── Isotonic calibration ────────────────────────────────────────────
-        # IsotonicRegression.predict() with out_of_bounds='clip': forecasts
-        # above the training x-range are clipped to the last step, a clean
-        # normal-market estimate for a spike input; below it is handled above.
-        # The prediction is published as fitted, negative or not. It used to
-        # be floored at 0.0 on the claim that a calibrated price cannot be
-        # negative; in the NEM it can, mild negatives are the normal solar
-        # trough state, and the model is fitted on negative actuals like any
-        # other. The floor published 0.0 on about one interval in nine on the
-        # live install and hid the sign (issue #114). The one floor that
-        # remains is the market price floor, -$1000/MWh, which a corrupt
-        # observation batch can drag a fitted step below and no price can be.
-        iso_raw = float(self.iso_model.predict(np.asarray([x], dtype=float))[0])
-        calibrated = max(iso_raw, MARKET_PRICE_FLOOR)
-
-        # Clamp the band so it contains calibrated and stays ordered.
-        p10, p50, p90 = _clamp_band(calibrated, *self.raw_band(x))
-
-        return {
-            "calibrated": round(calibrated, 6),
-            # Same number as "calibrated", the floored value, not iso_raw:
-            # every apply_all branch publishes the feature equal to the point
-            # estimate (see the below-domain and no-model branches above), and
-            # stage2_iso_feature's docstring states it as the invariant. This
-            # branch used to publish the unfloored iso_raw here instead, so a
-            # fitted step dragged below MARKET_PRICE_FLOOR by a corrupt
-            # observation batch fed stage 2 a feature more extreme than the
-            # price it was ever shown next to (issue #144).
-            ISO_FEATURE_KEY: round(calibrated, 6),
-            "p10": round(p10, 6) if p10 is not None else None,
-            "p50": round(p50, 6) if p50 is not None else None,
-            "p90": round(p90, 6) if p90 is not None else None,
-            "ols_mae": self.ols.mae,
-            BAND_SOURCE_KEY: BAND_SOURCE_STAGE1,
-            "calibrated_source": "isotonic",
-            "n_obs": self.ols.n,
-        }
+            return stage1_below_domain(self, x)
+        return stage1_isotonic(self, x)
 
 
 @dataclass
@@ -1011,8 +774,16 @@ class CalibrationResult:
     ols_models: dict[str, OlsModel] = field(default_factory=dict)
 
     def get_bucket(self, horizon_hours: float, hour_of_day: int) -> BucketModel:
-        key = _bucket_key(horizon_hours, hour_of_day)
-        return self.models.get(key, BucketModel(bucket_key=key))
+        return self._bucket_for(_bucket_key(horizon_hours, hour_of_day))
+
+    def _bucket_for(self, key: str) -> BucketModel:
+        # The same answer as models.get(key, BucketModel(bucket_key=key)), but
+        # the default, four dataclasses deep, is built only when the key is
+        # missing rather than on every interval served (spec 005 benchmark).
+        models = self.models
+        if key in models:
+            return models[key]
+        return BucketModel(bucket_key=key)
 
     def apply(
         self,
@@ -1022,167 +793,31 @@ class CalibrationResult:
         stpasa: "StpasaFeatures | None" = None,
         run_features: "RunFeatures | None" = None,
     ) -> dict:
-        # 1. Isotonic (existing) result.
-        bucket = self.get_bucket(horizon_hours, hour_of_day)
-        result = bucket.apply_all(forecast)
+        """Calibrated price, band and labels for one interval.
 
-        # 2a. Gate: never override a below-domain clip.
-        #
-        #     WHY: below the bucket's fitted domain the stage-1 value is the
-        #     edge level, not a fit at this forecast, and the stage-2 OLS was
-        #     fitted on rows inside that domain, so a prediction there is
-        #     extrapolation on both features. It also carries an asymmetric cost: a positive
-        #     prediction over a deeply negative raw forecast flips the
-        #     published sign, turning "paid to consume" into "pay to consume",
-        #     which is the one error a battery or controllable load schedule
-        #     cannot absorb. The sign-disagreement fallback in step 6 protects
-        #     the served region; this gate protects the region the fit never
-        #     covered. See #73, #114 and #117.
-        if result.get("calibrated_source") == SOURCE_ISOTONIC_BELOW_DOMAIN:
-            return result
-
-        # 2b. Gate: STPASA correction only inside the OLS horizon band, and only
-        #    when both feature groups are present.
-        if (
-            stpasa is None
-            or run_features is None
-            or horizon_hours < OLS_MIN_HORIZON_H
-            or horizon_hours > OLS_MAX_HORIZON_H
-        ):
-            return result
-
-        # 3. Look up the OLS model for this bucket.
+        Stage 1 is the bucket's apply_all. Stage 2, the STPASA correction,
+        replaces it only when every gate in serving.SERVING_GATES admits the
+        interval; the first gate that refuses serves the stage 1 dict itself,
+        unchanged. See serving.py (spec 005) for each gate and its issues.
+        """
+        # 1. Isotonic (existing) result. The key routes both stages, as
+        #    get_bucket and the stage 2 model lookup each computed it before.
         key = _bucket_key(horizon_hours, hour_of_day)
-        ols = self.ols_models.get(key)
-        if ols is None or len(ols.coef) < 2:
-            return result
+        bucket = self._bucket_for(key)
+        stage1 = bucket.apply_all(forecast)
 
-        # 4. Build the 8-feature vector (intercept handled inside predict()).
-        #    The feature is the unfloored stage-1 value, which differs from the
-        #    published one only inside the floored band, and is read through
-        #    the same helper fit_ols_stage2 uses. See issue #85.
-        iso_cal = stage2_iso_feature(result, forecast)
-        feature_vec = [
-            float(iso_cal),
-            run_features.run_max_h6_rrp,
-            run_features.run_mean_rrp,
-            run_features.run_spread,
-            horizon_hours / 168.0,
-            stpasa.log_surplus,
-            stpasa.log_solar,
-            stpasa.log_demand,
-            stpasa.poe_spread_n,
-        ]
-
-        # 5a. Gate: serve stage 2 only where its extrapolation is within the
-        #     uncertainty the bucket already publishes. #123's principle
-        #     applied to stage 2: below the evidence, publish the evidence.
-        #     A feature outside its training range means the prediction is an
-        #     extrapolation of a linear model, and the sign and floor gates
-        #     below cannot tell a plausible extrapolation from a blow-up that
-        #     happens to land between the floor and zero, which is exactly
-        #     what -$0.86 for a raw -$0.10 was (#147). The excursion is
-        #     weighed by the coefficient it multiplies against half the
-        #     bucket's residual spread (#153), so a hairline excursion on a
-        #     feature the model barely uses does not cost the row its
-        #     correction while the #147 case still cannot be served. See
-        #     OlsModel.serves.
-        if not ols.serves(feature_vec):
-            return result
-
-        # 5b. Predict.
-        prediction = ols.predict(feature_vec)
-
-        # 6. Fall back to the isotonic result when stage 2 disagrees with it on
-        #    sign. Before issue #114 this was `prediction <= 0.0`, which existed
-        #    to stop a positive stage-1 value being flipped negative and, as a
-        #    side effect, made stage 2 unable to publish a negative at all. Now
-        #    that stage 1 publishes negatives, the protection is symmetric: a
-        #    negative stage-1 value is not flipped positive, which is the error
-        #    #73 called out ("paid to consume" becoming "pay to consume"), and
-        #    a non-negative one is not flipped negative. Where both agree on
-        #    sign, including both negative, the stage-2 value is served.
-        iso_value = float(result["calibrated"])
-        if (prediction < 0.0) != (iso_value < 0.0):
-            return result
-        #    Below the market floor is not a price; treat it like the sign
-        #    disagreement rather than publishing it.
-        if prediction < MARKET_PRICE_FLOOR:
-            return result
-
-        # 7. Replace the point estimate, then re-clamp the band around it.
-        #
-        #    apply_all() in step 1 clamped the band against the *isotonic*
-        #    value.  Replacing the point estimate and inheriting that band
-        #    published a value outside its own p10 to p90 whenever the stage-2
-        #    prediction moved past a stage-1 bound, which on a five-region
-        #    snapshot was 522 of 3075 intervals across 9 sensors (issue #69).
-        #
-        #    The band is re-derived from the unclamped quantile fits rather
-        #    than from the already-clamped stage-1 band, so the result is
-        #    exactly what apply_all() would have returned had the stage-2
-        #    value been the point estimate all along.  Re-clamping the clamped
-        #    band instead would inherit a p10 pulled down to the isotonic
-        #    value and publish a looser interval than the fits support.
-        #
-        #    Re-clamping made the triple self-consistent; it did not make the
-        #    band a stage-2 interval.  The quantile fits know nothing about the
-        #    STPASA features, so where the prediction landed outside them the
-        #    nearer bound was pulled onto the point estimate, reporting zero
-        #    uncertainty on that side.  On the first live measurement, a single
-        #    residential premises in SE Queensland, QLD1, the run at
-        #    2026-09-03T07:30:00+10:00, that was 98 of 330 intervals, up from 36
-        #    before the re-clamp, and strongly one-sided: 82 onto p10 against 16
-        #    onto p90.  The band also did not tighten, median width 0.035764 to
-        #    0.036862 $/kWh.  See issue #72.
-        #
-        #    So the band is now built from the stage-2 model's own residual
-        #    quantiles when the bucket has them: prediction plus the 10th, 50th
-        #    and 90th percentile of its leave-one-out residuals.  That band is
-        #    centred on the prediction by construction, so it contains it
-        #    without any clamping and cannot collapse.
-        #
-        #    _clamp_band is still applied on top, for two reasons that are not
-        #    about containment: it floors p10 at the market price floor, the
-        #    same floor every other published lower bound carries, and it is
-        #    the one place the ordering and containment invariants are enforced,
-        #    so leaving it out would make this the only published triple not
-        #    passing through them.  On the residual path it is a no-op except
-        #    for that floor.
-        out = dict(result)
-        out["calibrated"] = round(prediction, 6)
-        out["calibrated_source"] = "isotonic+stpasa"
-        out["stpasa_run_at"] = stpasa.stpasa_run_at
-
-        resid_band = ols.residual_band(prediction)
-        if resid_band is not None:
-            raw_p10, raw_p50, raw_p90 = resid_band
-            band_source = BAND_SOURCE_STAGE2
-        else:
-            # Fallback: a bucket with coefficients but no usable residual
-            # quantiles.  Reached by a store written before issue #72, until the
-            # next engine fit rewrites it, and by a bucket whose residual sample
-            # failed the validity check in ResidualQuantiles.is_fitted.
-            #
-            # WHY the old behaviour rather than something safer: the choice is
-            # between publishing v3.4.0's re-clamped stage-1 band, which is
-            # self-consistent but can collapse a bound, and withholding the
-            # stage-2 point estimate entirely, which would move the published
-            # price on a path that is otherwise working.  Moving the price to
-            # improve the band is the larger change of the two, so the point
-            # estimate is kept and the band is labelled.  This is a judgement
-            # call and it is written up on the pull request: nothing collapses
-            # silently, because BAND_SOURCE_STAGE2_FALLBACK is published on the
-            # interval and the fit logs a warning naming the buckets.
-            raw_p10, raw_p50, raw_p90 = bucket.raw_band(forecast)
-            band_source = BAND_SOURCE_STAGE2_FALLBACK
-
-        p10, p50, p90 = _clamp_band(prediction, raw_p10, raw_p50, raw_p90)
-        out["p10"] = round(p10, 6) if p10 is not None else None
-        out["p50"] = round(p50, 6) if p50 is not None else None
-        out["p90"] = round(p90, 6) if p90 is not None else None
-        out[BAND_SOURCE_KEY] = band_source
-        return out
+        # 2. The gates, in order; then the stage 2 result. Positional, in
+        #    Stage2Context's field order: keywords cost a third of the
+        #    pipeline's overhead on the serving hot path.
+        ctx = Stage2Context(
+            forecast, horizon_hours, hour_of_day, stage1, bucket, stpasa, run_features, key
+        )
+        for gate in SERVING_GATES:
+            admitted = gate(ctx, self.ols_models)
+            if admitted is None:
+                return stage1
+            ctx = admitted
+        return stage2_result(ctx)
 
     def summary(self) -> dict[str, Any]:
         """Compact summary for diagnostic sensor attributes.
@@ -1916,8 +1551,8 @@ class CalibrationEngine:
             # Drop rows that the serving path never asks this model about.
             #
             # WHY: below the bucket's fitted domain the serving path publishes
-            # the edge level and never consults stage 2 (apply, gate 2a), so
-            # a row there would be fitted for a region that is never served.
+            # the edge level and never consults stage 2 (serving.BelowDomainGate),
+            # so a row there would be fitted for a region that is never served.
             # Both paths read the boundary from BucketModel.is_below_domain so
             # they cannot drift apart (#68, #79, #117). In practice a bucket's
             # own training rows define its domain, so this excludes nothing
