@@ -1,6 +1,6 @@
 # Spec 005: Serving gate pipeline
 
-Status: approved 27 September 2026; drafted against `main` at d3023fb (v3.17.6)
+Status: approved 27 September 2026; implemented (this PR); drafted against `main` at d3023fb (v3.17.6)
 Plan: docs/architecture/tech-debt-plan.md, step 005
 
 ## Responsibility
@@ -103,6 +103,24 @@ Changes to existing code:
 - **Names that stay importable from `calibration_engine`:** every name tests or other modules import from there, including `_clamp_band`, `_order_band`, `stage2_iso_feature`, the `BAND_SOURCE_*` and `SOURCE_*` constants, `ISO_FEATURE_KEY`, `MARKET_PRICE_FLOOR` and the `OLS_*` constants. These are defined there or imported there, never only in `serving.py`.
 
 Amendment to the plan: the plan listed a "spike" gate and a "band containment" gate. Neither is a gate in the code. The spike check annotates and never refuses (#176 says the calibrated value is never modified by it), so it is `annotate_spike`, applied after the pipeline. Containment is `_clamp_band`, applied inside every result builder, so it stays a function every builder calls, not a stage that can be reordered.
+
+### As implemented
+
+The pipeline, the builders and the call sites are as specified. These points differ from the text above, each for the reason given.
+
+- **No import of the engine from `serving.py`, not even under `TYPE_CHECKING`.** The golden-master harness (`tests/golden/harness.py`, `_import_order`) orders module loads by every module-level relative import, including those under `TYPE_CHECKING`, and raises on a cycle. Since the engine imports `serving` at module level, `serving.py` describes the engine types it reads by structural protocols instead: `IsotonicModel`, `BucketStats`, `Stage1Bucket` (for `BucketModel`), `Stage2Model` (for `OlsModel`), `StpasaInputs` and `RunInputs`. The signatures above use these names where they say `BucketModel`, `OlsModel`, `StpasaFeatures` and `RunFeatures`. A contract test pins the module's imports to `__future__`, `dataclasses`, `typing`, `numpy` and `.const`.
+- **One definition, moved into `serving.py`.** The constants and helpers the serving path needs are defined there with their comments, and `calibration_engine` imports them, so each stays importable from the engine: `SPIKE_THRESHOLD`, `SOURCE_ISOTONIC_BELOW_DOMAIN`, `ISO_FEATURE_KEY`, `BAND_SOURCE_KEY` and the five `BAND_SOURCE_*` labels, `OLS_MIN_HORIZON_H`, `OLS_MAX_HORIZON_H`, `stage2_iso_feature`, `_order_band` and `_clamp_band`. `MARKET_PRICE_FLOOR` stays imported by the engine from `const`. `scripts/_flag_constants.py` watches `SPIKE_THRESHOLD`, so the release notes for this change list it once as changed in `serving.py`: it moved, and its value is unchanged.
+- **`serving.py` imports numpy**, for the `np.asarray([x], dtype=float)` that `stage1_isotonic` passes to the isotonic model, as `apply_all` did.
+- **`Stage2Context` is mutable and slotted, not frozen.** The gates that establish a field set it in place and return the same context, and `CalibrationResult.apply` builds it positionally. A frozen context rebuilt with `dataclasses.replace` made `apply` about 60 per cent slower over the serving fixture grid.
+- **`Stage2Context.bucket_key`.** An extra field: the key `apply` routed the interval by, computed once for both the bucket lookup and `Stage2ModelGate`, which cannot call the engine's `_bucket_key`.
+- **`features` is a `list[float]`**, the type `OlsModel.serves` and `predict` take and were given before.
+- **The feature vector is built by `FeatureDomainGate`, not `Stage2ModelGate`.** The table in Responsibility puts the vector (`:1063-1075`) and #85 in the feature domain step, and invariant 3 pins the issues from that table, so the #85 rule and comment sit in the gate that lists #85. `Stage2ModelGate` looks the model up and sets `ols`; `FeatureDomainGate` builds the vector, calls `serves` and then `predict`, and sets `features` and `prediction`.
+- **Gate names:** `below_domain`, `stage2_inputs`, `stage2_model`, `feature_domain`, `sign_agreement`, `market_floor`.
+- **`get_bucket` builds its default only when the key is missing.** `CalibrationResult.get_bucket` now calls `_bucket_for(key)`, which returns `models[key]` when the key is present and a new `BucketModel(bucket_key=key)` otherwise. Before, `models.get(key, BucketModel(...))` built and discarded the default on every call. The answer is the same for any dict content. With the pipeline alone, `apply` measured about 7 to 11 per cent slower than on the base commit, too close to the 10 per cent limit. With this change it is faster (see below).
+- **`stage2_result` types the raw band once**, as one optional triple star-unpacked into `_clamp_band`. This removes a mypy error the old body carried, so the ratchet goes from 36 to 35.
+- **Comments.** Every explanatory comment moved to the gate or builder that carries its rule. The step labels of the old body ("2a. Gate:", "7.") are gone, and cross-references name the gate instead ("see apply, gate 2a" became "see BelowDomainGate"). The #69 and #72 history is a module comment directly above `stage2_result`, so the function stays under 60 lines.
+- **Serving fixture.** 35,880 inputs: four results over 26 forecasts, 16 horizons, 7 feature scenarios and one hour per time-of-day label (rotating through all 24), plus 936 with no calibration. Every coefficient, threshold and feature is an exact binary fraction, and every term of the prediction except the stage 1 one is a multiple of 1/64. Python 3.12 made the built-in `sum()` of floats compensated, and `OlsModel.predict` uses it. A first draft, with terms off that grid, published four values one unit apart in the sixth decimal on 3.11. Per input, the fixture records the `apply` and `apply_to_price` outputs, the identity of each against the stage 1 dict, and the branch. The branch is found by replaying the gate conditions, and the recorder asserts that the replay agrees with the output. The rarest branch, the fallback band, is reached 351 times.
+- **Benchmark.** `apply` over the fixture grid (34,944 calls, Python 3.13, best of 100 runs each, base and head alternating): 327.6 ms (9.38 us a call) on 705c11f and 306.0 ms (8.76 us) on the head, 6.6 per cent faster. On 3.11, best of 40: 314.4 ms against 298.2 ms. The golden master (19 tests) ran in 19.4 s on the base and 19.9 s on the head.
 
 ## Invariants
 
