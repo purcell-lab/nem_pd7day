@@ -305,7 +305,7 @@ def stage1_below_domain(bucket: Stage1Bucket, x: float) -> dict:
         "p50": round(p50, 6) if p50 is not None else None,
         "p90": round(p90, 6) if p90 is not None else None,
         # The published value is the feature too; stage 2 never
-        # consults this result (see CalibrationResult.apply, gate 2a).
+        # consults this result (see BelowDomainGate).
         ISO_FEATURE_KEY: round(calibrated, 6),
         BAND_SOURCE_KEY: BAND_SOURCE_STAGE1 if fitted else BAND_SOURCE_PASSTHROUGH,
         "calibrated_source": SOURCE_ISOTONIC_BELOW_DOMAIN,

@@ -1551,8 +1551,8 @@ class CalibrationEngine:
             # Drop rows that the serving path never asks this model about.
             #
             # WHY: below the bucket's fitted domain the serving path publishes
-            # the edge level and never consults stage 2 (apply, gate 2a), so
-            # a row there would be fitted for a region that is never served.
+            # the edge level and never consults stage 2 (serving.BelowDomainGate),
+            # so a row there would be fitted for a region that is never served.
             # Both paths read the boundary from BucketModel.is_below_domain so
             # they cannot drift apart (#68, #79, #117). In practice a bucket's
             # own training rows define its domain, so this excludes nothing
