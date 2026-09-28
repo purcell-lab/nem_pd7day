@@ -610,13 +610,17 @@ def test_forecast_description_in_attributes():
 
 
 def test_daily_supply_charge_in_attributes():
-    """daily_supply_charge_$ is the library's float, or None when it raises."""
+    """daily_supply_charge_$ is the library's c/day in $/day (#171), or None when it raises."""
     sensor = make_tariff_sensor(price_periods=None)
     with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=[]), \
-            patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", return_value=0.556):
+            patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", return_value=65.1):
         charge = sensor.extra_state_attributes["daily_supply_charge_$"]
     assert isinstance(charge, float)
-    assert abs(charge - 0.556) < 1e-6
+    assert charge == 0.651
+
+    with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=[]), \
+            patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", return_value=None):
+        assert sensor.extra_state_attributes["daily_supply_charge_$"] is None
 
     with patch.object(_tariff_mod.tariff_pricing, "get_periods", return_value=[]), \
             patch.object(_tariff_mod.tariff_pricing, "get_daily_fee", side_effect=ValueError("nope")):
