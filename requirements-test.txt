@@ -13,7 +13,7 @@ matplotlib==3.11.1
 PyYAML==6.0.1
 # The tariff catalogue and names are read from the library at runtime
 # (issue #159); the tests assert against the pinned catalogue.
-aemo-to-tariff==0.7.27
+aemo-to-tariff==0.7.28
 tzdata==2025.2
 # Coverage comparison gate (spec 000 part C, scripts/cov_compare.py).
 pytest-cov==7.1.0

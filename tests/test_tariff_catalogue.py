@@ -143,7 +143,7 @@ def test_default_enabled_tariffs_exist_in_the_catalogue():
     assert not missing, missing
 
 
-# What the derivation yields against 0.7.27, per distributor: the import->export
+# What the derivation yields against 0.7.28, per distributor: the import->export
 # pairings and the export codes no rule could place. A library release that adds
 # a pairing fails here, which is the point: EXPORT_TARIFF_PROGRAMS (the
 # no-library fallback) must be refreshed to match.
@@ -156,7 +156,7 @@ EXPECTED_EXPORT_PROGRAMS = {
     "evoenergy": ({"026": "026"}, []),                                           # same code both ways
     "sapn": ({"RESELE": "RESELE", "RELE2W": "RELE2W", "SBELE": "SBELE", "B2R": "B2R"},
              ["RESELEX", "SBELEX"]),                                             # same code beats the X twin
-    "powercor": ({"PRCER": "PRCER"}, []),                                        # tariff_extensions (#170)
+    "powercor": ({"PRCER": "PRCER"}, []),                                        # the library's from 0.7.28 (#165)
 }
 
 

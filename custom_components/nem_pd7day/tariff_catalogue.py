@@ -20,10 +20,12 @@ this, and tests exercise it without the HA stubs.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import io
 import logging
 from importlib import metadata
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .const import (
     DISTRIBUTOR_TARIFFS,
@@ -154,6 +156,38 @@ def feed_in_tariffs(distributor: str) -> dict[str, Any] | None:
     if module is None or not (hasattr(module, "get_feed_in_tariffs") or hasattr(module, "feed_in_tariffs")):
         return None
     return _table(module, "get_feed_in_tariffs", "feed_in_tariffs")
+
+
+def seasonal(distributor: str, code: str) -> bool:
+    """Whether the import rows of ``code`` change with the date, so a cached copy goes stale.
+
+    An extension tariff's do, and so do a library entry's marked ``seasonal``
+    (Powercor PRCER, aemo-to-tariff 0.7.28).
+    """
+    if priced_by_extension(distributor, code):
+        return True
+    entry = _library_import_tariffs(distributor).get(code)
+    return isinstance(entry, dict) and bool(entry.get("seasonal"))
+
+
+def month_gated_feed_in_rows(distributor: str, code: str, when: datetime.datetime) -> list[tuple[Any, ...]]:
+    """The library's feed-in rows for ``code`` in force in the network-local month of ``when``.
+
+    Only a five-field row, (name, start, end, months, rate c/kWh), states its
+    own validity; a four-field row's rests on module rules the table does not
+    carry (Endeavour's peak months and weekdays), so none is published.
+    Returned as (name, start, end, rate c/kWh).
+    """
+    entry = (feed_in_tariffs(distributor) or {}).get(code)
+    if not isinstance(entry, dict):
+        return []
+    zone = getattr(_module(distributor), "time_zone", None)
+    month = when.astimezone(ZoneInfo(zone())).month if callable(zone) else when.month
+    return [
+        (row[0], row[1], row[2], row[4])
+        for row in entry.get("periods", ())
+        if len(row) == 5 and month in row[3]
+    ]
 
 
 def import_tariff_codes(distributor: str) -> list[str]:

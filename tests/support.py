@@ -78,7 +78,7 @@ import os
 import sys
 import types
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -564,3 +564,46 @@ def expected_import_price(tariff_mod: types.ModuleType, lib_c_kwh, rrp_mwh, fee=
     if distributor in tm.tariff_pricing.LIB_APPLIES_GST:
         network_c /= tm.tariff_pricing.GST
     return round(((spot_c + network_c) / 100 + fee) * tm.tariff_pricing.GST, 6)
+
+
+# ── A synthetic tariff_extensions entry ───────────────────────────────────────
+#
+# The extension table is empty while the library carries every tariff priced
+# (#165), so the extension path is tested through this entry: Powercor PRCER's
+# 2026-27 schedule, the table's first real entry (#170), under a code no
+# library release carries.
+
+EXTENSION_CODE = "XCER"
+
+
+def extension_fixture(ext_mod: types.ModuleType) -> Any:
+    t = time
+    peak, shoulder, saver_export = (12, 1, 2, 6, 7, 8), (3, 4, 5, 9, 10, 11), (9, 10, 11, 12, 1, 2, 3, 4, 5)
+
+    def rows(peak_rate: float) -> list[tuple[str, time, time, float]]:
+        return [("Off-peak", t(0), t(11), 4.20), ("Saver", t(11), t(16), 1.00),
+                ("Peak", t(16), t(21), peak_rate), ("Off-peak", t(21), t(23, 59), 4.20)]
+
+    return ext_mod.ExtensionTariff(
+        distributor="powercor", code=EXTENSION_CODE, name="Test CER", timezone="Australia/Melbourne",
+        daily_fee_c=43.84, seasons={"peak_season": rows(27.86), "shoulder_season": rows(20.80)},
+        season_months={"peak_season": peak, "shoulder_season": shoulder},
+        feed_in_name="Test CER Export",
+        feed_in_periods=[("Peak export credit", t(16), t(21), peak, 7.00),
+                         ("Saver export charge", t(11), t(16), saver_export, -1.00)],
+        source="Powercor 2026-27 Tariff Summary, 7 May 2026 (PRCER)", remove_when="never: a test fixture",
+    )
+
+
+def install_extension_fixture(monkeypatch: Any, *modules: types.ModuleType) -> None:
+    """Add the fixture entry to every EXTENSIONS table the given modules reach."""
+    seen: set[int] = set()
+    stack = list(modules)
+    while stack:
+        mod = stack.pop()
+        if id(mod) in seen:
+            continue
+        seen.add(id(mod))
+        if isinstance(getattr(mod, "EXTENSIONS", None), dict):
+            monkeypatch.setitem(mod.EXTENSIONS, ("powercor", EXTENSION_CODE), extension_fixture(mod))
+        stack.extend(getattr(mod, n) for n in ("tariff_extensions", "tariff_catalogue", "tariff_pricing") if hasattr(mod, n))

@@ -750,7 +750,7 @@ def sa_stale_coordinator(mods: Any) -> Scenario:
 
 
 def vic_prcer_extension(mods: Any) -> Scenario:
-    """Powercor PRCER import and export priced from tariff_extensions (#170)."""
+    """Powercor PRCER import and export: the extension of #170, the library's since 0.7.28 (#165)."""
     return _common(
         mods, "vic_prcer_extension", SyntheticMarket(seed=41, region="VIC1"),
         now=nem(2026, 9, 23, 16, 20), run_at=nem(2026, 9, 23, 13, 0), long=False,

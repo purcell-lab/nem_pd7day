@@ -268,6 +268,27 @@ def test_spot_component_is_never_gst_inclusive(distributor):
     )
 
 
+def test_every_catalogue_tariff_is_spot_plus_network():
+    """#165: no catalogue tariff falls to the library's ``spot * slope + intercept``.
+
+    A code the library lists but its convert path does not recognise (Energex
+    94300 before 0.7.28, looked up by its first four digits) is priced by that
+    fallback, a guess that does not move one for one with spot. A recognised
+    tariff's price rises by exactly the spot component.
+    """
+    off: list[str] = []
+    for distributor in DISTRIBUTORS:
+        for code in _catalogue(distributor):
+            try:
+                rise = _convert(distributor, code, 1000.0) - _convert(distributor, code, 0.0)
+            except Exception as err:  # noqa: BLE001 - reported, not raised
+                off.append(f"{distributor}/{code}: {err!r}")
+                continue
+            if abs(rise - _spot_component(1000.0)) > 1e-6:
+                off.append(f"{distributor}/{code}: slope {rise / _spot_component(1000.0):.4f}")
+    assert not off, f"tariffs not priced as spot plus network: {off}"
+
+
 # ── Integration arithmetic ───────────────────────────────────────────────────
 
 

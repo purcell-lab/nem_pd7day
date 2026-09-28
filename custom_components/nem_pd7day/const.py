@@ -319,7 +319,7 @@ AMBER_EXPRESS_HORIZON_H = 24.0
 # DISTRIBUTOR_TARIFFS is the FALLBACK catalogue, used only when aemo_to_tariff
 # is not importable. With the library present the sensor platform and the
 # config flow enumerate from its own tables (tariff_catalogue.py, issue #159);
-# this snapshot mirrors aemo-to-tariff 0.7.27 and need not be kept current.
+# this snapshot mirrors aemo-to-tariff 0.7.28 and need not be kept current.
 DISTRIBUTOR_DISPLAY_NAMES = {
     "energex":     "Energex",
     "ergon":       "Ergon",
@@ -345,14 +345,14 @@ REGION_DISTRIBUTORS = {
 }
 
 DISTRIBUTOR_TARIFFS = {
-    "energex":      ["8400", "3900", "3700", "6900", "8500", "3600", "3800", "6000", "6800", "6600", "6700", "7200", "8100", "8300", "8900", "8800", "94300", "96200"],
+    "energex":      ["8400", "3900", "3700", "6900", "8500", "3600", "3800", "6000", "6800", "6600", "6700", "7200", "8100", "8300", "8900", "8800", "94300", "94000", "96200"],
     "ergon":        ["6900", "ERTOUET1", "WRTOUET1", "MRTOUET4", "ERTDEMT1", "WRTDEMT1", "MRTDEMT4", "EBTOUET1", "WBTOUET1", "MBTOUET4", "EBTDEMT1", "WBTDEMT1", "MBTDEMT4"],
     "ausgrid":      ["EA010", "EA025", "EA111", "EA116", "EA225", "EA305"],
     "endeavour":    ["N70", "N71", "N90", "N91", "N19", "N95", "N73"],
     "essential":    ["BLNN2AU", "BLNT3AU", "BLNT3AL", "BLNRSS2", "BLND1AR", "BLNC1AU", "BLNC2AU", "BLNN1AU", "BLNT2AU", "BLNT2AL", "BLNT1AO", "BLNBSS1", "BLND1AB"],
     "evoenergy":    ["015", "016", "017", "018", "026", "090"],
     "jemena":       ["D1", "PRTOU", "A100", "A130", "A200", "A210"],
-    "powercor":     ["D1", "PRTOU", "NDMO21", "NDTOU", "PRDS", "PRSTOU", "ND1", "NDD"],
+    "powercor":     ["D1", "PRTOU", "NDMO21", "NDTOU", "PRDS", "PRSTOU", "ND1", "NDD", "PRCER"],
     "united":       ["D1", "URTOU", "FURTOU", "FURDS", "URDS", "NDMO21", "NDTOU", "PRDS", "LVS1R", "URSTOU", "RESKW1R", "LVTOU", "LVM1R"],
     "ausnet":       ["NAST11S", "NEE11S", "NEE11", "NEE12", "NAST12"],
     "victoria":     ["VICR_SINGLE", "VICR_TOU", "VICR_DEMAND", "VICS_SINGLE", "VICS_TOU", "VICS_DEMAND"],
@@ -381,6 +381,7 @@ TARIFF_NAMES = {
         "8100": "Demand Large",
         "8300": "SAC Demand Small",
         "94300": "Large TOU Energy",
+        "94000": "Large Dynamic Flex Storage",
     },
     # Ergon
     "ergon": {
@@ -454,6 +455,7 @@ TARIFF_NAMES = {
         "NDMO21": "NDMO21 TOU",
         "NDTOU": "NDTOU TOU",
         "PRDS": "Residential Daytime Saver",
+        "PRCER": "Residential CER",
     },
     # United Energy
     "united": {
@@ -557,7 +559,7 @@ DEFAULT_ENABLED_TARIFFS = {
 # EXPORT_TARIFF_PROGRAMS is the FALLBACK, used only when aemo_to_tariff is not
 # importable. With the library present the pairings are derived from its own
 # tables and battery_tariffs() lists (tariff_catalogue.export_programs, issue
-# #159); this snapshot mirrors what that derivation yields on 0.7.27.
+# #159); this snapshot mirrors what that derivation yields on 0.7.28.
 # Export sensors use spot_to_feed_in_tariff() instead of spot_to_tariff().
 EXPORT_TARIFF_PROGRAMS = {
     ("energex", "6900"): "6900X",
@@ -574,7 +576,7 @@ EXPORT_TARIFF_PROGRAMS = {
     ("sapn", "RELE2W"): "RELE2W",
     ("sapn", "SBELE"): "SBELE",
     ("sapn", "B2R"): "B2R",
-    ("powercor", "PRCER"): "PRCER",   # tariff_extensions until the library carries it (#170)
+    ("powercor", "PRCER"): "PRCER",   # the library's from 0.7.28 (#165); an extension before (#170)
 }
 
 # Pairings the library cannot express, or that override a derived one for the

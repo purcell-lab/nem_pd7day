@@ -107,7 +107,13 @@ jobs:
         run: |
           git worktree add /tmp/base "origin/$BASE_REF"
           cd /tmp/base
-          pytest -q -p no:cacheprovider --cov=custom_components/nem_pd7day --cov-report=json:/tmp/cov_base.json
+          # The base's tests can fail on the head's tooling when the head
+          # bumps a pinned dependency (aemo-to-tariff, #165); the lines they
+          # executed are still the baseline. The head's tests are gated by
+          # the validate job.
+          pytest -q -p no:cacheprovider --cov=custom_components/nem_pd7day --cov-report=json:/tmp/cov_base.json \
+            || echo "::warning::base tests failed on the head's tooling; comparing the coverage they recorded"
+          test -s /tmp/cov_base.json
 
       - name: Compare
         env:

@@ -86,7 +86,7 @@ SOURCE_EXTENSION: Final[str] = "nem_pd7day extension"
 # A library period row: (name, start, end, rate_c) on most networks, and
 # (name, start, end, condition, rate_c) on SAPN.
 PeriodRow = tuple[Any, ...]
-# An extension feed-in row: (name, start, end, adjustment c/kWh).
+# A feed-in row in force this month: (name, start, end, adjustment c/kWh).
 FeedInRow = tuple[str, datetime.time, datetime.time, float]
 
 
@@ -173,13 +173,17 @@ class LibraryPricer:
             return spot_to_feed_in_tariff(interval_end, self.distributor, self.code, rrp_mwh)
 
     def period_rows(self, now: datetime.datetime) -> list[PeriodRow]:
-        """The library's period rows, consumed inside the suppression; ``now`` is unused."""
+        """The library's period rows at ``now``, consumed inside the suppression.
+
+        ``now`` picks the price year and, for a seasonal tariff such as
+        Powercor PRCER, the season; without it the library reads the clock.
+        """
         with quiet_stdout():
-            return list(get_periods(self.distributor, self.code))
+            return list(get_periods(self.distributor, self.code, now))
 
     def feed_in_rows(self, now: datetime.datetime) -> list[FeedInRow]:
-        """Always empty: the library exposes no feed-in period or rate data."""
-        return []
+        """The library's month-gated export credit or charge rows in force at ``now``."""
+        return tariff_catalogue.month_gated_feed_in_rows(self.distributor, self.code, now)
 
     def daily_fee(self) -> float | None:
         with quiet_stdout():
@@ -302,7 +306,7 @@ def period_attributes(rows: Iterable[PeriodRow]) -> list[dict[str, Any]]:
 
 
 def feed_in_period_attributes(rows: Iterable[FeedInRow]) -> list[dict[str, Any]]:
-    """Extension feed-in rows as the ``export_periods`` attribute.
+    """Feed-in rows as the ``export_periods`` attribute.
 
     The credit or charge rows in force this month, rate in $/kWh added to the
     price paid.
