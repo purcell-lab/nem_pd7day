@@ -1,9 +1,5 @@
 {
   "classes": {
-    "calibration_engine:CalibrationEngine": {
-      "lines": 498,
-      "methods": 4
-    },
     "calibration_store:CalibrationStore": {
       "lines": 364,
       "methods": 22
@@ -24,8 +20,6 @@
   "functions": {
     "__init__:async_setup_entry": 474,
     "bias_chart:render_chart": 221,
-    "calibration_engine:CalibrationEngine.fit": 157,
-    "calibration_engine:CalibrationEngine.fit_ols_stage2": 224,
     "calibration_engine:CalibrationResult.summary": 85,
     "calibration_engine:_quantile_regression": 86,
     "calibration_inputs:stpasa_features_for_interval": 98,

@@ -14,7 +14,7 @@ type = layers
 layers =
     custom_components.nem_pd7day.actual_price_service : custom_components.nem_pd7day.binary_sensor : custom_components.nem_pd7day.calibration_store : custom_components.nem_pd7day.camera : custom_components.nem_pd7day.config_flow : custom_components.nem_pd7day.coordinator : custom_components.nem_pd7day.diagnostics : custom_components.nem_pd7day.fetch_scheduler : custom_components.nem_pd7day.forecast_store : custom_components.nem_pd7day.notice_store : custom_components.nem_pd7day.number : custom_components.nem_pd7day.observation_log : custom_components.nem_pd7day.scarcity_sensor : custom_components.nem_pd7day.sensor : custom_components.nem_pd7day.stpasa_store : custom_components.nem_pd7day.tariff_sensor
     custom_components.nem_pd7day.actual_recorder : custom_components.nem_pd7day.bias_chart : custom_components.nem_pd7day.calibrated_forecast : custom_components.nem_pd7day.calibration_inputs : custom_components.nem_pd7day.calibration_summary : custom_components.nem_pd7day.dispatch_client : custom_components.nem_pd7day.executor : custom_components.nem_pd7day.forecast_chart : custom_components.nem_pd7day.forecast_history : custom_components.nem_pd7day.iso_chart : custom_components.nem_pd7day.json_repository : custom_components.nem_pd7day.market_notice_client : custom_components.nem_pd7day.nemweb_gate : custom_components.nem_pd7day.nemweb_retry : custom_components.nem_pd7day.pd7day_client : custom_components.nem_pd7day.pd7day_shared : custom_components.nem_pd7day.refit_service : custom_components.nem_pd7day.shared_dispatch : custom_components.nem_pd7day.startup_trace : custom_components.nem_pd7day.stpasa_client : custom_components.nem_pd7day.stpasa_refresh : custom_components.nem_pd7day.tradingis_client
-    custom_components.nem_pd7day.const : custom_components.nem_pd7day.nem_time : custom_components.nem_pd7day.calibration_engine : custom_components.nem_pd7day.serving : custom_components.nem_pd7day.tariff_catalogue : custom_components.nem_pd7day.tariff_extensions : custom_components.nem_pd7day.tariff_pricing : custom_components.nem_pd7day.scarcity_premium : custom_components.nem_pd7day.tod_stats
+    custom_components.nem_pd7day.const : custom_components.nem_pd7day.nem_time : custom_components.nem_pd7day.calibration_engine : custom_components.nem_pd7day.fitting : custom_components.nem_pd7day.serving : custom_components.nem_pd7day.tariff_catalogue : custom_components.nem_pd7day.tariff_extensions : custom_components.nem_pd7day.tariff_pricing : custom_components.nem_pd7day.scarcity_premium : custom_components.nem_pd7day.tod_stats
 
 [importlinter:contract:no-ha-below-adapters]
 name = Nothing below the adapter layer imports Home Assistant
@@ -45,6 +45,7 @@ source_modules =
     custom_components.nem_pd7day.const
     custom_components.nem_pd7day.nem_time
     custom_components.nem_pd7day.calibration_engine
+    custom_components.nem_pd7day.fitting
     custom_components.nem_pd7day.serving
     custom_components.nem_pd7day.tariff_catalogue
     custom_components.nem_pd7day.tariff_extensions

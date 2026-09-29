@@ -89,7 +89,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, NamedTuple, TYPE_CHECKING
 
 import numpy as np
@@ -100,19 +100,21 @@ if TYPE_CHECKING:
 from astral import LocationInfo
 from astral.sun import elevation as solar_elevation
 
+# The fit constants moved with the fit to fitting.py (spec 006); they stay
+# importable from here for the callers that import them from this module.
 from .const import (
     MARKET_PRICE_FLOOR as MARKET_PRICE_FLOOR,  # importable from here, used in serving.py
-    NEM_TZ,
+    NEM_TZ as NEM_TZ,
     HORIZON_EDGES,
     HORIZON_LABELS,
     IRLS_EPS,
     IRLS_ITER,
     IRLS_TOL,
-    MAX_OBS,
+    MAX_OBS as MAX_OBS,
     MIN_OBS,
     OLS_MIN_OBS,
-    STAGE2_LEVERAGE_MULTIPLE,
-    QUANTILES,
+    STAGE2_LEVERAGE_MULTIPLE as STAGE2_LEVERAGE_MULTIPLE,
+    QUANTILES as QUANTILES,
     TOD_LABELS,
 )
 # The serving path (spec 005). The band provenance labels, the stage-1 source
@@ -128,18 +130,18 @@ from .serving import (
     BAND_SOURCE_STAGE2 as BAND_SOURCE_STAGE2,
     BAND_SOURCE_STAGE2_FALLBACK as BAND_SOURCE_STAGE2_FALLBACK,
     ISO_FEATURE_KEY as ISO_FEATURE_KEY,
-    OLS_MAX_HORIZON_H,
-    OLS_MIN_HORIZON_H,
+    OLS_MAX_HORIZON_H as OLS_MAX_HORIZON_H,
+    OLS_MIN_HORIZON_H as OLS_MIN_HORIZON_H,
     SERVING_GATES,
     SOURCE_ISOTONIC_BELOW_DOMAIN as SOURCE_ISOTONIC_BELOW_DOMAIN,
-    SPIKE_THRESHOLD,
+    SPIKE_THRESHOLD as SPIKE_THRESHOLD,
     Stage2Context,
     _clamp_band as _clamp_band,
     _order_band as _order_band,
     stage1_below_domain,
     stage1_isotonic,
     stage1_passthrough,
-    stage2_iso_feature,
+    stage2_iso_feature as stage2_iso_feature,
     stage2_result,
 )
 # ── Pure-numpy isotonic regression ───────────────────────────────────────────
@@ -1338,156 +1340,19 @@ class CalibrationEngine:
         now: datetime | None = None,
     ) -> CalibrationResult:
         """
-        Partition observations into buckets, fit all models.
+        Partition observations into buckets, fit all models (fitting.Stage1Fitter).
         Returns a CalibrationResult ready to apply to new forecasts.
 
         *now* is the aware UTC instant the rolling window and decay weights
         are measured from; it defaults to the wall clock and exists so tests
         can pin it (issue #109). This module holds no hass reference.
-
-        Only observations within the last OBSERVATION_WINDOW_DAYS are used
-        for fitting.  All observations remain in storage (the window is a
-        fit-time filter only).
-
-        Weights are computed per-observation using exponential time decay:
-          weight = exp(-DECAY_LAMBDA * days_ago)
-        Region is used for solar elevation ToD classification.
         """
-        now_utc = now or datetime.now(timezone.utc)
-        now_nem_dt = now_utc.astimezone(NEM_TZ)
-        # ── Rolling window filter ────────────────────────────────────────────
-        cutoff = now_utc - timedelta(days=OBSERVATION_WINDOW_DAYS)
-        windowed: list[tuple[Observation, datetime]] = []
-        for obs in observations:
-            try:
-                obs_dt = datetime.fromisoformat(obs.interval_time)
-                if obs_dt.tzinfo is None:
-                    # Legacy naive timestamp — assume NEM time (UTC+10)
-                    obs_dt = obs_dt.replace(tzinfo=NEM_TZ)
-                if obs_dt >= cutoff:
-                    windowed.append((obs, obs_dt))
-            except (ValueError, TypeError):
-                # Unparseable timestamp — include defensively; use now for weight
-                windowed.append((obs, now_nem_dt))
-        observations_in_window = len(windowed)
+        # Imported here, not at module level: fitting imports this module's
+        # value types, so a module-level import either way round is a cycle
+        # (spec 006). A fit runs a few times a day, never on the serving path.
+        from .fitting import Stage1Fitter
 
-        # Partition into buckets using solar elevation ToD classification
-        buckets: dict[str, list[tuple[float, float]]] = {
-            k: [] for k in all_bucket_keys()
-        }
-        bucket_weights: dict[str, list[float]] = {
-            k: [] for k in all_bucket_keys()
-        }
-        for obs, obs_dt in windowed:
-            if obs.is_intervention:
-                # Skip intervention periods — prices are not market-driven
-                continue
-            if obs.actual_rrp >= SPIKE_THRESHOLD or obs.pd7day_forecast >= SPIKE_THRESHOLD:
-                # Exclude spike observations from OLS training — extreme prices
-                # follow a different distribution and poison the fit.
-                # Both sides must be checked: spike actuals poison y, and spike
-                # forecasts (served as passthrough) are extreme x leverage points
-                # that collapse the OLS slope even when actual_rrp is bounded.
-                continue
-            # Solar elevation ToD classification
-            obs_nem = obs_dt.astimezone(NEM_TZ)
-            key = _bucket_key_solar(obs.horizon_hours, obs_nem, region)
-            if key in buckets:
-                # Cap per-bucket to avoid memory bloat; keep most recent
-                if len(buckets[key]) < MAX_OBS:
-                    buckets[key].append((obs.pd7day_forecast, obs.actual_rrp))
-                    # Compute exponential time-decay weight
-                    days_ago = (now_nem_dt - obs_nem).total_seconds() / 86400.0
-                    weight = math.exp(-DECAY_LAMBDA * max(days_ago, 0.0))
-                    bucket_weights[key].append(weight)
-
-        now_str = now_nem_dt.isoformat()
-        models: dict[str, BucketModel] = {}
-
-        for key, pairs in buckets.items():
-            model = BucketModel(bucket_key=key)
-            weights = bucket_weights[key]
-
-            # OLS (weighted) — retained to populate LinearCoeff for quantile
-            # regression initialisation and diagnostic attributes (a, b, mae, rmse).
-            # The OLS calibrated value is no longer used in apply_all(); that path
-            # now uses the isotonic model below.
-            a_ols, b_ols = _ols(pairs, weights=weights if weights else None)
-            a_ols = max(a_ols, 0.0)
-            mae, rmse = _ols_metrics(pairs, a_ols, b_ols) if len(pairs) >= MIN_OBS else (None, None)
-            model.ols = LinearCoeff(
-                a=a_ols, b=b_ols, n=len(pairs), mae=mae, rmse=rmse
-            )
-
-            # Isotonic regression (internal PAV IsotonicRegression) — primary point estimator.
-            # Fitted with exponential decay sample weights (same as OLS above).
-            # out_of_bounds='clip': forecasts outside the training x-range are clipped
-            # to the nearest training boundary rather than extrapolated.
-            # MIN_OBS guard: iso_model remains None below threshold; apply_all() falls
-            # back to passthrough when iso_model is None.
-            if len(pairs) >= MIN_OBS:
-                _xs = np.array([p[0] for p in pairs])
-                _ys = np.array([p[1] for p in pairs])
-                _ws = np.array(weights) if weights else np.ones(len(pairs))
-                iso = IsotonicRegression(increasing=True, out_of_bounds="clip")
-                iso.fit(_xs, _ys, sample_weight=_ws)
-                model.iso_model = iso
-            # else: iso_model stays None (set by dataclass default)
-
-            # Quantile regression (P10, P50, P90)
-            q_results: dict[str, tuple[float, float, float]] = {}
-            for q, attr in zip(QUANTILES, ("q10", "q50", "q90")):
-                a_q, b_q, pl = _quantile_regression(
-                    pairs, q, weights=weights if weights else None
-                )
-                q_results[attr] = (a_q, b_q, pl)
-
-            # Enforce monotonic ordering of quantile slopes: q10_a <= q50_a <= q90_a
-            q10_a, q50_a, q90_a = sorted([q_results["q10"][0], q_results["q50"][0], q_results["q90"][0]])
-            # Clamp negative quantile slopes to 0 (same logic as OLS clamp)
-            q10_a = max(q10_a, 0.0)
-            q50_a = max(q50_a, 0.0)
-            q90_a = max(q90_a, 0.0)
-            q_results["q10"] = (q10_a, q_results["q10"][1], q_results["q10"][2])
-            q_results["q50"] = (q50_a, q_results["q50"][1], q_results["q50"][2])
-            q_results["q90"] = (q90_a, q_results["q90"][1], q_results["q90"][2])
-
-            for q, attr in zip(QUANTILES, ("q10", "q50", "q90")):
-                a_q, b_q, pl = q_results[attr]
-                setattr(model, attr, QuantileCoeff(
-                    quantile=q, a=a_q, b=b_q,
-                    n=len(pairs),
-                    pinball_loss=pl if len(pairs) >= MIN_OBS else None,
-                ))
-
-            models[key] = model
-            if len(pairs) >= MIN_OBS:
-                _LOGGER.debug(
-                    "Bucket %s: n=%d isotonic+OLS(a=%.3f, b=%.4f) MAE=%.4f "
-                    "Q10(a=%.3f) Q90(a=%.3f)",
-                    key, len(pairs), a_ols, b_ols, mae or 0,
-                    model.q10.a, model.q90.a,
-                )
-
-        total = len([
-            obs for obs, _ in windowed
-            if not obs.is_intervention and obs.actual_rrp < SPIKE_THRESHOLD and obs.pd7day_forecast < SPIKE_THRESHOLD
-        ])
-        _LOGGER.info(
-            "Calibration fit complete: %d observations in %d-day window "
-            "(%d total stored), %d buckets active",
-            total,
-            OBSERVATION_WINDOW_DAYS,
-            len(observations),
-            sum(1 for m in models.values() if not m.ols.is_default),
-        )
-
-        return CalibrationResult(
-            fitted_at=now_str,
-            total_observations=total,
-            observations_in_window=observations_in_window,
-            models=models,
-        )
+        return Stage1Fitter().fit(observations, region, now)
 
     def fit_ols_stage2(
         self,
@@ -1496,223 +1361,26 @@ class CalibrationEngine:
         region: str = "QLD1",
     ) -> dict[str, OlsModel]:
         """
-        Fit per-bucket 9-feature OLS using combined PD7DAY + STPASA features.
+        Fit per-bucket 9-feature OLS using combined PD7DAY + STPASA features
+        (fitting.Stage2Fitter).
 
         observations : the same observations used for the isotonic fit().
         stpasa_by_key: mapping str(interval_time + "|" + run_at) → StpasaFeatures.
 
-        Returns dict[bucket_key, OlsModel].  Only buckets whose horizon falls in
-        [OLS_MIN_HORIZON_H, OLS_MAX_HORIZON_H] are fitted; each requires at least
-        OLS_MIN_OBS observations carrying valid STPASA data.  Under-populated buckets
-        get an empty OlsModel (coef=[]).
-
-        Rows whose raw forecast lies below the bucket's fitted stage-1 domain
-        are dropped before fitting, and rows with hat leverage above
-        STAGE2_LEVERAGE_MULTIPLE times the mean are screened out and the bucket
-        refitted once; see the comments on both filters below.
-
-        Feature order (after a leading 1.0 intercept term):
-          [iso_calibrated, run_max_h6_rrp, run_mean_rrp, run_spread,
-           horizon_hours/168, log_surplus, log_solar, log_demand, poe_spread_n]
+        Returns dict[bucket_key, OlsModel]; see Stage2Fitter.fit.
         """
+        from .fitting import Stage2Fitter  # see fit() for why it is imported here
+
         run_features = _compute_run_features(observations)
 
         # We need an isotonic model to produce iso_calibrated for the feature
         # vector.  Refit on the same observations so OLS trains against the
-        # exact isotonic output it will see at apply() time.
+        # exact isotonic output it will see at apply() time. The refit reads
+        # the wall clock, so it can differ at the last bit from the result
+        # just published, and it repeats that work (#210, #213).
         iso_result = self.fit(observations, region=region)
 
-        # Group rows by bucket.  ``bucket_excluded`` counts the rows dropped
-        # below the stage-1 domain and ``bucket_high_leverage`` the rows the
-        # leverage screen removed, per bucket, so the exposure is visible in
-        # the log rather than merely assumed to be zero (issue #79 noted the
-        # count was unknown).
-        bucket_rows: dict[str, list[tuple[list[float], float]]] = {}
-        bucket_excluded: dict[str, int] = {}
-        bucket_high_leverage: dict[str, int] = {}
-        for obs in observations:
-            if obs.is_intervention:
-                continue
-            if obs.horizon_hours < OLS_MIN_HORIZON_H or obs.horizon_hours > OLS_MAX_HORIZON_H:
-                continue
-            if obs.actual_rrp >= SPIKE_THRESHOLD or obs.pd7day_forecast >= SPIKE_THRESHOLD:
-                continue
-
-            feat_key = f"{obs.interval_time}|{obs.forecast_run_at}"
-            sf = stpasa_by_key.get(feat_key)
-            if sf is None:
-                continue
-            rf = run_features.get(obs.forecast_run_at)
-            if rf is None:
-                continue
-
-            bucket_key = _bucket_key(obs.horizon_hours, obs.hour_of_day)
-
-            # Drop rows that the serving path never asks this model about.
-            #
-            # WHY: below the bucket's fitted domain the serving path publishes
-            # the edge level and never consults stage 2 (serving.BelowDomainGate),
-            # so a row there would be fitted for a region that is never served.
-            # Both paths read the boundary from BucketModel.is_below_domain so
-            # they cannot drift apart (#68, #79, #117). In practice a bucket's
-            # own training rows define its domain, so this excludes nothing
-            # unless a row's forecast changed after the stage-1 fit; it stays
-            # as the train and serve invariant.
-            #
-            # The leverage hazard that the old fixed threshold happened to
-            # cover (#79: one mis-joined deep negative row, isolated far from
-            # the cluster, took the iso_cal coefficient from +1.13 to -0.15) is
-            # handled below by a hat-leverage screen rather than by a price.
-            bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
-            if bucket.is_below_domain(obs.pd7day_forecast):
-                bucket_excluded[bucket_key] = bucket_excluded.get(bucket_key, 0) + 1
-                continue
-
-            # The unfloored stage-1 value, through the same helper the serving
-            # path reads, so a row is fitted from the number the same interval
-            # would be served from. A floored feature paired with a genuinely
-            # negative actual is what biased this coefficient: see
-            # stage2_iso_feature and issue #85.
-            iso_cal = stage2_iso_feature(
-                bucket.apply_all(obs.pd7day_forecast), obs.pd7day_forecast
-            )
-
-            feature_vec = [
-                float(iso_cal),
-                rf.run_max_h6_rrp,
-                rf.run_mean_rrp,
-                rf.run_spread,
-                obs.horizon_hours / 168.0,
-                sf.log_surplus,
-                sf.log_solar,
-                sf.log_demand,
-                sf.poe_spread_n,
-            ]
-            bucket_rows.setdefault(bucket_key, []).append((feature_vec, obs.actual_rrp))
-
-        ols_models: dict[str, OlsModel] = {}
-        # Iterate the union so a bucket whose every candidate row was excluded
-        # still gets an empty OlsModel rather than disappearing from the
-        # result. apply() treats a missing key and an empty coef list the same
-        # way, but the diagnostic summary should not lose the bucket.
-        # Sorted, so the fit order and the log line are deterministic.
-        for bucket_key in sorted(set(bucket_rows) | set(bucket_excluded)):
-            rows = bucket_rows.get(bucket_key, [])
-            # OLS_MIN_OBS is counted AFTER exclusion, deliberately. A bucket
-            # that only clears the floor by including rows the model is never
-            # served on has not really cleared it, so it falls back to an empty
-            # OlsModel and apply() keeps the stage-1 isotonic result. Falling
-            # back is the safe direction: the alternative is a 9 feature fit on
-            # fewer than 50 points, which is the over-fit that raised this
-            # floor from 10 in the first place. See #79.
-            if len(rows) < OLS_MIN_OBS:
-                ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
-                continue
-            # Design matrix with leading intercept column of ones.
-            X = np.array([[1.0] + r[0] for r in rows], dtype=float)
-            y = np.array([r[1] for r in rows], dtype=float)
-            try:
-                coef, _resid, _rank, _sv = np.linalg.lstsq(X, y, rcond=None)
-            except np.linalg.LinAlgError:
-                ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
-                continue
-
-            # Leverage screen. A row far from the rest of the design has a
-            # hat-matrix diagonal near 1 and is fitted largely by itself, so a
-            # single mis-joined actual there can invert a coefficient (#79).
-            # Rows above STAGE2_LEVERAGE_MULTIPLE times the mean leverage p/n
-            # are dropped and the bucket refitted once; if that leaves fewer
-            # than OLS_MIN_OBS rows the bucket falls back like any thin one.
-            # Data-driven and two-sided, unlike the price threshold it
-            # replaces (#117): a deep negative row among many is ordinary, an
-            # isolated one is not, and the same holds for a lone spike.
-            high = _hat_leverage(X) > STAGE2_LEVERAGE_MULTIPLE * X.shape[1] / X.shape[0]
-            n_high = int(high.sum())
-            if n_high:
-                bucket_high_leverage[bucket_key] = n_high
-                X = X[~high]
-                y = y[~high]
-                if X.shape[0] < OLS_MIN_OBS:
-                    ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
-                    continue
-                try:
-                    coef, _resid, _rank, _sv = np.linalg.lstsq(X, y, rcond=None)
-                except np.linalg.LinAlgError:
-                    ols_models[bucket_key] = OlsModel(bucket_key=bucket_key)
-                    continue
-            # R² for diagnostics.
-            y_hat = X @ coef
-            ss_res = float(np.sum((y - y_hat) ** 2))
-            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-            r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
-            # Feature ranges from the rows that survived the leverage screen,
-            # so a screened-out row cannot widen the domain the serving gate
-            # accepts. Column 0 is the intercept. Rounded OUTWARD to 6 dp:
-            # rounding to nearest put a served value that equals a training
-            # bound (horizon/168 at the same horizon, iso_cal at the domain
-            # edge) a fraction of a micro-unit outside its own range and the
-            # gate refused it. Issue #147.
-            features_only = X[:, 1:]
-            ols_models[bucket_key] = OlsModel(
-                bucket_key=bucket_key,
-                coef=[round(float(c), 8) for c in coef],
-                n_train=int(X.shape[0]),
-                r2=round(r2, 6),
-                # Fitted from the same X, y and coef, so the residual quantiles
-                # can never describe a different fit than the one they ship
-                # with. Issue #72.
-                resid=_residual_quantiles(bucket_key, X, y, coef),
-                feature_min=[
-                    math.floor(float(v) * 1e6) / 1e6 for v in features_only.min(axis=0)
-                ],
-                feature_max=[
-                    math.ceil(float(v) * 1e6) / 1e6 for v in features_only.max(axis=0)
-                ],
-            )
-
-        n_resid_fitted = sum(
-            1
-            for m in ols_models.values()
-            if m.resid is not None and m.resid.is_fitted
-        )
-        n_resid_missing = sum(
-            1
-            for m in ols_models.values()
-            if len(m.coef) >= 2 and (m.resid is None or not m.resid.is_fitted)
-        )
-        if n_resid_missing:
-            # Loud rather than silent: a bucket with coefficients but no usable
-            # residual quantiles publishes the old re-clamped stage-1 band and
-            # so can still collapse a bound onto the point estimate. See #72.
-            _LOGGER.warning(
-                "OLS stage2 fit: %d fitted bucket(s) have no usable residual "
-                "quantiles and will publish a re-clamped stage-1 band: %s",
-                n_resid_missing,
-                ", ".join(
-                    sorted(
-                        k for k, m in ols_models.items()
-                        if len(m.coef) >= 2
-                        and (m.resid is None or not m.resid.is_fitted)
-                    )
-                ),
-            )
-
-        n_excluded = sum(bucket_excluded.values())
-        n_high_leverage = sum(bucket_high_leverage.values())
-        _LOGGER.info(
-            "OLS stage2 fit: %d buckets evaluated (%d with sufficient STPASA obs, "
-            "%d with stage-2 residual quantiles), "
-            "%d rows excluded below the stage-1 domain%s, "
-            "%d high-leverage rows screened%s",
-            len(ols_models),
-            sum(1 for m in ols_models.values() if len(m.coef) >= 2),
-            n_resid_fitted,
-            n_excluded,
-            _per_bucket_counts(bucket_excluded),
-            n_high_leverage,
-            _per_bucket_counts(bucket_high_leverage),
-        )
-        return ols_models
+        return Stage2Fitter().fit(observations, stpasa_by_key, iso_result, run_features)
 
     def to_storage(self, result: CalibrationResult) -> dict:
         """Serialise CalibrationResult to a JSON-safe dict for .storage."""
