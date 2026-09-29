@@ -1374,9 +1374,10 @@ class CalibrationEngine:
         run_features = _compute_run_features(observations)
 
         # We need an isotonic model to produce iso_calibrated for the feature
-        # vector, so stage 1 is refitted on the same observations, on the wall
-        # clock: not the result just published, and at the last bit possibly
-        # not the same fit (#210, #213).
+        # vector.  Refit on the same observations so OLS trains against the
+        # exact isotonic output it will see at apply() time. The refit reads
+        # the wall clock, so it can differ at the last bit from the result
+        # just published, and it repeats that work (#210, #213).
         iso_result = self.fit(observations, region=region)
 
         return Stage2Fitter().fit(observations, stpasa_by_key, iso_result, run_features)

@@ -150,7 +150,14 @@ The move, the interfaces and the engine's delegation are as specified. These poi
   - `_lstsq`: `lstsq` or None on `LinAlgError`;
   - `_ols_model`: R², residual quantiles and ranges.
 - **The engine keeps every name it imported.** The constants and serving names that only the fit used are now explicit re-exports (`X as X`), with a comment, so every `from calibration_engine import …` keeps working. Only the engine's own unused `timedelta` import is dropped.
-- **One comment corrected, not just moved.** The below-domain comment said the exclusion "excludes nothing unless a row's forecast changed after the stage-1 fit". It now says a row lands there when its clock-hour bucket's domain, fitted from solar-keyed rows, does not cover it (#208). The fixture's main case excludes 69 rows that way.
+- **Comments corrected, not just moved, where the old text was wrong or has since been filed:**
+  - the below-domain comment said the exclusion "excludes nothing unless a row's forecast changed after the stage-1 fit". It now says a row lands there when its clock-hour bucket's domain, fitted from solar-keyed rows, does not cover it (#208). The fixture's main case excludes 69 rows that way;
+  - the `MAX_OBS` comment said "keep most recent". It now says a full bucket keeps its oldest rows (#209);
+  - the stage 2 refit comment in `CalibrationEngine.fit_ols_stage2` keeps its rationale and adds that the refit reads the wall clock and repeats the published fit (#210, #213);
+  - "is no longer used" in the stage 1 OLS comment became "is not used".
+
+  The old `fit_ols_stage2` docstring paragraph on the below-domain drop and the leverage screen now lives in the comments on `_stage2_row` and `fit_stage2_bucket`, beside the rules it describes.
+- **Test environment only:** `support.load` creates a fresh module object on every load, and the engine resolves `.fitting` from `sys.modules` at call time. In a mixed test run, `fitting` can therefore be bound to an earlier copy of `calibration_engine` than the one a test loaded, and return that copy's types. Production has one package import, so this cannot happen there. A future test that checks `isinstance` against the engine's classes after a fit, or patches an engine constant the fit reads, needs to load `fitting` in the same chain, as `tests/test_fitting.py` does.
 - **Fixture.** 13 cases, 20,610 observations, 665 KB gzipped; a run takes about 5 s. Every required branch is reached. `resid_missing` is not, as expected: `_residual_quantiles` always gets at least `OLS_MIN_OBS` finite rows.
   - **Clock:** the recorder freezes the clock by rebinding `datetime` in every loaded package module that holds the real class, rather than with `FrozenClock`. `FrozenClock` requires every clock-reading module in the package to be loaded, HA stubs included. The rebinding follows the clock read into `fitting.py` without knowing it moved.
   - **Non-finite feature:** it is `inf`, not NaN. NaN is unequal to itself, which would break the exact comparison after a JSON round trip. LAPACK rejects `inf` the same way, so the `lstsq` error path is still reached.
