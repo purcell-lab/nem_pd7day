@@ -1,6 +1,6 @@
 # Spec 006: Fitters
 
-Status: draft, 28 September 2026, against `main` at c756c3e (v3.19.0)
+Status: approved 29 September 2026 with option 1; implemented (this PR); drafted against `main` at c756c3e (v3.19.0)
 Plan: docs/architecture/tech-debt-plan.md, step 006
 
 ## Responsibility
@@ -137,7 +137,32 @@ Changes to existing code:
 2. Move the value types (`IsotonicRegression` to `CalibrationResult` and the bucket keys, about 800 lines) into a lower `calibration_model.py`. Both the engine and `fitting` would then import it, and there would be no cycle. That is a far larger move than this step, and it touches every importer of those names. It is a candidate for a later spec, which would also remove the function-level import.
 3. Keep `Stage1Fitter` and `Stage2Fitter` inside `calibration_engine.py`. There would be no cycle, but the fit would stay in a 1,800-line module, and the plan's aim, "a testable fit without the engine", would be only half met.
 
-The maintainer picks at approval. The rest of this spec assumes option 1.
+Approved with option 1.
+
+### As implemented
+
+The move, the interfaces and the engine's delegation are as specified. These points differ from the text above, each for the reason given.
+
+- **`fitting.py` imports `.serving` too.** `SPIKE_THRESHOLD`, `OLS_MIN_HORIZON_H`, `OLS_MAX_HORIZON_H` and `stage2_iso_feature` are defined there (spec 005). Each name is imported from the module that defines it, not through the engine's re-export. The invariant 6 test pins the package imports to `calibration_engine`, `const` and `serving`.
+- **Four private helpers beyond the listed interface**, to keep every function under 60 lines:
+  - `_stage2_joined`: the row filters and the two joins;
+  - `_stage2_row`: the below-domain check and the feature vector;
+  - `_lstsq`: `lstsq` or None on `LinAlgError`;
+  - `_ols_model`: R², residual quantiles and ranges.
+- **The engine keeps every name it imported.** The constants and serving names that only the fit used are now explicit re-exports (`X as X`), with a comment, so every `from calibration_engine import …` keeps working. Only the engine's own unused `timedelta` import is dropped.
+- **One comment corrected, not just moved.** The below-domain comment said the exclusion "excludes nothing unless a row's forecast changed after the stage-1 fit". It now says a row lands there when its clock-hour bucket's domain, fitted from solar-keyed rows, does not cover it (#208). The fixture's main case excludes 69 rows that way.
+- **Fixture.** 13 cases, 20,610 observations, 665 KB gzipped; a run takes about 5 s. Every required branch is reached. `resid_missing` is not, as expected: `_residual_quantiles` always gets at least `OLS_MIN_OBS` finite rows.
+  - **Clock:** the recorder freezes the clock by rebinding `datetime` in every loaded package module that holds the real class, rather than with `FrozenClock`. `FrozenClock` requires every clock-reading module in the package to be loaded, HA stubs included. The rebinding follows the clock read into `fitting.py` without knowing it moved.
+  - **Non-finite feature:** it is `inf`, not NaN. NaN is unequal to itself, which would break the exact comparison after a JSON round trip. LAPACK rejects `inf` the same way, so the `lstsq` error path is still reached.
+- **Contract tests** (`tests/test_fitting.py`, 9 tests):
+  - invariant 3: one stage 1 fit per stage 2 fit, with `now` None; `Stage2Fitter` never fits stage 1;
+  - invariant 4: equal models for equal arguments; a hand-built stage 1 result decides the exclusion; the screened count is kept when a bucket falls back;
+  - invariant 6: imports, the function-level engine import, and the logger name.
+- **Benchmark:** `fit` then `fit_ols_stage2` on the fixture's main case (9,517 observations), Python 3.13, best of 20, base and head alternating: 494.0 ms on 53c7e18 and 494.2 ms on the head. The golden master (19 tests) ran in 20.1 s on the base and 19.5 s on the head.
+- **Gates:**
+  - mypy stays at 35, with no errors in `fitting.py` (the moved code had none before either);
+  - the size baseline goes from 30 functions and 5 classes to 28 and 4;
+  - import-linter reports the same violations as `main`, none of them in `fitting`.
 
 ## Invariants
 
