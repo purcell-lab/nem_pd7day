@@ -139,15 +139,21 @@ def partition_stage1(
         obs_nem = obs_dt.astimezone(NEM_TZ)
         key = _bucket_key_solar(obs.horizon_hours, obs_nem, region)
         if key in buckets:
-            # Cap per-bucket to avoid memory bloat. The first MAX_OBS rows in
-            # input order are kept, and the input is oldest first, so a full
-            # bucket keeps its oldest rows (#209).
-            if len(buckets[key]) < MAX_OBS:
-                buckets[key].append((obs.pd7day_forecast, obs.actual_rrp))
-                # Compute exponential time-decay weight
-                days_ago = (now_nem - obs_nem).total_seconds() / 86400.0
-                weight = math.exp(-DECAY_LAMBDA * max(days_ago, 0.0))
-                bucket_weights[key].append(weight)
+            buckets[key].append((obs.pd7day_forecast, obs.actual_rrp))
+            # Compute exponential time-decay weight
+            days_ago = (now_nem - obs_nem).total_seconds() / 86400.0
+            bucket_weights[key].append(math.exp(-DECAY_LAMBDA * max(days_ago, 0.0)))
+    # Cap each bucket at its MAX_OBS most recent rows (#209). Until then the
+    # first MAX_OBS rows in input order were kept, and the input is mostly
+    # oldest first, so a full bucket froze on its oldest rows and dropped the
+    # ones decay weights most. The weight falls with age, so it ranks recency;
+    # ties go to the later row, and kept rows stay in input order.
+    for key, weights in bucket_weights.items():
+        if len(weights) > MAX_OBS:
+            ranked = sorted(range(len(weights)), key=lambda i: (weights[i], i))
+            keep = sorted(ranked[-MAX_OBS:])
+            buckets[key] = [buckets[key][i] for i in keep]
+            bucket_weights[key] = [weights[i] for i in keep]
     return buckets, bucket_weights
 
 
