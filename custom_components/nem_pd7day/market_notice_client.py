@@ -108,6 +108,12 @@ _NOTICE_REF = re.compile(r"Market Notice(?:\s+No\.?)?\s+(\d{5,})", re.IGNORECASE
 _UPDATE_REF = re.compile(
     r"Update to Market Notice(?:\s+No\.?)?\s+(\d{5,})", re.IGNORECASE
 )
+# MSL forecast minimum demand: "Minimum regional demand is forecast to be 2012
+# MW" until 2025, "Minimum demand is forecast to be -89 MW" since (#216).
+_MSL_FORECAST = re.compile(
+    r"minimum (?:regional )?demand is forecast to be (-?[\d,]+(?:\.\d+)?)\s*MW",
+    re.IGNORECASE,
+)
 # Wording that ends an earlier notice without the word "Cancellation" (#216):
 # 145397, "The suspect LOR3 condition advised in AEMO Electricity Market Notice
 # No. 145396 has been reviewed and is now resolved."
@@ -364,7 +370,7 @@ def _parse_notice_body(text: str, notice_id: int) -> Optional[GridNoticeAnnotati
     # Extract MSL-specific fields
     forecast_mw = None
     if notice_type == "MSL" and not is_cancelled:
-        msl_match = re.search(r'[Mm]inimum regional demand is forecast to be ([\d,]+)\s*MW', text)
+        msl_match = _MSL_FORECAST.search(text)
         if msl_match:
             forecast_mw = float(msl_match.group(1).replace(",", ""))
 
