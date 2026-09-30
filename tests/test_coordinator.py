@@ -660,13 +660,16 @@ DISPATCH_PRICES_MWH = {"QLD1": 89.5, "NSW1": 75.2, "VIC1": 120.0, "SA1": -5.0, "
 
 
 def _current_boundary_nem() -> datetime:
-    """Current 5-minute boundary in NEM time (UTC+10, no daylight saving).
+    """The settlement a poll now treats as fresh, in NEM time (UTC+10).
 
-    This is the settlement the coordinator computes as expected, so serving
-    it back keeps the freshness gate satisfied without any sleeping retry.
+    SETTLEMENTDATE is the interval end, so the price published after the
+    current 5-minute boundary B is the interval ending B + 5 min (#219).
+    Serving it back keeps the freshness gate satisfied without any sleeping
+    retry.
     """
     nem_now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=10)
-    return nem_now.replace(minute=(nem_now.minute // 5) * 5, second=0, microsecond=0)
+    boundary = nem_now.replace(minute=(nem_now.minute // 5) * 5, second=0, microsecond=0)
+    return boundary + timedelta(minutes=5)
 
 
 def _summary_payload(settlement: datetime, regions=DISPATCH_REGIONS) -> bytes:
