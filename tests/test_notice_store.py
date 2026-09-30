@@ -211,3 +211,58 @@ def test_advance_cursor_is_monotonic():
     assert store.last_seen_notice_id == 5100
     assert store.advance_cursor(5100) is False
     assert store.last_seen_notice_id == 5100
+
+
+# ── #216: the real SA1 sequence of 29 and 30 September 2026 ─────────────────
+
+
+def _parsed(notice_id: int) -> GridNoticeAnnotation:
+    from notice_fixtures import notice_text
+
+    return _mnc._parse_notice_body(notice_text(notice_id), notice_id)
+
+
+SA1_SEQUENCE = (145393, 145394, 145396, 145397, 145409, 145415, 145432)
+
+
+def test_real_sa1_sequence_leaves_only_the_two_current_msl_notices():
+    """What sensor.nem_pd7day_sa1_grid_notices should have shown at 20:39 on
+    30 September: 145409 (the update to 145393) and 145432. Before #216 it
+    showed 145396 and 145393 as well: a resolved LOR3 and a replaced MSL1."""
+    store = GridNoticeStore(MagicMock())
+    store.add_notices([_parsed(n) for n in SA1_SEQUENCE])
+    now = datetime(2026, 9, 30, 20, 39, tzinfo=NEM_TZ)
+    active = store.get_active_notices("SA1", from_dt=now, to_dt=now + timedelta(days=7))
+    assert [n.notice_id for n in active] == [145409, 145432]
+    assert {n.notice_type for n in active} == {"MSL"}
+
+
+def test_each_sa1_withdrawal_names_what_it_withdrew():
+    store = GridNoticeStore(MagicMock())
+    store.add_notices([_parsed(n) for n in SA1_SEQUENCE])
+    by_id = {n.notice_id: n for n in store._notices["SA1"]}
+    assert by_id[145396].is_cancelled is True          # resolved by 145397
+    assert by_id[145394].is_cancelled is True          # cancelled by 145415
+    assert by_id[145393].is_cancelled is False         # replaced, not cancelled
+    assert by_id[145393].superseded_by == 145409
+    assert by_id[145432].is_cancelled is False
+    assert by_id[145432].superseded_by is None
+
+
+def test_an_update_to_a_notice_the_store_never_saw_retires_nothing():
+    store = GridNoticeStore(MagicMock())
+    other = _notice(145400, region="SA1", notice_type="MSL")
+    update = _notice(145409, region="SA1", notice_type="MSL", supersedes_notice_id=145393)
+    store.add_notices([other, update])
+    assert [n.notice_id for n in store.get_active_notices("SA1")] == [145400, 145409]
+
+
+def test_an_update_retires_only_the_notice_it_names():
+    """Same region, type, level and day: only the named notice goes. The
+    date-wide match #182 removed must not come back through updates."""
+    store = GridNoticeStore(MagicMock())
+    named = _notice(145393, region="SA1", notice_type="MSL")
+    sibling = _notice(145394, region="SA1", notice_type="MSL")
+    update = _notice(145409, region="SA1", notice_type="MSL", supersedes_notice_id=145393)
+    store.add_notices([named, sibling, update])
+    assert [n.notice_id for n in store.get_active_notices("SA1")] == [145394, 145409]

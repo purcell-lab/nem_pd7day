@@ -101,6 +101,20 @@ _NOTICE_FETCH_DELAY_S = 0.1
 NOTICE_TYPE_LOR = "RESERVE NOTICE"
 NOTICE_TYPE_MSL = "MINIMUM SYSTEM LOAD"
 
+# A reference to another notice. AEMO writes "Refer to Market Notice 145394",
+# "Update to Market Notice 145393" and "advised in AEMO Electricity Market
+# Notice No. 145396" (#216).
+_NOTICE_REF = re.compile(r"Market Notice(?:\s+No\.?)?\s+(\d{5,})", re.IGNORECASE)
+_UPDATE_REF = re.compile(
+    r"Update to Market Notice(?:\s+No\.?)?\s+(\d{5,})", re.IGNORECASE
+)
+# Wording that ends an earlier notice without the word "Cancellation" (#216):
+# 145397, "The suspect LOR3 condition advised in AEMO Electricity Market Notice
+# No. 145396 has been reviewed and is now resolved."
+_RESOLVED = re.compile(
+    r"\bis now resolved\b|\b(?:is|has been|are) cancelled\b", re.IGNORECASE
+)
+
 # Region name normalisation: notice text uses "SA Region", "VIC region", "QLD1" etc.
 REGION_ALIASES = {
     "SA": "SA1", "VIC": "VIC1", "NSW": "NSW1", "QLD": "QLD1", "TAS": "TAS1",
@@ -120,6 +134,10 @@ class GridNoticeAnnotation:
     issued_at: datetime       # NEM time (tz-aware)
     is_cancelled: bool = False
     cancels_notice_id: Optional[int] = None   # notice ID this cancels
+    # "Update to Market Notice N": this notice replaces N (#216)
+    supersedes_notice_id: Optional[int] = None
+    # Set by the store on the notice an update replaced (#216)
+    superseded_by: Optional[int] = None
     cancellation_date: Optional[date] = None  # date of LOR/MSL period being cancelled
     forecast_mw: Optional[float] = None       # MSL: forecast minimum demand
     reserve_req_mw: Optional[float] = None    # LOR: reserve requirement
@@ -136,10 +154,14 @@ class GridNoticeAnnotation:
             "issued_at": self.issued_at.isoformat(),
             "is_cancelled": self.is_cancelled,
             "cancels_notice_id": self.cancels_notice_id,
+            "supersedes_notice_id": self.supersedes_notice_id,
             "cancellation_date": self.cancellation_date.isoformat() if self.cancellation_date else None,
             "forecast_mw": self.forecast_mw,
             "reserve_req_mw": self.reserve_req_mw,
             "surplus_mw": self.surplus_mw,
+            # Stored only once set. A notice the sensors publish is never
+            # superseded, so the key would always read null there.
+            **({"superseded_by": self.superseded_by} if self.superseded_by else {}),
         }
 
     @classmethod
@@ -156,6 +178,8 @@ class GridNoticeAnnotation:
             issued_at=datetime.fromisoformat(d["issued_at"]),
             is_cancelled=d.get("is_cancelled", False),
             cancels_notice_id=d.get("cancels_notice_id"),
+            supersedes_notice_id=d.get("supersedes_notice_id"),
+            superseded_by=d.get("superseded_by"),
             cancellation_date=cancellation_date,
             forecast_mw=d.get("forecast_mw"),
             reserve_req_mw=d.get("reserve_req_mw"),
@@ -179,6 +203,43 @@ def _parse_directory_listing(html: str) -> list[tuple[int, str]]:
             seen.add(notice_id)
             result.append((notice_id, filename))
     return sorted(result, key=lambda x: x[0])
+
+
+def _parse_references(
+    text: str, notice_id: int
+) -> tuple[bool, Optional[int], Optional[date], Optional[int]]:
+    """
+    How a notice relates to earlier ones (#216): whether it withdraws one
+    (a cancellation, or a resolution that never says "Cancellation"), the
+    notice it names, the date a PDPASA cancellation applies to, and for an
+    "Update to Market Notice N", the N it replaces.
+
+    Returns (is_cancelled, cancels_notice_id, cancellation_date,
+    supersedes_notice_id).
+    """
+    is_cancelled = bool(
+        re.search(r'\bCancell?ation\b', text, re.IGNORECASE)
+        or _RESOLVED.search(text)
+    )
+    cancels_notice_id = None
+    cancellation_date = None
+    supersedes_notice_id = None
+    if is_cancelled:
+        refs = [int(m) for m in _NOTICE_REF.findall(text) if int(m) != notice_id]
+        if refs:
+            cancels_notice_id = refs[0]
+        # Extract cancellation effective date from "on DD/MM/YYYY" or "at HHMM hrs DD/MM/YYYY"
+        cdate_match = re.search(r'(?:on|at\s+\d{4}\s+hrs)\s+(\d{2}/\d{2}/\d{4})', text)
+        if cdate_match:
+            try:
+                cancellation_date = datetime.strptime(cdate_match.group(1), "%d/%m/%Y").date()
+            except ValueError:
+                pass
+    else:
+        update_match = _UPDATE_REF.search(text)
+        if update_match and int(update_match.group(1)) != notice_id:
+            supersedes_notice_id = int(update_match.group(1))
+    return is_cancelled, cancels_notice_id, cancellation_date, supersedes_notice_id
 
 
 def _parse_notice_body(text: str, notice_id: int) -> Optional[GridNoticeAnnotation]:
@@ -208,21 +269,9 @@ def _parse_notice_body(text: str, notice_id: int) -> Optional[GridNoticeAnnotati
     else:
         issued_at = datetime.now(NEM_TZ)
 
-    # Check for cancellation
-    is_cancelled = bool(re.search(r'\bCancell?ation\b', text, re.IGNORECASE))
-    cancels_notice_id = None
-    cancellation_date = None
-    if is_cancelled:
-        ref_match = re.search(r'[Rr]efer to Market Notice (\d+)', text)
-        if ref_match:
-            cancels_notice_id = int(ref_match.group(1))
-        # Extract cancellation effective date from "on DD/MM/YYYY" or "at HHMM hrs DD/MM/YYYY"
-        cdate_match = re.search(r'(?:on|at\s+\d{4}\s+hrs)\s+(\d{2}/\d{2}/\d{4})', text)
-        if cdate_match:
-            try:
-                cancellation_date = datetime.strptime(cdate_match.group(1), "%d/%m/%Y").date()
-            except ValueError:
-                pass
+    is_cancelled, cancels_notice_id, cancellation_date, supersedes_notice_id = (
+        _parse_references(text, notice_id)
+    )
 
     # Extract level (LOR1/LOR2/LOR3 or MSL1/MSL2/MSL3)
     # The header line "Notice Type Description : LRC/LOR1/LOR2/LOR3" always
@@ -329,6 +378,7 @@ def _parse_notice_body(text: str, notice_id: int) -> Optional[GridNoticeAnnotati
         issued_at=issued_at,
         is_cancelled=is_cancelled,
         cancels_notice_id=cancels_notice_id,
+        supersedes_notice_id=supersedes_notice_id,
         cancellation_date=cancellation_date,
         forecast_mw=forecast_mw,
         reserve_req_mw=reserve_req_mw,

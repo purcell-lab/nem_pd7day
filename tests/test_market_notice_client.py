@@ -627,3 +627,83 @@ def test_healthy_cycle_stays_silent_at_info(caplog):
         f"a healthy cycle must be silent at INFO, got "
         f"{[r.getMessage() for r in caplog.records]}"
     )
+
+
+# ── #216: resolutions, "Notice No. N" references and updates ────────────────
+#
+# Real NEMWEB files (tests/fixtures/market_notices). On 30 September 2026 the
+# SA1 grid notices sensor showed 145396 and 145393 as active after AEMO had
+# resolved the first (145397) and replaced the second (145409).
+
+
+def _real(notice_id: int):
+    from notice_fixtures import notice_text
+
+    return _parse_notice_body(notice_text(notice_id), notice_id)
+
+
+def test_a_resolution_without_the_word_cancellation_cancels_the_named_notice():
+    """145397: "The suspect LOR3 condition advised in AEMO Electricity Market
+    Notice No. 145396 has been reviewed and is now resolved." Before #216 it
+    was stored as a new, zero-length LOR3 notice and 145396 stayed active."""
+    notice = _real(145397)
+    assert notice.region == "SA1"
+    assert (notice.notice_type, notice.level) == ("LOR", 3)
+    assert notice.is_cancelled is True
+    assert notice.cancels_notice_id == 145396
+    assert notice.supersedes_notice_id is None
+
+
+def test_the_resolved_notice_itself_parses_as_an_active_lor3():
+    notice = _real(145396)
+    assert notice.is_cancelled is False
+    assert notice.period_from == datetime(2026, 10, 1, 0, 0, tzinfo=NEM_TZ)
+    assert notice.period_to == datetime(2026, 10, 1, 4, 0, tzinfo=NEM_TZ)
+
+
+def test_a_cancellation_naming_its_notice_as_no_n_reads_the_id():
+    """145079 (VIC1 LOR1): "...advised in AEMO Electricity Market Notice No.
+    145078 is cancelled". With no ID read it fell back to the date match that
+    #182 showed can cancel notices it never named."""
+    notice = _real(145079)
+    assert notice.is_cancelled is True
+    assert notice.cancels_notice_id == 145078
+
+
+def test_refer_to_market_notice_still_names_the_cancelled_notice():
+    notice = _real(145415)
+    assert notice.is_cancelled is True
+    assert notice.cancels_notice_id == 145394
+
+
+def test_an_update_supersedes_the_notice_it_names_and_is_not_a_cancellation():
+    """145409: "Update to Market Notice 145393", period narrowed to 13:30 to
+    14:00 on 5 October."""
+    notice = _real(145409)
+    assert notice.is_cancelled is False
+    assert notice.cancels_notice_id is None
+    assert notice.supersedes_notice_id == 145393
+    assert notice.period_from == datetime(2026, 10, 5, 13, 30, tzinfo=NEM_TZ)
+    assert notice.period_to == datetime(2026, 10, 5, 14, 0, tzinfo=NEM_TZ)
+
+
+def test_an_original_notice_supersedes_nothing():
+    for notice_id in (145393, 145394, 145396, 145432):
+        notice = _real(notice_id)
+        assert notice.is_cancelled is False, notice_id
+        assert notice.cancels_notice_id is None, notice_id
+        assert notice.supersedes_notice_id is None, notice_id
+
+
+def test_new_fields_round_trip_and_old_stored_notices_still_load():
+    notice = _real(145409)
+    notice.superseded_by = 145500
+    again = mnc.GridNoticeAnnotation.from_dict(notice.to_dict())
+    assert again.supersedes_notice_id == 145393
+    assert again.superseded_by == 145500
+
+    stored_before_216 = notice.to_dict()
+    del stored_before_216["supersedes_notice_id"], stored_before_216["superseded_by"]
+    old = mnc.GridNoticeAnnotation.from_dict(stored_before_216)
+    assert old.supersedes_notice_id is None
+    assert old.superseded_by is None

@@ -1,0 +1,39 @@
+-------------------------------------------------------------------
+                           MARKET NOTICE
+-------------------------------------------------------------------
+
+From :              AEMO
+To   :              NEMITWEB1
+Creation Date :     30/09/2026     16:05:28
+
+-------------------------------------------------------------------
+
+Notice ID               :         145432
+Notice Type ID          :         MINIMUM SYSTEM LOAD
+Notice Type Description :         MSL1/MSL2/MSL3
+Issue Date              :         30/09/2026
+External Reference      :         Forecast Minimum System Load (MSL1) condition in the SA region on 07/10/2026
+
+-------------------------------------------------------------------
+
+Reason :
+
+AEMO ELECTRICITY MARKET NOTICE
+
+AEMO has detected that there is an elevated risk of insufficient demand to maintain a secure operating state in the SA region on 07/10/2026.
+
+Minimum System Load (MSL) conditions are forecast when demand is less than the relevant MSL threshold. The advisory MSL thresholds are:
+-	MSL1: -40 MW 
+-	MSL2: -315 MW 
+-	MSL3: -530 MW 
+
+The demand is forecast to be below the MSL1 threshold for the following period: 
+From 1200 hrs 07/10/2026 to 1400 hrs 07/10/2026. Minimum demand is forecast to be -112 MW at 1330 hrs.
+
+Forecast demand refers to forecast Operational Demand that excludes contribution from Significant Non-Scheduled Generation: see definitions at https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/operational-demand-data .
+
+AEMO Operations
+
+-------------------------------------------------------------------
+END OF REPORT
+-------------------------------------------------------------------
