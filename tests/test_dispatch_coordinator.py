@@ -89,6 +89,88 @@ def test_successful_fetch_stores_prices_and_last_updated():
     assert coord.last_updated is not None
 
 
+# ── Freshness: the interval ending at the next boundary (#219) ───────────────
+# SETTLEMENTDATE is the interval END. The price AEMO publishes just after
+# boundary B is the interval ending B + 5 min. The poll used to expect B, so
+# when AEMO published after the poll it accepted the interval it already had
+# and never fetched B + 5: about 1 interval in 4 on the live install.
+
+T0 = datetime(2026, 9, 30, 3, 16, 15, tzinfo=timezone.utc)      # 13:16:15 NEM, 75 s after 13:15
+FRESH = datetime(2026, 9, 30, 13, 20)                           # interval ending 13:20, NEM, naive
+PREVIOUS = datetime(2026, 9, 30, 13, 15)
+
+
+def _prices(settlement: datetime, rrp: float = 0.05) -> dict:
+    return {"QLD1": DispatchPrice("QLD1", settlement.strftime("%Y-%m-%dT%H:%M:%S"), rrp)}
+
+
+def _fetch_serving(*settlements):
+    """A fetch_dispatch_prices stand-in: each call serves the next settlement,
+    raising StaleIntervalError as the real one does when it is behind."""
+    calls: list = []
+    queue = list(settlements)
+
+    def fetch(expected=None):
+        calls.append(expected)
+        settlement = queue.pop(0) if len(queue) > 1 else queue[0]
+        if expected is not None and settlement < expected:
+            raise _dispatch_mod.StaleIntervalError(f"{settlement} < {expected}")
+        return _prices(settlement)
+
+    return fetch, calls
+
+
+def _run(fetch):
+    hass = MagicMock()
+
+    async def executor(fn, *args):
+        return fn(*args)
+
+    hass.async_add_executor_job = executor
+    coord = make_coordinator(hass)
+    sleeps: list = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    with patch.object(_coord_mod.dt_util, "utcnow", return_value=T0), \
+            patch.object(_coord_mod, "fetch_dispatch_prices", fetch), \
+            patch.object(_coord_mod.asyncio, "sleep", fake_sleep):
+        result = run_async(coord._async_update_data())
+    return result, sleeps
+
+
+def test_the_poll_expects_the_interval_ending_at_the_next_boundary():
+    fetch, calls = _fetch_serving(FRESH)
+    result, sleeps = _run(fetch)
+    assert calls == [FRESH]
+    assert sleeps == []
+    assert result["QLD1"].interval_datetime == "2026-09-30T13:20:00"
+
+
+def test_a_late_publication_is_picked_up_on_a_retry(caplog):
+    """The 30 Sep 13:20 case: the poll sees 13:15, retries, and gets 13:20."""
+    fetch, calls = _fetch_serving(PREVIOUS, FRESH)
+    with caplog.at_level("WARNING"):
+        result, sleeps = _run(fetch)
+    assert calls == [FRESH, FRESH]
+    assert sleeps == [_coord_mod._DISPATCH_RETRY_DELAY_S]
+    assert result["QLD1"].interval_datetime == "2026-09-30T13:20:00"
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+
+def test_still_behind_after_every_retry_serves_what_it_has_and_warns_once(caplog):
+    fetch, calls = _fetch_serving(PREVIOUS)
+    with caplog.at_level("WARNING"):
+        result, sleeps = _run(fetch)
+    retries = _coord_mod._DISPATCH_RETRIES
+    assert calls == [FRESH] * (retries + 1) + [None]
+    assert sleeps == [_coord_mod._DISPATCH_RETRY_DELAY_S] * retries
+    assert result["QLD1"].interval_datetime == "2026-09-30T13:15:00"
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1 and "still behind" in warnings[0] and "missed" in warnings[0]
+
+
 # ── Boundary-aligned poll scheduling ─────────────────────────────────────────
 
 @pytest.mark.parametrize(
