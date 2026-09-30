@@ -343,16 +343,6 @@
      "message": "Calibration fit complete: 36 observations in 90-day window (36 total stored), 1 buckets active"
     },
     {
-     "level": "DEBUG",
-     "logger": "custom_components.nem_pd7day.calibration_engine",
-     "message": "Bucket h24_48__shoulder: n=22 isotonic+OLS(a=0.992, b=-0.0031) MAE=0.0025 Q10(a=1.000) Q90(a=1.000)"
-    },
-    {
-     "level": "INFO",
-     "logger": "custom_components.nem_pd7day.calibration_engine",
-     "message": "Calibration fit complete: 36 observations in 90-day window (36 total stored), 1 buckets active"
-    },
-    {
      "level": "INFO",
      "logger": "custom_components.nem_pd7day.calibration_engine",
      "message": "OLS stage2 fit: 2 buckets evaluated (0 with sufficient STPASA obs, 0 with stage-2 residual quantiles), 0 rows excluded below the stage-1 domain, 0 high-leverage rows screened"

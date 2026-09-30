@@ -1479,7 +1479,7 @@ def test_fit_generation_advances_on_restore_refit_and_stage2():
     ]
     # Stage 2 is best effort; stand in for the OLS fit so the in-place update
     # runs (an empty model set still counts as a stage 2 update and serialises).
-    store._engine.fit_ols_stage2 = lambda obs, fmap, region: {}
+    store._engine.fit_ols_stage2 = lambda obs, fmap, region, stage1: {}
     assert store.fit_generation == 0
 
     run_async(store.async_refit())

@@ -573,7 +573,9 @@ def _record_case(mods: types.SimpleNamespace, name: str, case: dict[str, Any]) -
     stage2_log: list[list[str]] = []
     if case["stpasa_objects"]:
         with _captured() as log, _frozen_clock():
-            models = engine.fit_ols_stage2(observations, case["stpasa_objects"], case["region"])
+            models = engine.fit_ols_stage2(
+                observations, case["stpasa_objects"], case["region"], clock_result
+            )
         stage2_log = log.records
         clock_result.ols_models = models
     out["fit_clock"] = {

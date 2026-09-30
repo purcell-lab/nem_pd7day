@@ -364,7 +364,7 @@ class CalibrationStore:
         if stpasa_map:
             try:
                 ols_models = await self._hass.async_add_executor_job(
-                    self._engine.fit_ols_stage2, obs_list, stpasa_map, self._region
+                    self._engine.fit_ols_stage2, obs_list, stpasa_map, self._region, result
                 )
                 result.ols_models = ols_models
                 # Mutates the object already published as self._calibration, so

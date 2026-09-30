@@ -23,12 +23,11 @@ Stage 2, ``Stage2Fitter``, given the stage 1 result and run features:
 Log lines go to the engine's logger, not this module's, so a ``logger:``
 entry a user has set for ``calibration_engine`` still catches them.
 
-Three behaviours are pinned here as they are and filed for their own changes:
+Two behaviours are pinned here as they are and filed for their own changes:
 stage 1 keys by solar time of day while serving and stage 2 key by clock hour
-(#208); the MAX_OBS cap keeps the first rows of a full bucket in input order,
-the oldest (#209); and ``CalibrationEngine.fit_ols_stage2`` refits stage 1 on
-the wall clock rather than taking the published result, and stage 2 rows are
-not windowed (#210, #213).
+(#208); and the MAX_OBS cap keeps the first rows of a full bucket in input
+order, the oldest (#209). Stage 2 now trains against the published stage 1
+result and inside its window (#210, #213).
 """
 from __future__ import annotations
 
@@ -399,7 +398,7 @@ def stage2_rows(
     Filters, in order: intervention; horizon outside [OLS_MIN_HORIZON_H,
     OLS_MAX_HORIZON_H]; a spike on either side; no STPASA features for the
     interval and run; no run features for the run; below the stage 1 domain.
-    No rolling window is applied (#210).
+    The rolling window is applied by the caller, Stage2Fitter.fit (#210).
     """
     out = Stage2Rows()
     for obs in observations:
@@ -576,7 +575,12 @@ class Stage2Fitter:
           [iso_calibrated, run_max_h6_rrp, run_mean_rrp, run_spread,
            horizon_hours/168, log_surplus, log_solar, log_demand, poe_spread_n]
         """
-        rows = stage2_rows(observations, stpasa_by_key, run_features, stage1)
+        # Train only inside stage 1's window, measured from the instant stage 1
+        # was fitted at, so both stages see the same rows (#210). Run features
+        # still come from every observation the caller passed.
+        now_utc = datetime.fromisoformat(stage1.fitted_at).astimezone(timezone.utc)
+        in_window = [obs for obs, _ in window_observations(observations, now_utc)]
+        rows = stage2_rows(in_window, stpasa_by_key, run_features, stage1)
         models: dict[str, OlsModel] = {}
         screened: dict[str, int] = {}
         # Iterate the union so a bucket whose every candidate row was excluded

@@ -1359,6 +1359,7 @@ class CalibrationEngine:
         observations: list[Observation],
         stpasa_by_key: dict[str, "StpasaFeatures"],
         region: str = "QLD1",
+        stage1: "CalibrationResult | None" = None,
     ) -> dict[str, OlsModel]:
         """
         Fit per-bucket 9-feature OLS using combined PD7DAY + STPASA features
@@ -1366,21 +1367,20 @@ class CalibrationEngine:
 
         observations : the same observations used for the isotonic fit().
         stpasa_by_key: mapping str(interval_time + "|" + run_at) → StpasaFeatures.
+        stage1       : the stage 1 result being published. Stage 2 trains
+                       against its buckets and inside its window, so the rows
+                       see the exact stage 1 output serving applies (#210) and
+                       stage 1 is not fitted twice (#213). Omitted, stage 1 is
+                       fitted here on the wall clock.
 
         Returns dict[bucket_key, OlsModel]; see Stage2Fitter.fit.
         """
         from .fitting import Stage2Fitter  # see fit() for why it is imported here
 
         run_features = _compute_run_features(observations)
-
-        # We need an isotonic model to produce iso_calibrated for the feature
-        # vector.  Refit on the same observations so OLS trains against the
-        # exact isotonic output it will see at apply() time. The refit reads
-        # the wall clock, so it can differ at the last bit from the result
-        # just published, and it repeats that work (#210, #213).
-        iso_result = self.fit(observations, region=region)
-
-        return Stage2Fitter().fit(observations, stpasa_by_key, iso_result, run_features)
+        if stage1 is None:
+            stage1 = self.fit(observations, region=region)
+        return Stage2Fitter().fit(observations, stpasa_by_key, stage1, run_features)
 
     def to_storage(self, result: CalibrationResult) -> dict:
         """Serialise CalibrationResult to a JSON-safe dict for .storage."""
