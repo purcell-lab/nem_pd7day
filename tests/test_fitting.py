@@ -15,6 +15,7 @@ Run with:  python -m pytest tests/test_fitting.py -v
 from __future__ import annotations
 
 import ast
+import dataclasses
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -74,7 +75,46 @@ def test_a_stage2_fit_runs_exactly_one_stage1_fit_on_the_wall_clock():
         ce.CalibrationEngine().fit_ols_stage2(obs, stpasa, "QLD1")
     assert stage1.call_count == 1
     (_self, observations, region, now), _kwargs = stage1.call_args
-    assert (observations, region, now) == (obs, "QLD1", None)   # #210, pinned as it is
+    assert (observations, region, now) == (obs, "QLD1", None)   # only when not given one
+
+
+def test_a_stage2_fit_given_the_published_stage1_does_not_fit_it_again():
+    """async_refit passes the result it just published (#210, #213)."""
+    obs, stpasa = _stage2_inputs()
+    stage1 = fitting.Stage1Fitter().fit(obs, "QLD1", NOW)
+    with patch.object(fitting.Stage1Fitter, "fit", side_effect=AssertionError("stage 1 refit")):
+        models = ce.CalibrationEngine().fit_ols_stage2(obs, stpasa, "QLD1", stage1)
+    assert len(models["h24_48__peak"].coef) == 10
+
+
+def _shifted(obs: list, stpasa: dict, days: int) -> tuple[list, dict]:
+    def back(iso: str) -> str:
+        return (datetime.fromisoformat(iso) - timedelta(days=days)).isoformat()
+
+    moved = [o._replace(interval_time=back(o.interval_time), forecast_run_at=back(o.forecast_run_at)) for o in obs]
+    feats = {}
+    for key, f in stpasa.items():
+        interval, run = key.split("|")
+        feats[f"{back(interval)}|{back(run)}"] = dataclasses.replace(f, stpasa_run_at=back(f.stpasa_run_at))
+    return moved, feats
+
+
+def test_stage2_trains_only_inside_the_stage1_window():
+    """Rows older than OBSERVATION_WINDOW_DAYS before the stage 1 fit were
+    stage 2 training rows until #210, though stage 1 no longer saw them."""
+    obs, stpasa = _stage2_inputs()
+    old_obs, old_stpasa = _shifted(obs, stpasa, ce.OBSERVATION_WINDOW_DAYS + 30)
+    both, both_stpasa = obs + old_obs, {**stpasa, **old_stpasa}
+    engine = ce.CalibrationEngine()
+
+    stage1 = engine.fit(both, "QLD1", now=NOW)
+    with_old = engine.fit_ols_stage2(both, both_stpasa, "QLD1", stage1)
+    without = engine.fit_ols_stage2(obs, stpasa, "QLD1", engine.fit(obs, "QLD1", now=NOW))
+
+    assert _storage(with_old) == _storage(without)
+    # Fitted as of the old rows' own time instead, they are the ones trained on.
+    then = engine.fit(both, "QLD1", now=NOW - timedelta(days=ce.OBSERVATION_WINDOW_DAYS + 30))
+    assert _storage(engine.fit_ols_stage2(both, both_stpasa, "QLD1", then)) != _storage(without)
 
 
 def test_the_stage2_fitter_never_fits_stage1():
