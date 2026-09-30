@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -57,6 +58,31 @@ def _stage2_inputs(rows: int = 80) -> tuple[list, dict]:
             stpasa_run_at=run.isoformat(),
         )
     return obs, stpasa
+
+
+def test_a_full_bucket_keeps_its_most_recent_rows_whatever_the_input_order():
+    """Until #209 the first MAX_OBS rows in input order were kept, and the
+    input is mostly oldest first, so a full bucket froze on its oldest rows."""
+    night = NOW.astimezone(NEM).replace(hour=2, minute=0)
+    days = [9, 1, 7, 3, 5, 2]                 # out of order on purpose
+    windowed = []
+    for d in days:
+        t = night - timedelta(days=d)
+        windowed.append((ce.Observation(
+            interval_time=t.isoformat(), horizon_hours=130.0, pd7day_forecast=0.1,
+            actual_rrp=d / 100, forecast_run_at=(t - timedelta(hours=130)).isoformat(),
+            hour_of_day=t.hour, day_of_week=t.weekday(), month=t.month, gas_forecast_tj=None,
+            qni_mwflow=None, qni_violation_degree=None, is_intervention=False,
+        ), t))
+
+    with patch.object(fitting, "MAX_OBS", 3):
+        buckets, weights = fitting.partition_stage1(windowed, "QLD1", NOW.astimezone(NEM))
+
+    (key,) = [k for k, v in buckets.items() if v]
+    assert [round(y * 100) for _, y in buckets[key]] == [1, 3, 2]   # newest three, input order
+    assert min(weights[key]) > max(
+        math.exp(-ce.DECAY_LAMBDA * d) for d in (5, 7, 9)
+    )
 
 
 def _storage(models: dict) -> str:
