@@ -96,7 +96,8 @@ class GridNoticeStore:
 
     def add_notices(self, notices: list[GridNoticeAnnotation]) -> None:
         """
-        Add new notices. Apply cancellations in one of two ways:
+        Add new notices. An update ("Update to Market Notice N") retires N
+        (#216). Apply cancellations in one of two ways:
         1. By explicit cancels_notice_id, when the cancellation names one.
         2. Otherwise by matching (region, type, level, cancellation_date)
            against stored notices' period_from date, for AEMO's PDPASA
@@ -113,33 +114,7 @@ class GridNoticeStore:
             if region not in self._notices:
                 self._notices[region] = []
 
-            if notice.is_cancelled:
-                # Path 1: cancel by explicit notice ID reference
-                if notice.cancels_notice_id:
-                    for existing in self._notices.get(region, []):
-                        if existing.notice_id == notice.cancels_notice_id:
-                            existing.is_cancelled = True
-                            _LOGGER.debug(
-                                "Marked notice %d as cancelled (by %d via ID ref)",
-                                notice.cancels_notice_id, notice.notice_id,
-                            )
-
-                # Path 2: cancel by (region, type, level, date), only when no
-                # notice is named
-                elif notice.cancellation_date:
-                    for existing in self._notices.get(region, []):
-                        if (
-                            not existing.is_cancelled
-                            and existing.notice_type == notice.notice_type
-                            and existing.level == notice.level
-                            and existing.period_from.date() == notice.cancellation_date
-                        ):
-                            existing.is_cancelled = True
-                            _LOGGER.debug(
-                                "Marked notice %d as cancelled (by %d via date match %s)",
-                                existing.notice_id, notice.notice_id,
-                                notice.cancellation_date,
-                            )
+            self._apply_withdrawal(notice)
 
             # Deduplicate: replace if same notice_id already stored
             existing_ids = {n.notice_id for n in self._notices[region]}
@@ -155,6 +130,54 @@ class GridNoticeStore:
                 self._last_seen_notice_id, notice.notice_id
             )
 
+    def _apply_withdrawal(self, notice: GridNoticeAnnotation) -> None:
+        """
+        Retire what ``notice`` withdraws from this region's stored notices:
+        the notice a cancellation or resolution names, else (for PDPASA
+        cancellations naming none) every same-type, same-level notice that
+        day, else the notice an update replaces (#182, #216).
+        """
+        region = notice.region
+        if notice.is_cancelled:
+            # Path 1: cancel by explicit notice ID reference
+            if notice.cancels_notice_id:
+                for existing in self._notices.get(region, []):
+                    if existing.notice_id == notice.cancels_notice_id:
+                        existing.is_cancelled = True
+                        _LOGGER.debug(
+                            "Marked notice %d as cancelled (by %d via ID ref)",
+                            notice.cancels_notice_id, notice.notice_id,
+                        )
+
+            # Path 2: cancel by (region, type, level, date), only when no
+            # notice is named
+            elif notice.cancellation_date:
+                for existing in self._notices.get(region, []):
+                    if (
+                        not existing.is_cancelled
+                        and existing.notice_type == notice.notice_type
+                        and existing.level == notice.level
+                        and existing.period_from.date() == notice.cancellation_date
+                    ):
+                        existing.is_cancelled = True
+                        _LOGGER.debug(
+                            "Marked notice %d as cancelled (by %d via date match %s)",
+                            existing.notice_id, notice.notice_id,
+                            notice.cancellation_date,
+                        )
+
+        # An update replaces the notice it names; the update itself stays
+        # active with the revised period (#216). Nothing is retired for a
+        # reference the store has not seen.
+        elif notice.supersedes_notice_id:
+            for existing in self._notices.get(region, []):
+                if existing.notice_id == notice.supersedes_notice_id:
+                    existing.superseded_by = notice.notice_id
+                    _LOGGER.debug(
+                        "Marked notice %d as superseded (by %d)",
+                        existing.notice_id, notice.notice_id,
+                    )
+
     def get_active_notices(
         self,
         region: str,
@@ -162,12 +185,13 @@ class GridNoticeStore:
         to_dt: datetime | None = None,
     ) -> list[GridNoticeAnnotation]:
         """
-        Return non-cancelled notices for region, optionally filtered to overlap
-        a time window [from_dt, to_dt].
+        Return notices for region that are neither cancelled nor superseded
+        by an update (#216), optionally filtered to overlap a time window
+        [from_dt, to_dt].
         """
         notices = [
             n for n in self._notices.get(region, [])
-            if not n.is_cancelled
+            if not n.is_cancelled and n.superseded_by is None
         ]
         if from_dt is not None and to_dt is not None:
             notices = [
