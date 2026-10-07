@@ -52,7 +52,7 @@ The integration uses a two-stage forecasting pipeline:
 - **5-minute dispatch prices** — boundary-aligned `DispatchCoordinator` polls NEMWEB TradingIS at `:01:15`, `:06:15`, ..., `:56:15` (75 s after each dispatch boundary, after NEMWEB publishes). Used as the live `native_value` for tariff and spot sensors between 30-minute PD7DAY intervals.
 - **Live sensor state** — all forecast sensor states advance automatically every 30 minutes to reflect the current interval, with no fetch required
 - **No third-party accounts required** — actual prices sourced directly from AEMO TradingIS
-- **Dependencies** — `matplotlib`, `numpy` for chart rendering, `astral` for solar elevation (installed automatically by HACS/HA)
+- **Dependencies** — `matplotlib`, `numpy` for chart rendering (installed automatically by HACS/HA); `astral` for solar elevation, which ships with Home Assistant itself and so is not listed in the manifest
 
 ---
 
