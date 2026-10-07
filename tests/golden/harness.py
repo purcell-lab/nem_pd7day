@@ -395,6 +395,19 @@ class _ScenarioNoticeClient:
         return found
 
 
+class _ScenarioConstraintClient:
+    """ConstraintClient: the scenario's DispatchIS zips through the real parser."""
+
+    def __init__(self, files: Any, client_mod: Any) -> None:
+        self._files = list(files)
+        self._mod = client_mod
+
+    async def fetch_latest(self) -> Any:
+        if not self._files:
+            return None
+        return self._mod.parse_constraints(self._mod.unzip_csv(self._files.pop(0)), "scenario")
+
+
 # ── Module loading ───────────────────────────────────────────────────────────
 
 def _import_order() -> list[str]:
@@ -650,6 +663,15 @@ async def _setup(built: Built) -> None:
     dispatch_prices = dict(sc.dispatch or {})
     mods.coordinator.fetch_dispatch_prices = lambda expected, *a, **k: dict(dispatch_prices)
     dispatch = await mods.shared_dispatch.async_shared_dispatch(hass, setup_lock, trace)
+
+    # The shared constraint coordinator, as the sensor platform would create
+    # it, fed the scenario's intervals in order.
+    constraints = mods.constraint_coordinator.ConstraintCoordinator(
+        hass, dispatch, _ScenarioConstraintClient(sc.constraints, mods.constraint_client),
+    )
+    hass.data[domain][const.SHARED_CONSTRAINTS_KEY] = constraints
+    for _ in sc.constraints:
+        await constraints.async_refresh()
 
     entry.runtime_data = mods.init.NemPd7dayEntryData(
         coordinator=coordinator,

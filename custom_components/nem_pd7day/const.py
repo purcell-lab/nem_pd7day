@@ -105,6 +105,7 @@ SETUP_LOCK_KEY = "setup_lock"
 # domain level because one coordinator serves every configured region.
 SHARED_DISPATCH_KEY = "_shared_dispatch"
 DISPATCH_UNSUBS_KEY = "_dispatch_unsubs"
+SHARED_CONSTRAINTS_KEY = "_shared_constraints"
 
 # Market notices are global, not per region, so one fetch serves all five region
 # coordinators. These keys hold the shared in-flight lock and the timestamp of
