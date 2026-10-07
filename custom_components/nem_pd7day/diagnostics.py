@@ -9,10 +9,8 @@ from homeassistant.loader import async_get_integration
 
 from .tariff_catalogue import library_version
 from .const import (
-    COORDINATOR_KEY,
     DOMAIN,
     NEMWEB_SEMAPHORE_KEY,
-    STORE_KEY,
     get_region,
 )
 
@@ -100,10 +98,14 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     region = get_region(entry)
 
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    coordinator = entry_data.get(COORDINATOR_KEY)
-    store = entry_data.get(STORE_KEY)
-    stpasa_store = entry_data.get("stpasa_store")
+    # Setup keeps the coordinator and stores on entry.runtime_data
+    # (NemPd7dayEntryData). Diagnostics used to read hass.data[DOMAIN][entry_id],
+    # which setup stopped writing in #25, so all three values below were always
+    # null (#220). None when the entry never finished setup.
+    runtime = getattr(entry, "runtime_data", None)
+    coordinator = getattr(runtime, "coordinator", None)
+    store = getattr(runtime, "store", None)
+    stpasa_store = getattr(runtime, "stpasa_store", None)
 
     # All values here are derived from AEMO's public forecast data — there are
     # no credentials or personal data in the config entry, so nothing to redact.
