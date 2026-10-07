@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import json
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -58,6 +59,59 @@ def _stage2_inputs(rows: int = 80) -> tuple[list, dict]:
             stpasa_run_at=run.isoformat(),
         )
     return obs, stpasa
+
+
+def test_a_full_bucket_keeps_its_most_recent_rows_whatever_the_input_order():
+    """Until #209 the first MAX_OBS rows in input order were kept, and the
+    input is mostly oldest first, so a full bucket froze on its oldest rows."""
+    night = NOW.astimezone(NEM).replace(hour=2, minute=0)
+    days = [9, 1, 7, 3, 5, 2]                 # out of order on purpose
+    windowed = []
+    for d in days:
+        t = night - timedelta(days=d)
+        windowed.append((ce.Observation(
+            interval_time=t.isoformat(), horizon_hours=130.0, pd7day_forecast=0.1,
+            actual_rrp=d / 100, forecast_run_at=(t - timedelta(hours=130)).isoformat(),
+            hour_of_day=t.hour, day_of_week=t.weekday(), month=t.month, gas_forecast_tj=None,
+            qni_mwflow=None, qni_violation_degree=None, is_intervention=False,
+        ), t))
+
+    with patch.object(fitting, "MAX_OBS", 3):
+        buckets, weights = fitting.partition_stage1(windowed, "QLD1", NOW.astimezone(NEM))
+
+    (key,) = [k for k, v in buckets.items() if v]
+    assert [round(y * 100) for _, y in buckets[key]] == [1, 3, 2]   # newest three, input order
+    assert min(weights[key]) > max(
+        math.exp(-ce.DECAY_LAMBDA * d) for d in (5, 7, 9)
+    )
+
+
+def test_stage1_classifies_each_interval_once_and_keys_it_as_before():
+    """The solar label depends only on the interval and the region, so it is
+    computed once per interval, not once per observation (#212)."""
+    start = NOW.astimezone(NEM).replace(hour=0, minute=0) - timedelta(days=1)
+    intervals = [start + timedelta(minutes=30 * i) for i in range(48)]
+    windowed = [
+        (ce.Observation(
+            interval_time=t.isoformat(), horizon_hours=h, pd7day_forecast=0.1, actual_rrp=0.1,
+            forecast_run_at=(t - timedelta(hours=h)).isoformat(), hour_of_day=t.hour,
+            day_of_week=t.weekday(), month=t.month, gas_forecast_tj=None, qni_mwflow=None,
+            qni_violation_degree=None, is_intervention=False,
+        ), t)
+        for t in intervals
+        for h in (2.0, 30.0, 100.0)   # each interval seen by three runs
+    ]
+
+    real = fitting._tod_label_solar
+    with patch.object(fitting, "_tod_label_solar", side_effect=real) as label:
+        buckets, _ = fitting.partition_stage1(windowed, "QLD1", NOW.astimezone(NEM))
+
+    assert label.call_count == len(intervals)
+    expected: dict[str, int] = {}
+    for o, obs_dt in windowed:
+        key = ce._bucket_key_solar(o.horizon_hours, obs_dt.astimezone(NEM), "QLD1")
+        expected[key] = expected.get(key, 0) + 1
+    assert {k: len(v) for k, v in buckets.items() if v} == expected
 
 
 def _storage(models: dict) -> str:

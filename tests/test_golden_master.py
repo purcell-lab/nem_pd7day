@@ -171,6 +171,27 @@ def _lor2(built: harness.Built, snap: dict) -> None:
     assert {n["notice_id"] for n in listed} == {150211, 150215, 150218}
 
 
+def _binding_constraints(built: harness.Built, snap: dict) -> None:
+    sensor = _one(snap, "_binding_constraints")
+    attrs = sensor["extra_state_attributes"]
+    # Counted from the raw 10:50 file: the five NSW1 equations with a non-zero
+    # marginal value in the pricing run, largest cost first.
+    assert sensor["state"] == 5
+    assert [c["constraint_id"] for c in attrs["constraints"]] == [
+        "N>NIL_969", "N>>6CGH_060_051", "N^^N_6CGH_WGLT", "N>NIL_99F", "N>>NIL_964_84_S",
+    ]
+    assert (attrs["time"], attrs["nemtime"]) == ("2026-10-07T10:45:00+10:00", "2026-10-07T10:50:00+10:00")
+    assert attrs["tracked_since"] == "2026-10-07T10:25:00+10:00"
+    # Bound in all five intervals: the run starts with the first one tracked.
+    top = attrs["constraints"][0]
+    assert (top["first_bound"], top["bound_minutes_today"]) == ("2026-10-07T10:25:00+10:00", 25)
+    assert (top["marginal_value_mwh"], top["previous_marginal_value_mwh"]) == (-1064.30253, -1064.30258)
+    assert (top["cause"], top["system_normal"]) == ("thermal", True)
+    assert [c["constraint_id"] for c in attrs["unassigned_constraints"]] == ["L_PEC_X_6C_6G_6H"]
+    assert len(attrs["fcas_constraints"]) == 7
+    assert {c["category"] for c in attrs["fcas_constraints"]} == {"fcas"}
+
+
 NON_VACUITY: dict[str, Callable[[harness.Built, dict], None]] = {
     "qld_fitted_evening_peak": _fitted_evening_peak,
     "qld_days27_mode": _days27,
@@ -181,6 +202,7 @@ NON_VACUITY: dict[str, Callable[[harness.Built, dict], None]] = {
     "qld_negative_midday": _negative_midday,
     "qld_stage2_out_of_domain": _stage2_out_of_domain,
     "nsw_dispatch_live": _dispatch_live,
+    "nsw_binding_constraints": _binding_constraints,
     "sa_stale_coordinator": _stale,
     "vic_prcer_extension": _prcer,
     "qld_lor2_notice": _lor2,
@@ -260,7 +282,7 @@ def test_golden_master(name: str) -> None:
 
 def test_every_scenario_has_a_non_vacuity_check() -> None:
     assert set(NON_VACUITY) == set(SCENARIOS)
-    assert len(SCENARIOS) == 12
+    assert len(SCENARIOS) == 13
 
 
 # ── The frozen clock ─────────────────────────────────────────────────────────

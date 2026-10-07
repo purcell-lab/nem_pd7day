@@ -52,13 +52,15 @@ from .calibration_engine import (
     RunFeatures,
     StpasaFeatures,
     _bucket_key,
-    _bucket_key_solar,
     _hat_leverage,
+    _horizon_label,
     _ols,
     _ols_metrics,
     _per_bucket_counts,
     _quantile_regression,
     _residual_quantiles,
+    _tod_label,
+    _tod_label_solar,
     all_bucket_keys,
 )
 from .const import (
@@ -123,6 +125,9 @@ def partition_stage1(
     """
     buckets: dict[str, list[Pair]] = {k: [] for k in all_bucket_keys()}
     bucket_weights: dict[str, list[float]] = {k: [] for k in all_bucket_keys()}
+    # The label depends only on the interval and the region, and each interval
+    # is seen by many runs, so compute it once per interval (#212).
+    tod_by_interval: dict[datetime, str] = {}
     for obs, obs_dt in windowed:
         if obs.is_intervention:
             # Skip intervention periods — prices are not market-driven
@@ -136,17 +141,27 @@ def partition_stage1(
             continue
         # Solar elevation ToD classification
         obs_nem = obs_dt.astimezone(NEM_TZ)
-        key = _bucket_key_solar(obs.horizon_hours, obs_nem, region)
+        tod = tod_by_interval.get(obs_dt)
+        if tod is None:
+            tod = _tod_label_solar(obs_nem, region, _tod_label(obs_nem.hour))
+            tod_by_interval[obs_dt] = tod
+        key = f"{_horizon_label(obs.horizon_hours)}__{tod}"
         if key in buckets:
-            # Cap per-bucket to avoid memory bloat. The first MAX_OBS rows in
-            # input order are kept, and the input is oldest first, so a full
-            # bucket keeps its oldest rows (#209).
-            if len(buckets[key]) < MAX_OBS:
-                buckets[key].append((obs.pd7day_forecast, obs.actual_rrp))
-                # Compute exponential time-decay weight
-                days_ago = (now_nem - obs_nem).total_seconds() / 86400.0
-                weight = math.exp(-DECAY_LAMBDA * max(days_ago, 0.0))
-                bucket_weights[key].append(weight)
+            buckets[key].append((obs.pd7day_forecast, obs.actual_rrp))
+            # Compute exponential time-decay weight
+            days_ago = (now_nem - obs_nem).total_seconds() / 86400.0
+            bucket_weights[key].append(math.exp(-DECAY_LAMBDA * max(days_ago, 0.0)))
+    # Cap each bucket at its MAX_OBS most recent rows (#209). Until then the
+    # first MAX_OBS rows in input order were kept, and the input is mostly
+    # oldest first, so a full bucket froze on its oldest rows and dropped the
+    # ones decay weights most. The weight falls with age, so it ranks recency;
+    # ties go to the later row, and kept rows stay in input order.
+    for key, weights in bucket_weights.items():
+        if len(weights) > MAX_OBS:
+            ranked = sorted(range(len(weights)), key=lambda i: (weights[i], i))
+            keep = sorted(ranked[-MAX_OBS:])
+            buckets[key] = [buckets[key][i] for i in keep]
+            bucket_weights[key] = [weights[i] for i in keep]
     return buckets, bucket_weights
 
 

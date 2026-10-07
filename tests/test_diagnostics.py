@@ -74,16 +74,13 @@ def make_hass_and_entry(region: str = "NSW1"):
     coordinator = MagicMock()
     coordinator.data = result
 
+    # As async_setup_entry wires it: the per-entry objects live on
+    # entry.runtime_data, and hass.data[DOMAIN] holds only shared state (#220).
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=coordinator, store=store, stpasa_store=stpasa_store, region=region,
+    )
     hass = MagicMock()
-    hass.data = {
-        DOMAIN: {
-            entry.entry_id: {
-                COORDINATOR_KEY: coordinator,
-                STORE_KEY: store,
-                "stpasa_store": stpasa_store,
-            }
-        }
-    }
+    hass.data = {DOMAIN: {}}
     return hass, entry
 
 
@@ -142,3 +139,32 @@ def test_integration_version_none_when_loader_fails():
 
     assert result["integration_version"] is None
     assert result["region"] == "QLD1"  # the rest of the payload still comes through
+
+
+def test_values_come_from_runtime_data_not_the_legacy_hass_data_slot():
+    """#220: setup stores the per-entry objects on entry.runtime_data only.
+
+    A value left in the old hass.data[DOMAIN][entry_id] slot must not be read,
+    and the download must carry what runtime_data holds.
+    """
+    hass, entry = make_hass_and_entry("QLD1")
+    stale = MagicMock()
+    stale.summary_attributes.return_value = {"status": "stale-slot"}
+    hass.data[DOMAIN][entry.entry_id] = {STORE_KEY: stale, COORDINATOR_KEY: None}
+    with loader_returning():
+        result = run_async(async_get_config_entry_diagnostics(hass, entry))
+    assert result["calibration_summary"]["status"] == "active"
+    assert result["pd7day_run_datetime"] == "2026-06-12T13:00:00+10:00"
+    assert result["stpasa_run_datetime"] == "2026-06-12T13:30:00+10:00"
+
+
+def test_an_entry_without_runtime_data_gives_nulls_not_an_error():
+    """An entry that never finished setup has no runtime_data."""
+    hass, entry = make_hass_and_entry()
+    del entry.runtime_data
+    entry.runtime_data = None
+    with loader_returning():
+        result = run_async(async_get_config_entry_diagnostics(hass, entry))
+    assert result["calibration_summary"] is None
+    assert result["stpasa_run_datetime"] is None
+    assert result["pd7day_run_datetime"] is None
