@@ -9,4 +9,6 @@ build/
 .env
 .venv
 *.zip
+# Real NEMWEB DispatchIS files, unchanged, read by the binding constraints tests.
+!tests/fixtures/dispatchis/*.zip
 .pytest_cache/

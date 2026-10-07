@@ -156,7 +156,6 @@ async def async_setup_entry(
     entities.append(PD7DayDataSensor(coordinator, store, entry, region))
     entities.append(StpasaDataSensor(coordinator, entry, region))
 
-
     # Interconnectors for this region.
     #
     # The entity set comes from the static region map alone, never from the
@@ -185,7 +184,7 @@ async def async_setup_entry(
     entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
     entities.append(PD7DayTodSensor(coordinator, entry, region))
 
-    entities.append(NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store))
+    entities.extend(_grid_entities(hass, coordinator, entry, region))
 
     # Tariff forecast sensors — one per (distributor, tariff_code) for this
     # region, enumerated from aemo_to_tariff's own catalogue so a tariff the
@@ -240,6 +239,20 @@ async def async_setup_entry(
             )
 
     async_add_entities(entities, update_before_add=True)
+
+
+def _grid_entities(
+    hass: HomeAssistant, coordinator: PD7DayCoordinator, entry: ConfigEntry, region: str
+) -> list[SensorEntity]:
+    """Grid notices, and binding constraints from the shared dispatch file."""
+    from .constraint_coordinator import shared_constraints
+    from .constraint_sensor import NemPd7dayBindingConstraintsSensor
+
+    constraints = shared_constraints(hass, entry.runtime_data.dispatch)
+    return [
+        NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store),
+        NemPd7dayBindingConstraintsSensor(constraints, entry, region),
+    ]
 
 
 def _published_spike_credible(cal: dict, horizon_h: float | None) -> bool | None:

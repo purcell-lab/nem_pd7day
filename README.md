@@ -175,6 +175,14 @@ Actual NEM dispatch prices are fetched from AEMO's TradingIS reports and used to
 - **Schedule**: 75 seconds after each 5-minute UTC boundary (`:01:15`, `:06:15`, ..., `:56:15`). AEMO typically publishes 65–90 s after the interval boundary; 75 s sits within that window with margin (`_DISPATCH_POLL_DELAY_S = 75`).
 - **Alignment**: uses `async_track_point_in_utc_time` with self-rescheduling one-shot callbacks — no drift from HA startup time.
 
+### Binding constraints (every 5 minutes, after the dispatch poll)
+
+The network constraints binding in each dispatch interval come from AEMO's DispatchIS reports, one file for all regions:
+
+- **URL**: `https://www.nemweb.com.au/Reports/Current/DispatchIS_Reports/`
+- **Schedule**: no timer of its own. One shared fetch runs each time the live dispatch poll completes, and a failure here never delays or affects the price.
+- **Load**: two NEMWEB requests per interval through the shared NEMWEB request gate, the directory listing (about 17 KB compressed) and the zip (about 22 KB). That is about 576 requests and 11 MB a day. NEMWEB answers rapid callers with 403, so the requests share the gate and its spacing with every other NEMWEB fetch.
+
 ### Sensor state updates (every 30 minutes)
 
 Forecast sensor states — price forecast and interconnector flow — advance automatically at each 30-minute interval boundary (:00 and :30 past every hour). The state always reflects the current interval from the most recent fetch, without waiting for the next PD7DAY fetch. This means:
@@ -324,6 +332,26 @@ Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the
 | `last_fetched` | NEM-time ISO-8601 timestamp of the last successful NEMWEB notice poll this session; `null` until the first poll. Moves on every refresh whether or not a relevant notice was found |
 | `last_notice_issued_at` | Issue time of the newest stored notice, `null` when the store is empty. This is about the market, not the poll |
 | `last_seen_notice_id` | The poll cursor: the highest NEMWEB notice id examined so far. A moving cursor proves the poll is working on a quiet grid |
+
+---
+
+### Binding Constraints
+
+`sensor.nem_pd7day_{region}_binding_constraints`: the number of network constraints binding in the region in the latest dispatch interval. A constraint is binding when its marginal value is not zero, so relieving it by 1 MW would change the cost of dispatch; a violated constraint is included too. Unavailable before the first file arrives and when the latest interval is more than 15 minutes old.
+
+AEMO does not publish a region with each constraint, so the region is read from the constraint ID following AEMO's [Constraint Naming Guidelines](https://aemo.com.au/-/media/Files/Electricity/NEM/Security_and_Reliability/Congestion-Information/2016/Constraint-Naming-Guidelines.pdf): `N>NIL_969` is a NSW1 thermal constraint with no outage, `SVML^...` covers Murraylink (VIC1 and SA1), `NRM_VIC1_SA1` is negative residue management between those regions. An ID that follows no documented convention is listed under `unassigned_constraints` in every region rather than guessed.
+
+| Attribute | Description |
+|---|---|
+| `time`, `nemtime` | Start and end of the dispatch interval, NEM time (+10:00) |
+| `constraints` | The region's binding network, interconnector and negative residue constraints, largest cost first (not saved to the HA recorder) |
+| `fcas_constraints` | Binding FCAS constraints covering the region, not counted in the state (not recorded) |
+| `unassigned_constraints` | Binding constraints whose ID names no region (not recorded) |
+| `binding_nem`, `evaluated_nem` | Binding constraints in the whole NEM, and every equation evaluated for the interval |
+| `file` | The DispatchIS file read |
+| `tracked_since` | Start of the first interval seen since Home Assistant started; `first_bound` and `bound_minutes_today` count from here |
+
+Each constraint carries `constraint_id`, `regions`, `category`, `cause` (thermal, stability, voltage_stability, frequency_control), `co_optimised`, `system_normal`, `rhs`, `lhs`, `marginal_value_mwh` ($/MWh, AEMO's sign: negative for a limit on the left-hand side), `previous_marginal_value_mwh` (the interval before, `null` if it was not binding), `violation_degree`, `first_bound` (start of the current binding run) and `bound_minutes_today` (the NEM day so far).
 
 ---
 
