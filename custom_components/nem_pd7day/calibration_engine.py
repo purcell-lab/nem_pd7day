@@ -86,6 +86,7 @@ Reference: Koenker & Bassett (1978), "Regression Quantiles",
 """
 from __future__ import annotations
 
+import functools
 import logging
 import math
 from dataclasses import dataclass, field
@@ -775,8 +776,11 @@ class CalibrationResult:
     models: dict[str, BucketModel] = field(default_factory=dict)
     ols_models: dict[str, OlsModel] = field(default_factory=dict)
 
-    def get_bucket(self, horizon_hours: float, hour_of_day: int) -> BucketModel:
-        return self._bucket_for(_bucket_key(horizon_hours, hour_of_day))
+    def get_bucket(
+        self, horizon_hours: float, hour_of_day: int,
+        interval_dt: datetime | None = None, region: str | None = None,
+    ) -> BucketModel:
+        return self._bucket_for(bucket_key_for(horizon_hours, hour_of_day, interval_dt, region))
 
     def _bucket_for(self, key: str) -> BucketModel:
         # The same answer as models.get(key, BucketModel(bucket_key=key)), but
@@ -794,8 +798,14 @@ class CalibrationResult:
         hour_of_day: int,
         stpasa: "StpasaFeatures | None" = None,
         run_features: "RunFeatures | None" = None,
+        interval_dt: datetime | None = None,
+        region: str | None = None,
     ) -> dict:
         """Calibrated price, band and labels for one interval.
+
+        With the interval's start and the region, the bucket is the one the
+        interval was trained in, by solar elevation (#208); without them it
+        falls back to the clock-hour key.
 
         Stage 1 is the bucket's apply_all. Stage 2, the STPASA correction,
         replaces it only when every gate in serving.SERVING_GATES admits the
@@ -804,7 +814,7 @@ class CalibrationResult:
         """
         # 1. Isotonic (existing) result. The key routes both stages, as
         #    get_bucket and the stage 2 model lookup each computed it before.
-        key = _bucket_key(horizon_hours, hour_of_day)
+        key = bucket_key_for(horizon_hours, hour_of_day, interval_dt, region)
         bucket = self._bucket_for(key)
         stage1 = bucket.apply_all(forecast)
 
@@ -999,6 +1009,38 @@ def _bucket_key_solar(horizon_hours: float, dt_nem: datetime, region: str) -> st
     raw = _tod_label(dt_nem.hour)
     tod = _tod_label_solar(dt_nem, region, raw)
     return f"{_horizon_label(horizon_hours)}__{tod}"
+
+
+@functools.lru_cache(maxsize=16384)
+def _solar_tod(dt_nem: datetime, region: str) -> str:
+    """The training label for an interval, computed once per interval and region.
+
+    Serving asks for the same interval about 1,650 times per state write and
+    each answer is an astral elevation call, so it is cached. Aware datetimes
+    hash by instant, so the same interval written in UTC or NEM time hits the
+    same entry.
+    """
+    return _tod_label_solar(dt_nem, region, _tod_label(dt_nem.hour))
+
+
+def bucket_key_for(
+    horizon_hours: float, hour_of_day: int, interval_dt: datetime | None, region: str | None,
+) -> str:
+    """The bucket an interval is trained in and served from (#208).
+
+    Stage 1 trains by solar elevation (``_bucket_key_solar``). Until #208 the
+    serving path and stage 2 looked buckets up by clock hour, so the
+    ``morning_ramp`` buckets were fitted and never served, about 05:00 to
+    10:00 was served by the night-time ``shoulder`` model, and ``solar``
+    served 10:00 to 16:00 by the clock whatever the sun was doing. Every path
+    now keys through here. Without an interval start or a region the key
+    falls back to the clock hour, as before.
+    """
+    if interval_dt is None or not region:
+        return _bucket_key(horizon_hours, hour_of_day)
+    if interval_dt.tzinfo is None:
+        interval_dt = interval_dt.replace(tzinfo=NEM_TZ)
+    return f"{_horizon_label(horizon_hours)}__{_solar_tod(interval_dt.astimezone(NEM_TZ), region)}"
 
 
 def all_bucket_keys() -> list[str]:
@@ -1380,7 +1422,7 @@ class CalibrationEngine:
         run_features = _compute_run_features(observations)
         if stage1 is None:
             stage1 = self.fit(observations, region=region)
-        return Stage2Fitter().fit(observations, stpasa_by_key, stage1, run_features)
+        return Stage2Fitter().fit(observations, stpasa_by_key, stage1, run_features, region)
 
     def to_storage(self, result: CalibrationResult) -> dict:
         """Serialise CalibrationResult to a JSON-safe dict for .storage."""

@@ -40,6 +40,7 @@ The integration uses a two-stage forecasting pipeline:
 
 - **Days 2–7 price forecast** — calibrated $/kWh with P10/P50/P90 confidence bands, trimmed to the window beyond Amber Express
 - **Isotonic calibration** — monotone PAV regression bias correction fitted on actual TradingIS vs PD7DAY pairs, with per-bucket compression ratio, iso_mae, and P10/P90 confidence intervals
+  - Each bucket is a horizon band and a time of day classified from the interval's solar elevation in its region: `peak` 16:00 to 21:00 NEM time, `solar` with the sun above 15 degrees, `morning_ramp` from 0 to 15 degrees (early morning, and a low winter sun before 16:00), `shoulder` otherwise. Stage 2 and the published values use the same bucket the interval was trained in; before v3.21.0 they looked it up by clock hour ([#208](https://github.com/purcell-lab/nem_pd7day/issues/208)).
 - **Interconnector flows** — interconnector MW flow forecasts for the configured region
 - **Market intervention flag** — binary sensor from CASESOLUTION data
 - **Calibration diagnostic** — observation count, active bucket count, fit quality per bucket

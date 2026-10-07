@@ -332,7 +332,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
                     stpasa=stpasa_latest,
                 )
             # Recompute time-of-day statistics from updated observations
-            self.tod_stats = _tod_stats.compute(self._store.observations, calibration_result=self._store.calibration)
+            self.tod_stats = _tod_stats.compute_for_store(self._store)
 
         # Persist the fresh result so the next HA restart can restore sensors
         # instantly (phase 1 of two-phase startup) without a blocking fetch.

@@ -51,7 +51,7 @@ from .calibration_engine import (
     QuantileCoeff,
     RunFeatures,
     StpasaFeatures,
-    _bucket_key,
+    bucket_key_for,
     _hat_leverage,
     _horizon_label,
     _ols,
@@ -343,6 +343,7 @@ def _stage2_joined(
 
 def _stage2_row(
     obs: Observation,
+    obs_dt: datetime | None, region: str | None,
     stpasa_by_key: Mapping[str, StpasaFeatures],
     run_features: Mapping[str, RunFeatures],
     stage1: CalibrationResult,
@@ -357,7 +358,7 @@ def _stage2_row(
         return None
     sf, rf = joined
 
-    bucket_key = _bucket_key(obs.horizon_hours, obs.hour_of_day)
+    bucket_key = bucket_key_for(obs.horizon_hours, obs.hour_of_day, obs_dt, region)
 
     # Drop rows that the serving path never asks this model about.
     #
@@ -366,15 +367,14 @@ def _stage2_row(
     # so a row there would be fitted for a region that is never served.
     # Both paths read the boundary from BucketModel.is_below_domain so
     # they cannot drift apart (#68, #79, #117). A row lands here when its
-    # clock-hour bucket's domain, fitted from solar-keyed rows, does not
-    # cover it (#208), or when its forecast changed after the stage-1 fit.
+    # forecast changed after the stage-1 fit.
     #
     # The leverage hazard that the old fixed threshold happened to
     # cover (#79: one mis-joined deep negative row, isolated far from
     # the cluster, took the iso_cal coefficient from +1.13 to -0.15) is
     # handled by the hat-leverage screen in fit_stage2_bucket rather than
     # by a price.
-    bucket = stage1.get_bucket(obs.horizon_hours, obs.hour_of_day)
+    bucket = stage1.get_bucket(obs.horizon_hours, obs.hour_of_day, obs_dt, region)
     if bucket.is_below_domain(obs.pd7day_forecast):
         return bucket_key, None
 
@@ -402,13 +402,28 @@ def _stage2_row(
     return bucket_key, (feature_vec, obs.actual_rrp)
 
 
+def _interval_start(interval_time: str) -> datetime | None:
+    """An interval start as stage 1 reads it, or None when it does not parse."""
+    try:
+        dt = datetime.fromisoformat(interval_time)
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=NEM_TZ)
+
+
 def stage2_rows(
     observations: Sequence[Observation],
     stpasa_by_key: Mapping[str, StpasaFeatures],
     run_features: Mapping[str, RunFeatures],
     stage1: CalibrationResult,
+    region: str | None = None,
 ) -> Stage2Rows:
-    """Every observation's stage 2 row, grouped by clock-hour bucket, in input order.
+    """Every observation's stage 2 row, grouped by its serving bucket, in input order.
+
+    Each observation's interval start, with ``region``, picks the
+    solar-elevation bucket stage 1 trained the interval in (#208), the one
+    serving uses, so each stage 2 model trains on the intervals and the
+    stage 1 output it corrects when served.
 
     Filters, in order: intervention; horizon outside [OLS_MIN_HORIZON_H,
     OLS_MAX_HORIZON_H]; a spike on either side; no STPASA features for the
@@ -417,7 +432,8 @@ def stage2_rows(
     """
     out = Stage2Rows()
     for obs in observations:
-        found = _stage2_row(obs, stpasa_by_key, run_features, stage1)
+        obs_dt = _interval_start(obs.interval_time)  # None keys by clock hour
+        found = _stage2_row(obs, obs_dt, region, stpasa_by_key, run_features, stage1)
         if found is None:
             continue
         bucket_key, row = found
@@ -572,6 +588,7 @@ class Stage2Fitter:
         stpasa_by_key: Mapping[str, StpasaFeatures],
         stage1: CalibrationResult,
         run_features: Mapping[str, RunFeatures],
+        region: str | None = None,
     ) -> dict[str, OlsModel]:
         """
         Fit per-bucket 9-feature OLS using combined PD7DAY + STPASA features.
@@ -595,7 +612,7 @@ class Stage2Fitter:
         # still come from every observation the caller passed.
         now_utc = datetime.fromisoformat(stage1.fitted_at).astimezone(timezone.utc)
         in_window = [obs for obs, _ in window_observations(observations, now_utc)]
-        rows = stage2_rows(in_window, stpasa_by_key, run_features, stage1)
+        rows = stage2_rows(in_window, stpasa_by_key, run_features, stage1, region)
         models: dict[str, OlsModel] = {}
         screened: dict[str, int] = {}
         # Iterate the union so a bucket whose every candidate row was excluded

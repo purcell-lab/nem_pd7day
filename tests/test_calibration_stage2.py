@@ -58,6 +58,7 @@ from custom_components.nem_pd7day.calibration_engine import (  # noqa: E402
     RunFeatures,
     StpasaFeatures,
     _bucket_key,
+    bucket_key_for,
     _compute_run_features,
     _conformal_index,
     _loo_residuals,
@@ -340,12 +341,7 @@ _FIXTURE_FLOOR = -0.02
 _FLOORED_DEPTH = -0.09
 
 
-def _hourly_base(hour: int) -> float:
-    if 16 <= hour <= 21:
-        return 0.16
-    if 10 <= hour < 16:
-        return 0.02
-    return 0.08
+_TOD_BASE = {"peak": 0.16, "solar": 0.02}  # shoulder and morning_ramp: 0.08
 
 
 def _build(n_runs: int = 26, seed: int = 7):
@@ -363,9 +359,12 @@ def _build(n_runs: int = 26, seed: int = 7):
         run_at = run_dt.isoformat()
         for h_int in list(range(1, 24, 2)) + list(range(24, 97, 2)):
             interval_dt = run_dt + timedelta(hours=h_int)
-            hour = interval_dt.hour
-            solar = 10 <= hour < 16
-            fc = max(_FIXTURE_FLOOR, _hourly_base(hour) + rng.gauss(0, 0.02))
+            # The price regime follows the bucket the interval trains and is
+            # served in, by solar elevation (#208), so each bucket holds one
+            # regime as it did when buckets were clock hours.
+            tod = bucket_key_for(h_int, interval_dt.hour, interval_dt, "QLD1").split("__")[1]
+            solar = tod == "solar"
+            fc = max(_FIXTURE_FLOOR, _TOD_BASE.get(tod, 0.08) + rng.gauss(0, 0.02))
             o = _obs(interval_dt, h_int, fc, _TRUE_SLOPE * fc + _TRUE_INTERCEPT + rng.gauss(0, 0.008), run_at)
             obs.append(o)
             stpasa[f"{o.interval_time}|{run_at}"] = StpasaFeatures(
@@ -381,7 +380,7 @@ def _build(n_runs: int = 26, seed: int = 7):
 def _in_target(o: Observation) -> bool:
     return (
         OLS_MIN_HORIZON_H <= o.horizon_hours <= OLS_MAX_HORIZON_H
-        and _bucket_key(o.horizon_hours, o.hour_of_day) == TARGET
+        and bucket_key_for(o.horizon_hours, o.hour_of_day, datetime.fromisoformat(o.interval_time), "QLD1") == TARGET
     )
 
 
@@ -1069,9 +1068,11 @@ def test_fit_path_uses_the_same_unfloored_feature_as_serving():
         rf = run_features.get(obs.forecast_run_at)
         if sf is None or rf is None:
             continue
-        if _bucket_key(obs.horizon_hours, obs.hour_of_day) != TARGET:
+        # The serving bucket, by solar elevation, as stage 2 now keys (#208).
+        obs_dt = datetime.fromisoformat(obs.interval_time)
+        if bucket_key_for(obs.horizon_hours, obs.hour_of_day, obs_dt, "QLD1") != TARGET:
             continue
-        bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day)
+        bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day, obs_dt, "QLD1")
         if bucket.is_below_domain(obs.pd7day_forecast):
             continue
         feature = round(_raw_iso(bucket, obs.pd7day_forecast), 6)
@@ -1188,8 +1189,12 @@ def test_isolated_row_is_screened_by_leverage_whatever_its_price():
         for k in (1, 2):
             m = _stage2(_promote(obs, k, depth), sp)[TARGET]
             assert m.n_train == n_before - k, f"{k} isolated row(s) at {depth} $/kWh should be screened; n_train {m.n_train}"
-        m = _stage2(_promote(obs, 5, depth), sp)[TARGET]
-        assert m.n_train == n_before, f"a cluster of 5 rows at {depth} $/kWh supports itself and must be kept; n_train {m.n_train}"
+        # A cluster of k rows has leverage near 1/k each against a threshold
+        # of 3p/n. Keyed by solar elevation (#208) this bucket gained the
+        # 07:30 to 09:30 rows, 78 to 128, so the threshold fell from 0.38 to
+        # 0.23 and 5 rows sat on it; from 7 they are kept at every depth.
+        m = _stage2(_promote(obs, 8, depth), sp)[TARGET]
+        assert m.n_train == n_before, f"a cluster of 8 rows at {depth} $/kWh supports itself and must be kept; n_train {m.n_train}"
 
 
 def test_corrupt_deep_negative_row_cannot_flip_the_coefficient():

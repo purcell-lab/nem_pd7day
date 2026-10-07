@@ -106,9 +106,23 @@ class TodStats:
         }
 
 
+def _interval_start(interval_time: str) -> datetime | None:
+    """An observation's interval start, or None when it does not parse."""
+    try:
+        return datetime.fromisoformat(interval_time)
+    except (TypeError, ValueError):
+        return None
+
+
+def compute_for_store(store) -> TodStats:
+    """``compute`` over a calibration store's observations, fit and region."""
+    region = getattr(store, "_region", None)
+    return compute(store.observations, store.calibration, region if isinstance(region, str) else None)
+
+
 def compute(
     observations: Sequence[dict],
-    calibration_result: "CalibrationResult | None" = None,
+    calibration_result: "CalibrationResult | None" = None, region: str | None = None,
 ) -> TodStats:
     """
     Compute per-slot statistics from a list of observation dicts.
@@ -127,7 +141,7 @@ def compute(
     If calibration_result is provided, mean_calibrated is also computed for
     each slot using the fitted OLS model for that interval's horizon + ToD.
     """
-    from .calibration_engine import _bucket_key
+    from .calibration_engine import bucket_key_for
 
     # Collect actuals (deduplicated) and raw forecasts (averaged across runs)
     actuals: dict[str, float]       = {}
@@ -148,7 +162,7 @@ def compute(
                 h   = o.get("horizon_hours")
                 hod = o.get("hour_of_day")
                 if h is not None and hod is not None:
-                    key = _bucket_key(float(h), int(hod))
+                    key = bucket_key_for(float(h), int(hod), _interval_start(it), region)  # served bucket, #208
                     bm  = calibration_result.models.get(key)
                     if bm is not None:
                         cal_val = bm.apply_all(float(raw))["calibrated"]

@@ -478,6 +478,14 @@ def run_features_for_coordinator(
         return None
 
 
+def _interval_start(interval_key: str):
+    """The interval start an interval key names, or None when it does not parse."""
+    try:
+        return parse_iso(interval_key)
+    except (ValueError, TypeError):
+        return None
+
+
 def calibrate_interval(
     store,
     coordinator: "PD7DayCoordinator",
@@ -524,12 +532,16 @@ def calibrate_interval(
         coordinator, interval_key, horizon_hours_value, run_at_iso=run_at_iso
     )
     run_features = run_features_for_coordinator(coordinator)
+    # interval_key is the interval START in NEM time, the instant stage 1 was
+    # trained on, so serving finds the bucket the interval was fitted in (#208).
+    interval_dt = _interval_start(interval_key)
     return store.apply_to_price(
         raw_price,
         horizon_hours_value,
         hour_of_day,
         stpasa_features=stpasa_features,
         run_features=run_features,
+        interval_dt=interval_dt,
         **covariates,
     )
 
