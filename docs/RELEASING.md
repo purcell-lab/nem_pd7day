@@ -163,6 +163,14 @@ training window and `apply()` began returning `passthrough` instead of
 `isotonic`. Anchor fixtures to `datetime.now()`; the guard tests added in
 [#26][pr26] fail loudly if this recurs.
 
+**An `aemo-to-tariff` pin bump can need a second restart** ([#207][i207]).
+When another integration on the install imports the library before
+nem_pd7day loads, the first restart after the upgrade keeps the old version
+in memory while Home Assistant installs the new one. Since v3.21.0 the
+integration logs a warning naming #207 and publishes `library_version` as
+unknown when that may have happened. Say so in the notes of any release that
+moves the pin, and check the log after the deploy.
+
 **Clear `__pycache__` after switching branches**, or stale bytecode produces
 failures unrelated to your change.
 
@@ -170,3 +178,4 @@ failures unrelated to your change.
 [pr26]: https://github.com/purcell-lab/nem_pd7day/pull/26
 [pr28]: https://github.com/purcell-lab/nem_pd7day/pull/28
 [pr29]: https://github.com/purcell-lab/nem_pd7day/pull/29
+[i207]: https://github.com/purcell-lab/nem_pd7day/issues/207

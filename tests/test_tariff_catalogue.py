@@ -264,3 +264,73 @@ def test_a_broken_or_missing_module_yields_no_sensors(monkeypatch):
     assert _cat.tariff_name("sapn", "RTOU") == "Residential Time of Use"
     # No feed-in table on the fake network: export programs are not refused.
     assert _cat.export_program_supported("sapn", "RESELE")
+
+
+# ── #207: a library imported before this integration's pin was installed ────
+
+import os
+import sys
+import time
+
+
+@pytest.mark.parametrize(
+    "preloaded, installed_at, started_at, stale",
+    [
+        (True, 200.0, 100.0, True),     # imported by another integration, then reinstalled
+        (False, 200.0, 100.0, False),   # this integration imported it first
+        (True, 50.0, 100.0, False),     # installed before this start: the module is that copy
+        (True, None, 100.0, False),     # no install time: cannot tell, so no claim
+        (True, 200.0, None, False),     # no process start (not Linux): no claim
+    ],
+)
+def test_library_possibly_stale(preloaded, installed_at, started_at, stale):
+    assert _cat.library_possibly_stale(preloaded, installed_at, started_at) is stale
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/stat"), reason="needs /proc")
+def test_process_started_at_is_this_process():
+    started = _cat.process_started_at()
+    assert started is not None
+    # This test process started before now, and not before the test session's
+    # own interpreter could have: well within the last day on any CI runner.
+    assert time.time() - 86400 < started <= time.time() + 1
+
+
+def test_library_installed_at_reads_the_record_file():
+    if not _cat.library_available():
+        pytest.skip("aemo_to_tariff not installed")
+    from importlib import metadata
+
+    dist = metadata.distribution("aemo-to-tariff")
+    record = next(p for p in dist.files if p.name == "RECORD")
+    assert _cat.library_installed_at() == os.stat(str(dist.locate_file(record))).st_mtime
+
+
+def test_library_version_is_unknown_when_possibly_stale(monkeypatch):
+    if not _cat.library_available():
+        pytest.skip("aemo_to_tariff not installed")
+    assert _cat.library_version() is not None
+    monkeypatch.setattr(_cat, "LIBRARY_POSSIBLY_STALE", True)
+    assert _cat.library_version() is None
+
+
+def test_reproduces_the_28_september_sequence(tmp_path, monkeypatch):
+    """Old copy imported first, newer copy installed over it: flagged (#207)."""
+    site = tmp_path / "site"
+    pkg = site / "fake_att"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("VERSION = 'old'\n")
+    monkeypatch.syspath_prepend(str(site))
+    monkeypatch.delitem(sys.modules, "fake_att", raising=False)
+    import fake_att  # noqa: F401  # another integration's import, at the old version
+
+    started = time.time() - 60
+    preloaded = "fake_att" in sys.modules
+    dist_info = site / "fake_att-0.0.2.dist-info"
+    dist_info.mkdir()
+    (dist_info / "RECORD").write_text("")      # the pinned install, after the import
+    (pkg / "__init__.py").write_text("VERSION = 'new'\n")
+    installed = os.stat(dist_info / "RECORD").st_mtime
+
+    assert sys.modules["fake_att"].VERSION == "old"   # memory still holds the old copy
+    assert _cat.library_possibly_stale(preloaded, installed, started)
