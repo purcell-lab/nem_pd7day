@@ -42,7 +42,7 @@ What is pinned, so the output is deterministic:
 * ``CalibrationEngine.fit`` is called with ``now`` set to that clock less
   ``FIT_LAG``, through an instance attribute on each store's engine, so
   ``fitted_at`` and the rolling window do not read the wall clock
-  (``fit_ols_stage2`` calls ``self.fit`` and goes through the same pin), and
+  (``fit_ols_stage2`` takes that result rather than fitting again, #210), and
   every decay weight is exactly 1.0 (see ``FIT_LAG``);
 * ``const.MAX_TOTAL_OBS`` is set to 36 before the store module is loaded, so
   whichever module binds the name sees the small cap;
