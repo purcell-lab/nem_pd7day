@@ -26,6 +26,7 @@ still reached. The STPASA runs are not thinned.
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -145,6 +146,8 @@ class Scenario:
     stale: StaleState | None = None
     scarcity_samples: Mapping[str, float] | None = None
     entry_id: str = ""
+    # Real DispatchIS zips, read in order, one per dispatch interval.
+    constraints: Sequence[bytes] = ()
 
 
 # ── The synthetic market ──────────────────────────────────────────────────────
@@ -571,6 +574,7 @@ def _common(
     usage_fee: float | None = None,
     stale: StaleState | None = None,
     scarcity_samples: Mapping[str, float] | None = None,
+    constraints: Sequence[bytes] = (),
 ) -> Scenario:
     fetch_at = stale.first_fetch_at if stale else now
     stpasa = None
@@ -596,6 +600,7 @@ def _common(
         stale=stale,
         scarcity_samples=scarcity_samples,
         entry_id=_entry_id(name),
+        constraints=tuple(constraints),
     )
 
 
@@ -731,6 +736,20 @@ def nsw_dispatch_live(mods: Any) -> Scenario:
     )
 
 
+DISPATCHIS_FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "dispatchis"
+
+
+def nsw_binding_constraints(mods: Any) -> Scenario:
+    """Five real DispatchIS intervals, 10:25 to 10:50 on 7 Oct 2026, read in order."""
+    return _common(
+        mods, "nsw_binding_constraints", SyntheticMarket(seed=22, region="NSW1"),
+        now=nem(2026, 10, 7, 10, 52), run_at=nem(2026, 10, 7, 7, 30), long=False,
+        calibration=EmptySeed(),
+        options={"forecast_mode": "days_2_7"},
+        constraints=[p.read_bytes() for p in sorted(DISPATCHIS_FIXTURES.glob("PUBLIC_DISPATCHIS_*.zip"))],
+    )
+
+
 def sa_stale_coordinator(mods: Any) -> Scenario:
     """Morning run served all day after the evening fetch failed with a 403.
 
@@ -801,6 +820,7 @@ SCENARIOS: dict[str, Callable[[Any], Scenario]] = {
     "qld_negative_midday": qld_negative_midday,
     "qld_stage2_out_of_domain": qld_stage2_out_of_domain,
     "nsw_dispatch_live": nsw_dispatch_live,
+    "nsw_binding_constraints": nsw_binding_constraints,
     "sa_stale_coordinator": sa_stale_coordinator,
     "vic_prcer_extension": vic_prcer_extension,
     "qld_lor2_notice": qld_lor2_notice,
