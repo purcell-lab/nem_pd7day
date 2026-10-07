@@ -696,6 +696,17 @@ def test_an_original_notice_supersedes_nothing():
         assert notice.supersedes_notice_id is None, notice_id
 
 
+@pytest.mark.parametrize(
+    "notice_id, forecast_mw",
+    [(145393, -89.0), (145394, -125.0), (145409, -55.0), (145432, -112.0)],
+)
+def test_msl_forecast_reads_the_current_wording_and_a_negative_value(notice_id, forecast_mw):
+    """AEMO now writes "Minimum demand is forecast to be -89 MW at 1400 hrs".
+    The old pattern wanted "Minimum regional demand" and no sign, so every
+    current MSL notice published forecast_mw as null."""
+    assert _real(notice_id).forecast_mw == forecast_mw
+
+
 def test_new_fields_round_trip_and_old_stored_notices_still_load():
     notice = _real(145409)
     notice.superseded_by = 145500
