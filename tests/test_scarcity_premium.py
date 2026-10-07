@@ -33,7 +33,7 @@ def base(price=0.010):
     ]
 
 
-def test_haeo_contract_units_spacing_utc_and_endpoint():
+def test_haeo_contract_units_spacing_nem_time_and_endpoint():
     result = build_premium(now(), observations(), base(), base_fresh=True)
     assert result.status == "active"
     assert result.count == 6
@@ -42,7 +42,7 @@ def test_haeo_contract_units_spacing_utc_and_endpoint():
     assert result.forecast[-1]["value"] == 0
     for a, b in zip(result.forecast, result.forecast[1:]):
         assert set(a) == {"time", "value"}
-        assert a["time"].endswith("+00:00")
+        assert a["time"].endswith("+10:00")
         assert aware_time(b["time"]) - aware_time(a["time"]) == timedelta(minutes=30)
     assert all(p["value"] == 0 for p in result.forecast[8:])
 
@@ -164,7 +164,7 @@ def test_missing_and_invalid_base_rows():
 
 def test_half_hour_bucket_contains_current_time():
     result = build_premium(now(11, 47), observations(at=now(11, 45)), base(), base_fresh=True)
-    assert result.forecast[0]["time"] == "2026-09-23T01:30:00+00:00"
+    assert result.forecast[0]["time"] == "2026-09-23T11:30:00+10:00"
     assert result.forecast[5]["value"] == 0
 
 
