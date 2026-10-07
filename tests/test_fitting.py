@@ -59,6 +59,34 @@ def _stage2_inputs(rows: int = 80) -> tuple[list, dict]:
     return obs, stpasa
 
 
+def test_stage1_classifies_each_interval_once_and_keys_it_as_before():
+    """The solar label depends only on the interval and the region, so it is
+    computed once per interval, not once per observation (#212)."""
+    start = NOW.astimezone(NEM).replace(hour=0, minute=0) - timedelta(days=1)
+    intervals = [start + timedelta(minutes=30 * i) for i in range(48)]
+    windowed = [
+        (ce.Observation(
+            interval_time=t.isoformat(), horizon_hours=h, pd7day_forecast=0.1, actual_rrp=0.1,
+            forecast_run_at=(t - timedelta(hours=h)).isoformat(), hour_of_day=t.hour,
+            day_of_week=t.weekday(), month=t.month, gas_forecast_tj=None, qni_mwflow=None,
+            qni_violation_degree=None, is_intervention=False,
+        ), t)
+        for t in intervals
+        for h in (2.0, 30.0, 100.0)   # each interval seen by three runs
+    ]
+
+    real = fitting._tod_label_solar
+    with patch.object(fitting, "_tod_label_solar", side_effect=real) as label:
+        buckets, _ = fitting.partition_stage1(windowed, "QLD1", NOW.astimezone(NEM))
+
+    assert label.call_count == len(intervals)
+    expected: dict[str, int] = {}
+    for o, obs_dt in windowed:
+        key = ce._bucket_key_solar(o.horizon_hours, obs_dt.astimezone(NEM), "QLD1")
+        expected[key] = expected.get(key, 0) + 1
+    assert {k: len(v) for k, v in buckets.items() if v} == expected
+
+
 def _storage(models: dict) -> str:
     result = ce.CalibrationResult(fitted_at="", total_observations=0, observations_in_window=0, models={})
     result.ols_models = models
