@@ -558,16 +558,21 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
 # AEMO typically publishes within ~65–90s of each boundary;
 # 75s gives comfortable margin while staying well clear of the 30-minute tariff tick.
 _DISPATCH_POLL_DELAY_S = 75
+# When the poll still sees the previous interval, AEMO has not published yet:
+# retry this often, this many times (to about 2 minutes past the boundary),
+# before serving what it has (#219).
+_DISPATCH_RETRY_DELAY_S = 15
+_DISPATCH_RETRIES = 3
 
 
 class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
     """5-minute coordinator for AEMO dispatch prices.
 
     Polling is boundary-aligned: each fetch fires at the next multiple of
-    5 minutes past midnight (UTC) plus _DISPATCH_POLL_DELAY_S (35 s).
-    NEMWEB publishes TradingIS data ~30 s after each boundary, so the
-    +35 s delay ensures fresh data while staying well clear of the
-    30-minute tariff tick.
+    5 minutes past midnight (UTC) plus _DISPATCH_POLL_DELAY_S (75 s). The
+    price AEMO publishes after boundary B is the interval ending B + 5 min
+    (SETTLEMENTDATE is the interval end), usually 60 to 90 s after B; a poll
+    that still sees the interval ending at B retries (#219).
 
     This replaces the old rolling update_interval approach, which drifted by
     whatever random offset existed at HA startup (observed: up to ~4 min).
@@ -674,20 +679,55 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
         # chain; schedule_next_poll checks the flag itself.
         self.schedule_next_poll()
 
+    async def _retry_until_fresh(
+        self, expected_settlement: datetime, stale_exc: StaleIntervalError,
+    ) -> dict[str, DispatchPrice]:
+        """Refetch until the interval ending at *expected_settlement* is published.
+
+        Up to _DISPATCH_RETRIES attempts, _DISPATCH_RETRY_DELAY_S apart. If
+        AEMO is still behind after the last one, serve what it returns and say
+        so: that interval is missed.
+        """
+        expected_str = expected_settlement.strftime("%Y-%m-%dT%H:%M")
+        for attempt in range(1, _DISPATCH_RETRIES + 1):
+            _LOGGER.debug(
+                "ELEC_NEM_SUMMARY: got stale settlement, expected >= %s (NEMtime) — "
+                "retry %d of %d in %ds (%s)",
+                expected_str, attempt, _DISPATCH_RETRIES, _DISPATCH_RETRY_DELAY_S, stale_exc,
+            )
+            await asyncio.sleep(_DISPATCH_RETRY_DELAY_S)
+            try:
+                return await self.hass.async_add_executor_job(
+                    fetch_dispatch_prices, expected_settlement
+                )
+            except StaleIntervalError as exc:
+                stale_exc = exc
+        prices = await self.hass.async_add_executor_job(fetch_dispatch_prices, None)
+        sample = next(iter(prices.values()), None)
+        if sample and parse_settlement(sample.interval_datetime) < expected_settlement:
+            _LOGGER.warning(
+                "Dispatch: settlement=%s still behind expected=%s (NEMtime) after %d "
+                "retries — serving anyway; that interval is missed",
+                sample.interval_datetime, expected_str, _DISPATCH_RETRIES,
+            )
+        return prices
+
     async def _async_update_data(self) -> dict[str, DispatchPrice]:
         t0 = dt_util.utcnow()
 
-        # Expected settlement = current 5-min boundary (NEM time).
-        # settlement == boundary means the just-closed interval — that's fresh.
-        # Only reject data older than boundary (genuinely stale).
-        # Strip tzinfo so expected_settlement is tz-naive NEM time
+        # SETTLEMENTDATE is the interval END (dispatch_client). The price AEMO
+        # publishes just after boundary B is the interval ending B + 5 min, so
+        # that is the fresh one. Expecting B instead accepted the previous
+        # interval whenever AEMO published after the poll, and the interval
+        # ending B + 5 was then never fetched: about 1 in 4 on the live
+        # install (#219). Tz-naive NEM time, as parse_settlement returns.
         nem_now = t0.astimezone(NEM_TZ).replace(tzinfo=None)
         boundary_nem = nem_now.replace(
             minute=(nem_now.minute // 5) * 5,
             second=0,
             microsecond=0,
         )
-        expected_settlement = boundary_nem
+        expected_settlement = boundary_nem + timedelta(minutes=5)
 
         try:
             try:
@@ -695,26 +735,7 @@ class DispatchCoordinator(DataUpdateCoordinator[dict[str, DispatchPrice]]):
                     fetch_dispatch_prices, expected_settlement
                 )
             except StaleIntervalError as stale_exc:
-                _LOGGER.debug(
-                    "ELEC_NEM_SUMMARY: got stale settlement, expected >= %s (NEMtime) — retrying in 15s (%s)",
-                    expected_settlement.strftime("%Y-%m-%dT%H:%M"),
-                    stale_exc,
-                )
-                await asyncio.sleep(15)
-                prices = await self.hass.async_add_executor_job(
-                    fetch_dispatch_prices, None
-                )
-                # Check if retry result is still behind expected settlement
-                sample = next(iter(prices.values()), None)
-                if sample:
-                    actual_str = sample.interval_datetime
-                    actual_dt = parse_settlement(actual_str)
-                    if actual_dt < expected_settlement:
-                        _LOGGER.warning(
-                            "Dispatch: settlement=%s still behind boundary=%s (NEMtime) after retry — serving anyway",
-                            actual_str,
-                            expected_settlement.strftime("%Y-%m-%dT%H:%M"),
-                        )
+                prices = await self._retry_until_fresh(expected_settlement, stale_exc)
 
             self.prices = prices
             self.last_updated = dt_util.utcnow()
