@@ -53,13 +53,15 @@ from .calibration_engine import (
     RunFeatures,
     StpasaFeatures,
     _bucket_key,
-    _bucket_key_solar,
     _hat_leverage,
+    _horizon_label,
     _ols,
     _ols_metrics,
     _per_bucket_counts,
     _quantile_regression,
     _residual_quantiles,
+    _tod_label,
+    _tod_label_solar,
     all_bucket_keys,
 )
 from .const import (
@@ -124,6 +126,9 @@ def partition_stage1(
     """
     buckets: dict[str, list[Pair]] = {k: [] for k in all_bucket_keys()}
     bucket_weights: dict[str, list[float]] = {k: [] for k in all_bucket_keys()}
+    # The label depends only on the interval and the region, and each interval
+    # is seen by many runs, so compute it once per interval (#212).
+    tod_by_interval: dict[datetime, str] = {}
     for obs, obs_dt in windowed:
         if obs.is_intervention:
             # Skip intervention periods — prices are not market-driven
@@ -137,7 +142,11 @@ def partition_stage1(
             continue
         # Solar elevation ToD classification
         obs_nem = obs_dt.astimezone(NEM_TZ)
-        key = _bucket_key_solar(obs.horizon_hours, obs_nem, region)
+        tod = tod_by_interval.get(obs_dt)
+        if tod is None:
+            tod = _tod_label_solar(obs_nem, region, _tod_label(obs_nem.hour))
+            tod_by_interval[obs_dt] = tod
+        key = f"{_horizon_label(obs.horizon_hours)}__{tod}"
         if key in buckets:
             buckets[key].append((obs.pd7day_forecast, obs.actual_rrp))
             # Compute exponential time-decay weight
