@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
+from . import tariff_catalogue
 from .tariff_catalogue import library_version
 from .const import (
     DOMAIN,
@@ -118,4 +119,5 @@ async def async_get_config_entry_diagnostics(
         "nemweb_gate": _nemweb_gate(hass),
         "integration_version": await _integration_version(hass),
         "aemo_to_tariff_version": library_version(),
+        "aemo_to_tariff_restart_needed": tariff_catalogue.LIBRARY_POSSIBLY_STALE,
     }

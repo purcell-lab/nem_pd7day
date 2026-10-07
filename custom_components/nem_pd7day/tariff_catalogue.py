@@ -23,6 +23,8 @@ import contextlib
 import datetime
 import io
 import logging
+import os
+import sys
 from importlib import metadata
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -37,6 +39,10 @@ from .const import (
 from . import tariff_extensions
 
 _LOGGER = logging.getLogger(__name__)
+
+# Read before the import below: True when something else in this process had
+# already imported the library, which is the precondition for #207.
+_PRELOADED = "aemo_to_tariff" in sys.modules
 
 try:
     import aemo_to_tariff as _att
@@ -70,6 +76,74 @@ def _read_library_version() -> str | None:
 _LIBRARY_VERSION = _read_library_version()
 
 
+def process_started_at() -> float | None:
+    """When this process started, epoch seconds, from /proc; None elsewhere."""
+    try:
+        with open("/proc/self/stat", encoding="ascii") as f:
+            stat = f.read()
+        with open("/proc/stat", encoding="ascii") as f:
+            boot = next(int(line.split()[1]) for line in f if line.startswith("btime "))
+        # starttime is field 22, counted in clock ticks since boot. The command
+        # name before it is parenthesised and may hold spaces, so count from
+        # the last ")": the field after it is field 3.
+        ticks = int(stat.rsplit(")", 1)[1].split()[19])
+        return boot + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration, AttributeError):
+        return None
+
+
+def library_installed_at() -> float | None:
+    """When the installed aemo-to-tariff was written, epoch seconds, or None.
+
+    Read from the dist-info RECORD. Home Assistant installs requirements with
+    uv, which keeps the wheel's own timestamps on METADATA and on the library
+    files, so only RECORD and its directory carry the install time; pip writes
+    it on all of them.
+    """
+    try:
+        dist = metadata.distribution("aemo-to-tariff")
+    except metadata.PackageNotFoundError:
+        return None
+    for path in dist.files or ():
+        if path.name == "RECORD" and path.parent.name.endswith(".dist-info"):
+            try:
+                return os.stat(str(dist.locate_file(path))).st_mtime
+            except OSError:
+                return None
+    return None
+
+
+def library_possibly_stale(
+    preloaded: bool, installed_at: float | None, started_at: float | None
+) -> bool:
+    """True when the library in memory may be older than the one installed (#207).
+
+    Another integration imported aemo_to_tariff before this one, and the
+    installed copy was written after this process started, so Home Assistant
+    installed this integration's pinned version after that import: the module
+    in memory is the previous version while the metadata reads the new one.
+    The library has no __version__ to compare, so this cannot be certain. The
+    one false positive, another integration importing the new copy after the
+    install in the same start, costs an unneeded restart.
+    """
+    return preloaded and installed_at is not None and started_at is not None and installed_at > started_at
+
+
+# Checked once, at import, off the event loop, for the reason given above.
+LIBRARY_POSSIBLY_STALE = _att is not None and library_possibly_stale(
+    _PRELOADED, library_installed_at(), process_started_at()
+)
+if LIBRARY_POSSIBLY_STALE:
+    _LOGGER.warning(
+        "aemo-to-tariff %s was installed after Home Assistant started, and another "
+        "integration had already imported the library, so the code running may be "
+        "the previous version: tariff prices and the list of tariff sensors can be "
+        "out of date, and library_version is published as unknown. Restart Home "
+        "Assistant once more. See https://github.com/purcell-lab/nem_pd7day/issues/207",
+        _LIBRARY_VERSION,
+    )
+
+
 def library_version() -> str | None:
     """Installed aemo-to-tariff version, or None when it is not importable.
 
@@ -77,8 +151,13 @@ def library_version() -> str | None:
     checked against the floor in manifest.json without shell access: the
     catalogue follows whatever version is installed, and nothing else on the
     system said which that was (issue #159).
+
+    None as well when the code running may be an older version than the one
+    installed (#207): the metadata would name a version that is not running.
     """
-    return _LIBRARY_VERSION if _att is not None else None
+    if _att is None or LIBRARY_POSSIBLY_STALE:
+        return None
+    return _LIBRARY_VERSION
 
 
 def _module(distributor: str) -> Any | None:
