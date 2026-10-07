@@ -440,7 +440,7 @@ def test_native_value_passes_covariates_to_the_store():
     def _apply(
         raw, h, hour, *,
         gas_forecast_tj=None, network_tight=None,
-        stpasa_features=None, run_features=None,
+        stpasa_features=None, run_features=None, interval_dt=None,
     ):
         capped = gas_forecast_tj is not None and network_tight is not None
         value = SPIKE_COVARIATE_CAP if capped else raw

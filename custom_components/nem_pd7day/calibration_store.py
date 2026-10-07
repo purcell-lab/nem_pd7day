@@ -441,15 +441,15 @@ class CalibrationStore:
         network_tight: bool | None = None,
         stpasa_features: "StpasaFeatures | None" = None,
         run_features: "RunFeatures | None" = None,
+        interval_dt: "datetime | None" = None,
     ) -> dict:
         if self._calibration is None:
             return passthrough_result(raw_price)
+        # The interval start and this store's region pick the bucket the
+        # interval was trained in (#208).
         cal = self._calibration.apply(
-            raw_price,
-            horizon_hours,
-            hour_of_day,
-            stpasa=stpasa_features,
-            run_features=run_features,
+            raw_price, horizon_hours, hour_of_day, stpasa=stpasa_features, run_features=run_features,
+            interval_dt=interval_dt, region=getattr(self, "_region", None),
         )
         # The spike credibility annotation (#176), informational only.
         return annotate_spike(cal, raw_price, gas_forecast_tj, network_tight)
