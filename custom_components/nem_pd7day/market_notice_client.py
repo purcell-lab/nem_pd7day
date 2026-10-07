@@ -148,6 +148,8 @@ class GridNoticeAnnotation:
     forecast_mw: Optional[float] = None       # MSL: forecast minimum demand
     reserve_req_mw: Optional[float] = None    # LOR: reserve requirement
     surplus_mw: Optional[float] = None        # LOR: min capacity available
+    # The NEMWEB file this notice was read from
+    url: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -165,6 +167,7 @@ class GridNoticeAnnotation:
             "forecast_mw": self.forecast_mw,
             "reserve_req_mw": self.reserve_req_mw,
             "surplus_mw": self.surplus_mw,
+            "url": self.url or notice_url(self.notice_id, self.issued_at),
             # Stored only once set. A notice the sensors publish is never
             # superseded, so the key would always read null there.
             **({"superseded_by": self.superseded_by} if self.superseded_by else {}),
@@ -190,7 +193,30 @@ class GridNoticeAnnotation:
             forecast_mw=d.get("forecast_mw"),
             reserve_req_mw=d.get("reserve_req_mw"),
             surplus_mw=d.get("surplus_mw"),
+            url=d.get("url"),
         )
+
+
+def _with_url(
+    notice: Optional[GridNoticeAnnotation], url: str
+) -> Optional[GridNoticeAnnotation]:
+    """Record the NEMWEB file a parsed notice was read from."""
+    if notice is not None:
+        notice.url = url
+    return notice
+
+
+def notice_url(notice_id: int, issued_at: datetime) -> str:
+    """
+    The NEMWEB file for a notice, for one stored before its URL was kept.
+
+    AEMO names each file for the notice's creation date in NEM time,
+    NEMITWEB1_MKTNOTICE_20260929.R145393; the date matched the Creation Date
+    in all 672 notices checked. Files stay in Current for about 60 days,
+    far longer than a notice stays in the 7-day horizon.
+    """
+    day = issued_at.astimezone(NEM_TZ).strftime("%Y%m%d")
+    return f"{NEMWEB_MARKET_NOTICE_URL}NEMITWEB1_MKTNOTICE_{day}.R{notice_id}"
 
 
 def _parse_directory_listing(html: str) -> list[tuple[int, str]]:
@@ -646,4 +672,4 @@ class MarketNoticeClient:
         if text is None:
             self._cycle_fetch_failures += 1
             return None
-        return _parse_notice_body(text, notice_id)
+        return _with_url(_parse_notice_body(text, notice_id), url)

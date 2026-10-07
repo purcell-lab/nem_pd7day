@@ -24,6 +24,7 @@ import asyncio
 import functools
 import logging
 from datetime import date, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -718,3 +719,40 @@ def test_new_fields_round_trip_and_old_stored_notices_still_load():
     old = mnc.GridNoticeAnnotation.from_dict(stored_before_216)
     assert old.supersedes_notice_id is None
     assert old.superseded_by is None
+
+
+# ── Notice URLs ──────────────────────────────────────────────────────────────
+
+NOTICES = Path(__file__).parent / "fixtures" / "market_notices"
+
+def test_a_fetched_notice_carries_the_url_it_was_read_from():
+    """The URL is the file fetched, not one rebuilt from the notice's date."""
+    listing = _listing((200100, "20260615"))
+    client, calls = _client(listing, body=LOR_NOTICE_TEXT)
+
+    (notice,) = run_async(client.fetch_new_notices())
+
+    expected = mnc.NEMWEB_MARKET_NOTICE_URL + "NEMITWEB1_MKTNOTICE_20260615.R200100"
+    assert notice.url == expected == calls["urls"][1]
+    assert notice.to_dict()["url"] == expected
+
+
+@pytest.mark.parametrize("path", sorted(NOTICES.glob("NEMITWEB1_MKTNOTICE_*")), ids=lambda p: p.suffix)
+def test_a_notice_stored_without_a_url_gets_its_nemweb_file(path):
+    """Stored before URLs were kept: the URL comes from the creation date."""
+    notice_id = int(path.suffix[2:])
+    notice = _parse_notice_body(path.read_text(encoding="ascii"), notice_id)
+    assert notice is not None and notice.url is None
+
+    stored = notice.to_dict()
+    del stored["url"]
+    loaded = mnc.GridNoticeAnnotation.from_dict(stored)
+
+    assert loaded.to_dict()["url"] == mnc.NEMWEB_MARKET_NOTICE_URL + path.name
+
+
+def test_a_stored_url_is_kept_as_stored():
+    notice = _real(145409)
+    notice.url = "https://www.nemweb.com.au/REPORTS/CURRENT/Market_Notice/X.R145409"
+    again = mnc.GridNoticeAnnotation.from_dict(notice.to_dict())
+    assert again.url == notice.url

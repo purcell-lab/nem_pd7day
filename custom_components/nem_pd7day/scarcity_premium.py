@@ -142,5 +142,7 @@ def build_premium(
             if price is None:
                 return PremiumResult("base_forecast_gap", [], count, mean, floor)
             value = round(min(PREMIUM_CAP, max(0.0, floor - price)), 6)
-        forecast.append({"time": t.astimezone(UTC).isoformat(), "value": value})
+        # Reported in NEM time, +10:00, like every other forecast this
+        # integration publishes. Lookups above stay keyed on UTC instants.
+        forecast.append({"time": t.isoformat(), "value": value})
     return PremiumResult(status, forecast, count, mean, floor)
