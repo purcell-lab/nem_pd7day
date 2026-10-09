@@ -142,7 +142,7 @@ def current_nem_interval() -> str:
     return to_nem_iso(interval_start)
 
 
-def _amber_express_cutoff(now: datetime | None = None) -> datetime:
+def _amber_express_cutoff(now: datetime) -> datetime:
     """
     Return the earliest datetime that PD7DAY should cover.
 
@@ -155,11 +155,11 @@ def _amber_express_cutoff(now: datetime | None = None) -> datetime:
     Outside (12:30pm–3:30am NEM):
         cutoff = now + 24h            (rolling horizon)
 
-    NEM time is UTC+10, no DST.
+    NEM time is UTC+10, no DST. The day 2-7 sensors use this rule only when no
+    Amber forecast entity is configured or it has no current forecast; see
+    day27_start (#235).
     """
     from datetime import timedelta
-    if now is None:
-        now = now_nem()
     window_start = now.replace(hour=3, minute=30, second=0, microsecond=0)
     window_end = now.replace(hour=12, minute=30, second=0, microsecond=0)
     if window_start <= now < window_end:
