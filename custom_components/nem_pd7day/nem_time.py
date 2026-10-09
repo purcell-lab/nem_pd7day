@@ -21,7 +21,7 @@ This means:
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -217,18 +217,24 @@ class Day27Start:
         return interval_start > self.at
 
 
-def day27_start(amber_attributes: Mapping[str, Any] | None, now: datetime | None = None) -> Day27Start:
-    """Start the day 2-7 series where the Amber forecast it is summed with ends.
+def day27_start(
+    amber_forecasts: Iterable[Mapping[str, Any]], now: datetime | None = None,
+) -> Day27Start:
+    """Start the day 2-7 series where the Amber forecasts it is summed with end.
 
-    Falls back to the clock rule when there is no Amber forecast or its coverage
-    ends before ``now`` (#235).
+    ``amber_forecasts`` are the attributes of every Amber forecast sensor
+    found. Coverage that has already ended is ignored; of the rest the
+    earliest end wins. Amber Electric and Amber Express end together in
+    practice, and should they not, an interval priced twice is a safer error
+    than one priced at 0. With no current Amber forecast the clock rule
+    applies (#235).
     """
     if now is None:
         now = now_nem()
-    if amber_attributes is not None:
-        end = amber_coverage_end(amber_attributes)
-        if end is not None and end > now:
-            return Day27Start(end, "amber")
+    ends = [amber_coverage_end(attrs) for attrs in amber_forecasts]
+    current = [end for end in ends if end is not None and end > now]
+    if current:
+        return Day27Start(min(current), "amber")
     return Day27Start(_amber_express_cutoff(now), "clock")
 
 

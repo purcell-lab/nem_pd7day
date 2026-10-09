@@ -1,5 +1,9 @@
 """
-The day 2-7 series starts where the Amber forecast it is summed with ends (#235).
+The day 2-7 series starts where the Amber forecasts it is summed with end (#235).
+
+The Amber Electric and Amber Express sensors are found in the entity
+registry, so no option has to be set; amber_forecast_entity overrides the
+search when it is.
 
 HAEO sums an Amber forecast with the day 2-7 series and reads either as 0
 outside its span. Started by the clock alone (nem_time._amber_express_cutoff),
@@ -118,10 +122,13 @@ def test_no_readable_forecast_has_no_end(attrs):
 
 # ── Where the day 2-7 series starts ──────────────────────────────────────────
 
+ELECTRIC_1400 = _electric("2026-10-09T03:30:01+00:00", "2026-10-09T04:00:00+00:00")
+
+
 def test_the_30_minute_hole_at_the_24h_edge_is_closed():
     """8 Oct 14:18: the clock started day 2-7 at 14:30, Amber ended at 14:00."""
-    clock = day27_start(None, now=T_1418)
-    joined = day27_start(_electric("2026-10-09T03:30:01+00:00", "2026-10-09T04:00:00+00:00"), now=T_1418)
+    clock = day27_start([], now=T_1418)
+    joined = day27_start([ELECTRIC_1400], now=T_1418)
 
     assert (joined.at, joined.source) == (END_1400, "amber")
     assert joined.includes(END_1400)                                  # no hole
@@ -133,23 +140,40 @@ def test_just_after_1230_the_series_starts_at_tomorrow_0400_not_24h_ahead():
     """12:31, before Amber extends: Amber still ends at 04:00 tomorrow. The clock
     rule had already jumped to now + 24 h, a 9-hour hole."""
     now = datetime(2026, 10, 8, 12, 31, tzinfo=NEM_TZ)
-    amber = _express("2026-10-09T03:30:00+10:00")
-    start = day27_start(amber, now=now)
+    start = day27_start([_express("2026-10-09T03:30:00+10:00")], now=now)
 
     assert (start.at, start.source) == (datetime(2026, 10, 9, 4, 0, tzinfo=NEM_TZ), "amber")
-    assert day27_start(None, now=now).at == now + timedelta(hours=24)
+    assert day27_start([], now=now).at == now + timedelta(hours=24)
+
+
+def test_both_integrations_present_and_agreeing_give_their_common_end():
+    """The live install runs both; their price, descriptor and renewables sensors
+    carry no forecast and drop out."""
+    found = [ELECTRIC_1400, _express("2026-10-09T13:30:00+10:00"), {"descriptor": "low"}, {}]
+    assert day27_start(found, now=T_1418) == Day27Start(END_1400, "amber")
+
+
+def test_when_amber_sources_disagree_the_earliest_end_wins():
+    """An interval priced twice is a safer error than one priced at 0."""
+    later = _express("2026-10-09T14:00:00+10:00")          # covers to 14:30
+    assert day27_start([later, ELECTRIC_1400], now=T_1418).at == END_1400
+
+
+def test_a_source_whose_coverage_has_ended_is_ignored():
+    ended = _express("2026-10-08T13:30:00+10:00")
+    assert day27_start([ended, ELECTRIC_1400], now=T_1418) == Day27Start(END_1400, "amber")
 
 
 @pytest.mark.parametrize(
-    "attrs",
+    "found",
     [
-        pytest.param(None, id="no entity"),
-        pytest.param({}, id="no forecast"),
-        pytest.param(_express("2026-10-08T13:30:00+10:00"), id="coverage already over"),
+        pytest.param([], id="no amber integration"),
+        pytest.param([{}, {"descriptor": "low"}], id="no forecast"),
+        pytest.param([_express("2026-10-08T13:30:00+10:00")], id="coverage already over"),
     ],
 )
-def test_without_a_current_amber_forecast_the_clock_rule_applies(attrs):
-    start = day27_start(attrs, now=T_1418)
+def test_without_a_current_amber_forecast_the_clock_rule_applies(found):
+    start = day27_start(found, now=T_1418)
     assert start == Day27Start(_nem_time._amber_express_cutoff(T_1418), "clock")
 
 
@@ -159,37 +183,83 @@ def test_the_clock_rule_keeps_its_exclusive_cutoff():
     assert not clock.includes(cutoff) and clock.includes(cutoff + timedelta(minutes=30))
 
 
-# ── Reading the configured entity ────────────────────────────────────────────
+# ── Finding the Amber sensors ────────────────────────────────────────────────
 
-def _hass_with(state):
-    hass = MagicMock()
-    hass.states.get = MagicMock(return_value=state)
-    return hass
+def _registry(*entries):
+    """(entity_id, platform, disabled_by) rows as the entity registry holds them."""
+    return types.SimpleNamespace(entities={
+        eid: types.SimpleNamespace(entity_id=eid, domain=eid.split(".")[0], platform=platform, disabled_by=disabled)
+        for eid, platform, disabled in entries
+    })
+
+
+LIVE_REGISTRY = _registry(
+    ("sensor.amber_general_forecast", "amberelectric", None),
+    ("sensor.amber_feed_in_forecast", "amberelectric", None),
+    ("sensor.amber_general_price", "amberelectric", None),
+    ("binary_sensor.amber_price_spike", "amberelectric", None),
+    ("sensor.amber_express_amber_general_price", "amber_express", None),
+    ("sensor.amber_express_amber_renewables", "amber_express", "user"),
+    ("sensor.haeo_amber_general_price", "template", None),
+    ("sensor.nem_pd7day_qld1_forecast_days27", "nem_pd7day", None),
+)
 
 
 def _entry(entity_id=None):
     return types.SimpleNamespace(options={} if entity_id is None else {CONF_AMBER: entity_id})
 
 
-def test_unset_or_empty_option_reads_no_entity():
-    hass = _hass_with(MagicMock())
-    for entry in (_entry(), _entry(""), types.SimpleNamespace()):
-        assert _amber_mod.amber_attributes(hass, entry) is None
-    hass.states.get.assert_not_called()
+def test_amber_sensors_are_found_without_any_option():
+    """Every enabled Amber Electric and Amber Express sensor; not a template
+    wrapper, not a binary sensor, not a disabled entity."""
+    with patch.object(_amber_mod.er, "async_get", return_value=LIVE_REGISTRY):
+        found = _amber_mod.amber_forecast_entities(MagicMock(), _entry())
+    assert found == (
+        "sensor.amber_express_amber_general_price",
+        "sensor.amber_feed_in_forecast",
+        "sensor.amber_general_forecast",
+        "sensor.amber_general_price",
+    )
 
 
-def test_an_unavailable_or_missing_entity_gives_no_attributes():
-    assert _amber_mod.amber_attributes(_hass_with(None), _entry("sensor.amber_general_forecast")) is None
-    gone = types.SimpleNamespace(state="unavailable", attributes={"forecasts": []})
-    assert _amber_mod.amber_attributes(_hass_with(gone), _entry("sensor.amber_general_forecast")) is None
+def test_the_option_overrides_the_search():
+    with patch.object(_amber_mod.er, "async_get", side_effect=AssertionError("searched")):
+        found = _amber_mod.amber_forecast_entities(MagicMock(), _entry("sensor.amber_general_forecast"))
+    assert found == ("sensor.amber_general_forecast",)
+
+
+def test_an_empty_option_still_searches():
+    for entry in (_entry(""), types.SimpleNamespace()):
+        with patch.object(_amber_mod.er, "async_get", return_value=LIVE_REGISTRY):
+            assert len(_amber_mod.amber_forecast_entities(MagicMock(), entry)) == 4
+
+
+def _hass_with(states):
+    hass = MagicMock()
+    hass.states.get = MagicMock(side_effect=lambda eid: states.get(eid))
+    return hass
+
+
+def test_missing_and_unavailable_sensors_are_skipped():
+    up = types.SimpleNamespace(state="0.11", attributes=ELECTRIC_1400)
+    down = types.SimpleNamespace(state="unavailable", attributes=_express("2026-10-09T20:00:00+10:00"))
+    hass = _hass_with({"sensor.a": up, "sensor.b": down})
+    assert _amber_mod.amber_forecasts(hass, ("sensor.a", "sensor.b", "sensor.gone")) == [ELECTRIC_1400]
+    assert _amber_mod.amber_forecasts(None, ("sensor.a",)) == []
 
 
 # ── Re-writing when the start moves ──────────────────────────────────────────
 
 def test_writes_follow_the_start_not_every_amber_update():
     """Amber updates every 5 minutes; the start moves about every 30 (#215)."""
-    state = types.SimpleNamespace(state="0.11", attributes=_express("2026-10-09T13:30:00+10:00"))
-    entity = types.SimpleNamespace(hass=_hass_with(state), async_on_remove=MagicMock())
+    express = types.SimpleNamespace(state="0.11", attributes=_express("2026-10-09T13:30:00+10:00"))
+    electric = types.SimpleNamespace(state="0.11", attributes=_electric("2026-10-09T03:30:01+00:00",
+                                                                         "2026-10-09T04:00:00+00:00"))
+    entity = types.SimpleNamespace(
+        hass=_hass_with({"sensor.amber_express_amber_general_price": express,
+                         "sensor.amber_general_forecast": electric}),
+        async_on_remove=MagicMock(),
+    )
     write = MagicMock()
     handlers = []
 
@@ -197,46 +267,39 @@ def test_writes_follow_the_start_not_every_amber_update():
         handlers.append((entity_ids, handler))
         return "unsub"
 
-    now = T_1418
+    registry = _registry(("sensor.amber_express_amber_general_price", "amber_express", None),
+                         ("sensor.amber_general_forecast", "amberelectric", None))
     # homeassistant.core is stubbed, so its callback decorator must pass through.
     with patch.object(_amber_mod, "async_track_state_change_event", track), \
             patch.object(_amber_mod, "callback", lambda fn: fn), \
-            patch.object(_nem_time, "now_nem", lambda: now):
-        _amber_mod.track_day27_start(entity, _entry("sensor.amber_express_amber_general_price"), write)
+            patch.object(_amber_mod.er, "async_get", return_value=registry), \
+            patch.object(_nem_time, "now_nem", lambda: T_1418):
+        found = _amber_mod.track_day27_start(entity, _entry(), write)
         (ids, handler), = handlers
-        assert ids == ["sensor.amber_express_amber_general_price"]
+        assert list(found) == ids == ["sensor.amber_express_amber_general_price", "sensor.amber_general_forecast"]
         entity.async_on_remove.assert_called_once_with("unsub")
 
         handler(None)                                     # a price update, same coverage
         assert write.call_count == 0
-        state.attributes = _express("2026-10-09T14:00:00+10:00")
-        handler(None)                                     # coverage extended by one interval
+        express.attributes = _express("2026-10-09T14:00:00+10:00")
+        handler(None)                                     # one source ahead: earliest end unchanged
+        assert write.call_count == 0
+        electric.attributes = _electric("2026-10-09T04:00:01+00:00", "2026-10-09T04:30:00+00:00")
+        handler(None)                                     # both extended by one interval
         assert write.call_count == 1
         handler(None)
         assert write.call_count == 1
 
 
-def test_no_option_subscribes_to_nothing():
+def test_no_amber_integration_subscribes_to_nothing():
     entity = types.SimpleNamespace(hass=MagicMock(), async_on_remove=MagicMock())
-    with patch.object(_amber_mod, "async_track_state_change_event", side_effect=AssertionError):
-        _amber_mod.track_day27_start(entity, _entry(), MagicMock())
+    with patch.object(_amber_mod, "async_track_state_change_event", side_effect=AssertionError), \
+            patch.object(_amber_mod.er, "async_get", return_value=_registry()):
+        assert _amber_mod.track_day27_start(entity, _entry(), MagicMock()) == ()
     entity.async_on_remove.assert_not_called()
 
 
 # ── The day 2-7 sensors ──────────────────────────────────────────────────────
-
-def _spot_sensor(amber_state):
-    sensor = _sensor_mod.SpotPriceForecastDays27Sensor.__new__(_sensor_mod.SpotPriceForecastDays27Sensor)
-    sensor.coordinator = MagicMock()
-    sensor._region = "QLD1"
-    sensor._store = None
-    sensor._entry = types.SimpleNamespace(
-        options={CONF_AMBER: "sensor.amber_general_forecast"},
-        runtime_data=types.SimpleNamespace(dispatch=None),
-    )
-    sensor.hass = _hass_with(amber_state)
-    return sensor
-
 
 def test_the_spot_sensor_starts_exactly_where_amber_ends():
     now = _nem_time.now_nem()
@@ -245,7 +308,13 @@ def test_the_spot_sensor_starts_exactly_where_amber_ends():
     amber = types.SimpleNamespace(state="0.11", attributes={"forecasts": [
         {"start_time": nem_iso(amber_end - timedelta(minutes=30)), "end_time": nem_iso(amber_end)},
     ]})
-    sensor = _spot_sensor(amber)
+    sensor = _sensor_mod.SpotPriceForecastDays27Sensor.__new__(_sensor_mod.SpotPriceForecastDays27Sensor)
+    sensor.coordinator = MagicMock()
+    sensor._region = "QLD1"
+    sensor._store = None
+    sensor._entry = types.SimpleNamespace(options={}, runtime_data=types.SimpleNamespace(dispatch=None))
+    sensor.hass = _hass_with({"sensor.amber_general_forecast": amber})
+    sensor._amber_ids = ("sensor.amber_general_forecast",)        # as found when added
     periods = [make_price_period(boundary + timedelta(minutes=30 * (i + 1)), value=0.05 + i * 1e-3)
                for i in range(96)]
     price_data = MagicMock(forecast=periods, forecast_generated_at=nem_iso(boundary),
@@ -258,3 +327,8 @@ def test_the_spot_sensor_starts_exactly_where_amber_ends():
     assert attrs["forecast_start_source"] == "amber"
     assert attrs["next_value"] == attrs["forecast"][0]["value"]
     assert len(attrs["forecast"]) == 96 - 47
+
+
+def test_a_sensor_not_yet_added_uses_the_clock_rule():
+    for cls in (_sensor_mod.SpotPriceForecastDays27Sensor, _tariff_mod.TariffForecastDays27Sensor):
+        assert cls._amber_ids == ()

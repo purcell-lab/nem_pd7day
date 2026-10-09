@@ -251,11 +251,12 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 def _amber_forecast_field(current: str) -> dict[Any, Any]:
-    """The optional Amber forecast entity the day 2-7 series joins (#235).
+    """An optional override for the Amber forecast the day 2-7 series joins (#235).
 
-    Only Amber Electric's and Amber Express's own sensors are offered: a
-    wrapper template's last point is not an interval start. The current value
-    is suggested rather than defaulted, so it can be cleared.
+    Empty, the Amber Electric and Amber Express sensors are found in the
+    entity registry. Only their own sensors are offered: a wrapper template's
+    last point is not an interval start. The current value is suggested
+    rather than defaulted, so it can be cleared.
     """
     return {
         vol.Optional(

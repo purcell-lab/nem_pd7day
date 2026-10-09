@@ -143,12 +143,13 @@ CONF_REGION = "region"
 CONF_REGIONS = "regions"  # kept for migration from old list-based config
 CONF_FORECAST_MODE = "forecast_mode"
 CONF_ACTIVE_TARIFF = "active_tariff"
-# The Amber forecast entity the day 2-7 series is joined to (#235). Unset, the
-# day 2-7 series starts by the clock rule in nem_time._amber_express_cutoff.
+# An optional override: the one Amber forecast entity the day 2-7 series joins
+# (#235). Unset, every Amber forecast sensor in the entity registry is used,
+# and with none the series starts by nem_time._amber_express_cutoff.
 CONF_AMBER_FORECAST_ENTITY = "amber_forecast_entity"
 # Integrations whose forecast attributes amber_coverage_end can read: Amber
 # Electric (core) and Amber Express. A template wrapper's last point is not an
-# interval start, so wrappers are not offered.
+# interval start, so wrappers are neither searched nor offered.
 AMBER_FORECAST_PLATFORMS = ("amberelectric", "amber_express")
 
 # Forecast mode values

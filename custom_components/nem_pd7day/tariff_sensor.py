@@ -670,6 +670,8 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
     _attr_suggested_display_precision = 4
     _attr_entity_registry_enabled_default = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # The Amber forecast sensors found when added; none means the clock rule (#235).
+    _amber_ids: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -694,11 +696,11 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        track_day27_start(self, self._entry, self.async_write_ha_state)
+        self._amber_ids = track_day27_start(self, self._entry, self.async_write_ha_state)
 
     def _forecast_periods(self, d: Any) -> list[Any]:
         """The intervals the day 2-7 forecast lists: from where Amber's forecast ends (#235)."""
-        start = day27_start_for(self.hass, self._entry)
+        start = day27_start_for(self.hass, self._amber_ids)
         # The memo covers the whole run, so the day 2 to 7 trim shares the
         # slot the day 1 to 7 sensor of the same region filled.
         return [p for p in d.forecast if start.includes(parse_iso(p.time))]
@@ -709,7 +711,7 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
         forecast = attrs.pop("forecast", [])
         attrs[ATTR_FORECAST_START] = forecast[0]["time"] if forecast else None
         attrs[ATTR_FORECAST_START_SOURCE] = (
-            None if self._price_data is None else day27_start_for(self.hass, self._entry).source
+            None if self._price_data is None else day27_start_for(self.hass, self._amber_ids).source
         )
         attrs["forecast"] = forecast
         return attrs

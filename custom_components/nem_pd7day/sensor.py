@@ -851,6 +851,8 @@ class SpotPriceForecastDays27Sensor(
     _attr_entity_registry_enabled_default = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _unrecorded_attributes = frozenset({"forecast", "forecast_description"})
+    # The Amber forecast sensors found when added; none means the clock rule (#235).
+    _amber_ids: tuple[str, ...] = ()
 
     def __init__(self, coordinator, store, entry: ConfigEntry, region: str) -> None:
         super().__init__(coordinator)
@@ -902,7 +904,7 @@ class SpotPriceForecastDays27Sensor(
                     self._schedule_warm_state_write
                 )
             )
-        track_day27_start(self, self._entry, self._schedule_warm_state_write)
+        self._amber_ids = track_day27_start(self, self._entry, self._schedule_warm_state_write)
 
     def _current_period(self, forecast: list):
         now = now_nem()
@@ -939,7 +941,7 @@ class SpotPriceForecastDays27Sensor(
         run_at = d.forecast_generated_at
         calibrated_forecast = self._calibrated_forecast(d)
         # Day 2-7: from where the Amber forecast ends, or by the clock (#235)
-        start = day27_start_for(self.hass, self._entry)
+        start = day27_start_for(self.hass, self._amber_ids)
         trimmed_forecast = [
             p for p in calibrated_forecast
             if start.includes(parse_iso(p["time"]))

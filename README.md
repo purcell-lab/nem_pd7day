@@ -120,9 +120,11 @@ No `configuration.yaml` entries are required.
 
 ### Joining the day 2-7 series to an Amber forecast
 
-If you sum an Amber forecast with the day 2-7 sensors (for example as HAEO's grid price inputs), set **Amber forecast to join** in the integration's options (**Settings → Devices & services → NEM PD7DAY → Configure**). Choose the Amber Electric (`sensor.<site>_general_forecast`) or Amber Express (`sensor.amber_express_*_price`) forecast sensor you sum. The day 2-7 series then starts exactly where that forecast ends, read from its last interval's end time, with no gap and no overlap.
+No setting is needed. If Amber Electric or Amber Express is installed, the day 2-7 sensors find its forecast sensors and start exactly where Amber's forecast ends, read from its last interval's end time, so a sum of the two (for example HAEO's grid price inputs) has no gap and no overlap. They follow Amber as it extends its forecast, re-writing when the end moves rather than on every Amber update. With both installed and in agreement, which is usual, they share one end; should they ever disagree, the earlier end is used, since an interval priced twice is a safer error than one priced at 0.
 
-Left empty, the day 2-7 series starts by the clock: after tomorrow 03:30 between 03:30 and 12:30 NEM, otherwise after now + 24 h. Amber's real coverage does not follow that clock, so a sum leaves a hole: 30 minutes on most refreshes, and up to about 9 hours just after 12:30, before Amber extends its forecast (#235). The option also falls back to the clock rule whenever the Amber entity is unavailable or its forecast has ended. Only Amber's own sensors are offered: a template that wraps an Amber forecast usually carries a closing point rather than an interval start.
+With no Amber integration, or while its sensors are unavailable or their forecast has ended, the day 2-7 series starts by the clock: after tomorrow 03:30 between 03:30 and 12:30 NEM, otherwise after now + 24 h. Amber's real coverage does not follow that clock, so before #235 a sum had a hole: 30 minutes on most refreshes, and up to about 9 hours just after 12:30. An Amber integration added later is found at the next reload of this integration.
+
+To join one particular Amber forecast instead, for example with two Amber sites installed, choose it under **Amber forecast override** in the integration's options (**Settings → Devices & services → NEM PD7DAY → Configure**). Only Amber's own sensors are searched or offered: a template that wraps an Amber forecast usually carries a closing point rather than an interval start.
 
 The day 2-7 sensors report `forecast_start` (the first interval listed) and `forecast_start_source` (`amber` or `clock`).
 
@@ -225,7 +227,7 @@ All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (
 | `max_24h_value` | Maximum calibrated price in the first 24 hours of this sensor's window |
 | `cheapest_2h_window` | Best contiguous 2-hour window over the whole days 2–7 window, by design |
 | `forecast_start` | `time` of the first interval listed: where the days 2–7 window begins |
-| `forecast_start_source` | `amber` when the window starts where the configured Amber forecast ends, `clock` when it starts by the clock rule (see *Joining the day 2-7 series to an Amber forecast*) |
+| `forecast_start_source` | `amber` when the window starts where the Amber forecast ends, `clock` when it starts by the clock rule (see *Joining the day 2-7 series to an Amber forecast*) |
 
 Each entry in `forecast` contains:
 

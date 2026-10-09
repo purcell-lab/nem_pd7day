@@ -151,7 +151,7 @@ class Scenario:
     amber: Mapping[str, Any] | None = None  # attributes served at AMBER_ENTITY (#235)
 
 
-# The Amber Electric forecast entity a day 2-7 scenario may join to.
+# The Amber Electric forecast entity a day 2-7 scenario may serve and register.
 AMBER_ENTITY = "sensor.amber_general_forecast"
 
 
@@ -633,7 +633,7 @@ def qld_days27_mode(mods: Any) -> Scenario:
 
 
 def qld_days27_amber_joined(mods: Any) -> Scenario:
-    """The day 2-7 series joined to an Amber Electric forecast (#235).
+    """The day 2-7 series joined to an Amber Electric forecast found in the registry (#235).
 
     At 14:18 Amber's last interval runs 12:30 to 13:00 the next day, so day 2-7
     starts at 13:00. The clock rule would start after 14:18 the next day: 15:00
@@ -652,7 +652,7 @@ def qld_days27_amber_joined(mods: Any) -> Scenario:
         mods, "qld_days27_amber_joined", SyntheticMarket(seed=12, region="QLD1"),
         now=nem(2026, 9, 16, 14, 18), run_at=nem(2026, 9, 16, 13, 0), long=True,
         calibration=ObservationSeed(),
-        options={"forecast_mode": "days_2_7", "active_tariff": "energex/6900", "amber_forecast_entity": AMBER_ENTITY},
+        options={"forecast_mode": "days_2_7", "active_tariff": "energex/6900"},
         amber=amber,
     )
 
