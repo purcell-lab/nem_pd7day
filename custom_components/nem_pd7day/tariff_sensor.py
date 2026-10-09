@@ -23,6 +23,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ATTR_FORECAST_START,
+    ATTR_FORECAST_START_SOURCE,
     DEFAULT_ADDITIONAL_FEE,
     DEFAULT_ENABLED_TARIFFS,
     DISTRIBUTOR_DISPLAY_NAMES,
@@ -30,11 +32,12 @@ from .const import (
     additional_fee_entity_id,
     additional_fee_unique_id,
 )
+from .amber_forecast import day27_start_for, track_day27_start
 from .calibrated_forecast import CalibratedForecast
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from . import tariff_pricing
 from .tariff_catalogue import library_version, seasonal as seasonal_tariff, tariff_name as catalogue_tariff_name
-from .nem_time import _amber_express_cutoff, now_nem, parse_iso
+from .nem_time import now_nem, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -689,12 +692,27 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
     def entity_registry_enabled_default(self) -> bool:
         return True
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        track_day27_start(self, self._entry, self.async_write_ha_state)
+
     def _forecast_periods(self, d: Any) -> list[Any]:
-        """The intervals the day 2-7 forecast lists: those after the amber_express_cutoff."""
-        cutoff_dt = _amber_express_cutoff()
+        """The intervals the day 2-7 forecast lists: from where Amber's forecast ends (#235)."""
+        start = day27_start_for(self.hass, self._entry)
         # The memo covers the whole run, so the day 2 to 7 trim shares the
         # slot the day 1 to 7 sensor of the same region filled.
-        return [p for p in d.forecast if parse_iso(p.time) > cutoff_dt]
+        return [p for p in d.forecast if start.includes(parse_iso(p.time))]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = super().extra_state_attributes
+        forecast = attrs.pop("forecast", [])
+        attrs[ATTR_FORECAST_START] = forecast[0]["time"] if forecast else None
+        attrs[ATTR_FORECAST_START_SOURCE] = (
+            None if self._price_data is None else day27_start_for(self.hass, self._entry).source
+        )
+        attrs["forecast"] = forecast
+        return attrs
 
 
 class NemPd7dayExportTariffSensor(TariffEntityBase):

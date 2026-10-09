@@ -118,6 +118,14 @@ The configured region is used for both price forecasting and calibration. No add
 
 No `configuration.yaml` entries are required.
 
+### Joining the day 2-7 series to an Amber forecast
+
+If you sum an Amber forecast with the day 2-7 sensors (for example as HAEO's grid price inputs), set **Amber forecast to join** in the integration's options (**Settings → Devices & services → NEM PD7DAY → Configure**). Choose the Amber Electric (`sensor.<site>_general_forecast`) or Amber Express (`sensor.amber_express_*_price`) forecast sensor you sum. The day 2-7 series then starts exactly where that forecast ends, read from its last interval's end time, with no gap and no overlap.
+
+Left empty, the day 2-7 series starts by the clock: after tomorrow 03:30 between 03:30 and 12:30 NEM, otherwise after now + 24 h. Amber's real coverage does not follow that clock, so a sum leaves a hole: 30 minutes on most refreshes, and up to about 9 hours just after 12:30, before Amber extends its forecast (#235). The option also falls back to the clock rule whenever the Amber entity is unavailable or its forecast has ended. Only Amber's own sensors are offered: a template that wraps an Amber forecast usually carries a closing point rather than an interval start.
+
+The day 2-7 sensors report `forecast_start` (the first interval listed) and `forecast_start_source` (`amber` or `clock`).
+
 ### Monitoring multiple regions
 
 Each integration instance monitors one NEM region with full independent calibration. To monitor multiple regions, add a separate integration instance for each via **Settings → Integrations → Add Integration → NEM PD7DAY**. Each instance maintains its own calibration store, observation log, and forecast sensors.
@@ -216,6 +224,8 @@ All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (
 | `min_24h_value` | Minimum calibrated price in the first 24 hours of this sensor's window (the 24 hours after the Amber Express cutoff) |
 | `max_24h_value` | Maximum calibrated price in the first 24 hours of this sensor's window |
 | `cheapest_2h_window` | Best contiguous 2-hour window over the whole days 2–7 window, by design |
+| `forecast_start` | `time` of the first interval listed: where the days 2–7 window begins |
+| `forecast_start_source` | `amber` when the window starts where the configured Amber forecast ends, `clock` when it starts by the clock rule (see *Joining the day 2-7 series to an Amber forecast*) |
 
 Each entry in `forecast` contains:
 

@@ -102,6 +102,7 @@ Each is small and names what it exercises. Twelve, as merged in #183:
 |---|---|
 | `qld_fitted_evening_peak` | QLD1, stage 1 and stage 2 fitted, days 1-7, Energex tariffs, evening peak |
 | `qld_days27_mode` | the day 2-7 sensors and trims |
+| `qld_days27_amber_joined` | the day 2-7 series starting where a configured Amber Electric forecast ends (#235) |
 | `qld_empty_store` | no calibration yet: passthrough everywhere |
 | `qld_spike_credible` | raw above the spike threshold, gas high, network tight (#176) |
 | `qld_spike_uncredible` | the same spike, network slack |

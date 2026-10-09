@@ -78,7 +78,11 @@
         "data": {
           "region": "NEM Region",
           "forecast_mode": "Forecast mode",
-          "active_tariff": "Active tariff (days 2-7 mode)"
+          "active_tariff": "Active tariff (days 2-7 mode)",
+          "amber_forecast_entity": "Amber forecast to join (days 2-7 mode)"
+        },
+        "data_description": {
+          "amber_forecast_entity": "Optional. The Amber Electric or Amber Express price forecast you sum with the day 2-7 sensors. When set, the day 2-7 series starts exactly where that forecast ends; when empty, it starts by the clock (tomorrow 03:30 between 03:30 and 12:30, otherwise 24 hours ahead)."
         }
       }
     }

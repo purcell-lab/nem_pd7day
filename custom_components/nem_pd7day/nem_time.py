@@ -21,7 +21,10 @@ This means:
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from .const import FETCH_TIMES_NEM, INTERVAL_DURATION, NEM_TZ
 
@@ -164,6 +167,69 @@ def _amber_express_cutoff(now: datetime | None = None) -> datetime:
         return tomorrow_330
     else:
         return now + timedelta(hours=24)
+
+
+def amber_coverage_end(attributes: Mapping[str, Any]) -> datetime | None:
+    """Where an Amber forecast stops: the end of its last interval, or None.
+
+    Amber Electric publishes ``forecasts`` and Amber Express ``detailedForecast``,
+    and each entry carries its ``end_time``. Amber Express's plain ``forecast``
+    lists interval starts only, so without the detailed list its end is the
+    last start plus one interval (#235).
+    """
+    for key in ("forecasts", "detailedForecast"):
+        entries = attributes.get(key)
+        if isinstance(entries, list) and entries:
+            ends = [_parse_or_none(e.get("end_time")) for e in entries if isinstance(e, Mapping)]
+            found = [e for e in ends if e is not None]
+            if found:
+                return max(found)
+    entries = attributes.get("forecast")
+    if isinstance(entries, list) and entries:
+        starts = [_parse_or_none(e.get("time")) for e in entries if isinstance(e, Mapping)]
+        found = [s for s in starts if s is not None]
+        if found:
+            return max(found) + INTERVAL_DURATION
+    return None
+
+
+def _parse_or_none(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return parse_iso(value)
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class Day27Start:
+    """Where the day 2-7 series begins, and which rule placed it."""
+
+    at: datetime
+    source: str     # "amber" or "clock"
+
+    def includes(self, interval_start: datetime) -> bool:
+        # Amber's end is the first interval it does not cover, so it is listed.
+        # The clock cutoff keeps its exclusive comparison, unchanged since v2.
+        if self.source == "amber":
+            return interval_start >= self.at
+        return interval_start > self.at
+
+
+def day27_start(amber_attributes: Mapping[str, Any] | None, now: datetime | None = None) -> Day27Start:
+    """Start the day 2-7 series where the Amber forecast it is summed with ends.
+
+    Falls back to the clock rule when there is no Amber forecast or its coverage
+    ends before ``now`` (#235).
+    """
+    if now is None:
+        now = now_nem()
+    if amber_attributes is not None:
+        end = amber_coverage_end(amber_attributes)
+        if end is not None and end > now:
+            return Day27Start(end, "amber")
+    return Day27Start(_amber_express_cutoff(now), "clock")
 
 
 def fetch_times_as_utc() -> list[str]:

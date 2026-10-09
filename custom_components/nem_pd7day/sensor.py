@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, TYPE_CHECKING
 
-from .nem_time import _amber_express_cutoff, now_nem, parse_iso, to_nem_iso
+from .nem_time import now_nem, parse_iso, to_nem_iso
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -41,6 +41,8 @@ from .const import (
     ATTR_CAL_SOURCE,
     ATTR_CAL_STATUS,
     ATTR_CHEAPEST_2H,
+    ATTR_FORECAST_START,
+    ATTR_FORECAST_START_SOURCE,
     ATTR_EXPORTLIMIT,
     ATTR_FORECAST,
     ATTR_FORECAST_GENERATED_AT,
@@ -87,6 +89,7 @@ from .calibration_inputs import (
     stpasa_effective_min_horizon_h,
     stpasa_features_for_interval,
 )
+from .amber_forecast import day27_start_for, track_day27_start
 from .calibrated_forecast import CalibratedForecast, WarmOutcome
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from .tariff_catalogue import export_program_supported, export_programs, import_tariff_codes
@@ -899,6 +902,7 @@ class SpotPriceForecastDays27Sensor(
                     self._schedule_warm_state_write
                 )
             )
+        track_day27_start(self, self._entry, self._schedule_warm_state_write)
 
     def _current_period(self, forecast: list):
         now = now_nem()
@@ -934,11 +938,11 @@ class SpotPriceForecastDays27Sensor(
             return {}
         run_at = d.forecast_generated_at
         calibrated_forecast = self._calibrated_forecast(d)
-        # Day 2-7: trim to post-amber-express-cutoff only
-        cutoff_dt = _amber_express_cutoff()
+        # Day 2-7: from where the Amber forecast ends, or by the clock (#235)
+        start = day27_start_for(self.hass, self._entry)
         trimmed_forecast = [
             p for p in calibrated_forecast
-            if parse_iso(p["time"]) > cutoff_dt
+            if start.includes(parse_iso(p["time"]))
         ]
         # Min/max over the first 24 hours after the cutoff, as the attribute
         # name says. The cheapest 2 h window below searches the whole trimmed
@@ -974,6 +978,8 @@ class SpotPriceForecastDays27Sensor(
             ATTR_MIN_24H: min_value,
             ATTR_MAX_24H: max_value,
             ATTR_CHEAPEST_2H: cheapest_window,
+            ATTR_FORECAST_START: trimmed_forecast[0]["time"] if trimmed_forecast else None,
+            ATTR_FORECAST_START_SOURCE: start.source,
             ATTR_FORECAST: trimmed_forecast,
             ATTR_SOURCE_FILE: d.source_file,
             "calibration_active": (

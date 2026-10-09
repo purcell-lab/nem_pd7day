@@ -13,7 +13,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import selector
 
 from .const import (
+    AMBER_FORECAST_PLATFORMS,
     CONF_ACTIVE_TARIFF,
+    CONF_AMBER_FORECAST_ENTITY,
     CONF_FORECAST_MODE,
     CONF_REGION,
     CONF_REGIONS,
@@ -248,6 +250,30 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return PD7DayOptionsFlow(config_entry)
 
 
+def _amber_forecast_field(current: str) -> dict[Any, Any]:
+    """The optional Amber forecast entity the day 2-7 series joins (#235).
+
+    Only Amber Electric's and Amber Express's own sensors are offered: a
+    wrapper template's last point is not an interval start. The current value
+    is suggested rather than defaulted, so it can be cleared.
+    """
+    return {
+        vol.Optional(
+            CONF_AMBER_FORECAST_ENTITY,
+            description={"suggested_value": current or None},
+        ): selector.selector(
+            {
+                "entity": {
+                    "filter": [
+                        {"integration": platform, "domain": "sensor"}
+                        for platform in AMBER_FORECAST_PLATFORMS
+                    ],
+                }
+            }
+        ),
+    }
+
+
 class PD7DayOptionsFlow(config_entries.OptionsFlow):
     """Allow changing region, forecast mode, and active tariff after initial setup."""
 
@@ -262,10 +288,9 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                 title="",
                 data={
                     CONF_REGION: user_input[CONF_REGION],
-                    CONF_FORECAST_MODE: user_input.get(
-                        CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7
-                    ),
+                    CONF_FORECAST_MODE: user_input.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7),
                     CONF_ACTIVE_TARIFF: user_input.get(CONF_ACTIVE_TARIFF, ""),
+                    CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
                 },
             )
 
@@ -276,9 +301,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
              if isinstance(self._entry.data.get(CONF_REGIONS), list)
              else self._entry.data.get(CONF_REGIONS, DEFAULT_REGION))
         )
-        current_mode = self._entry.options.get(
-            CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7
-        )
+        current_mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
         current_tariff = self._entry.options.get(CONF_ACTIVE_TARIFF, "")
 
         tariff_options = _tariff_options_for_region(current_region)
@@ -317,6 +340,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                         }
                     }
                 ),
+                **_amber_forecast_field(self._entry.options.get(CONF_AMBER_FORECAST_ENTITY, "")),
             }
         )
 

@@ -270,7 +270,7 @@ def test_forecast_length_by_sensor_kind(factory, expected):
     ]
     sensor = factory(price_periods=periods)
     with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=10.0), \
-            patch.object(_tariff_mod, "_amber_express_cutoff", return_value=base + timedelta(hours=24)):
+            patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(base + timedelta(hours=24), "clock")):
         forecast = sensor.extra_state_attributes["forecast"]
     assert len(forecast) == expected
 
@@ -676,7 +676,7 @@ def test_attribute_loop_calibrates_each_interval_once(factory):
 
     wrapper, calls = count_calls(sensor, "_calibrated_value")
     with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5), \
-            patch.object(_tariff_mod, "_amber_express_cutoff", return_value=NO_CUTOFF), \
+            patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(NO_CUTOFF, "clock")), \
             patch.object(type(sensor), "_calibrated_value", wrapper):
         attrs = sensor.extra_state_attributes
 
@@ -710,7 +710,7 @@ def test_spot_key_is_the_value_that_was_fed_to_the_tariff(factory):
     with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5), \
             patch.object(type(sensor), "_calibrated_value", fake_calibrate), \
             patch.object(type(sensor), "_compute_tariff", spy), \
-            patch.object(_tariff_mod, "_amber_express_cutoff", return_value=NO_CUTOFF):
+            patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(NO_CUTOFF, "clock")):
         attrs = sensor.extra_state_attributes
 
     assert len(seen) == 8

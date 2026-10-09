@@ -103,9 +103,10 @@ class _FakeOptionsFlow:
 
 
 class _Marker:
-    def __init__(self, key, default=None):
+    def __init__(self, key, default=None, description=None):
         self.key = key
         self.default = default
+        self.description = description
 
 
 class _Required(_Marker):
@@ -285,6 +286,41 @@ def test_options_flow_saves_region_mode_and_active_tariff(flow_env):
     assert result["data"][const_mod.CONF_REGION] == "VIC1"
     assert result["data"][const_mod.CONF_FORECAST_MODE] == const_mod.FORECAST_MODE_FULL
     assert result["data"][const_mod.CONF_ACTIVE_TARIFF] == "energex/6900"
+
+
+def test_options_flow_saves_the_amber_forecast_entity_and_clears_it_when_omitted(flow_env):
+    config_flow_mod, const_mod = flow_env
+    entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1"})
+    base = {const_mod.CONF_REGION: "QLD1", const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7}
+
+    chosen = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(
+        {**base, const_mod.CONF_AMBER_FORECAST_ENTITY: "sensor.amber_general_forecast"}))
+    cleared = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(dict(base)))
+
+    assert chosen["data"][const_mod.CONF_AMBER_FORECAST_ENTITY] == "sensor.amber_general_forecast"
+    assert cleared["data"][const_mod.CONF_AMBER_FORECAST_ENTITY] == ""
+
+
+def test_the_amber_field_offers_only_amber_sensors_and_suggests_the_current_one(flow_env, monkeypatch):
+    """A wrapper template's last point is not an interval start, so only Amber
+    Electric's and Amber Express's own sensors are offered (#235)."""
+    config_flow_mod, const_mod = flow_env
+    configs: list = []
+    monkeypatch.setattr(config_flow_mod.selector, "selector", lambda cfg: configs.append(cfg) or (lambda v: v))
+    entry = make_entry(const_mod, "QLD1", options={
+        const_mod.CONF_REGION: "QLD1",
+        const_mod.CONF_AMBER_FORECAST_ENTITY: "sensor.amber_express_amber_general_price",
+    })
+
+    result = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init())
+
+    (marker,) = [m for m in result["data_schema"].spec if m.key == const_mod.CONF_AMBER_FORECAST_ENTITY]
+    assert marker.description == {"suggested_value": "sensor.amber_express_amber_general_price"}
+    (entity_cfg,) = [c["entity"] for c in configs if "entity" in c]
+    assert entity_cfg["filter"] == [
+        {"integration": "amberelectric", "domain": "sensor"},
+        {"integration": "amber_express", "domain": "sensor"},
+    ]
 
 
 # ── Reconfigure flow ──────────────────────────────────────────────────────────
