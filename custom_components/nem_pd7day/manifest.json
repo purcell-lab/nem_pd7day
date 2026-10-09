@@ -17,5 +17,5 @@
     "aemo-to-tariff==0.7.28",
     "matplotlib>=3.7.0"
   ],
-  "version": "3.21.0"
+  "version": "3.22.0"
 }
