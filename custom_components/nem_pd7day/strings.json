@@ -78,7 +78,11 @@
         "data": {
           "region": "NEM Region",
           "forecast_mode": "Forecast mode",
-          "active_tariff": "Active tariff (days 2-7 mode)"
+          "active_tariff": "Active tariff (days 2-7 mode)",
+          "amber_forecast_entity": "Amber forecast override (days 2-7 mode)"
+        },
+        "data_description": {
+          "amber_forecast_entity": "Leave empty: the day 2-7 series starts where the Amber Electric or Amber Express forecast ends, found automatically. Choose one Amber forecast sensor only to use it alone, for example when two Amber sites are installed. With no Amber integration it starts by the clock."
         }
       }
     }

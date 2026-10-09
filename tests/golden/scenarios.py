@@ -148,6 +148,11 @@ class Scenario:
     entry_id: str = ""
     # Real DispatchIS zips, read in order, one per dispatch interval.
     constraints: Sequence[bytes] = ()
+    amber: Mapping[str, Any] | None = None  # attributes served at AMBER_ENTITY (#235)
+
+
+# The Amber Electric forecast entity a day 2-7 scenario may serve and register.
+AMBER_ENTITY = "sensor.amber_general_forecast"
 
 
 # ── The synthetic market ──────────────────────────────────────────────────────
@@ -575,6 +580,7 @@ def _common(
     stale: StaleState | None = None,
     scarcity_samples: Mapping[str, float] | None = None,
     constraints: Sequence[bytes] = (),
+    amber: Mapping[str, Any] | None = None,
 ) -> Scenario:
     fetch_at = stale.first_fetch_at if stale else now
     stpasa = None
@@ -601,6 +607,7 @@ def _common(
         scarcity_samples=scarcity_samples,
         entry_id=_entry_id(name),
         constraints=tuple(constraints),
+        amber=amber,
     )
 
 
@@ -622,6 +629,31 @@ def qld_days27_mode(mods: Any) -> Scenario:
         now=nem(2026, 9, 16, 8, 10), run_at=nem(2026, 9, 16, 7, 30), long=True,
         calibration=ObservationSeed(),
         options={"forecast_mode": "days_2_7", "active_tariff": "energex/6900"},
+    )
+
+
+def qld_days27_amber_joined(mods: Any) -> Scenario:
+    """The day 2-7 series joined to an Amber Electric forecast found in the registry (#235).
+
+    At 14:18 Amber's last interval runs 12:30 to 13:00 the next day, so day 2-7
+    starts at 13:00. The clock rule would start after 14:18 the next day: 15:00
+    on this run, which past 8 hours has one interval every 2 hours, on odd hours.
+    """
+    amber = {
+        "forecasts": [
+            {"duration": 30, "start_time": "2026-09-17T02:00:01+00:00", "end_time": "2026-09-17T02:30:00+00:00",
+             "per_kwh": 0.0241, "nem_date": "2026-09-17T12:30:00+10:00"},
+            {"duration": 30, "start_time": "2026-09-17T02:30:01+00:00", "end_time": "2026-09-17T03:00:00+00:00",
+             "per_kwh": 0.0263, "nem_date": "2026-09-17T13:00:00+10:00"},
+        ],
+        "channel_type": "general",
+    }
+    return _common(
+        mods, "qld_days27_amber_joined", SyntheticMarket(seed=12, region="QLD1"),
+        now=nem(2026, 9, 16, 14, 18), run_at=nem(2026, 9, 16, 13, 0), long=True,
+        calibration=ObservationSeed(),
+        options={"forecast_mode": "days_2_7", "active_tariff": "energex/6900"},
+        amber=amber,
     )
 
 
@@ -813,6 +845,7 @@ def qld_lor2_notice(mods: Any) -> Scenario:
 SCENARIOS: dict[str, Callable[[Any], Scenario]] = {
     "qld_fitted_evening_peak": qld_fitted_evening_peak,
     "qld_days27_mode": qld_days27_mode,
+    "qld_days27_amber_joined": qld_days27_amber_joined,
     "qld_empty_store": qld_empty_store,
     "qld_spike_credible": qld_spike_credible,
     "qld_spike_uncredible": qld_spike_uncredible,

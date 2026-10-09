@@ -72,6 +72,18 @@ def _days27(built: harness.Built, snap: dict) -> None:
     assert any(e["time"] <= cutoff for e in _forecast(snap))
 
 
+def _days27_amber_joined(built: harness.Built, snap: dict) -> None:
+    """Both day 2-7 series start at 13:00, where Amber ends, not by the clock at 15:00 (#235)."""
+    for suffix in ("_forecast_days27", "_6900_days27"):
+        record = _one(snap, suffix)
+        attrs = record["extra_state_attributes"]
+        first = next(iter(snapshot.iter_forecast(record)))
+        assert first["time"] == attrs["forecast_start"] == "2026-09-17T13:00:00+10:00", suffix
+        assert attrs["forecast_start_source"] == "amber", suffix
+    clock_first = [e["time"] for e in _forecast(snap) if e["time"] > "2026-09-17T14:18:00+10:00"][0]
+    assert clock_first == "2026-09-17T15:00:00+10:00"
+
+
 def _empty_store(built: harness.Built, snap: dict) -> None:
     assert {e["calibrated_source"] for e in _forecast(snap)} == {"passthrough"}
     assert _one(snap, "_calibration")["extra_state_attributes"]["status"] == "no_calibration"
@@ -195,6 +207,7 @@ def _binding_constraints(built: harness.Built, snap: dict) -> None:
 NON_VACUITY: dict[str, Callable[[harness.Built, dict], None]] = {
     "qld_fitted_evening_peak": _fitted_evening_peak,
     "qld_days27_mode": _days27,
+    "qld_days27_amber_joined": _days27_amber_joined,
     "qld_empty_store": _empty_store,
     "qld_spike_credible": _spike(True, short=False),
     "qld_spike_uncredible": _spike(False, short=False),
@@ -282,7 +295,7 @@ def test_golden_master(name: str) -> None:
 
 def test_every_scenario_has_a_non_vacuity_check() -> None:
     assert set(NON_VACUITY) == set(SCENARIOS)
-    assert len(SCENARIOS) == 13
+    assert len(SCENARIOS) == 14
 
 
 # ── The frozen clock ─────────────────────────────────────────────────────────

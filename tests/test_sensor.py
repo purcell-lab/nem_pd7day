@@ -554,7 +554,7 @@ def test_day27_sensor_forecast_only_contains_post_cutoff_intervals():
     periods = ascending_periods(run_at_dt, 200)
     set_price_data(sensor, periods, run_at_dt)
 
-    with patch.object(_sensor_mod, "_amber_express_cutoff", return_value=cutoff):
+    with patch.object(_sensor_mod, "day27_start_for", return_value=_nem_time.Day27Start(cutoff, "clock")):
         attrs = sensor.extra_state_attributes
     forecast = attrs["forecast"]
 
@@ -614,7 +614,7 @@ def test_day27_min_max_cover_first_24h_after_cutoff_not_whole_window():
         periods.append(make_price_period(run_at_dt + timedelta(minutes=30 * (i + 1)), value=val))
     set_price_data(sensor, periods, run_at_dt)
 
-    with patch.object(_sensor_mod, "_amber_express_cutoff", return_value=cutoff):
+    with patch.object(_sensor_mod, "day27_start_for", return_value=_nem_time.Day27Start(cutoff, "clock")):
         attrs = sensor.extra_state_attributes
 
     assert attrs["min_24h_value"] == 0.05

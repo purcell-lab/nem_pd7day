@@ -185,6 +185,8 @@ def _make_region_sensors(coordinator, store, region=REGION):
         s.coordinator = coordinator
         s._region = region
         s._store = store
+        s.hass = None       # the day 2-7 start reads no Amber entity (#235)
+        s._entry = None
         sensors.append(s)
     return sensors
 
@@ -475,7 +477,7 @@ def test_every_builder_that_publishes_a_band_publishes_band_source():
     method_globals = sensor_module.PD7DayForecastSensor._calibrate_period.__globals__
     with patch.dict(method_globals, {
         "calibrate_interval": lambda *a, **k: dict(fake_cal),
-        "_amber_express_cutoff": lambda: run_at - timedelta(days=1),
+        "day27_start_for": lambda *a: _nem_time.Day27Start(run_at - timedelta(days=1), "clock"),
     }):
         for s in sensors:
             entries = s.extra_state_attributes["forecast"]

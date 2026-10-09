@@ -143,6 +143,14 @@ CONF_REGION = "region"
 CONF_REGIONS = "regions"  # kept for migration from old list-based config
 CONF_FORECAST_MODE = "forecast_mode"
 CONF_ACTIVE_TARIFF = "active_tariff"
+# An optional override: the one Amber forecast entity the day 2-7 series joins
+# (#235). Unset, every Amber forecast sensor in the entity registry is used,
+# and with none the series starts by nem_time._amber_express_cutoff.
+CONF_AMBER_FORECAST_ENTITY = "amber_forecast_entity"
+# Integrations whose forecast attributes amber_coverage_end can read: Amber
+# Electric (core) and Amber Express. A template wrapper's last point is not an
+# interval start, so wrappers are neither searched nor offered.
+AMBER_FORECAST_PLATFORMS = ("amberelectric", "amber_express")
 
 # Forecast mode values
 FORECAST_MODE_FULL = "days_1_7"       # naive: days 1-7, all residential tariffs visible
@@ -631,6 +639,10 @@ ATTR_MIN_24H = "min_24h_value"
 ATTR_MAX_24H = "max_24h_value"
 ATTR_CHEAPEST_2H = "cheapest_2h_window"
 ATTR_FORECAST = "forecast"
+# Day 2-7 sensors: the first interval listed, and whether the Amber forecast
+# or the clock rule placed it (#235).
+ATTR_FORECAST_START = "forecast_start"
+ATTR_FORECAST_START_SOURCE = "forecast_start_source"
 ATTR_SOURCE_FILE = "source_file"
 
 # ── CASESOLUTION binary sensor attributes ─────────────────────────────────────

@@ -69,7 +69,8 @@ IMPORT_KEYS = [
     "forecast_description",
     "forecast",
 ]
-DAYS27_KEYS = list(IMPORT_KEYS)
+# Day 2-7 adds where its series starts and why, just before the forecast (#235).
+DAYS27_KEYS = [k for k in IMPORT_KEYS if k != "forecast"] + ["forecast_start", "forecast_start_source", "forecast"]
 EXPORT_KEYS = [
     "tariff_code",
     "data_age_hours", "last_success_at", "is_stale", "stale_reason",
@@ -142,7 +143,7 @@ def attributes(sensor):
     with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5), \
             patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=6.0), \
             patch.object(_tariff_mod, "staleness_attributes", return_value=dict(STALENESS)), \
-            patch.object(_tariff_mod, "_amber_express_cutoff", return_value=NO_CUTOFF):
+            patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(NO_CUTOFF, "clock")):
         return sensor.extra_state_attributes
 
 
@@ -213,18 +214,20 @@ def test_days27_trims_only_the_forecast():
     importer = make_sensor(NemPd7dayTariffSensor, price_periods=periods)
     days27 = make_sensor(TariffForecastDays27Sensor, price_periods=periods)
     with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5), \
-            patch.object(_tariff_mod, "_amber_express_cutoff", return_value=cutoff):
+            patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(cutoff, "clock")):
         full = importer.extra_state_attributes
         trimmed = days27.extra_state_attributes
     assert [e["time"] for e in trimmed["forecast"]] == [p.time for p in periods[3:]]
     assert trimmed["forecast"] == full["forecast"][3:]
-    assert {k: v for k, v in trimmed.items() if k != "forecast"} == \
+    day27_only = {"forecast", "forecast_start", "forecast_start_source"}
+    assert {k: v for k, v in trimmed.items() if k not in day27_only} == \
         {k: v for k, v in full.items() if k != "forecast"}
+    assert (trimmed["forecast_start"], trimmed["forecast_start_source"]) == (periods[3].time, "clock")
 
 
 def test_days27_reads_the_cutoff_only_with_price_data():
     sensor = make_sensor(TariffForecastDays27Sensor, price_periods=None)
-    with patch.object(_tariff_mod, "_amber_express_cutoff", side_effect=AssertionError("read")):
+    with patch.object(_tariff_mod, "day27_start_for", side_effect=AssertionError("read")):
         assert sensor.extra_state_attributes["forecast"] == []
 
 

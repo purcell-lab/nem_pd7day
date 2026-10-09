@@ -67,7 +67,7 @@ import support
 from support import PKG, PKG_DIR
 
 from . import clock as clock_mod
-from .scenarios import SCENARIOS, Scenario
+from .scenarios import AMBER_ENTITY, SCENARIOS, Scenario
 
 _LOGGER = logging.getLogger("golden.harness")
 
@@ -236,13 +236,18 @@ def _callback(func: Callable) -> Callable:
 
 class _EntityRegistry:
     """The slice of Home Assistant's entity registry the integration reads:
-    unique id to entity id, filled as entities are added (#181)."""
+    unique id to entity id, filled as entities are added (#181), and the
+    entries the Amber forecast search walks (#235)."""
 
     def __init__(self) -> None:
         self._ids: dict[tuple[str, str, str], str] = {}
+        self.entities: dict[str, types.SimpleNamespace] = {}
 
     def register(self, domain: str, platform: str, unique_id: str, entity_id: str) -> None:
         self._ids[(domain, platform, unique_id)] = entity_id
+        self.entities[entity_id] = types.SimpleNamespace(
+            entity_id=entity_id, domain=domain, platform=platform, disabled_by=None,
+        )
 
     def async_get_entity_id(self, domain: str, platform: str, unique_id: str) -> str | None:
         return self._ids.get((domain, platform, unique_id))
@@ -305,16 +310,17 @@ class _ClosedTask:
 
 class _States:
     def __init__(self) -> None:
-        self._by_id: dict[str, Callable[[], Any]] = {}
+        self._by_id: dict[str, tuple[Callable[[], Any], dict[str, Any]]] = {}
 
-    def serve(self, entity_id: str, state: Callable[[], Any]) -> None:
-        self._by_id[entity_id] = state
+    def serve(self, entity_id: str, state: Callable[[], Any], attributes: dict[str, Any] | None = None) -> None:
+        self._by_id[entity_id] = (state, dict(attributes or {}))
 
     def get(self, entity_id: str) -> Any:
-        state = self._by_id.get(entity_id)
-        if state is None:
+        served = self._by_id.get(entity_id)
+        if served is None:
             return None
-        return types.SimpleNamespace(entity_id=entity_id, state=state(), attributes={})
+        state, attributes = served
+        return types.SimpleNamespace(entity_id=entity_id, state=state(), attributes=attributes)
 
 
 class FakeHass:
@@ -594,6 +600,10 @@ async def _setup(built: Built) -> None:
     domain = const.DOMAIN
     setup_at = sc.stale.first_fetch_at if sc.stale else sc.now
     clock.set(setup_at)
+    if sc.amber is not None:
+        # Another integration's entity, so it is in place before setup (#235).
+        hass.golden_registry.register("sensor", "amberelectric", "amber-forecasts-general", AMBER_ENTITY)
+        hass.states.serve(AMBER_ENTITY, lambda: "0.11", attributes=dict(sc.amber))
 
     # ── Storage as the live install would hold it at setup ───────────────
     payloads = dict(sc.calibration.payloads(mods, sc.market, setup_at))

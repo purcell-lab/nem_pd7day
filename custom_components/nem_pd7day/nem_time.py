@@ -21,7 +21,10 @@ This means:
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from .const import FETCH_TIMES_NEM, INTERVAL_DURATION, NEM_TZ
 
@@ -139,7 +142,7 @@ def current_nem_interval() -> str:
     return to_nem_iso(interval_start)
 
 
-def _amber_express_cutoff(now: datetime | None = None) -> datetime:
+def _amber_express_cutoff(now: datetime) -> datetime:
     """
     Return the earliest datetime that PD7DAY should cover.
 
@@ -152,11 +155,11 @@ def _amber_express_cutoff(now: datetime | None = None) -> datetime:
     Outside (12:30pm–3:30am NEM):
         cutoff = now + 24h            (rolling horizon)
 
-    NEM time is UTC+10, no DST.
+    NEM time is UTC+10, no DST. The day 2-7 sensors use this rule only when no
+    Amber forecast entity is configured or it has no current forecast; see
+    day27_start (#235).
     """
     from datetime import timedelta
-    if now is None:
-        now = now_nem()
     window_start = now.replace(hour=3, minute=30, second=0, microsecond=0)
     window_end = now.replace(hour=12, minute=30, second=0, microsecond=0)
     if window_start <= now < window_end:
@@ -164,6 +167,75 @@ def _amber_express_cutoff(now: datetime | None = None) -> datetime:
         return tomorrow_330
     else:
         return now + timedelta(hours=24)
+
+
+def amber_coverage_end(attributes: Mapping[str, Any]) -> datetime | None:
+    """Where an Amber forecast stops: the end of its last interval, or None.
+
+    Amber Electric publishes ``forecasts`` and Amber Express ``detailedForecast``,
+    and each entry carries its ``end_time``. Amber Express's plain ``forecast``
+    lists interval starts only, so without the detailed list its end is the
+    last start plus one interval (#235).
+    """
+    for key in ("forecasts", "detailedForecast"):
+        entries = attributes.get(key)
+        if isinstance(entries, list) and entries:
+            ends = [_parse_or_none(e.get("end_time")) for e in entries if isinstance(e, Mapping)]
+            found = [e for e in ends if e is not None]
+            if found:
+                return max(found)
+    entries = attributes.get("forecast")
+    if isinstance(entries, list) and entries:
+        starts = [_parse_or_none(e.get("time")) for e in entries if isinstance(e, Mapping)]
+        found = [s for s in starts if s is not None]
+        if found:
+            return max(found) + INTERVAL_DURATION
+    return None
+
+
+def _parse_or_none(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return parse_iso(value)
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class Day27Start:
+    """Where the day 2-7 series begins, and which rule placed it."""
+
+    at: datetime
+    source: str     # "amber" or "clock"
+
+    def includes(self, interval_start: datetime) -> bool:
+        # Amber's end is the first interval it does not cover, so it is listed.
+        # The clock cutoff keeps its exclusive comparison, unchanged since v2.
+        if self.source == "amber":
+            return interval_start >= self.at
+        return interval_start > self.at
+
+
+def day27_start(
+    amber_forecasts: Iterable[Mapping[str, Any]], now: datetime | None = None,
+) -> Day27Start:
+    """Start the day 2-7 series where the Amber forecasts it is summed with end.
+
+    ``amber_forecasts`` are the attributes of every Amber forecast sensor
+    found. Coverage that has already ended is ignored; of the rest the
+    earliest end wins. Amber Electric and Amber Express end together in
+    practice, and should they not, an interval priced twice is a safer error
+    than one priced at 0. With no current Amber forecast the clock rule
+    applies (#235).
+    """
+    if now is None:
+        now = now_nem()
+    ends = [amber_coverage_end(attrs) for attrs in amber_forecasts]
+    current = [end for end in ends if end is not None and end > now]
+    if current:
+        return Day27Start(min(current), "amber")
+    return Day27Start(_amber_express_cutoff(now), "clock")
 
 
 def fetch_times_as_utc() -> list[str]:
