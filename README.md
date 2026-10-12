@@ -83,6 +83,19 @@ The integration uses a two-stage forecasting pipeline:
 3. Restart Home Assistant
 4. Go to **Settings → Devices & Services → Add Integration** and search for **NEM PD7DAY**
 
+### Update script (without HACS)
+
+Every release also carries `update_nem_pd7day.sh`, which installs that release's `nem_pd7day.zip` into `/config/custom_components/nem_pd7day`. Run it from a shell on the Home Assistant host (for example the SSH add-on):
+
+```bash
+curl -fsSL https://github.com/purcell-lab/nem_pd7day/releases/latest/download/update_nem_pd7day.sh | bash
+```
+
+- With no argument, the copy attached to a release installs that release; `bash update_nem_pd7day.sh v3.23.0` installs a given one, and `latest` the newest. A second argument names another config directory.
+- It installs the released zip, never the head of `main`, and refuses a zip whose `manifest.json` does not carry the version asked for.
+- The new copy is staged and swapped in with two renames, so a failed download leaves the installed copy in place; the replaced copy is kept at `/config/.nem_pd7day.previous`.
+- It does not restart Home Assistant. Restart it to load the new version.
+
 ---
 
 ## Removal

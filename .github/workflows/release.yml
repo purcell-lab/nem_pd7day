@@ -1,7 +1,9 @@
 name: "Release"
 
 # Tags a release commit and publishes the GitHub release with nem_pd7day.zip
-# attached, which is what HACS installs from. Same house style as
+# attached, which is what HACS installs from, and update_nem_pd7day.sh, the
+# installer for setups outside HACS, stamped with the release's tag so that
+# copy installs exactly this release (scripts/update_nem_pd7day.sh). Same house style as
 # purcell-lab/ha-amber-v2x:
 #   tag      vX.Y.Z (annotated), message "vX.Y.Z: <summary>"
 #   release  title "vX.Y.Z - <summary>", notes from docs/releases/vX.Y.Z.md,
@@ -92,6 +94,14 @@ jobs:
           cd "${{ github.workspace }}/custom_components/nem_pd7day"
           zip nem_pd7day.zip -r ./
 
+      # The repo copy installs "latest"; the attached copy installs this tag.
+      - name: "Stamp the update script with the tag"
+        shell: "bash"
+        run: |
+          sed 's/^STAMPED_VERSION="__RELEASE_VERSION__"/STAMPED_VERSION="v${{ inputs.version }}"/' scripts/update_nem_pd7day.sh > /tmp/update_nem_pd7day.sh
+          grep -q 'STAMPED_VERSION="v${{ inputs.version }}"' /tmp/update_nem_pd7day.sh
+          bash -n /tmp/update_nem_pd7day.sh
+
       - name: "Create the annotated tag"
         shell: "bash"
         run: |
@@ -100,13 +110,14 @@ jobs:
           git tag -a "v${{ inputs.version }}" -m "v${{ inputs.version }}: ${{ inputs.summary }}" HEAD
           git push origin "refs/tags/v${{ inputs.version }}"
 
-      - name: "Publish the release with the ZIP attached"
+      - name: "Publish the release with the ZIP and the update script attached"
         shell: "bash"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v${{ inputs.version }}" \
             "${{ github.workspace }}/custom_components/nem_pd7day/nem_pd7day.zip" \
+            /tmp/update_nem_pd7day.sh \
             --title "v${{ inputs.version }} - ${{ inputs.summary }}" \
             --notes-file /tmp/notes.md \
             --verify-tag \
@@ -120,7 +131,12 @@ jobs:
           gh api "repos/${{ github.repository }}/git/refs/tags/v${{ inputs.version }}" --jq '"tag object type: \(.object.type)"'
           gh api "repos/${{ github.repository }}/releases/tags/v${{ inputs.version }}" --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease) assets=\(.assets|length) \(.name)"'
           assets=$(gh api "repos/${{ github.repository }}/releases/tags/v${{ inputs.version }}" --jq '.assets|length')
-          if [ "$assets" != "1" ]; then
-            echo "::error::expected exactly one asset (nem_pd7day.zip), found $assets"
+          if [ "$assets" != "2" ]; then
+            echo "::error::expected two assets (nem_pd7day.zip, update_nem_pd7day.sh), found $assets"
+            exit 1
+          fi
+          names=$(gh api "repos/${{ github.repository }}/releases/tags/v${{ inputs.version }}" --jq '[.assets[].name] | sort | join(" ")')
+          if [ "$names" != "nem_pd7day.zip update_nem_pd7day.sh" ]; then
+            echo "::error::unexpected assets: $names"
             exit 1
           fi

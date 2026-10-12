@@ -110,7 +110,9 @@ the same house style as `purcell-lab/ha-amber-v2x`:
 
 The workflow runs the version lockstep check, refuses an existing tag (it
 never moves one), creates the annotated tag, publishes the release with
-`nem_pd7day.zip` attached, and verifies the tag object and the asset count.
+`nem_pd7day.zip` and `update_nem_pd7day.sh` attached (the installer for setups
+outside HACS, with the tag stamped in), and verifies the tag object and the
+assets.
 There is no tag-push path any more: a tag pushed by hand publishes nothing,
 which matters because the Claude Code cloud git proxy cannot push tags and a
 half-published release used to be the failure mode.
@@ -118,7 +120,7 @@ half-published release used to be the failure mode.
 ### 6. Verify the artifact
 
 The workflow's own Verify step prints the tag object type and the release
-with its asset count, and fails unless exactly one asset is attached. From
+with its asset count, and fails unless exactly the two assets are attached. From
 outside:
 
 ```bash
@@ -127,8 +129,9 @@ gh release view vX.Y.Z --json tagName,isDraft,assets \
   --jq '"\(.tagName) draft=\(.isDraft) assets=\(.assets|length)"'
 ```
 
-`assets` must be `1` — the `nem_pd7day.zip` HACS installs from. A release with
-zero assets is broken even though it looks published.
+`assets` must be `2`: `nem_pd7day.zip`, which HACS installs from, and
+`update_nem_pd7day.sh`, which installs that same zip without HACS. A release
+with no zip is broken even though it looks published.
 
 ### 7. Confirm on a live install
 
