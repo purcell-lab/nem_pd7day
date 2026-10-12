@@ -284,8 +284,9 @@ def test_every_interconnector_is_mapped_to_both_of_its_regions():
 
 
 def test_nsw1_creates_the_terranora_interconnector_sensor():
-    """N-Q-MNSP1 is mapped to NSW1 as well as QLD1 (#47); the NSW1 set is pinned."""
-    assert interconnector_ids(run_setup("NSW1")) == ["N-Q-MNSP1", "NSW1-QLD1", "VIC1-NSW1"]
+    """N-Q-MNSP1 is mapped to NSW1 as well as QLD1 (#47), and NSW1-SA1 (Project
+    EnergyConnect) to NSW1 and SA1; the NSW1 set is pinned."""
+    assert interconnector_ids(run_setup("NSW1")) == ["N-Q-MNSP1", "NSW1-QLD1", "NSW1-SA1", "VIC1-NSW1"]
 
 
 @pytest.mark.parametrize(

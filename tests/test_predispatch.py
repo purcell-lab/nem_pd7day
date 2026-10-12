@@ -80,12 +80,13 @@ def test_constraints_per_period_largest_cost_first():
         (-490.0, 300.0, -500.0, None),
         (0.5, 1.0, -1.0, "export"),               # the 1 MW floor
         (10.0, None, None, None),
+        (0.0, 0.0, 0.0, "closed"),               # NSW1-SA1 held by NS_ZERO / SN_ZERO
     ],
 )
 def test_bound_tolerance(flow, export, imp, bound):
     p = _client.InterconnectorPeriod(_at(11), flow, export, imp, None, None, "E", "I")
     assert p.bound == bound
-    assert p.limit_constraint == {"export": "E", "import": "I", None: None}[bound]
+    assert p.limit_constraint == {"export": "E", "import": "I", "closed": "E", None: None}[bound]
 
 
 def test_parse_reads_headers_and_skips_intervention():
@@ -343,6 +344,13 @@ def test_interconnector_ends_cover_region_map():
     for region, signs in _const.REGION_INTERCONNECTOR_SIGN.items():
         for ic, sign in signs.items():
             assert _const.INTERCONNECTOR_ENDS[ic][1 if sign > 0 else 0] == region
+
+
+def test_energyconnect_reads_closed_in_the_real_run():
+    pec = _snapshot().interconnectors["NSW1-SA1"]
+    assert {(p.mwflow, p.bound, p.limit_constraint, p.import_constraint) for p in pec} == {
+        (0.0, "closed", "NS_ZERO", "SN_ZERO")
+    }
 
 
 def test_period_is_thirty_minutes():

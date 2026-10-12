@@ -315,6 +315,26 @@ def import_capability(point, sign: int) -> float | None:
     return value if sign > 0 else -value
 
 
+def _out_of_service(points) -> bool:
+    """True when every point holds the link at 0 MW both ways.
+
+    That is a link not yet in service, as Project EnergyConnect (NSW1-SA1)
+    is while AEMO holds it with NS_ZERO and SN_ZERO, not a link shut by an
+    outage: an outage closes one direction, or part of a run, never both
+    directions for the whole seven days. Such a link carries nothing to judge
+    the region's network by, so it is left out rather than read as shut.
+    """
+    if not points:
+        return False
+    for p in points:
+        try:
+            if float(getattr(p, "exportlimit", None)) != 0.0 or float(getattr(p, "importlimit", None)) != 0.0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
 def network_context(interconnectors, region: str | None) -> dict | None:
     """Per-run lookup tables for one region's own interconnectors.
 
@@ -324,16 +344,21 @@ def network_context(interconnectors, region: str | None) -> dict | None:
     order of magnitude between links and no MW constant can serve them all.
 
     Returns None when the region has no direction mapping, which is the honest
-    answer for a region this integration does not model.
+    answer for a region this integration does not model. A link held at 0 MW
+    both ways for the whole run is left out of ``signs`` (see _out_of_service).
     """
-    signs = REGION_INTERCONNECTOR_SIGN.get(region or "")
-    if not signs:
+    mapped = REGION_INTERCONNECTOR_SIGN.get(region or "")
+    if not mapped:
         return None
+    signs: dict[str, int] = {}
     index: dict[str, dict[str, object]] = {}
     reference: dict[str, float | None] = {}
-    for ic_id, sign in signs.items():
+    for ic_id, sign in mapped.items():
         series = interconnectors.get(ic_id) if interconnectors else None
         points = getattr(series, "forecast", None) or []
+        if _out_of_service(points):
+            continue
+        signs[ic_id] = sign
         index[ic_id] = {p.time: p for p in points}
         caps = [
             c for c in (import_capability(p, sign) for p in points)

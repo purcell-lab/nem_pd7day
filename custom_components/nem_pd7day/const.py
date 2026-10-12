@@ -16,12 +16,16 @@ DEVICE_CONFIGURATION_URL = AEMO_WWW
 
 # Interconnectors per region
 QLD1_INTERCONNECTORS = {"NSW1-QLD1", "N-Q-MNSP1"}
-NSW1_INTERCONNECTORS = {"NSW1-QLD1", "VIC1-NSW1", "N-Q-MNSP1"}
+NSW1_INTERCONNECTORS = {"NSW1-QLD1", "VIC1-NSW1", "N-Q-MNSP1", "NSW1-SA1"}
 # Heywood is published by AEMO as "V-SA". "SA1-VIC1" is not an id that appears
 # in the PD7DAY file, so listing it here gave VIC1 no Heywood sensor at all
 # while SA1, which uses the correct id below, had one. See issue #46.
 VIC1_INTERCONNECTORS = {"VIC1-NSW1", "V-SA", "V-S-MNSP1", "T-V-MNSP1"}
-SA1_INTERCONNECTORS = {"V-SA", "V-S-MNSP1"}
+# Project EnergyConnect, NSW to SA, published as "NSW1-SA1" in PD7DAY,
+# PredispatchIS and DispatchIS. While it is not in service AEMO holds it at
+# 0 MW both ways with the NS_ZERO and SN_ZERO constraints; the spike gate leaves
+# a link held that way for a whole run out (calibration_inputs.network_context).
+SA1_INTERCONNECTORS = {"V-SA", "V-S-MNSP1", "NSW1-SA1"}
 TAS1_INTERCONNECTORS = {"T-V-MNSP1"}
 
 REGION_INTERCONNECTORS = {
@@ -43,9 +47,9 @@ REGION_INTERCONNECTORS = {
 # REGION_INTERCONNECTORS in the test suite so the two cannot drift.
 REGION_INTERCONNECTOR_SIGN: dict[str, dict[str, int]] = {
     "QLD1": {"NSW1-QLD1": 1, "N-Q-MNSP1": 1},
-    "NSW1": {"NSW1-QLD1": -1, "VIC1-NSW1": 1, "N-Q-MNSP1": -1},
+    "NSW1": {"NSW1-QLD1": -1, "VIC1-NSW1": 1, "N-Q-MNSP1": -1, "NSW1-SA1": -1},
     "VIC1": {"VIC1-NSW1": -1, "V-SA": -1, "V-S-MNSP1": -1, "T-V-MNSP1": 1},
-    "SA1": {"V-SA": 1, "V-S-MNSP1": 1},
+    "SA1": {"V-SA": 1, "V-S-MNSP1": 1, "NSW1-SA1": 1},
     "TAS1": {"T-V-MNSP1": -1},
 }
 
@@ -59,6 +63,7 @@ INTERCONNECTOR_ENDS: dict[str, tuple[str, str]] = {
     "V-SA": ("VIC1", "SA1"),
     "V-S-MNSP1": ("VIC1", "SA1"),
     "T-V-MNSP1": ("TAS1", "VIC1"),
+    "NSW1-SA1": ("NSW1", "SA1"),
 }
 
 # Queensland to New South Wales. Retained as a named id because the forecast

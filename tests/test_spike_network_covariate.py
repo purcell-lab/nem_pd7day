@@ -227,11 +227,17 @@ def test_victoria_is_now_answerable_on_its_own_links():
 
 
 def test_south_australia_is_now_answerable_on_heywood_and_murraylink():
+    """With EnergyConnect (NSW1-SA1) mapped but held at 0 MW, as published before service."""
     target = {
         "V-SA": flow(TARGET, mwflow=600.0, exportlimit=100.0),
         "V-S-MNSP1": flow(TARGET, mwflow=50.0),
+        "NSW1-SA1": flow(TARGET, mwflow=0.0),
     }
-    result = covariates("SA1", target)
+    links = run_for("SA1", target)
+    links["NSW1-SA1"] = series(
+        [flow(_iso(i), mwflow=0.0, exportlimit=0.0, importlimit=0.0) for i in range(BACKGROUND + 1)]
+    )
+    result = network_covariates_for_interval(network_context(links, "SA1"), TARGET)
     assert result["network_tight"] is True
     assert result["network_links_used"] == 2
 
@@ -282,3 +288,43 @@ def test_no_interconnector_data_at_all_is_none():
         "QLD1",
     )
     assert network_covariates_for_interval(context, TARGET)["network_tight"] is None
+
+
+# ── A link not yet in service (Project EnergyConnect) ────────────────────────
+
+
+def _sa1_run(pec_points):
+    """SA1 importing 300 MW on Heywood at full capability, Murraylink idle."""
+    links = run_for("SA1", {
+        "V-SA": flow(TARGET, mwflow=300.0),
+        "V-S-MNSP1": flow(TARGET, mwflow=0.0),
+        "NSW1-SA1": flow(TARGET, mwflow=0.0),
+    })
+    links["NSW1-SA1"] = series(pec_points)
+    return links
+
+
+def test_link_held_at_zero_both_ways_for_the_whole_run_is_left_out():
+    """NSW1-SA1 as AEMO publishes it before service: 0 MW, both limits 0.
+
+    Read as a shut import path it would mark SA1 (and NSW1) tight in every
+    importing interval; it is left out instead, and the region is judged on
+    the links it can actually import across.
+    """
+    held = [flow(_iso(i), mwflow=0.0, exportlimit=0.0, importlimit=0.0) for i in range(BACKGROUND + 1)]
+    context = network_context(_sa1_run(held), "SA1")
+    assert "NSW1-SA1" not in context["signs"]
+    cov = network_covariates_for_interval(context, TARGET)
+    assert cov["network_tight"] is False
+    assert cov["network_links_used"] == 2
+
+
+def test_link_closed_for_part_of_the_run_still_counts_as_shut():
+    """Only a whole run at 0/0 means not in service; one closed interval is an outage."""
+    points = [flow(TARGET, mwflow=0.0, exportlimit=0.0, importlimit=0.0)]
+    points += [flow(_iso(i), mwflow=200.0) for i in range(1, BACKGROUND + 1)]
+    context = network_context(_sa1_run(points), "SA1")
+    assert "NSW1-SA1" in context["signs"]
+    cov = network_covariates_for_interval(context, TARGET)
+    assert cov["network_tight"] is True
+    assert cov["network_links_used"] == 3
