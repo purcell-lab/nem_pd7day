@@ -276,10 +276,12 @@ Default interconnectors per region:
 | Region | Interconnectors |
 |---|---|
 | QLD1 | NSW1-QLD1, N-Q-MNSP1 |
-| NSW1 | NSW1-QLD1, VIC1-NSW1, N-Q-MNSP1 |
-| VIC1 | VIC1-NSW1, SA1-VIC1, V-S-MNSP1, T-V-MNSP1 |
-| SA1 | V-SA, V-S-MNSP1 |
+| NSW1 | NSW1-QLD1, VIC1-NSW1, N-Q-MNSP1, NSW1-SA1 |
+| VIC1 | VIC1-NSW1, V-SA, V-S-MNSP1, T-V-MNSP1 |
+| SA1 | V-SA, V-S-MNSP1, NSW1-SA1 |
 | TAS1 | T-V-MNSP1 |
+
+`NSW1-SA1` is Project EnergyConnect, nominal direction NSW to SA. Until it is in service AEMO publishes it at 0 MW with both limits at 0 (the `NS_ZERO` and `SN_ZERO` constraints), so its sensors read 0 and the pre-dispatch `bound` reads `closed`. The spike gate leaves out a link held at 0 MW both ways for a whole PD7DAY run, as not in service, rather than reading it as a shut import path; a link closed for only part of a run still counts as shut.
 
 ---
 
@@ -386,7 +388,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 |---|---|
 | `time`, `nemtime` | Start and end of the current period, NEM time (+10:00) |
 | `mwflow`, `exportlimit`, `importlimit` | MW, AEMO's sign: `importlimit` is the limit in the negative direction |
-| `bound` | `export`, `import`, or `null` when the flow is at neither limit |
+| `bound` | `export`, `import`, `closed` when the two limits meet so nothing can flow (NSW1-SA1 before service), or `null` when the flow is at neither limit |
 | `limit_constraint` | The constraint holding the flow at its limit (`EXPORTGENCONID` or `IMPORTGENCONID`), `null` when not bound |
 | `export_constraint`, `import_constraint` | The constraints setting each limit in the current period |
 | `marginalvalue`, `violationdegree` | As AEMO publishes them |

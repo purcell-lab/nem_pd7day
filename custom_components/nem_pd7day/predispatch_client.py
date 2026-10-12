@@ -62,7 +62,15 @@ class InterconnectorPeriod:
 
     @property
     def bound(self) -> Optional[str]:
-        """"export" or "import" when the flow is at that limit, else None."""
+        """"export" or "import" when the flow is at that limit, else None.
+
+        "closed" when the two limits meet, so the link can carry nothing either
+        way: Project EnergyConnect (NSW1-SA1) held at 0 MW by NS_ZERO and
+        SN_ZERO while it is not in service.
+        """
+        if self.exportlimit is not None and self.importlimit is not None:
+            if self.exportlimit - self.importlimit <= max(_BOUND_MW, _BOUND_FRACTION * abs(self.exportlimit)):
+                return "closed"
         for side, limit in (("export", self.exportlimit), ("import", self.importlimit)):
             if limit is None:
                 continue
@@ -74,11 +82,15 @@ class InterconnectorPeriod:
 
     @property
     def limit_constraint(self) -> Optional[str]:
-        """The constraint holding the flow at its limit, when it is at one."""
+        """The constraint holding the flow at its limit, when it is at one.
+
+        For a closed link, the export one (NS_ZERO for NSW1-SA1); both are
+        published as export_constraint and import_constraint.
+        """
         side = self.bound
         if side is None:
             return None
-        return self.export_constraint if side == "export" else self.import_constraint
+        return self.import_constraint if side == "import" else self.export_constraint
 
 
 @dataclass(frozen=True)

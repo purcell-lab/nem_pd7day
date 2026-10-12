@@ -173,6 +173,9 @@ _IC = {
     "V-SA": (150.0, 250.0, 650.0, -600.0),
     "V-S-MNSP1": (60.0, 100.0, 220.0, -200.0),
     "T-V-MNSP1": (200.0, 250.0, 478.0, -478.0),
+    # Project EnergyConnect as AEMO publishes it before service: held at 0 MW
+    # both ways (NS_ZERO, SN_ZERO), so no flow and no noise.
+    "NSW1-SA1": (0.0, 0.0, 0.0, 0.0),
 }
 
 
@@ -318,7 +321,8 @@ class SyntheticMarket:
         local = start.astimezone(NEM)
         hour = local.hour + local.minute / 60.0
         flow = base + swing * _diurnal(hour)
-        flow += 25.0 * _gauss(self.seed, ic_id, "flow", iso(start))
+        if export_lim != 0.0 or import_lim != 0.0:
+            flow += 25.0 * _gauss(self.seed, ic_id, "flow", iso(start))
         point = {
             "mwflow": round(flow, 3),
             "meteredmwflow": round(flow * 0.98, 3),
