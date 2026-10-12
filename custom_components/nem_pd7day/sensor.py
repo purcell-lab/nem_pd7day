@@ -247,14 +247,31 @@ async def async_setup_entry(
 def _grid_entities(
     hass: HomeAssistant, coordinator: PD7DayCoordinator, entry: ConfigEntry, region: str
 ) -> list[SensorEntity]:
-    """Grid notices, and binding constraints from the shared dispatch file."""
+    """Grid notices, binding constraints from the shared dispatch file, and the
+    shared pre-dispatch run's interconnectors and binding constraints.
+
+    The pre-dispatch interconnector entities come from the static region map,
+    as the PD7DAY ones do (issue #48).
+    """
     from .constraint_coordinator import shared_constraints
     from .constraint_sensor import NemPd7dayBindingConstraintsSensor
+    from .predispatch_coordinator import shared_predispatch
+    from .predispatch_sensor import (
+        NemPd7dayPredispatchConstraintsSensor,
+        NemPd7dayPredispatchInterconnectorSensor,
+    )
 
-    constraints = shared_constraints(hass, entry.runtime_data.dispatch)
+    dispatch = entry.runtime_data.dispatch
+    constraints = shared_constraints(hass, dispatch)
+    predispatch = shared_predispatch(hass, dispatch)
     return [
         NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store),
         NemPd7dayBindingConstraintsSensor(constraints, entry, region),
+        NemPd7dayPredispatchConstraintsSensor(predispatch, entry, region),
+        *(
+            NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id)
+            for ic_id in sorted(interconnectors_for_regions([region]))
+        ),
     ]
 
 
