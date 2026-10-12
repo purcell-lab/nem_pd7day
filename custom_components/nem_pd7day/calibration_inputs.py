@@ -327,11 +327,14 @@ def _out_of_service(points) -> bool:
     if not points:
         return False
     for p in points:
-        try:
-            if float(getattr(p, "exportlimit", None)) != 0.0 or float(getattr(p, "importlimit", None)) != 0.0:
+        for raw in (getattr(p, "exportlimit", None), getattr(p, "importlimit", None)):
+            if raw is None:
                 return False
-        except (TypeError, ValueError):
-            return False
+            try:
+                if float(raw) != 0.0:
+                    return False
+            except (TypeError, ValueError):
+                return False
     return True
 
 
