@@ -225,6 +225,8 @@ class ConstraintClient:
     """
 
     BASE_URL = DISPATCHIS_BASE_URL
+    LABEL = "DispatchIS"
+    NO_ROWS = "no D,DISPATCH,CONSTRAINT rows"
 
     def __init__(
         self,
@@ -250,28 +252,36 @@ class ConstraintClient:
             kwargs["sleep"] = self._sleep
         html = await fetch_with_retry(
             lambda: self._get(self.BASE_URL, text=True), url=self.BASE_URL,
-            label="DispatchIS directory listing", **kwargs,
+            label=f"{self.LABEL} directory listing", **kwargs,
         )
-        name = latest_file(html) if isinstance(html, str) else None
+        name = self._latest(html) if isinstance(html, str) else None
         if name is None or name == self.last_file:
             return None
         url = self.BASE_URL + name
         data = await fetch_with_retry(
-            lambda: self._get(url, text=False), url=url, label="DispatchIS zip", **kwargs,
+            lambda: self._get(url, text=False), url=url, label=f"{self.LABEL} zip", **kwargs,
         )
         if data is None:
             return None
         try:
             content = await run_in_executor(self._executor_job, unzip_csv, data)
         except (zipfile.BadZipFile, KeyError, IndexError) as exc:
-            _LOGGER.warning("DispatchIS: bad zip from %s: %s", url, exc)
+            _LOGGER.warning("%s: bad zip from %s: %s", self.LABEL, url, exc)
             return None
-        snapshot = parse_constraints(content, name) if content else None
+        snapshot = await self._parse_off_loop(content, name) if content else None
         if snapshot is None:
-            _LOGGER.warning("DispatchIS: no D,DISPATCH,CONSTRAINT rows in %s", url)
+            _LOGGER.warning("%s: %s in %s", self.LABEL, self.NO_ROWS, url)
             return None
         self.last_file = name
         return snapshot
+
+    # Hooks for a client of another NEMWEB report (predispatch_client.py).
+    def _latest(self, html: str) -> Optional[str]:
+        return latest_file(html)
+
+    async def _parse_off_loop(self, content: str, name: str) -> Any:
+        """A DispatchIS file is small enough to parse on the loop, as before."""
+        return parse_constraints(content, name)
 
     async def _get(self, url: str, *, text: bool) -> Any:
         """One attempt. A 404 on the zip means not published yet."""

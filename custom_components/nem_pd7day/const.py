@@ -49,6 +49,18 @@ REGION_INTERCONNECTOR_SIGN: dict[str, dict[str, int]] = {
     "TAS1": {"T-V-MNSP1": -1},
 }
 
+# The two regions each interconnector joins, in its nominal direction: a
+# positive mwflow runs from the first to the second. The keys are asserted
+# against REGION_INTERCONNECTORS in the test suite, as the signs above are.
+INTERCONNECTOR_ENDS: dict[str, tuple[str, str]] = {
+    "NSW1-QLD1": ("NSW1", "QLD1"),
+    "N-Q-MNSP1": ("NSW1", "QLD1"),
+    "VIC1-NSW1": ("VIC1", "NSW1"),
+    "V-SA": ("VIC1", "SA1"),
+    "V-S-MNSP1": ("VIC1", "SA1"),
+    "T-V-MNSP1": ("TAS1", "VIC1"),
+}
+
 # Queensland to New South Wales. Retained as a named id because the forecast
 # history still records its flow and violation degree as a NEM-wide covariate
 # available to future fits. It is deliberately no longer the input to the
@@ -106,6 +118,7 @@ SETUP_LOCK_KEY = "setup_lock"
 SHARED_DISPATCH_KEY = "_shared_dispatch"
 DISPATCH_UNSUBS_KEY = "_dispatch_unsubs"
 SHARED_CONSTRAINTS_KEY = "_shared_constraints"
+SHARED_PREDISPATCH_KEY = "_shared_predispatch"
 
 # Market notices are global, not per region, so one fetch serves all five region
 # coordinators. These keys hold the shared in-flight lock and the timestamp of
@@ -158,6 +171,7 @@ FORECAST_MODE_DAYS_2_7 = "days_2_7"   # sophisticated: days 2-7, one selected ta
 # TradingIS (actual price source)
 TRADINGIS_BASE_URL = "https://www.nemweb.com.au/Reports/Current/TradingIS_Reports/"
 DISPATCHIS_BASE_URL = "https://www.nemweb.com.au/Reports/Current/DispatchIS_Reports/"
+PREDISPATCHIS_BASE_URL = "https://www.nemweb.com.au/Reports/Current/PredispatchIS_Reports/"
 ELEC_NEM_SUMMARY_URL = "https://visualisations.aemo.com.au/aemo/apps/api/report/ELEC_NEM_SUMMARY"
 TRADINGIS_FETCH_MINUTES = [2, 32]
 

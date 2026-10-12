@@ -184,7 +184,7 @@ def _lor2(built: harness.Built, snap: dict) -> None:
 
 
 def _binding_constraints(built: harness.Built, snap: dict) -> None:
-    sensor = _one(snap, "_binding_constraints")
+    sensor = _one(snap, "_nsw1_binding_constraints")
     attrs = sensor["extra_state_attributes"]
     # Counted from the raw 10:50 file: the five NSW1 equations with a non-zero
     # marginal value in the pricing run, largest cost first.

@@ -194,6 +194,14 @@ The network constraints binding in each dispatch interval come from AEMO's Dispa
 - **Schedule**: no timer of its own. One shared fetch runs each time the live dispatch poll completes, and a failure here never delays or affects the price.
 - **Load**: two NEMWEB requests per interval through the shared NEMWEB request gate, the directory listing (about 17 KB compressed) and the zip (about 22 KB). That is about 576 requests and 11 MB a day. NEMWEB answers rapid callers with 403, so the requests share the gate and its spacing with every other NEMWEB fetch.
 
+### Pre-dispatch interconnectors and constraints (every 30 minutes, after the dispatch poll)
+
+AEMO's 30-minute pre-dispatch runs every half hour and covers each trading period to the end of the next trading day. One PredispatchIS file carries every region's price, every interconnector's flow and limits, and every constraint's marginal value:
+
+- **URL**: `https://www.nemweb.com.au/Reports/Current/PredispatchIS_Reports/`
+- **Schedule**: no timer of its own. After each live dispatch poll the shared coordinator checks whether the run it holds is 30 minutes old; only then does it read the listing, so usually one or two listing requests per half hour, and one zip per new run.
+- **Load**: the zip is about 800 KB (about 38 MB a day), the CSV inside about 8 MB; it is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
+
 ### Sensor state updates (every 30 minutes)
 
 Forecast sensor states — price forecast and interconnector flow — advance automatically at each 30-minute interval boundary (:00 and :30 past every hour). The state always reflects the current interval from the most recent fetch, without waiting for the next PD7DAY fetch. This means:
@@ -367,6 +375,37 @@ AEMO does not publish a region with each constraint, so the region is read from 
 Each constraint carries `constraint_id`, `regions`, `category`, `cause` (thermal, stability, voltage_stability, frequency_control), `co_optimised`, `system_normal`, `rhs`, `lhs`, `marginal_value_mwh` ($/MWh, AEMO's sign: negative for a limit on the left-hand side), `previous_marginal_value_mwh` (the interval before, `null` if it was not binding), `violation_degree`, `first_bound` (start of the current binding run) and `bound_minutes_today` (the NEM day so far).
 
 ---
+
+### Predispatch Interconnector
+
+`sensor.nem_pd7day_{region}_predispatch_interconnector_{interconnector}`: one per interconnector touching the region (the same static map as the PD7DAY interconnector sensors). The state is the forecast MW flow for the current 30-minute period from the latest pre-dispatch run, in the interconnector's nominal direction: positive from `from_region` to `to_region` (NSW1-QLD1 positive is NSW to QLD). Unavailable before the first run arrives and when the run held was solved more than 75 minutes ago.
+
+An interconnector held at a limit separates the two regions' prices; one that is not lets a price spike on one side reach the other. `bound` says which limit the flow is at, comparing the flow with the limit (within 1 MW or 0.5 %), because pre-dispatch often reports a zero marginal value for a link held at a frequency-control limit.
+
+| Attribute | Description |
+|---|---|
+| `time`, `nemtime` | Start and end of the current period, NEM time (+10:00) |
+| `mwflow`, `exportlimit`, `importlimit` | MW, AEMO's sign: `importlimit` is the limit in the negative direction |
+| `bound` | `export`, `import`, or `null` when the flow is at neither limit |
+| `limit_constraint` | The constraint holding the flow at its limit (`EXPORTGENCONID` or `IMPORTGENCONID`), `null` when not bound |
+| `export_constraint`, `import_constraint` | The constraints setting each limit in the current period |
+| `marginalvalue`, `violationdegree` | As AEMO publishes them |
+| `rrp_from`, `rrp_to` | Pre-dispatch price at each end, $/MWh |
+| `forecast` | Every period not yet over, each with the fields above (not saved to the HA recorder) |
+| `run_at`, `file` | When AEMO solved the run, and the PredispatchIS file read |
+
+### Predispatch Binding Constraints
+
+`sensor.nem_pd7day_{region}_predispatch_binding_constraints`: the number of network constraints forecast to bind in the region in the current 30-minute period of the latest pre-dispatch run. Regions and categories are read from the constraint ID as for the dispatch Binding Constraints sensor; FCAS constraints are not counted. Unavailable before the first run and when the run held was solved more than 75 minutes ago.
+
+| Attribute | Description |
+|---|---|
+| `time`, `nemtime`, `count`, `rrp` | The current period, its count and the region's pre-dispatch price ($/MWh) |
+| `max_marginal_value_mwh` | The largest marginal value among the region's binding constraints, as a magnitude. Values of $1,000,000/MWh or more are constraint violation penalties, not prices (`SN_ZERO` and `NS_ZERO` show $8.35M), and are left out here though still listed and counted |
+| `constraints` | The region's binding constraints in the current period, largest cost first, with `constraint_id`, `regions`, `category`, `cause`, `rhs`, `lhs`, `marginal_value_mwh` and `violation_degree` (not recorded) |
+| `binding_nem` | Binding constraints in the whole NEM in the current period |
+| `forecast` | Every period not yet over with `time`, `nemtime`, `count`, `max_marginal_value_mwh`, `top` (up to five constraint IDs, largest first) and `rrp` (not recorded) |
+| `run_at`, `file` | When AEMO solved the run, and the PredispatchIS file read |
 
 ### PD7DAY Data / STPASA Data (diagnostic)
 
