@@ -739,6 +739,11 @@ def test_stpasa_data_sensor_state_and_unrecorded_intervals():
     assert "intervals" in StpasaDataSensor._unrecorded_attributes
 
 
+def test_calibration_summary_is_not_recorded():
+    # Over the recorder's 16 KB limit it would drop every attribute (#248).
+    assert PD7DayCalibrationSensor._unrecorded_attributes == frozenset({"summary"})
+
+
 def test_stpasa_data_sensor_unavailable_without_data():
     sensor = make_stpasa_data_sensor(stpasa_result=None)
     assert sensor.native_value == STATE_UNAVAILABLE

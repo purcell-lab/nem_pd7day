@@ -1252,6 +1252,10 @@ class PD7DayInterconnectorSensor(CoordinatorEntity[PD7DayCoordinator], SensorEnt
 class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
     """Calibration pipeline status sensor."""
 
+    # The per-bucket summary runs past the recorder's 16 KB attribute limit
+    # (about 20 KB since #248), which drops every attribute from history. It
+    # stays on the live state and in the diagnostics download.
+    _unrecorded_attributes = frozenset({"summary"})
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_has_entity_name = True
     _attr_should_poll = False
