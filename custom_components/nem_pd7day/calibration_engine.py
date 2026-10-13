@@ -111,6 +111,7 @@ from .const import (
     IRLS_EPS,
     IRLS_ITER,
     IRLS_TOL,
+    ISO_FULL_SUPPORT_DAYS,
     MAX_OBS as MAX_OBS,
     MIN_OBS,
     OLS_MIN_OBS,
@@ -148,7 +149,10 @@ from .serving import (
 # ── Pure-numpy isotonic regression ───────────────────────────────────────────
 # Replaces sklearn.isotonic.IsotonicRegression to avoid a heavy optional
 # dependency that HA's pip installer cannot resolve in all environments.
-# Output is numerically identical to sklearn (max diff < 1e-15 on test data).
+# Until #247 its output was numerically identical to sklearn's weighted-mean
+# fit; steps are now levelled at their weighted median and pulled toward the
+# bucket's p50 line when their rows span few days. _pav keeps the mean fit,
+# used to make the pulled map monotone again.
 
 def _pav_blocks(y_sorted: np.ndarray, w_sorted: np.ndarray) -> list[list[float]]:
     """Pool-adjacent-violators on pre-sorted (y, w) arrays, as blocks.
@@ -167,12 +171,6 @@ def _pav_blocks(y_sorted: np.ndarray, w_sorted: np.ndarray) -> list[list[float]]
             b1, b2 = blocks.pop(-2), blocks.pop(-1)
             blocks.append([b1[0] + b2[0], b1[1] + b2[1], b1[2] + b2[2], b1[3] + b2[3]])
     return blocks
-
-
-def _block_support(block: list[float]) -> float:
-    """Kish effective sample size of a block, (sum w)^2 / sum w^2: how many
-    equally weighted rows its decay-weighted rows are worth."""
-    return block[1] * block[1] / block[3] if block[3] > 0 else 0.0
 
 
 def _expand(blocks: list[list[float]]) -> np.ndarray:
@@ -196,15 +194,47 @@ def _pav(
     return _expand(_pav_blocks(y_sorted, w_sorted))
 
 
+def _weighted_median(y: np.ndarray, w: np.ndarray) -> float:
+    """The lower weighted median: the smallest y holding half the weight."""
+    order = np.argsort(y, kind="stable")
+    cum = np.cumsum(w[order])
+    return float(y[order][int(np.searchsorted(cum, 0.5 * cum[-1]))])
+
+
+def _pav_median_blocks(y_sorted: np.ndarray, w_sorted: np.ndarray) -> list[tuple[int, int, float]]:
+    """Pool-adjacent-violators under absolute loss, as (start, end, level) blocks.
+
+    Each block is a run of the x-sorted rows, levelled at its weighted median
+    rather than its weighted mean (#247). A mean lets a handful of spike rows
+    set the level of the step they fall in; a median needs them to be half
+    the step's weight.
+    """
+    blocks: list[tuple[int, int, float]] = []
+    for i, yi in enumerate(y_sorted):
+        blocks.append((i, i + 1, float(yi)))
+        while len(blocks) >= 2 and blocks[-2][2] >= blocks[-1][2]:
+            level = blocks[-1][2]
+            end = blocks.pop()[1]
+            start = blocks[-1][0]
+            if blocks[-1][2] != level:
+                level = _weighted_median(y_sorted[start:end], w_sorted[start:end])
+            # Equal neighbours merge too, at the same level: they are one step,
+            # and its support is counted over all of it.
+            blocks[-1] = (start, end, level)
+    return blocks
+
+
 @dataclass(frozen=True)
 class IsoStep:
     """One end step of a fitted isotonic map, for diagnostics (#247)."""
 
     x_start: float      # lowest training forecast in the step
     x_end: float        # highest training forecast in the step
-    level: float        # the value served across it
+    level: float        # the step's weighted median, before the support pull
+    served: float       # what the map serves at x_end
     n: int              # training observations in it
     n_eff: float        # their Kish effective size under the decay weights
+    days: int | None    # distinct days its rows span (None when not given)
 
 
 def _step_summary(step: IsoStep | None) -> dict[str, Any] | None:
@@ -214,21 +244,25 @@ def _step_summary(step: IsoStep | None) -> dict[str, Any] | None:
         "x_start": round(step.x_start, 4),
         "x_end": round(step.x_end, 4),
         "level": round(step.level, 4),
+        "served": round(step.served, 4),
         "n": step.n,
         "n_eff": round(step.n_eff, 1),
+        "days": step.days,
     }
 
 
 class IsotonicRegression:
     """Weighted isotonic regression (monotone non-decreasing) via PAV.
 
-    Drop-in replacement for
+    The interface of
     ``sklearn.isotonic.IsotonicRegression(increasing=True,
-    out_of_bounds='clip')``.
+    out_of_bounds='clip')``, fitted under absolute loss: each step is levelled
+    at its weighted median, not its mean (#247). See ``fit`` for the pull
+    toward a prior on steps with few days.
 
-    ``predict()`` uses ``numpy.interp`` on the sorted training (x, y) pairs
-    so predictions are identical to sklearn's implementation (linear
-    interpolation between training points, clipped at the boundary values).
+    ``predict()`` uses ``numpy.interp`` on the sorted training (x, y) pairs,
+    as sklearn does (linear interpolation between training points, clipped
+    at the boundary values).
 
     Requires only numpy — no scikit-learn dependency.
     """
@@ -246,11 +280,20 @@ class IsotonicRegression:
         x: np.ndarray,
         y: np.ndarray,
         sample_weight: np.ndarray | None = None,
+        days: np.ndarray | None = None,
+        prior: np.ndarray | None = None,
     ) -> "IsotonicRegression":
-        """Fit the isotonic model to (x, y) pairs with optional decay weights.
+        """Fit the map to (x, y) pairs with optional decay weights (#247).
+
+        Steps are pooled at their weighted median. With ``days`` (one day key
+        per row) and ``prior`` (the value to fall back on at each row, the
+        bucket's p50 line), a step spanning fewer than ISO_FULL_SUPPORT_DAYS
+        distinct days is pulled toward the prior in proportion, and the
+        result is made monotone again by a weighted-mean PAV. Without them
+        the map is the plain weighted-median isotonic fit.
 
         Also records the map's end steps (bottom_step, top_step) with their
-        support, for the calibration summary (#247).
+        support, for the calibration summary.
         """
         x_arr = np.asarray(x, dtype=float)
         y_arr = np.asarray(y, dtype=float)
@@ -260,21 +303,40 @@ class IsotonicRegression:
             else np.asarray(sample_weight, dtype=float)
         )
         order = np.argsort(x_arr, kind="stable")
-        self._x_thresholds = x_arr[order]
-        blocks = _pav_blocks(y_arr[order], w_arr[order])
-        self._y_thresholds = _expand(blocks)
+        xs, ys, ws = x_arr[order], y_arr[order], w_arr[order]
+        ds = None if days is None else np.asarray(days)[order]
+        blocks = _pav_median_blocks(ys, ws)
+        level = np.empty(len(xs))
+        support = np.ones(len(xs))
+        block_days: list[int | None] = []
+        for start, end, lv in blocks:
+            level[start:end] = lv
+            n_days = None if ds is None else int(len(np.unique(ds[start:end])))
+            block_days.append(n_days)
+            if n_days is not None:
+                support[start:end] = min(1.0, n_days / ISO_FULL_SUPPORT_DAYS)
+        fitted = level
+        if prior is not None:
+            p = np.asarray(prior, dtype=float)[order]
+            fitted = _pav(p + support * (level - p), ws)
+        self._x_thresholds = xs
+        self._y_thresholds = fitted
         if blocks:
-            first, last = blocks[0], blocks[-1]
-            xs = self._x_thresholds
-            self.bottom_step = IsoStep(
-                float(xs[0]), float(xs[int(first[2]) - 1]), first[0] / first[1],
-                int(first[2]), _block_support(first),
-            )
-            self.top_step = IsoStep(
-                float(xs[len(xs) - int(last[2])]), float(xs[-1]), last[0] / last[1],
-                int(last[2]), _block_support(last),
-            )
+            self.bottom_step = self._step(blocks[0], block_days[0], ws)
+            self.top_step = self._step(blocks[-1], block_days[-1], ws)
         return self
+
+    def _step(self, block: tuple[int, int, float], days: int | None, ws: np.ndarray) -> IsoStep:
+        start, end, lv = block
+        assert self._x_thresholds is not None and self._y_thresholds is not None
+        w = ws[start:end]
+        # Kish effective size, (sum w)^2 / sum w^2: how many equally weighted
+        # rows the step's decay-weighted rows are worth.
+        n_eff = float(w.sum() ** 2 / (w * w).sum()) if (w * w).sum() > 0 else 0.0
+        return IsoStep(
+            float(self._x_thresholds[start]), float(self._x_thresholds[end - 1]), lv,
+            float(self._y_thresholds[end - 1]), end - start, n_eff, days,
+        )
 
     @property
     def x_min(self) -> float | None:
@@ -941,11 +1003,12 @@ class CalibrationResult:
           q10_a          — quantile P10 slope (used for P10 interval)
           q90_a          — quantile P90 slope (used for P90 interval)
           iso_top / iso_bottom — the map's end steps (#247): x_start and
-                           x_end (training forecasts it spans), level (the
-                           value served across it, and clipped to beyond),
-                           n and n_eff (its training rows, and their Kish
-                           effective size under the decay weights); None if
-                           < MIN_OBS
+                           x_end (training forecasts it spans), level (its
+                           weighted median), served (the map's value at
+                           x_end, after the support pull toward p50), n and
+                           n_eff (its training rows, and their Kish effective
+                           size under the decay weights), days (distinct
+                           days its rows span); None if < MIN_OBS
 
         ``stage2`` carries one entry per bucket with a fitted OLS model
         (issue #147: before this, n_train, r2, the residual quantiles and the

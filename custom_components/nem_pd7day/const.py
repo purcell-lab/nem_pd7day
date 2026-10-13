@@ -219,6 +219,11 @@ MIN_OBS = 10
 # (r²≈0.99 with n=10–25) that produced destructive negative coefficients
 # and non-positive predictions clamped silently to 0.
 OLS_MIN_OBS = 50
+# An isotonic step is served as fitted only when its training rows span at
+# least this many distinct days. A step on fewer days is pulled toward the
+# bucket's p50 line in proportion, so one day's event (a pre-dawn spike, a
+# high midday) cannot set the price for every forecast in its range (#247).
+ISO_FULL_SUPPORT_DAYS = 10
 # Stage-2 rows whose hat-matrix leverage exceeds this multiple of the mean
 # leverage p/n are dropped and the bucket refitted once. The textbook screen
 # for influential points in OLS: one isolated row far from the cluster can

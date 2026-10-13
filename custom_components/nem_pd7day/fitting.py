@@ -115,16 +115,18 @@ def window_observations(
 
 def partition_stage1(
     windowed: Sequence[tuple[Observation, datetime]], region: str, now_nem: datetime,
-) -> tuple[dict[str, list[Pair]], dict[str, list[float]]]:
+) -> tuple[dict[str, list[Pair]], dict[str, list[float]], dict[str, list[int]]]:
     """Training pairs and decay weights per bucket, keyed by solar time of day.
 
     Every key of ``all_bucket_keys()`` is present, in that order, even when
     empty. Weights are ``exp(-DECAY_LAMBDA * days_ago)``; the region drives
     the solar elevation classification. Serving looks buckets up by clock
-    hour instead (#208).
+    hour instead (#208). The third mapping holds each row's NEM date as a day
+    ordinal, the isotonic fit's measure of support (#247).
     """
     buckets: dict[str, list[Pair]] = {k: [] for k in all_bucket_keys()}
     bucket_weights: dict[str, list[float]] = {k: [] for k in all_bucket_keys()}
+    bucket_days: dict[str, list[int]] = {k: [] for k in all_bucket_keys()}
     # The label depends only on the interval and the region, and each interval
     # is seen by many runs, so compute it once per interval (#212).
     tod_by_interval: dict[datetime, str] = {}
@@ -151,6 +153,7 @@ def partition_stage1(
             # Compute exponential time-decay weight
             days_ago = (now_nem - obs_nem).total_seconds() / 86400.0
             bucket_weights[key].append(math.exp(-DECAY_LAMBDA * max(days_ago, 0.0)))
+            bucket_days[key].append(obs_nem.date().toordinal())
     # Cap each bucket at its MAX_OBS most recent rows (#209). Until then the
     # first MAX_OBS rows in input order were kept, and the input is mostly
     # oldest first, so a full bucket froze on its oldest rows and dropped the
@@ -162,7 +165,8 @@ def partition_stage1(
             keep = sorted(ranked[-MAX_OBS:])
             buckets[key] = [buckets[key][i] for i in keep]
             bucket_weights[key] = [weights[i] for i in keep]
-    return buckets, bucket_weights
+            bucket_days[key] = [bucket_days[key][i] for i in keep]
+    return buckets, bucket_weights, bucket_days
 
 
 def fit_quantile_lines(
@@ -202,8 +206,14 @@ def fit_quantile_lines(
     return q10, q50, q90
 
 
-def fit_stage1_bucket(key: str, pairs: list[Pair], weights: list[float]) -> BucketModel:
-    """One bucket's stage 1 model: least-squares line, isotonic model, quantile lines."""
+def fit_stage1_bucket(
+    key: str, pairs: list[Pair], weights: list[float], days: list[int] | None = None,
+) -> BucketModel:
+    """One bucket's stage 1 model: least-squares line, quantile lines, isotonic model.
+
+    The quantile lines are fitted first: the isotonic fit pulls a step on few
+    days toward the p50 line (#247).
+    """
     model = BucketModel(bucket_key=key)
 
     # OLS (weighted) — retained to populate LinearCoeff for quantile
@@ -217,8 +227,12 @@ def fit_stage1_bucket(key: str, pairs: list[Pair], weights: list[float]) -> Buck
         a=a_ols, b=b_ols, n=len(pairs), mae=mae, rmse=rmse
     )
 
+    model.q10, model.q50, model.q90 = fit_quantile_lines(pairs, weights)
+
     # Isotonic regression (internal PAV IsotonicRegression) — primary point estimator.
-    # Fitted with exponential decay sample weights (same as OLS above).
+    # Fitted with exponential decay sample weights (same as OLS above), each
+    # step at its weighted median and pulled toward the p50 line when its
+    # rows span few days (#247).
     # out_of_bounds='clip': forecasts outside the training x-range are clipped
     # to the nearest training boundary rather than extrapolated.
     # MIN_OBS guard: iso_model remains None below threshold; apply_all() falls
@@ -228,11 +242,13 @@ def fit_stage1_bucket(key: str, pairs: list[Pair], weights: list[float]) -> Buck
         _ys = np.array([p[1] for p in pairs])
         _ws = np.array(weights) if weights else np.ones(len(pairs))
         iso = IsotonicRegression(increasing=True, out_of_bounds="clip")
-        iso.fit(_xs, _ys, sample_weight=_ws)
+        iso.fit(
+            _xs, _ys, sample_weight=_ws,
+            days=np.array(days) if days else None,
+            prior=model.q50.a * _xs + model.q50.b if days else None,
+        )
         model.iso_model = iso
     # else: iso_model stays None (set by dataclass default)
-
-    model.q10, model.q50, model.q90 = fit_quantile_lines(pairs, weights)
 
     if len(pairs) >= MIN_OBS:
         _LOGGER.debug(
@@ -277,11 +293,11 @@ class Stage1Fitter:
         now_nem_dt = now_utc.astimezone(NEM_TZ)
         windowed = window_observations(observations, now_utc)
         observations_in_window = len(windowed)
-        buckets, bucket_weights = partition_stage1(windowed, region, now_nem_dt)
+        buckets, bucket_weights, bucket_days = partition_stage1(windowed, region, now_nem_dt)
 
         now_str = now_nem_dt.isoformat()
         models: dict[str, BucketModel] = {
-            key: fit_stage1_bucket(key, pairs, bucket_weights[key])
+            key: fit_stage1_bucket(key, pairs, bucket_weights[key], bucket_days[key])
             for key, pairs in buckets.items()
         }
 
