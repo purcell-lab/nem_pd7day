@@ -78,10 +78,12 @@ def test_a_full_bucket_keeps_its_most_recent_rows_whatever_the_input_order():
         ), t))
 
     with patch.object(fitting, "MAX_OBS", 3):
-        buckets, weights = fitting.partition_stage1(windowed, "QLD1", NOW.astimezone(NEM))
+        buckets, weights, days = fitting.partition_stage1(windowed, "QLD1", NOW.astimezone(NEM))
 
     (key,) = [k for k, v in buckets.items() if v]
     assert [round(y * 100) for _, y in buckets[key]] == [1, 3, 2]   # newest three, input order
+    night_day = night.date().toordinal()
+    assert days[key] == [night_day - 1, night_day - 3, night_day - 2]   # their days, kept with them
     assert min(weights[key]) > max(
         math.exp(-ce.DECAY_LAMBDA * d) for d in (5, 7, 9)
     )
@@ -105,7 +107,7 @@ def test_stage1_classifies_each_interval_once_and_keys_it_as_before():
 
     real = fitting._tod_label_solar
     with patch.object(fitting, "_tod_label_solar", side_effect=real) as label:
-        buckets, _ = fitting.partition_stage1(windowed, "QLD1", NOW.astimezone(NEM))
+        buckets, _, _ = fitting.partition_stage1(windowed, "QLD1", NOW.astimezone(NEM))
 
     assert label.call_count == len(intervals)
     expected: dict[str, int] = {}
@@ -267,84 +269,171 @@ def test_fit_log_lines_keep_the_engine_logger(logger_name):
     assert logger_name == ce._LOGGER.name == "custom_components.nem_pd7day.calibration_engine"
 
 
-# ── Isotonic end steps in the summary (#247) ──────────────────────────────────
-# A step's level is served flat across its whole x range, and the top step on
-# to x_max and beyond. On 13 Oct 2026 QLD1's h24_48__solar top step started at
-# a raw 8.9 c and served 17.85 c to every higher forecast, against a realised
-# 1.5 to 4.9 c for those slots; the summary had the step count and x range but
-# not the steps. Each bucket now reports iso_top and iso_bottom. No fitted or
-# served value changes.
+# ── One day cannot set a step (#247) ──────────────────────────────────────────
+# Until #247 each isotonic step served the weighted mean of its rows, and a
+# step on one day's rows served that day to every forecast in its range. On
+# 13 Oct 2026 QLD1 served 44.2 c for a raw 26 to 31 c at 21:00 and 23:00 (the
+# h06_12__shoulder top step: five rows from the 9 Oct pre-dawn spike, 36 to
+# 85 c) and 17.85 c for a raw 8.9 c at 13:00 tomorrow (h24_48__solar: the
+# 13 Oct midday at 28 to 45 c), against realised means of 9 c and 2 to 5 c.
+# Steps are now levelled at their weighted median, and a step whose rows span
+# fewer than ISO_FULL_SUPPORT_DAYS days is pulled toward the p50 line in
+# proportion.
 
-def _solar_bucket(seed: int = 7):
-    """A day-ahead solar bucket shaped like QLD1 h24_48__solar on 13 Oct.
-
-    ~3,000 rows over 60 days of decay weights, raw forecasts mostly below
-    5 c and outcomes a little above them, plus 12 rows from the last day with
-    raw forecasts of 9 to 30 c and outcomes of 28 to 45 c (13 Oct 10:00-13:00).
-    """
+def _bucket(seed: int, n: int, x_of, y_of, extra):
+    """``n`` ordinary rows over 60 days plus ``extra`` rows (x, y, day)."""
     rng = np.random.default_rng(seed)
-    n = 3000
-    days = rng.uniform(1, 60, n)
-    x = rng.normal(-0.02, 0.035, n)
-    y = 0.02 + 0.5 * np.clip(x, -0.05, None) + rng.normal(0, 0.02, n)
-    w = np.exp(-0.033 * days)
-    hx = rng.uniform(0.09, 0.30, 12)
-    hy = rng.uniform(0.28, 0.45, 12)
-    hw = np.full(12, np.exp(-0.033 * 0.2))
-    return np.concatenate([x, hx]), np.concatenate([y, hy]), np.concatenate([w, hw])
+    day = rng.integers(1, 60, n)
+    x = x_of(rng, n)
+    y = y_of(rng, x)
+    ex = np.array([e[0] for e in extra])
+    ey = np.array([e[1] for e in extra])
+    ed = np.array([e[2] for e in extra])
+    days = np.concatenate([day, ed])
+    return np.concatenate([x, ex]), np.concatenate([y, ey]), np.exp(-0.033 * days), days
 
 
-def _summary_bucket(x, y, w):
+def _fit(key, x, y, w, days):
     pairs = list(zip(x.tolist(), y.tolist()))
-    model = fitting.fit_stage1_bucket("h24_48__solar", pairs, w.tolist())
+    model = fitting.fit_stage1_bucket(key, pairs, w.tolist(), [int(d) for d in days])
     result = ce.CalibrationResult(
-        fitted_at="2026-10-13T13:00:00+10:00", total_observations=len(pairs),
-        models={"h24_48__solar": model},
+        fitted_at="2026-10-13T13:00:00+10:00", total_observations=len(pairs), models={key: model},
     )
-    return model, result.summary()["buckets"]["h24_48__solar"]
+    return model, result.summary()["buckets"][key]
 
 
-def test_a_thin_top_step_shows_in_the_summary():
-    """The #247 shape: the top step is a few fresh rows, served at their mean."""
-    x, y, w = _solar_bucket()
-    model, bucket = _summary_bucket(x, y, w)
+def _serve(model, x):
+    return float(model.iso_model.predict(np.array([x]))[0])
+
+
+def _shoulder(seed=1):
+    """h06_12__shoulder: late-evening rows near 9 c, and one pre-dawn spike (9 Oct)."""
+    spike = [(0.2513, 0.25, 0), (0.26, 0.26, 0), (0.27, 0.362, 0), (0.29, 0.48, 0), (0.303, 0.847, 0)]
+    return _bucket(
+        seed, 1140,
+        lambda rng, n: rng.uniform(0.04, 0.25, n),
+        lambda rng, x: 0.07 + 0.25 * (x - 0.04) + rng.normal(0, 0.02, len(x)),
+        spike,
+    )
+
+
+def _solar(seed=2):
+    """h24_48__solar: middays near 0 c, three ordinary days at raw 8-12 c, and
+    one day (13 Oct) with raw 9-30 c settling at 28-45 c."""
+    rng = np.random.default_rng(seed + 100)
+    ordinary = [(float(rng.uniform(0.08, 0.12)), float(rng.uniform(0.03, 0.08)), int(d))
+                for d in rng.choice([10, 25, 40], 24)]
+    today = [(float(rng.uniform(0.09, 0.30)), float(rng.uniform(0.28, 0.45)), 0) for _ in range(30)]
+    return _bucket(
+        seed, 2900,
+        lambda rng, n: rng.normal(-0.01, 0.03, n),
+        lambda rng, x: 0.015 + 0.4 * np.clip(x, -0.05, None) + rng.normal(0, 0.02, len(x)),
+        ordinary + today,
+    )
+
+
+def _mean_map(x, y, w):
+    order = np.argsort(x, kind="stable")
+    return x[order], ce._pav(y[order], w[order])
+
+
+def test_a_one_night_spike_no_longer_sets_the_evening_price():
+    x, y, w, days = _shoulder()
+    model, _ = _fit("h06_12__shoulder", x, y, w, days)
+    xs, old = _mean_map(x, y, w)
+    for raw in (0.309, 0.278, 0.264):
+        before, after, p50 = float(np.interp(raw, xs, old)), _serve(model, raw), model.q50.apply(raw)
+        assert before > 0.30                                  # the spike served (30 to 85 c)
+        assert after < raw and abs(after - p50) < 0.08, (raw, before, after, p50)
+
+
+def test_one_high_midday_no_longer_lifts_the_day_ahead_midday():
+    x, y, w, days = _solar()
+    model, bucket = _fit("h24_48__solar", x, y, w, days)
+    xs, old = _mean_map(x, y, w)
+    raw = 0.115
+    assert float(np.interp(raw, xs, old)) > 0.15             # the one high midday served
+    assert _serve(model, raw) < 0.13
+    assert abs(_serve(model, raw) - model.q50.apply(raw)) < 0.05
+    assert bucket["iso_top"]["days"] == 1                     # the top step is that day alone
+    assert bucket["iso_top"]["served"] < bucket["iso_top"]["level"]
+
+
+def test_a_step_on_enough_days_is_served_at_its_median():
+    """At ISO_FULL_SUPPORT_DAYS days or more there is no pull: the step's median, as fitted."""
+    rng = np.random.default_rng(5)
+    x = np.repeat([0.1, 0.2], 200)
+    y = np.where(x < 0.15, 0.08, 0.15)
+    y[200:203] = 2.0                                           # three spike rows in the upper step
+    days = rng.integers(0, 40, 400)
+    model, bucket = _fit("h24_48__peak", x, y, np.ones(400), days)
     top = bucket["iso_top"]
+    assert top["days"] >= _const.ISO_FULL_SUPPORT_DAYS
+    assert top["served"] == pytest.approx(top["level"], abs=1e-4)
+    assert top["level"] == pytest.approx(0.15, abs=0.01)      # the median, not the spike-pulled mean
+    assert _serve(model, 0.2) == pytest.approx(top["level"], abs=1e-4)
 
-    assert top["n"] == 7 and top["n_eff"] == pytest.approx(7.0)
-    assert top["x_end"] == pytest.approx(float(x.max()), abs=1e-4)
-    served = model.iso_model.predict(np.array([top["x_start"], top["x_end"], 1.0]))
-    assert served == pytest.approx([top["level"]] * 3, abs=1e-4)   # flat to x_max, and beyond
-    assert top["level"] > 0.3
+
+def test_far_ahead_spikes_stay_compressed():
+    """A thin top step in a peak bucket is pulled toward p50, not toward raw: a
+    raw $2.92 must not come back as dollars."""
+    extra = [(1.31, 0.12, 5), (2.0, 0.13, 5), (2.92, 0.14, 30)]
+    x, y, w, days = _bucket(
+        3, 1500,
+        lambda rng, n: np.abs(rng.lognormal(-1.6, 0.8, n)),
+        lambda rng, x: 0.09 + 0.01 * x + rng.normal(0, 0.02, len(x)),
+        extra,
+    )
+    model, _ = _fit("h24_48__peak", x, y, w, days)
+    for raw in (0.95, 2.92, 9.99):
+        assert _serve(model, raw) < 0.2, raw
+
+
+def test_the_map_stays_monotone():
+    rng = np.random.default_rng(9)
+    for _ in range(20):
+        n = int(rng.integers(20, 400))
+        x = rng.normal(0, 0.1, n)
+        y = 0.5 * x + rng.lognormal(-3, 1.2, n)
+        days = rng.integers(0, 15, n)
+        model, _ = _fit("h24_48__solar", x, y, np.exp(-0.033 * days), days)
+        assert np.all(np.diff(model.iso_model._y_thresholds) >= -1e-12)
+
+
+def test_each_step_is_levelled_at_its_weighted_median():
+    """Without days the fit is the plain weighted-median isotonic map."""
+    x = np.array([0.0, 0.1, 0.2, 0.3, 0.4, 0.5])
+    y = np.array([0.1, 0.5, 0.2, 0.15, 0.6, 0.7])
+    w = np.array([1.0, 1.0, 3.0, 1.0, 1.0, 1.0])
+    iso = ce.IsotonicRegression().fit(x, y, sample_weight=w)
+    # 0.5, 0.2 (weight 3) and 0.15 pool to their weighted median, 0.2.
+    assert iso._y_thresholds.tolist() == pytest.approx([0.1, 0.2, 0.2, 0.2, 0.6, 0.7])
+    assert np.all(np.diff(iso._y_thresholds) >= 0)
 
 
 def test_the_end_steps_describe_the_fitted_map():
-    x, y, w = _solar_bucket(seed=11)
-    model, bucket = _summary_bucket(x, y, w)
+    x, y, w, days = _solar(seed=11)
+    model, bucket = _fit("h24_48__solar", x, y, w, days)
     iso = model.iso_model
-    xt, yt = iso._x_thresholds, iso._y_thresholds
     order = np.argsort(x, kind="stable")
-    ws = w[order]
-    for name, rows in (("iso_top", yt == yt[-1]), ("iso_bottom", yt == yt[0])):
-        step = bucket[name]
-        assert step["n"] == int(rows.sum()), name
-        assert step["x_start"] == pytest.approx(float(xt[rows].min()), abs=1e-4)
-        assert step["x_end"] == pytest.approx(float(xt[rows].max()), abs=1e-4)
-        assert step["level"] == pytest.approx(float(yt[rows][0]), abs=1e-4)
+    xs, ws, ds = x[order], w[order], days[order]
+    for name, step in (("iso_top", iso.top_step), ("iso_bottom", iso.bottom_step)):
+        summary = bucket[name]
+        rows = slice(len(xs) - step.n, len(xs)) if name == "iso_top" else slice(0, step.n)
+        assert summary["n"] == step.n
+        assert summary["x_start"] == pytest.approx(float(xs[rows].min()), abs=1e-4)
+        assert summary["x_end"] == pytest.approx(float(xs[rows].max()), abs=1e-4)
+        assert summary["days"] == len(np.unique(ds[rows]))
+        assert summary["served"] == pytest.approx(_serve(model, float(xs[rows].max())), abs=1e-4)
         expected = ws[rows].sum() ** 2 / (ws[rows] ** 2).sum()
-        assert step["n_eff"] == pytest.approx(expected, abs=0.05)
-
-
-def test_no_fitted_value_changes():
-    x, y, w = _solar_bucket(seed=3)
-    order = np.argsort(x, kind="stable")
-    iso = ce.IsotonicRegression().fit(x, y, sample_weight=w)
-    assert np.array_equal(iso._y_thresholds, ce._pav(y[order], w[order]))
+        assert summary["n_eff"] == pytest.approx(expected, abs=0.05)
 
 
 def test_equal_weights_give_an_effective_size_equal_to_the_count():
     iso = ce.IsotonicRegression().fit([0.0, 0.1, 0.2, 0.3], [0.05, 0.04, 0.2, 0.3])
     assert (iso.bottom_step.n, iso.bottom_step.n_eff) == (2, pytest.approx(2.0))
-    assert iso.bottom_step.level == pytest.approx(0.045)
+    assert iso.bottom_step.level == pytest.approx(0.04)        # the lower median of 0.05 and 0.04
+    assert iso.bottom_step.days is None
     assert (iso.top_step.x_start, iso.top_step.n) == (0.3, 1)
 
 

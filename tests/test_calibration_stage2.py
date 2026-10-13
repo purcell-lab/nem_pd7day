@@ -1086,11 +1086,16 @@ def test_fit_path_uses_the_same_unfloored_feature_as_serving():
     for i, (got, want) in enumerate(zip(fitted, expected)):
         assert abs(got - want) < 1e-6, f"coefficient {i} is {got}, an unfloored design gives {want}"
     # The negative feature values really are in the matrix: the eight promoted
-    # rows sit at an isotonic prediction of -0.093, and the generator also
-    # produces a few mildly negative ordinary rows main floored to 0.0.
-    promoted = int(np.isclose(X[:, 1], -0.093).sum())
+    # rows sit at the map's negative value at their forecast, and the
+    # generator also produces a few mildly negative ordinary rows main floored
+    # to 0.0. The value is read from the map: since #247 a step is levelled at
+    # its median and pulled toward p50 when its rows span few days.
+    target = iso_result.models[TARGET]
+    depth_feature = round(_raw_iso(target, _FLOORED_DEPTH), 6)
+    assert depth_feature < 0.0
+    promoted = int(np.isclose(X[:, 1], depth_feature).sum())
     negatives = int((X[:, 1] < 0.0).sum())
-    assert promoted == 8, f"expected the eight promoted rows at a feature of -0.093, found {promoted}"
+    assert promoted == 8, f"expected the eight promoted rows at a feature of {depth_feature}, found {promoted}"
     assert negatives >= promoted, "the floored rows did not reach the design matrix as negatives"
 
 
