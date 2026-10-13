@@ -64,13 +64,18 @@ class InterconnectorPeriod:
     def bound(self) -> Optional[str]:
         """"export" or "import" when the flow is at that limit, else None.
 
-        "closed" when the two limits meet, so the link can carry nothing either
-        way: Project EnergyConnect (NSW1-SA1) held at 0 MW by NS_ZERO and
-        SN_ZERO while it is not in service.
+        When the two limits meet the flow is fixed, and which case it is
+        depends on where they meet:
+        - "closed" at 0 MW, so the link carries nothing either way: Project
+          EnergyConnect (NSW1-SA1) held by NS_ZERO and SN_ZERO while it is not
+          in service;
+        - "pinned" anywhere else, so the link carries exactly that flow:
+          Murraylink (V-S-MNSP1) held at 71 to 110 MW by V^SML_BUDP_3 (#243).
         """
         if self.exportlimit is not None and self.importlimit is not None:
             if self.exportlimit - self.importlimit <= max(_BOUND_MW, _BOUND_FRACTION * abs(self.exportlimit)):
-                return "closed"
+                at_zero = abs(self.exportlimit) <= _BOUND_MW and abs(self.importlimit) <= _BOUND_MW
+                return "closed" if at_zero else "pinned"
         for side, limit in (("export", self.exportlimit), ("import", self.importlimit)):
             if limit is None:
                 continue
@@ -84,8 +89,9 @@ class InterconnectorPeriod:
     def limit_constraint(self) -> Optional[str]:
         """The constraint holding the flow at its limit, when it is at one.
 
-        For a closed link, the export one (NS_ZERO for NSW1-SA1); both are
-        published as export_constraint and import_constraint.
+        For a closed or pinned link, the export one (NS_ZERO for NSW1-SA1,
+        V^SML_BUDP_3 for Murraylink); both are published as export_constraint
+        and import_constraint.
         """
         side = self.bound
         if side is None:

@@ -81,12 +81,15 @@ def test_constraints_per_period_largest_cost_first():
         (0.5, 1.0, -1.0, "export"),               # the 1 MW floor
         (10.0, None, None, None),
         (0.0, 0.0, 0.0, "closed"),               # NSW1-SA1 held by NS_ZERO / SN_ZERO
+        (0.4, 0.5, -0.5, "closed"),              # meeting within the 1 MW floor of zero
+        (71.53924, 71.53924, 71.53922, "pinned"),  # Murraylink held by V^SML_BUDP_3 (#243)
+        (-120.0, -120.0, -120.0, "pinned"),     # pinned in the import direction
     ],
 )
 def test_bound_tolerance(flow, export, imp, bound):
     p = _client.InterconnectorPeriod(_at(11), flow, export, imp, None, None, "E", "I")
     assert p.bound == bound
-    assert p.limit_constraint == {"export": "E", "import": "I", "closed": "E", None: None}[bound]
+    assert p.limit_constraint == {"export": "E", "import": "I", "closed": "E", "pinned": "E", None: None}[bound]
 
 
 def test_parse_reads_headers_and_skips_intervention():
@@ -351,6 +354,18 @@ def test_energyconnect_reads_closed_in_the_real_run():
     assert {(p.mwflow, p.bound, p.limit_constraint, p.import_constraint) for p in pec} == {
         (0.0, "closed", "NS_ZERO", "SN_ZERO")
     }
+
+
+def test_murraylink_held_at_a_flow_reads_pinned_not_closed_in_the_real_run():
+    """#243: the limits meet at a non-zero flow, so the link carries exactly
+    that flow. "closed" is kept for limits meeting at 0 MW."""
+    murraylink = _snapshot().interconnectors["V-S-MNSP1"]
+    pinned = [p for p in murraylink if p.bound == "pinned"]
+    assert pinned, "the fixture has Murraylink pinned by V^SML_BUDP_3"
+    for p in pinned:
+        assert p.mwflow == pytest.approx(p.exportlimit, abs=1.0) and abs(p.mwflow) > 1.0
+        assert p.limit_constraint == "V^SML_BUDP_3"
+    assert all(p.bound != "closed" for p in murraylink)
 
 
 def test_period_is_thirty_minutes():

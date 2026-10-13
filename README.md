@@ -388,7 +388,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 |---|---|
 | `time`, `nemtime` | Start and end of the current period, NEM time (+10:00) |
 | `mwflow`, `exportlimit`, `importlimit` | MW, AEMO's sign: `importlimit` is the limit in the negative direction |
-| `bound` | `export`, `import`, `closed` when the two limits meet so nothing can flow (NSW1-SA1 before service), or `null` when the flow is at neither limit |
+| `bound` | `export` or `import` when the flow is at that limit; `closed` when the two limits meet at 0 MW so nothing can flow (NSW1-SA1 before service); `pinned` when they meet at a non-zero flow, so the link carries exactly that flow (Murraylink held by `V^SML_BUDP_3`); `null` when the flow is at neither limit |
 | `limit_constraint` | The constraint holding the flow at its limit (`EXPORTGENCONID` or `IMPORTGENCONID`), `null` when not bound |
 | `export_constraint`, `import_constraint` | The constraints setting each limit in the current period |
 | `marginalvalue`, `violationdegree` | As AEMO publishes them |
