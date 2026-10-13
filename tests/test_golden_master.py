@@ -165,9 +165,12 @@ def _prcer(built: harness.Built, snap: dict) -> None:
         if (r.get("extra_state_attributes") or {}).get("tariff_code") == "PRCER"
     ]
     assert {a["tariff_source"] for a in prcer} == {"aemo-to-tariff"}, prcer
-    export = [a for a in prcer if "import_tariff_code" in a]
+    export = [a for a in prcer if "import_tariff_code" in a and "forecast_start" not in a]
     assert len(export) == 1 and len(prcer) > len(export), prcer
     assert [p["period"] for p in export[0]["export_periods"]] == ["Saver export charge"]
+    # PRCER is the active tariff, so its export side also has a day 2-7 sensor.
+    days27 = [a for a in prcer if "import_tariff_code" in a and "forecast_start" in a]
+    assert len(days27) == 1 and days27[0]["export_periods"] == export[0]["export_periods"], prcer
 
 
 def _lor2(built: harness.Built, snap: dict) -> None:

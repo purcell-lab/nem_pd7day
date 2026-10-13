@@ -239,7 +239,9 @@ def test_setup_entry_creates_one_of_each_region_entity():
     ],
 )
 def test_setup_entry_registers_day27_sensors_in_days_2_7_mode(options, expected_active):
-    """days_2_7 mode adds a Day 2-7 spot sensor and one Day 2-7 tariff sensor.
+    """days_2_7 mode adds a Day 2-7 spot sensor, one Day 2-7 import tariff sensor
+    for the active tariff, and one Day 2-7 export tariff sensor for its export
+    partner (energex 6900 pairs with 6900X).
 
     An entry from before forecast_mode existed carries no option and must be
     treated as days_2_7 (migration default).
@@ -248,13 +250,17 @@ def test_setup_entry_registers_day27_sensors_in_days_2_7_mode(options, expected_
 
     base_spot = [e for e in created if getattr(e, "_attr_name", "") == BASE_SENSOR_NAME]
     day27_spot = [e for e in created if getattr(e, "_attr_name", "") == DAY27_SENSOR_NAME]
+    day27_export = [e for e in created if isinstance(e, _tariff_mod.ExportTariffForecastDays27Sensor)]
     day27_tariff = [
         e for e in created
         if "Day 2-7" in getattr(e, "_attr_name", "") and "Tariff" in getattr(e, "_attr_name", "")
+        and e not in day27_export
     ]
     assert len(base_spot) == 1, "Base spot sensor must always be registered"
     assert len(day27_spot) == 1
     assert len(day27_tariff) == 1, "Only one Day 2-7 tariff sensor, for the active tariff"
+    assert [(e._import_code, e._export_code) for e in day27_export] == [("6900", "6900X")]
+    assert day27_export[0]._attr_unique_id == "nem_pd7day_QLD1_energex_6900_export_days27"
     if expected_active is not None:
         distributor, code = expected_active
         assert day27_tariff[0]._distributor == distributor

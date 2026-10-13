@@ -179,7 +179,11 @@ def test_export_programs_registered_in_setup():
 
     run_async(_sensor_mod.async_setup_entry(hass, entry, _add_entities))
 
-    export_sensors = [e for e in created if isinstance(e, NemPd7dayExportTariffSensor)]
+    days27_export = [e for e in created if isinstance(e, _tariff_mod.ExportTariffForecastDays27Sensor)]
+    export_sensors = [
+        e for e in created
+        if isinstance(e, NemPd7dayExportTariffSensor) and e not in days27_export
+    ]
     # NSW1 pairings come from the library (issue #159): ausgrid EA025->EA029 and
     # EA225->EA029, endeavour N71->N61 and N95->N95, essential BLNRSS2->BLNREX2 and
     # BLNBSS1->BLNBEX1, evoenergy 026->026.
@@ -194,6 +198,10 @@ def test_export_programs_registered_in_setup():
         ("evoenergy", "026"): "026",
     }
     assert all(s._attr_unique_id.endswith("_export_tariff") for s in export_sensors)
+    # The active tariff's export partner also gets its day 2-7 sensor (days_2_7 mode).
+    assert [(s._import_code, s._export_code, s._attr_unique_id) for s in days27_export] == [
+        ("EA025", "EA029", "nem_pd7day_NSW1_ausgrid_EA025_export_days27"),
+    ]
 
 
 # ── Calibration plumbing ──────────────────────────────────────────────────────
