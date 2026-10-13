@@ -22,6 +22,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from support import PKG_DIR, load_chain
@@ -264,3 +265,91 @@ def test_the_engine_reaches_fitting_only_inside_its_two_fit_methods():
 @pytest.mark.parametrize("logger_name", [fitting._LOGGER.name])
 def test_fit_log_lines_keep_the_engine_logger(logger_name):
     assert logger_name == ce._LOGGER.name == "custom_components.nem_pd7day.calibration_engine"
+
+
+# ── Isotonic end steps in the summary (#247) ──────────────────────────────────
+# A step's level is served flat across its whole x range, and the top step on
+# to x_max and beyond. On 13 Oct 2026 QLD1's h24_48__solar top step started at
+# a raw 8.9 c and served 17.85 c to every higher forecast, against a realised
+# 1.5 to 4.9 c for those slots; the summary had the step count and x range but
+# not the steps. Each bucket now reports iso_top and iso_bottom. No fitted or
+# served value changes.
+
+def _solar_bucket(seed: int = 7):
+    """A day-ahead solar bucket shaped like QLD1 h24_48__solar on 13 Oct.
+
+    ~3,000 rows over 60 days of decay weights, raw forecasts mostly below
+    5 c and outcomes a little above them, plus 12 rows from the last day with
+    raw forecasts of 9 to 30 c and outcomes of 28 to 45 c (13 Oct 10:00-13:00).
+    """
+    rng = np.random.default_rng(seed)
+    n = 3000
+    days = rng.uniform(1, 60, n)
+    x = rng.normal(-0.02, 0.035, n)
+    y = 0.02 + 0.5 * np.clip(x, -0.05, None) + rng.normal(0, 0.02, n)
+    w = np.exp(-0.033 * days)
+    hx = rng.uniform(0.09, 0.30, 12)
+    hy = rng.uniform(0.28, 0.45, 12)
+    hw = np.full(12, np.exp(-0.033 * 0.2))
+    return np.concatenate([x, hx]), np.concatenate([y, hy]), np.concatenate([w, hw])
+
+
+def _summary_bucket(x, y, w):
+    pairs = list(zip(x.tolist(), y.tolist()))
+    model = fitting.fit_stage1_bucket("h24_48__solar", pairs, w.tolist())
+    result = ce.CalibrationResult(
+        fitted_at="2026-10-13T13:00:00+10:00", total_observations=len(pairs),
+        models={"h24_48__solar": model},
+    )
+    return model, result.summary()["buckets"]["h24_48__solar"]
+
+
+def test_a_thin_top_step_shows_in_the_summary():
+    """The #247 shape: the top step is a few fresh rows, served at their mean."""
+    x, y, w = _solar_bucket()
+    model, bucket = _summary_bucket(x, y, w)
+    top = bucket["iso_top"]
+
+    assert top["n"] == 7 and top["n_eff"] == pytest.approx(7.0)
+    assert top["x_end"] == pytest.approx(float(x.max()), abs=1e-4)
+    served = model.iso_model.predict(np.array([top["x_start"], top["x_end"], 1.0]))
+    assert served == pytest.approx([top["level"]] * 3, abs=1e-4)   # flat to x_max, and beyond
+    assert top["level"] > 0.3
+
+
+def test_the_end_steps_describe_the_fitted_map():
+    x, y, w = _solar_bucket(seed=11)
+    model, bucket = _summary_bucket(x, y, w)
+    iso = model.iso_model
+    xt, yt = iso._x_thresholds, iso._y_thresholds
+    order = np.argsort(x, kind="stable")
+    ws = w[order]
+    for name, rows in (("iso_top", yt == yt[-1]), ("iso_bottom", yt == yt[0])):
+        step = bucket[name]
+        assert step["n"] == int(rows.sum()), name
+        assert step["x_start"] == pytest.approx(float(xt[rows].min()), abs=1e-4)
+        assert step["x_end"] == pytest.approx(float(xt[rows].max()), abs=1e-4)
+        assert step["level"] == pytest.approx(float(yt[rows][0]), abs=1e-4)
+        expected = ws[rows].sum() ** 2 / (ws[rows] ** 2).sum()
+        assert step["n_eff"] == pytest.approx(expected, abs=0.05)
+
+
+def test_no_fitted_value_changes():
+    x, y, w = _solar_bucket(seed=3)
+    order = np.argsort(x, kind="stable")
+    iso = ce.IsotonicRegression().fit(x, y, sample_weight=w)
+    assert np.array_equal(iso._y_thresholds, ce._pav(y[order], w[order]))
+
+
+def test_equal_weights_give_an_effective_size_equal_to_the_count():
+    iso = ce.IsotonicRegression().fit([0.0, 0.1, 0.2, 0.3], [0.05, 0.04, 0.2, 0.3])
+    assert (iso.bottom_step.n, iso.bottom_step.n_eff) == (2, pytest.approx(2.0))
+    assert iso.bottom_step.level == pytest.approx(0.045)
+    assert (iso.top_step.x_start, iso.top_step.n) == (0.3, 1)
+
+
+def test_a_bucket_without_an_isotonic_model_reports_none():
+    model = fitting.fit_stage1_bucket("h96plus__peak", [(0.1, 0.1)] * (_const.MIN_OBS - 1), [1.0] * (_const.MIN_OBS - 1))
+    result = ce.CalibrationResult(fitted_at="x", total_observations=1, models={"h96plus__peak": model})
+    bucket = result.summary()["buckets"]["h96plus__peak"]
+    assert bucket["iso_top"] is None and bucket["iso_bottom"] is None
