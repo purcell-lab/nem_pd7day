@@ -150,6 +150,40 @@ from .serving import (
 # dependency that HA's pip installer cannot resolve in all environments.
 # Output is numerically identical to sklearn (max diff < 1e-15 on test data).
 
+def _pav_blocks(y_sorted: np.ndarray, w_sorted: np.ndarray) -> list[list[float]]:
+    """Pool-adjacent-violators on pre-sorted (y, w) arrays, as blocks.
+
+    Each block is [sum_wy, sum_w, count, sum_w2]; adjacent blocks whose
+    weighted means violate the non-decreasing constraint are merged.
+    """
+    blocks: list[list[float]] = []
+    for yi, wi in zip(y_sorted, w_sorted):
+        blocks.append([float(yi) * float(wi), float(wi), 1, float(wi) * float(wi)])
+        # Merge while the previous block's weighted mean exceeds this one's
+        while (
+            len(blocks) >= 2
+            and (blocks[-2][0] / blocks[-2][1]) > (blocks[-1][0] / blocks[-1][1])
+        ):
+            b1, b2 = blocks.pop(-2), blocks.pop(-1)
+            blocks.append([b1[0] + b2[0], b1[1] + b2[1], b1[2] + b2[2], b1[3] + b2[3]])
+    return blocks
+
+
+def _block_support(block: list[float]) -> float:
+    """Kish effective sample size of a block, (sum w)^2 / sum w^2: how many
+    equally weighted rows its decay-weighted rows are worth."""
+    return block[1] * block[1] / block[3] if block[3] > 0 else 0.0
+
+
+def _expand(blocks: list[list[float]]) -> np.ndarray:
+    fitted = np.empty(int(sum(b[2] for b in blocks)))
+    i = 0
+    for sum_wy, sum_w, count, _ in blocks:
+        fitted[i : i + int(count)] = sum_wy / sum_w
+        i += int(count)
+    return fitted
+
+
 def _pav(
     y_sorted: np.ndarray, w_sorted: np.ndarray
 ) -> np.ndarray:
@@ -159,22 +193,30 @@ def _pav(
     using weighted means.  Returns the fitted y value for each observation
     (in the same sorted order as the inputs).
     """
-    blocks: list[list[float]] = []  # each entry: [sum_wy, sum_w, count]
-    for yi, wi in zip(y_sorted, w_sorted):
-        blocks.append([float(yi) * float(wi), float(wi), 1])
-        # Merge while the previous block's weighted mean exceeds this one's
-        while (
-            len(blocks) >= 2
-            and (blocks[-2][0] / blocks[-2][1]) > (blocks[-1][0] / blocks[-1][1])
-        ):
-            b1, b2 = blocks.pop(-2), blocks.pop(-1)
-            blocks.append([b1[0] + b2[0], b1[1] + b2[1], b1[2] + b2[2]])
-    fitted = np.empty(int(sum(b[2] for b in blocks)))
-    i = 0
-    for sum_wy, sum_w, count in blocks:
-        fitted[i : i + int(count)] = sum_wy / sum_w
-        i += int(count)
-    return fitted
+    return _expand(_pav_blocks(y_sorted, w_sorted))
+
+
+@dataclass(frozen=True)
+class IsoStep:
+    """One end step of a fitted isotonic map, for diagnostics (#247)."""
+
+    x_start: float      # lowest training forecast in the step
+    x_end: float        # highest training forecast in the step
+    level: float        # the value served across it
+    n: int              # training observations in it
+    n_eff: float        # their Kish effective size under the decay weights
+
+
+def _step_summary(step: IsoStep | None) -> dict[str, Any] | None:
+    if step is None:
+        return None
+    return {
+        "x_start": round(step.x_start, 4),
+        "x_end": round(step.x_end, 4),
+        "level": round(step.level, 4),
+        "n": step.n,
+        "n_eff": round(step.n_eff, 1),
+    }
 
 
 class IsotonicRegression:
@@ -196,6 +238,8 @@ class IsotonicRegression:
         # out_of_bounds='clip' is supported (the only mode used by this integration).
         self._x_thresholds: np.ndarray | None = None
         self._y_thresholds: np.ndarray | None = None
+        self.bottom_step: IsoStep | None = None
+        self.top_step: IsoStep | None = None
 
     def fit(
         self,
@@ -203,7 +247,11 @@ class IsotonicRegression:
         y: np.ndarray,
         sample_weight: np.ndarray | None = None,
     ) -> "IsotonicRegression":
-        """Fit the isotonic model to (x, y) pairs with optional decay weights."""
+        """Fit the isotonic model to (x, y) pairs with optional decay weights.
+
+        Also records the map's end steps (bottom_step, top_step) with their
+        support, for the calibration summary (#247).
+        """
         x_arr = np.asarray(x, dtype=float)
         y_arr = np.asarray(y, dtype=float)
         w_arr = (
@@ -213,7 +261,19 @@ class IsotonicRegression:
         )
         order = np.argsort(x_arr, kind="stable")
         self._x_thresholds = x_arr[order]
-        self._y_thresholds = _pav(y_arr[order], w_arr[order])
+        blocks = _pav_blocks(y_arr[order], w_arr[order])
+        self._y_thresholds = _expand(blocks)
+        if blocks:
+            first, last = blocks[0], blocks[-1]
+            xs = self._x_thresholds
+            self.bottom_step = IsoStep(
+                float(xs[0]), float(xs[int(first[2]) - 1]), first[0] / first[1],
+                int(first[2]), _block_support(first),
+            )
+            self.top_step = IsoStep(
+                float(xs[len(xs) - int(last[2])]), float(xs[-1]), last[0] / last[1],
+                int(last[2]), _block_support(last),
+            )
         return self
 
     @property
@@ -767,6 +827,38 @@ class BucketModel:
         return stage1_isotonic(self, x)
 
 
+def _iso_bucket_stats(iso: IsotonicRegression | None) -> dict[str, Any]:
+    """The isotonic entries of a bucket's summary; empty when no map was fitted."""
+    if (
+        iso is None
+        or iso._x_thresholds is None
+        or iso._y_thresholds is None
+        or len(iso._x_thresholds) == 0
+    ):
+        return {}
+    xt = iso._x_thresholds
+    yt = iso._y_thresholds
+    x_min = float(xt[0])
+    x_max = float(xt[-1])
+    x_range = x_max - x_min
+    stats: dict[str, Any] = {
+        # n_steps: count distinct PAV blocks (unique consecutive y values)
+        "iso_n_steps": int(1 + np.sum(np.diff(yt) != 0)),
+        "x_min": round(x_min, 4),
+        "x_max": round(x_max, 4),
+        # iso_mae: mean absolute calibration shift (mean |fitted - raw|)
+        # This measures how much the isotonic model moves forecasts on average.
+        "iso_mae": round(float(np.mean(np.abs(yt - xt))), 6),
+        "spot_010": round(float(iso.predict(np.array([0.10]))[0]), 4),
+        "spot_020": round(float(iso.predict(np.array([0.20]))[0]), 4),
+        "iso_top": _step_summary(iso.top_step),
+        "iso_bottom": _step_summary(iso.bottom_step),
+    }
+    if x_range > 1e-6:
+        stats["compression_ratio"] = round((float(yt[-1]) - float(yt[0])) / x_range, 4)
+    return stats
+
+
 @dataclass
 class CalibrationResult:
     """Full set of fitted models across all buckets."""
@@ -848,6 +940,12 @@ class CalibrationResult:
           spot_020       — calibrated output at 0.20 $/kWh forecast
           q10_a          — quantile P10 slope (used for P10 interval)
           q90_a          — quantile P90 slope (used for P90 interval)
+          iso_top / iso_bottom — the map's end steps (#247): x_start and
+                           x_end (training forecasts it spans), level (the
+                           value served across it, and clipped to beyond),
+                           n and n_eff (its training rows, and their Kish
+                           effective size under the decay weights); None if
+                           < MIN_OBS
 
         ``stage2`` carries one entry per bucket with a fitted OLS model
         (issue #147: before this, n_train, r2, the residual quantiles and the
@@ -885,35 +983,10 @@ class CalibrationResult:
                 "spot_020": None,
                 "q10_a": round(model.q10.a, 4),
                 "q90_a": round(model.q90.a, 4),
+                "iso_top": None,
+                "iso_bottom": None,
             }
-            iso = model.iso_model
-            if (
-                iso is not None
-                and iso._x_thresholds is not None
-                and iso._y_thresholds is not None
-                and len(iso._x_thresholds) > 0
-            ):
-                xt = iso._x_thresholds
-                yt = iso._y_thresholds
-                x_min = float(xt[0])
-                x_max = float(xt[-1])
-                y_min = float(yt[0])
-                y_max = float(yt[-1])
-                x_range = x_max - x_min
-                # n_steps: count distinct PAV blocks (unique consecutive y values)
-                n_steps = int(1 + np.sum(np.diff(yt) != 0))
-                bucket["iso_n_steps"] = n_steps
-                bucket["x_min"] = round(x_min, 4)
-                bucket["x_max"] = round(x_max, 4)
-                if x_range > 1e-6:
-                    bucket["compression_ratio"] = round((y_max - y_min) / x_range, 4)
-                # iso_mae: mean absolute calibration shift (mean |fitted - raw|)
-                # This measures how much the isotonic model moves forecasts on average.
-                calibration_shift_mae = float(np.mean(np.abs(yt - xt)))
-                bucket["iso_mae"] = round(calibration_shift_mae, 6)
-                # Spot values
-                bucket["spot_010"] = round(float(iso.predict(np.array([0.10]))[0]), 4)
-                bucket["spot_020"] = round(float(iso.predict(np.array([0.20]))[0]), 4)
+            bucket.update(_iso_bucket_stats(model.iso_model))
             out["buckets"][key] = bucket
         return out
 
