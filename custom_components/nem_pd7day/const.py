@@ -544,6 +544,7 @@ DEFAULT_ENABLED_TARIFFS = {
     # Energex — Residential ToU + battery trial
     ("energex", "6900"),   # Residential Time of Use Energy
     ("energex", "8900"),   # Small 8900 TOU (trial)
+    ("energex", "96200"),  # Residential Two-Way Tariff Trial (export 96200X)
     # Ergon
     ("ergon", "6900"),     # Residential Time of Use Energy
     ("ergon", "ERTOUET1"), # Residential Battery ToU

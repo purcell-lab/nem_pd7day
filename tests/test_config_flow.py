@@ -370,3 +370,14 @@ def test_reconfigure_flow_to_the_same_region_does_not_abort(flow_env):
     assert result["entry"] is entry
     assert result["data"][const_mod.CONF_REGION] == "QLD1"
     assert result["unique_id"] == "nem_pd7day_QLD1"
+
+
+def test_energex_two_way_trial_is_a_selectable_active_tariff(flow_env):
+    """96200 (Residential Two-Way Tariff Trial) can be the active tariff, so a
+    days 2-7 sensor exists for it; its full days 1-7 sensor would overlap the
+    Amber forecast it is summed with."""
+    config_flow_mod, _const_mod = flow_env
+    values = [o["value"] for o in config_flow_mod._tariff_options_for_region("QLD1")]
+    assert "energex/96200" in values
+    assert values[0] == "energex/6900"          # the default stays the first entry
+    assert config_flow_mod._default_tariff_for_region("QLD1") == "energex/6900"

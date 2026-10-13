@@ -33,12 +33,14 @@ TariffEntityBase = _tariff_mod.TariffEntityBase
 NemPd7dayTariffSensor = _tariff_mod.NemPd7dayTariffSensor
 TariffForecastDays27Sensor = _tariff_mod.TariffForecastDays27Sensor
 NemPd7dayExportTariffSensor = _tariff_mod.NemPd7dayExportTariffSensor
+ExportTariffForecastDays27Sensor = _tariff_mod.ExportTariffForecastDays27Sensor
 DOMAIN = _const_mod.DOMAIN
 
 TARIFF_CLASSES = [
     pytest.param(NemPd7dayTariffSensor, id="import"),
     pytest.param(TariffForecastDays27Sensor, id="days27"),
     pytest.param(NemPd7dayExportTariffSensor, id="export"),
+    pytest.param(ExportTariffForecastDays27Sensor, id="export_days27"),
 ]
 
 NO_CUTOFF = datetime(2000, 1, 1, tzinfo=NEM_TZ)
@@ -90,6 +92,8 @@ EXPORT_KEYS = [
     "export_periods",
     "forecast",
 ]
+# The day 2-7 export sensor adds the same two keys as the import one.
+EXPORT_DAYS27_KEYS = [k for k in EXPORT_KEYS if k != "forecast"] + ["forecast_start", "forecast_start_source", "forecast"]
 FORECAST_ENTRY_KEYS = ["time", "nemtime", "spot_raw", "spot", "value", "period", "network_rate"]
 
 
@@ -121,7 +125,7 @@ def make_sensor(cls, price_periods=None, dispatch=None):
     sensor.coordinator = coordinator
     sensor._region = region
     sensor._distributor = "energex"
-    if cls is NemPd7dayExportTariffSensor:
+    if issubclass(cls, NemPd7dayExportTariffSensor):
         sensor._import_code = "8400"
         sensor._export_code = "8400"
     else:
@@ -168,7 +172,7 @@ def _functions_of(value):
 def test_the_module_defines_the_tariff_classes():
     assert {c.__name__ for c in _module_classes()} >= {
         "TariffEntityBase", "NemPd7dayTariffSensor", "TariffForecastDays27Sensor",
-        "NemPd7dayExportTariffSensor",
+        "NemPd7dayExportTariffSensor", "ExportTariffForecastDays27Sensor",
     }
 
 
@@ -192,6 +196,7 @@ def test_no_method_is_shared_by_assignment():
         pytest.param(NemPd7dayTariffSensor, IMPORT_KEYS, id="import"),
         pytest.param(TariffForecastDays27Sensor, DAYS27_KEYS, id="days27"),
         pytest.param(NemPd7dayExportTariffSensor, EXPORT_KEYS, id="export"),
+        pytest.param(ExportTariffForecastDays27Sensor, EXPORT_DAYS27_KEYS, id="export_days27"),
     ],
 )
 @pytest.mark.parametrize("with_data", [True, False], ids=["data", "no_data"])
@@ -223,6 +228,32 @@ def test_days27_trims_only_the_forecast():
     assert {k: v for k, v in trimmed.items() if k not in day27_only} == \
         {k: v for k, v in full.items() if k != "forecast"}
     assert (trimmed["forecast_start"], trimmed["forecast_start_source"]) == (periods[3].time, "clock")
+
+
+def test_export_days27_trims_only_the_forecast():
+    """The day 2-7 export sensor publishes the export dictionary over fewer intervals,
+    from the same start the day 2-7 import sensor uses (#235)."""
+    periods = forecast(6)
+    cutoff = _nem_time.parse_iso(periods[2].time)
+    exporter = make_sensor(NemPd7dayExportTariffSensor, price_periods=periods)
+    days27 = make_sensor(ExportTariffForecastDays27Sensor, price_periods=periods)
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=4.5), \
+            patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(cutoff, "amber")):
+        full = exporter.extra_state_attributes
+        trimmed = days27.extra_state_attributes
+    # An Amber start is the first interval Amber does not cover, so it is listed.
+    assert [e["time"] for e in trimmed["forecast"]] == [p.time for p in periods[2:]]
+    assert trimmed["forecast"] == full["forecast"][2:]
+    day27_only = {"forecast", "forecast_start", "forecast_start_source"}
+    assert {k: v for k, v in trimmed.items() if k not in day27_only} == \
+        {k: v for k, v in full.items() if k != "forecast"}
+    assert (trimmed["forecast_start"], trimmed["forecast_start_source"]) == (periods[2].time, "amber")
+
+
+def test_export_days27_identity_and_registry_default():
+    sensor = ExportTariffForecastDays27Sensor.__new__(ExportTariffForecastDays27Sensor)
+    assert sensor.entity_registry_enabled_default is True
+    assert ExportTariffForecastDays27Sensor._amber_ids == ()
 
 
 def test_days27_reads_the_cutoff_only_with_price_data():

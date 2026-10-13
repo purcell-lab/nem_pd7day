@@ -856,11 +856,15 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
             )
             return None
 
+    def _forecast_periods(self, d: Any) -> list[Any]:
+        """The intervals the forecast attribute lists: all of day 1 to 7."""
+        return d.forecast
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         d = self._price_data
         # Same per region memo the import tariff sensors read. See #62.
-        forecast_list = [] if d is None else self._forecast_entries(d, d.forecast)
+        forecast_list = [] if d is None else self._forecast_entries(d, self._forecast_periods(d))
 
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
             self._distributor, self._distributor.title(),
@@ -889,3 +893,65 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
             "export_periods": self._get_tariff_periods(),
             "forecast": forecast_list,
         }
+
+
+class ExportTariffForecastDays27Sensor(NemPd7dayExportTariffSensor):
+    """Day 2-7 export tariff sensor: the active tariff's export partner, days_2_7 mode only.
+
+    The export counterpart of TariffForecastDays27Sensor. A days 1 to 7 export
+    sensor summed with an Amber feed-in forecast would count every interval
+    Amber covers twice; this one starts where Amber's forecast ends (#235), as
+    the import one does, so a two-way tariff's export charge or reward (Energex
+    96200X) reaches the days after Amber's horizon.
+    """
+
+    _attr_state_class = None
+    _attr_suggested_display_precision = 4
+    _attr_entity_registry_enabled_default = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # The Amber forecast sensors found when added; none means the clock rule (#235).
+    _amber_ids: tuple[str, ...] = ()
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+        distributor: str,
+        import_code: str,
+        export_code: str,
+        store=None,
+    ) -> None:
+        super().__init__(coordinator, entry, region, distributor, import_code, export_code, store=store)
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+        export_name = get_export_tariff_name(distributor, export_code)
+        suffix = "Tariff" if "Export" in export_name else "Export Tariff"
+        self._attr_name = f"Day 2-7 {distributor_display} {export_name} {suffix} ({export_code})"
+        # Keyed on the import code, as the full export sensor is: an export code
+        # can equal its import code (SAPN RESELE, Powercor PRCER), which would
+        # collide with the day 2-7 import sensor's id.
+        self._attr_unique_id = f"nem_pd7day_{region}_{distributor}_{import_code}_export_days27"
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        return True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._amber_ids = track_day27_start(self, self._entry, self.async_write_ha_state)
+
+    def _forecast_periods(self, d: Any) -> list[Any]:
+        """The intervals the day 2-7 forecast lists: from where Amber's forecast ends (#235)."""
+        start = day27_start_for(self.hass, self._amber_ids)
+        return [p for p in d.forecast if start.includes(parse_iso(p.time))]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = super().extra_state_attributes
+        forecast = attrs.pop("forecast", [])
+        attrs[ATTR_FORECAST_START] = forecast[0]["time"] if forecast else None
+        attrs[ATTR_FORECAST_START_SOURCE] = (
+            None if self._price_data is None else day27_start_for(self.hass, self._amber_ids).source
+        )
+        attrs["forecast"] = forecast
+        return attrs

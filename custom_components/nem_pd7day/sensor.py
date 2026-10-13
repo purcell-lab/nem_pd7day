@@ -93,7 +93,12 @@ from .amber_forecast import day27_start_for, track_day27_start
 from .calibrated_forecast import CalibratedForecast, WarmOutcome
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from .tariff_catalogue import export_program_supported, export_programs, import_tariff_codes
-from .tariff_sensor import NemPd7dayExportTariffSensor, NemPd7dayTariffSensor, TariffForecastDays27Sensor
+from .tariff_sensor import (
+    ExportTariffForecastDays27Sensor,
+    NemPd7dayExportTariffSensor,
+    NemPd7dayTariffSensor,
+    TariffForecastDays27Sensor,
+)
 
 if TYPE_CHECKING:
     from .notice_store import GridNoticeStore
@@ -237,11 +242,29 @@ async def async_setup_entry(
                     break
         if active_tariff and "/" in active_tariff:
             dist, code = active_tariff.split("/", 1)
-            entities.append(
-                TariffForecastDays27Sensor(coordinator, entry, region, dist, code, store=store)
-            )
+            entities.extend(_days27_tariff_entities(coordinator, entry, region, dist, code, store))
 
     async_add_entities(entities, update_before_add=True)
+
+
+def _days27_tariff_entities(
+    coordinator: PD7DayCoordinator, entry: ConfigEntry, region: str, dist: str, code: str, store: Any
+) -> list[SensorEntity]:
+    """The active tariff's day 2-7 sensors: import, and its export partner when it has one.
+
+    The export partner is the one the full export sensors use (export_programs,
+    #159), so a two-way tariff's export charge or reward (Energex 96200X) is
+    forecast beyond the Amber horizon too.
+    """
+    entities: list[SensorEntity] = [
+        TariffForecastDays27Sensor(coordinator, entry, region, dist, code, store=store)
+    ]
+    export_code = export_programs(dist).get(code)
+    if export_code and export_program_supported(dist, export_code):
+        entities.append(
+            ExportTariffForecastDays27Sensor(coordinator, entry, region, dist, code, export_code, store=store)
+        )
+    return entities
 
 
 def _grid_entities(
