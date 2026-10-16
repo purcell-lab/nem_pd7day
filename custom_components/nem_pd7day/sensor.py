@@ -290,7 +290,7 @@ def _grid_entities(
     return [
         NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store),
         NemPd7dayBindingConstraintsSensor(constraints, entry, region),
-        NemPd7dayPredispatchConstraintsSensor(predispatch, entry, region),
+        NemPd7dayPredispatchConstraintsSensor(predispatch, entry, region, constraints),
         *(
             NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id)
             for ic_id in sorted(interconnectors_for_regions([region]))

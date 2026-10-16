@@ -318,7 +318,64 @@ def test_constraints_sensor_counts_region_and_skips_artefacts(monkeypatch):
     assert attrs["max_marginal_value_mwh"] == pytest.approx(1044.87)
     assert attrs["rrp"] == pytest.approx(1079.32653)
     assert attrs["forecast"][0]["top"][0] == "N::N_CNCW_2"
-    assert sensor._unrecorded_attributes == frozenset({"constraints", "forecast"})
+    assert sensor._unrecorded_attributes == frozenset({"constraints", "unassigned_constraints", "forecast"})
+
+
+def _with_ca_bris(snapshot, end):
+    """The fixture run with the 16 Oct 2026 CA_BRIS constraint added to one
+    period: binding at about half its dispatch RHS, at -$32,000/MWh (#255)."""
+    ca = _cc.BindingConstraint("CA_BRIS_59E3F2B6_1", rhs=1039.0, lhs=1039.0, marginal_value=-32000.0, violation_degree=0.0)
+    constraints = dict(snapshot.constraints)
+    constraints[end] = constraints.get(end, ()) + (ca,)
+    return replace(snapshot, constraints=constraints)
+
+
+def _dispatch_holding(rhs, interval_end):
+    """A stand-in for the shared dispatch ConstraintCoordinator."""
+    ca = _cc.BindingConstraint("CA_BRIS_59E3F2B6_1", rhs=rhs, lhs=rhs, marginal_value=-1200.0, violation_degree=0.0)
+    latest = SimpleNamespace(interval_end=interval_end, constraints=(ca,))
+    return SimpleNamespace(tracker=SimpleNamespace(latest=latest))
+
+
+def test_constraint_automation_is_listed_as_unassigned(monkeypatch):
+    """CA_BRIS names no region, so no region's list showed it while it priced
+    QLD1 at the cap; it is now published as unassigned, as dispatch does (#255)."""
+    monkeypatch.setattr(_sensor, "now_nem", lambda: _at(10, 40))
+    snapshot = _with_ca_bris(_snapshot(), _at(11))
+    plain = _sensor.NemPd7dayPredispatchConstraintsSensor(
+        _coordinator(_snapshot(), _at(10, 1)), SimpleNamespace(entry_id="e1"), "QLD1"
+    )
+    sensor = _sensor.NemPd7dayPredispatchConstraintsSensor(
+        _coordinator(snapshot, _at(10, 1)), SimpleNamespace(entry_id="e1"), "QLD1",
+        _dispatch_holding(2557.0, _at(10, 35)),
+    )
+    attrs = sensor.extra_state_attributes
+    # Not guessed into the region: the count and the region list are unchanged.
+    assert sensor.native_value == plain.native_value
+    assert "CA_BRIS_59E3F2B6_1" not in [c["constraint_id"] for c in attrs["constraints"]]
+    (ca,) = attrs["unassigned_constraints"]
+    assert (ca["constraint_id"], ca["category"], ca["regions"]) == ("CA_BRIS_59E3F2B6_1", "constraint_automation", [])
+    assert ca["rhs_vs_dispatch"] == pytest.approx(0.406)
+    assert attrs["max_unassigned_marginal_value_mwh"] == 32000.0
+    first = attrs["forecast"][0]
+    assert first["max_unassigned_marginal_value_mwh"] == 32000.0
+    assert first["unassigned"] == [{
+        "constraint_id": "CA_BRIS_59E3F2B6_1", "marginal_value_mwh": -32000.0, "rhs": 1039.0,
+        "violation_degree": 0.0, "rhs_vs_dispatch": pytest.approx(0.406),
+    }]
+    # Periods without it carry an empty list and a zero, not a missing key.
+    assert attrs["forecast"][1]["unassigned"] == [] and attrs["forecast"][1]["max_unassigned_marginal_value_mwh"] == 0.0
+    assert "unassigned" not in attrs
+
+
+def test_rhs_vs_dispatch_needs_a_recent_dispatch_interval(monkeypatch):
+    monkeypatch.setattr(_sensor, "now_nem", lambda: _at(10, 40))
+    snapshot = _with_ca_bris(_snapshot(), _at(11))
+    for dispatch in (None, _dispatch_holding(2557.0, _at(10, 20)), _dispatch_holding(0.0, _at(10, 35))):
+        sensor = _sensor.NemPd7dayPredispatchConstraintsSensor(
+            _coordinator(snapshot, _at(10, 1)), SimpleNamespace(entry_id="e1"), "QLD1", dispatch,
+        )
+        assert sensor.extra_state_attributes["unassigned_constraints"][0]["rhs_vs_dispatch"] is None
 
 
 def test_constraints_sensor_qld_midday(monkeypatch):
