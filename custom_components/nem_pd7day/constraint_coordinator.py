@@ -29,6 +29,7 @@ from .constraint_client import (
 )
 from .const import DISPATCH_UNSUBS_KEY, DOMAIN, NEMWEB_SEMAPHORE_KEY, SHARED_CONSTRAINTS_KEY
 from .nem_time import NEM_TZ
+from .refresh_guard import RefreshGuard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class ConstraintCoordinator(DataUpdateCoordinator[Optional[ConstraintSnapshot]])
         super().__init__(hass, _LOGGER, name="NEM Binding Constraints", update_interval=None)
         self.client = client
         self.tracker = ConstraintTracker()
-        self._refreshing = False
+        self._guard = RefreshGuard(hass, "nem_pd7day_binding_constraints_refresh", self.async_refresh, _LOGGER)
         self._unsub_dispatch: Optional[Callable[[], None]] = (
             dispatch.async_add_listener(self._on_dispatch) if dispatch is not None else None
         )
@@ -118,20 +119,10 @@ class ConstraintCoordinator(DataUpdateCoordinator[Optional[ConstraintSnapshot]])
         """A dispatch poll finished: read that interval's constraints.
 
         One refresh at a time; a notification while one is running is dropped,
-        because the running one reads the same newest file.
+        because the running one reads the same newest file, unless that one
+        has run so long it is stuck (refresh_guard, #256).
         """
-        if self._refreshing:
-            return
-        self._refreshing = True
-        self.hass.async_create_background_task(
-            self._refresh_once(), "nem_pd7day_binding_constraints_refresh"
-        )
-
-    async def _refresh_once(self) -> None:
-        try:
-            await self.async_refresh()
-        finally:
-            self._refreshing = False
+        self._guard.request()
 
     async def _async_update_data(self) -> Optional[ConstraintSnapshot]:
         snapshot = await self.client.fetch_latest()

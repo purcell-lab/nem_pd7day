@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import DISPATCH_UNSUBS_KEY, DOMAIN, NEMWEB_SEMAPHORE_KEY, SHARED_PREDISPATCH_KEY
 from .nem_time import now_nem
 from .predispatch_client import PredispatchClient, PredispatchSnapshot
+from .refresh_guard import RefreshGuard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class PredispatchCoordinator(DataUpdateCoordinator[Optional[PredispatchSnapshot]
         super().__init__(hass, _LOGGER, name="NEM Predispatch", update_interval=None)
         self.client = client
         self.latest: Optional[PredispatchSnapshot] = None
-        self._refreshing = False
+        self._guard = RefreshGuard(hass, "nem_pd7day_predispatch_refresh", self.async_refresh, _LOGGER)
         self._unsub_dispatch: Optional[Callable[[], None]] = (
             dispatch.async_add_listener(self._on_dispatch) if dispatch is not None else None
         )
@@ -40,18 +41,10 @@ class PredispatchCoordinator(DataUpdateCoordinator[Optional[PredispatchSnapshot]
         """A dispatch poll finished. One refresh at a time, as for constraints.
 
         Every refresh notifies the sensors, which is how they step to the next
-        30-minute period without a new file.
+        30-minute period without a new file. A refresh stuck past the guard's
+        bound is cancelled and restarted (refresh_guard, #256).
         """
-        if self._refreshing:
-            return
-        self._refreshing = True
-        self.hass.async_create_background_task(self._refresh_once(), "nem_pd7day_predispatch_refresh")
-
-    async def _refresh_once(self) -> None:
-        try:
-            await self.async_refresh()
-        finally:
-            self._refreshing = False
+        self._guard.request()
 
     def due(self, now: datetime) -> bool:
         """True when the run held is 30 minutes old, or there is none."""
