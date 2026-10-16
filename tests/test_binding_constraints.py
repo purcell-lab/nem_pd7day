@@ -10,6 +10,7 @@ Run with:  python -m pytest tests/test_binding_constraints.py -v
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -131,10 +132,11 @@ class _Resp:
 
 class _Session:
     def __init__(self, routes):
-        self.routes, self.calls = routes, []
+        self.routes, self.calls, self.kwargs = routes, [], []
 
     def get(self, url, **kw):
         self.calls.append(url)
+        self.kwargs.append(kw)
         return _Resp(*self.routes[url])
 
 
@@ -156,6 +158,17 @@ def test_client_fetches_newest_then_skips_it():
     # Same newest file: one listing request, nothing new.
     assert run_async(client.fetch_latest()) is None
     assert session.calls == [base, base + name, base]
+
+
+def test_client_requests_carry_a_timeout(monkeypatch):
+    """No request waits on NEMWEB indefinitely (#256): 30 s for the listing,
+    60 s for the zip, as the PD7DAY client sets them."""
+    monkeypatch.setattr(_client.aiohttp, "ClientTimeout", lambda total: ("timeout", total))
+    base = _const.DISPATCHIS_BASE_URL
+    name = FIXTURES[-1].name
+    session = _Session({base: (f'<a href="{name}">{name}</a>',), base + name: (FIXTURES[-1].read_bytes(),)})
+    run_async(_client.ConstraintClient(session, sleep=_no_sleep).fetch_latest())
+    assert [kw["timeout"] for kw in session.kwargs] == [("timeout", 30), ("timeout", 60)]
 
 
 def test_client_zip_not_published_is_none_and_retried_next_time():
@@ -261,6 +274,72 @@ def test_dispatch_notification_starts_one_refresh_at_a_time():
     assert hass.tasks == ["nem_pd7day_binding_constraints_refresh"]
     coord.async_shutdown_listener()
     assert dispatch.listeners == []
+
+
+class _Task:
+    def __init__(self, coro):
+        self.coro, self.cancelled = coro, False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class _TaskHass(_Hass):
+    """Keeps each background task so a test can finish or cancel it."""
+
+    def __init__(self):
+        super().__init__()
+        self.started = []
+
+    def async_create_background_task(self, coro, name):
+        self.tasks.append(name)
+        task = _Task(coro)
+        self.started.append(task)
+        return task
+
+
+def _guard(hass, clock, refreshes):
+    async def refresh():
+        refreshes.append(1)
+    return _coord.RefreshGuard(hass, "refresh", refresh, _coord._LOGGER, clock=lambda: clock[0])
+
+
+def test_a_stuck_refresh_is_cancelled_and_restarted(caplog):
+    """15 Oct 2026: one refresh never returned and every later notification was
+    dropped, freezing all five region sensors with nothing logged (#256)."""
+    stuck_after = sys.modules[_coord.RefreshGuard.__module__].STUCK_AFTER_S
+    hass, clock, refreshes = _TaskHass(), [0.0], []
+    guard = _guard(hass, clock, refreshes)
+    guard.request()
+    clock[0] = stuck_after - 1
+    guard.request()                                    # slow, not stuck: dropped
+    assert len(hass.started) == 1
+    clock[0] = stuck_after + 1
+    with caplog.at_level("WARNING"):
+        guard.request()
+    assert hass.started[0].cancelled and len(hass.started) == 2
+    assert "cancelled and restarted" in caplog.text
+    # The cancelled refresh ending late must not release its replacement's slot.
+    hass.started[0].coro.close()
+    run_async(_finish_cancelled(guard))
+    assert guard.running
+    run_async(hass.started[1].coro)
+    assert not guard.running and refreshes == [1, 1]   # the late one, then its replacement
+
+
+async def _finish_cancelled(guard):
+    """Runs a first-generation refresh to the end, as a cancelled one would."""
+    await guard._run(1)
+
+
+def test_a_finished_refresh_frees_the_slot():
+    hass, clock, refreshes = _TaskHass(), [0.0], []
+    guard = _guard(hass, clock, refreshes)
+    guard.request()
+    run_async(hass.started[0].coro)
+    guard.request()
+    assert len(hass.started) == 2 and refreshes == [1]
+    hass.started[1].coro.close()
 
 
 def test_shared_constraints_created_once_and_cleaned_up():

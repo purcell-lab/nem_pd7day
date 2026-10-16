@@ -227,6 +227,10 @@ class ConstraintClient:
     BASE_URL = DISPATCHIS_BASE_URL
     LABEL = "DispatchIS"
     NO_ROWS = "no D,DISPATCH,CONSTRAINT rows"
+    # Per attempt, as the PD7DAY client sets them. Without one a hung response
+    # held the refresh, and a NEMWEB gate slot, indefinitely (#256).
+    LISTING_TIMEOUT_S = 30
+    ZIP_TIMEOUT_S = 60
 
     def __init__(
         self,
@@ -285,7 +289,8 @@ class ConstraintClient:
 
     async def _get(self, url: str, *, text: bool) -> Any:
         """One attempt. A 404 on the zip means not published yet."""
-        async with self._session.get(url, headers=NEMWEB_HEADERS) as resp:
+        timeout = aiohttp.ClientTimeout(total=self.LISTING_TIMEOUT_S if text else self.ZIP_TIMEOUT_S)
+        async with self._session.get(url, headers=NEMWEB_HEADERS, timeout=timeout) as resp:
             classify_status(
                 resp.status, url=url, headers=getattr(resp, "headers", None),
                 not_published_statuses=() if text else (404,),
