@@ -398,15 +398,18 @@ An interconnector held at a limit separates the two regions' prices; one that is
 
 ### Predispatch Binding Constraints
 
-`sensor.nem_pd7day_{region}_predispatch_binding_constraints`: the number of network constraints forecast to bind in the region in the current 30-minute period of the latest pre-dispatch run. Regions and categories are read from the constraint ID as for the dispatch Binding Constraints sensor; FCAS constraints are not counted. Unavailable before the first run and when the run held was solved more than 75 minutes ago.
+`sensor.nem_pd7day_{region}_predispatch_binding_constraints`: the number of network constraints forecast to bind in the region in the current 30-minute period of the latest pre-dispatch run. Regions and categories are read from the constraint ID as for the dispatch Binding Constraints sensor; FCAS constraints are not counted. A binding constraint whose ID names no region, such as AEMO's control-room constraint automation (`CA_BRIS_...`), is not counted either: it is listed in every region under `unassigned_constraints`, as dispatch lists it, rather than given a guessed region. Unavailable before the first run and when the run held was solved more than 75 minutes ago.
 
 | Attribute | Description |
 |---|---|
 | `time`, `nemtime`, `count`, `rrp` | The current period, its count and the region's pre-dispatch price ($/MWh) |
 | `max_marginal_value_mwh` | The largest marginal value among the region's binding constraints, as a magnitude. Values of $1,000,000/MWh or more are constraint violation penalties, not prices (`SN_ZERO` and `NS_ZERO` show $8.35M), and are left out here though still listed and counted |
-| `constraints` | The region's binding constraints in the current period, largest cost first, with `constraint_id`, `regions`, `category`, `cause`, `rhs`, `lhs`, `marginal_value_mwh` and `violation_degree` (not recorded) |
+| `constraints` | The region's binding constraints in the current period, largest cost first, with `constraint_id`, `regions`, `category`, `cause`, `rhs`, `lhs`, `marginal_value_mwh`, `violation_degree` and `rhs_vs_dispatch` (not recorded) |
+| `unassigned_constraints` | Binding constraints in the current period whose ID names no region, with the same fields (not recorded) |
+| `max_unassigned_marginal_value_mwh` | The largest marginal value among the unassigned constraints, as a magnitude, with the same $1,000,000/MWh cut-off. On 15 and 16 Oct 2026 a `CA_BRIS` constraint at $16,000 to $32,000/MWh priced QLD1 at the cap hours ahead while `max_marginal_value_mwh` read 0 |
+| `rhs_vs_dispatch` (per constraint) | This period's RHS over the RHS of the same constraint in the latest dispatch interval, when it binds there too and that interval is under 15 minutes old; otherwise null. Near 0.5 means pre-dispatch is applying the constraint at about half what dispatch applies, which preceded both false cap forecasts in October 2026 |
 | `binding_nem` | Binding constraints in the whole NEM in the current period |
-| `forecast` | Every period not yet over with `time`, `nemtime`, `count`, `max_marginal_value_mwh`, `top` (up to five constraint IDs, largest first) and `rrp` (not recorded) |
+| `forecast` | Every period not yet over with `time`, `nemtime`, `count`, `max_marginal_value_mwh`, `top` (up to five constraint IDs, largest first), `max_unassigned_marginal_value_mwh`, `unassigned` (up to five, largest first, with `constraint_id`, `marginal_value_mwh`, `rhs`, `violation_degree` and `rhs_vs_dispatch`) and `rrp` (not recorded) |
 | `run_at`, `file` | When AEMO solved the run, and the PredispatchIS file read |
 
 ### PD7DAY Data / STPASA Data (diagnostic)

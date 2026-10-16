@@ -6,7 +6,10 @@ with the price at each end. A link at a limit separates the two regions'
 prices; one that is not lets a price spike on one side reach the other.
 
 NemPd7dayPredispatchConstraintsSensor: the network constraints forecast to bind
-in the region, period by period, with the largest marginal value.
+in the region, period by period, with the largest marginal value. Binding
+constraints whose ID names no region, such as AEMO's control-room constraint
+automation (CA_), are listed beside them as unassigned, as the dispatch sensor
+lists them, rather than given a guessed region (#255).
 
 Both are unavailable before the first run arrives and when the run held was
 solved more than 75 minutes ago (two runs missed).
@@ -14,7 +17,7 @@ solved more than 75 minutes ago (two runs missed).
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -38,6 +41,9 @@ MAX_AGE = timedelta(minutes=75)
 # constraint is still listed and counted, but left out of max_marginal_value_mwh.
 ARTEFACT_MARGINAL_VALUE = 1_000_000.0
 TOP_PER_PERIOD = 5
+# rhs_vs_dispatch compares a forecast constraint with the one dispatch is
+# applying now, so a dispatch interval older than this is not compared with.
+DISPATCH_RHS_MAX_AGE = timedelta(minutes=15)
 
 
 def _iso(dt: datetime) -> str:
@@ -54,11 +60,44 @@ def _region_constraints(constraints: tuple[BindingConstraint, ...], region: str)
     return found
 
 
+def _unassigned_constraints(constraints: tuple[BindingConstraint, ...]) -> list[BindingConstraint]:
+    """Binding constraints whose ID names no region (CA_, NC_ and the like).
+
+    The same set the dispatch sensor publishes as unassigned_constraints. On 15
+    and 16 Oct 2026 a CA_BRIS constraint, applied at about half its dispatch
+    RHS, priced QLD1 at the cap hours ahead while no region's list showed it.
+    """
+    found = []
+    for c in constraints:
+        info = describe_constraint(c.constraint_id)
+        if info.category != "data_snapshot" and not info.regions:
+            found.append(c)
+    return found
+
+
 def _priced(constraints: list[BindingConstraint]) -> list[BindingConstraint]:
     return [c for c in constraints if abs(c.marginal_value) < ARTEFACT_MARGINAL_VALUE]
 
 
-def _constraint_row(c: BindingConstraint) -> dict[str, Any]:
+def _max_marginal(constraints: list[BindingConstraint]) -> float:
+    return max((abs(c.marginal_value) for c in _priced(constraints)), default=0.0)
+
+
+def _rhs_vs_dispatch(c: BindingConstraint, dispatch_rhs: Mapping[str, float]) -> Optional[float]:
+    """This period's RHS over dispatch's RHS for the same constraint, or None.
+
+    None unless the constraint is binding in the latest dispatch interval too.
+    Near 0.5 was the early sign, on both days in #255, that pre-dispatch had
+    applied a constraint far tighter than dispatch and its cap price was an
+    artefact.
+    """
+    base = dispatch_rhs.get(c.constraint_id)
+    if c.rhs is None or not base:
+        return None
+    return round(c.rhs / base, 3)
+
+
+def _constraint_row(c: BindingConstraint, dispatch_rhs: Mapping[str, float]) -> dict[str, Any]:
     info = describe_constraint(c.constraint_id)
     return {
         "constraint_id": c.constraint_id,
@@ -69,6 +108,17 @@ def _constraint_row(c: BindingConstraint) -> dict[str, Any]:
         "lhs": c.lhs,
         "marginal_value_mwh": c.marginal_value,
         "violation_degree": c.violation_degree,
+        "rhs_vs_dispatch": _rhs_vs_dispatch(c, dispatch_rhs),
+    }
+
+
+def _unassigned_brief(c: BindingConstraint, dispatch_rhs: Mapping[str, float]) -> dict[str, Any]:
+    return {
+        "constraint_id": c.constraint_id,
+        "marginal_value_mwh": c.marginal_value,
+        "rhs": c.rhs,
+        "violation_degree": c.violation_degree,
+        "rhs_vs_dispatch": _rhs_vs_dispatch(c, dispatch_rhs),
     }
 
 
@@ -180,17 +230,30 @@ class NemPd7dayPredispatchConstraintsSensor(_PredispatchSensor):
     """
     State: binding network constraints touching the region forecast for the
     current 30-minute period. FCAS constraints are not counted, as in the
-    dispatch Binding Constraints sensor.
+    dispatch Binding Constraints sensor, and neither are unassigned ones,
+    which are listed beside them.
     """
 
     _attr_native_unit_of_measurement = "constraints"
     _attr_icon = "mdi:transmission-tower-off"
-    _unrecorded_attributes = frozenset({"constraints", "forecast"})
+    _unrecorded_attributes = frozenset({"constraints", "unassigned_constraints", "forecast"})
 
-    def __init__(self, coordinator: PredispatchCoordinator, entry: Any, region: str) -> None:
+    def __init__(
+        self, coordinator: PredispatchCoordinator, entry: Any, region: str, dispatch_constraints: Any = None,
+    ) -> None:
         super().__init__(coordinator, entry, region)
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_predispatch_binding_constraints"
         self._attr_name = "Predispatch Binding Constraints"
+        # The shared dispatch ConstraintCoordinator, read for rhs_vs_dispatch only.
+        self._dispatch_constraints = dispatch_constraints
+
+    def _dispatch_rhs(self, now: datetime) -> dict[str, float]:
+        """RHS by constraint ID in the latest dispatch interval, if it is recent."""
+        tracker = getattr(self._dispatch_constraints, "tracker", None)
+        latest = getattr(tracker, "latest", None)
+        if latest is None or now - latest.interval_end > DISPATCH_RHS_MAX_AGE:
+            return {}
+        return {c.constraint_id: c.rhs for c in latest.constraints if c.rhs}
 
     def _ends(self, snapshot: PredispatchSnapshot, now: datetime) -> list[datetime]:
         return [end for end in snapshot.period_ends if end > now]
@@ -212,15 +275,20 @@ class NemPd7dayPredispatchConstraintsSensor(_PredispatchSensor):
             return None
         return len(_region_constraints(snapshot.constraints.get(end, ()), self._region))
 
-    def _period_row(self, snapshot: PredispatchSnapshot, end: datetime) -> dict[str, Any]:
-        found = _region_constraints(snapshot.constraints.get(end, ()), self._region)
-        priced = _priced(found)
+    def _period_row(
+        self, snapshot: PredispatchSnapshot, end: datetime, dispatch_rhs: Mapping[str, float],
+    ) -> dict[str, Any]:
+        constraints = snapshot.constraints.get(end, ())
+        found = _region_constraints(constraints, self._region)
+        unassigned = _unassigned_constraints(constraints)
         return {
             "time": _iso(end - PERIOD),
             "nemtime": _iso(end),
             "count": len(found),
-            "max_marginal_value_mwh": max((abs(c.marginal_value) for c in priced), default=0.0),
-            "top": [c.constraint_id for c in priced[:TOP_PER_PERIOD]],
+            "max_marginal_value_mwh": _max_marginal(found),
+            "top": [c.constraint_id for c in _priced(found)[:TOP_PER_PERIOD]],
+            "max_unassigned_marginal_value_mwh": _max_marginal(unassigned),
+            "unassigned": [_unassigned_brief(c, dispatch_rhs) for c in unassigned[:TOP_PER_PERIOD]],
             "rrp": snapshot.prices.get(self._region, {}).get(end),
         }
 
@@ -230,12 +298,15 @@ class NemPd7dayPredispatchConstraintsSensor(_PredispatchSensor):
         attrs = self._run_attrs(snapshot)
         if snapshot is None or end is None:
             return attrs
-        rows = [self._period_row(snapshot, e) for e in self._ends(snapshot, now_nem())]
-        found = _region_constraints(snapshot.constraints.get(end, ()), self._region)
+        now = now_nem()
+        dispatch_rhs = self._dispatch_rhs(now)
+        rows = [self._period_row(snapshot, e, dispatch_rhs) for e in self._ends(snapshot, now)]
+        constraints = snapshot.constraints.get(end, ())
         return {
             **attrs,
-            **{k: v for k, v in rows[0].items() if k != "top"},
-            "binding_nem": len(snapshot.constraints.get(end, ())),
-            "constraints": [_constraint_row(c) for c in found],
+            **{k: v for k, v in rows[0].items() if k not in ("top", "unassigned")},
+            "binding_nem": len(constraints),
+            "constraints": [_constraint_row(c, dispatch_rhs) for c in _region_constraints(constraints, self._region)],
+            "unassigned_constraints": [_constraint_row(c, dispatch_rhs) for c in _unassigned_constraints(constraints)],
             "forecast": rows,
         }
