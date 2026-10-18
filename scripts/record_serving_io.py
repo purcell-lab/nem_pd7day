@@ -34,7 +34,7 @@ Per input it records the inputs, ``json.dumps`` of the ``apply`` output and of
 the ``apply_to_price`` output (insertion order kept, no sort_keys), whether
 each returned object ``is`` the dict ``BucketModel.apply_all`` returned (seen
 by wrapping ``apply_all`` here, never in the code under test), and a branch
-label: the stage 1 path, the serving outcome (one of six gate refusals or one
+label: the stage 1 path, the serving outcome (one of seven gate refusals or one
 of two stage 2 bands) and the spike annotation. The serving outcome is found
 by replaying the gate conditions here, and the replay is checked against the
 output (source label and identity), so a label cannot drift from what the
@@ -91,7 +91,7 @@ STAGE1_LABELS = {
 }
 SERVING_LABELS = (
     "refuse_below_domain", "refuse_inputs", "refuse_model",
-    "refuse_feature_domain", "refuse_sign", "refuse_floor",
+    "refuse_feature_domain", "refuse_sign", "refuse_floor", "refuse_stage1_band",
     "stage2_residual", "stage2_fallback", "store_passthrough",
 )
 SPIKE_LABELS = ("spike_true", "spike_false", "spike_none", "no_annotation")
@@ -353,6 +353,8 @@ def _replay(e: Any, result: Any, stage1: dict, forecast: float, horizon: float, 
         return "refuse_sign"
     if prediction < e.MARKET_PRICE_FLOOR:
         return "refuse_floor"
+    if stage1.get("p90") is not None and prediction > float(stage1["p90"]):
+        return "refuse_stage1_band"
     return "stage2_residual" if ols.residual_band(prediction) is not None else "stage2_fallback"
 
 
