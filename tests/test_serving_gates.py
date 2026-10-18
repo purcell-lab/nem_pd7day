@@ -1,6 +1,6 @@
 """Contract of the serving gate pipeline (spec 005, invariants 3, 4, 5 and 6).
 
-* Invariant 3: ``SERVING_GATES`` holds exactly six gates, in the order
+* Invariant 3: ``SERVING_GATES`` holds exactly seven gates, in the order
   below, each with the issues it guards. Reordering, adding or dropping a
   gate fails here, so it is a visible, reviewed change.
 * Invariant 4: an interval any gate refuses is served the stage 1 dict
@@ -40,6 +40,7 @@ def test_the_gates_their_order_and_their_issues():
         ("FeatureDomainGate", "feature_domain", ("#85", "#147", "#153")),
         ("SignAgreementGate", "sign_agreement", ("#73", "#114")),
         ("MarketFloorGate", "market_floor", ("#114",)),
+        ("Stage1BandGate", "stage1_band", ("#261",)),
     ]
 
 
@@ -114,6 +115,8 @@ CASES = {
     "feature_domain": (0.25, 0.0625, _stpasa(log_demand=50.0), True, ["serves"]),
     "sign_agreement": (0.25, -1.0, _stpasa(), True, ["serves", "predict"]),
     "market_floor": (-0.25, -1.0, _stpasa(), True, ["serves", "predict"]),
+    # Stage 1 at 0.25 is 0.125 with p90 0.3125; stage 2 predicts 0.625.
+    "stage1_band": (0.25, 0.5, _stpasa(), True, ["serves", "predict"]),
     "stage2": (0.25, 0.0625, _stpasa(), True, ["serves", "predict", "residual_band"]),
 }
 

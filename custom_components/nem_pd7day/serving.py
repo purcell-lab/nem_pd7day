@@ -604,6 +604,32 @@ class MarketFloorGate:
         return ctx
 
 
+class Stage1BandGate:
+    """Stage 2 never publishes above the stage 1 p90."""
+
+    name: str = "stage1_band"
+    issues: tuple[str, ...] = ("#261",)
+
+    def __call__(
+        self, ctx: Stage2Context, models: Mapping[str, Stage2Model]
+    ) -> Stage2Context | None:
+        prediction = ctx.prediction
+        assert prediction is not None
+        # The stage 1 p90 is the 90th percentile of what settled at this
+        # forecast in this bucket, clamped up to contain the stage 1 value.
+        # A stage 2 point estimate above it says the likeliest price is in
+        # the bucket's top decile, which an OLS with R² 0.2 to 0.6 cannot
+        # support: on the 16 Oct QLD1 cross-check stage 2 made 98 of the 142
+        # intervals published 3c or more above raw (#261). Refused, not
+        # capped: a point estimate sitting on its own p90 is rarely the
+        # right answer either, so the stage 1 value is served instead.
+        # No fitted q90 line, no bound to hold stage 2 to.
+        p90 = ctx.stage1.get("p90")
+        if p90 is not None and prediction > float(p90):
+            return None
+        return ctx
+
+
 # The order is part of the contract: each gate may rely on the ones before it
 # (the model gate on the inputs gate, the sign and floor gates on the
 # prediction the feature domain gate makes), and ols.serves and ols.predict
@@ -616,6 +642,7 @@ SERVING_GATES: Final[tuple[ServingGate, ...]] = (
     FeatureDomainGate(),
     SignAgreementGate(),
     MarketFloorGate(),
+    Stage1BandGate(),
 )
 
 

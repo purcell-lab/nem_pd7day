@@ -528,10 +528,11 @@ def test_stage_two_serves_a_negative_prediction_when_stage_one_is_negative():
     bucket = _negative_bucket()
     x = -0.05
     assert _raw_iso(bucket, x) < 0.0
-    out = _neg_apply(_result(bucket, -0.03, _resid(-0.02, -0.001, 0.03, key=NEG_KEY)), x)
+    # Below the stage 1 p90 here, 1.10 * -0.05 + 0.02 = -0.035 (#261).
+    out = _neg_apply(_result(bucket, -0.04, _resid(-0.02, -0.001, 0.03, key=NEG_KEY)), x)
     assert out["calibrated_source"] == "isotonic+stpasa"
-    assert out["calibrated"] == -0.03
-    assert out["p10"] == -0.05 and out["p90"] == 0.0, out
+    assert out["calibrated"] == -0.04
+    assert out["p10"] == -0.06 and out["p90"] == -0.01, out
     assert out["p10"] < out["calibrated"] < out["p90"]
 
 
@@ -605,13 +606,17 @@ def test_override_on_top_of_a_passthrough_bucket_is_still_consistent():
     """Stage 2 can fire on a bucket with no isotonic model (the gate tests
     horizon and features, not the stage-1 source). The passthrough band is
     deliberately unclamped, but once the point estimate is a calibrated
-    stage-2 value the band must contain it."""
+    stage-2 value the band must contain it. Stage 2 cannot go above the
+    stage 1 p90 (#261), so the override here sits below the band."""
     bucket = _bucket(with_iso=False, q10_a=1.0, q10_b=0.05, q50_a=1.0, q50_b=0.10, q90_a=1.0, q90_b=0.15)
-    out = _apply(_result(bucket, prediction=0.4), 0.1)
+    out = _apply(_result(bucket, prediction=0.12), 0.1)
     assert out["calibrated_source"] == "isotonic+stpasa"
-    assert out["calibrated"] == 0.4
-    assert out["p90"] == 0.4, f"p90 must rise to contain the override, got {out['p90']}"
+    assert out["calibrated"] == 0.12
+    assert out["p10"] == 0.12, f"p10 must fall to contain the override, got {out['p10']}"
     _assert_consistent(out, "override over passthrough")
+
+    above = _apply(_result(bucket, prediction=0.4), 0.1)
+    assert above["calibrated_source"] == "passthrough", "above the stage 1 p90 is refused (#261)"
 
 
 def test_invariant_holds_across_every_source_and_horizon():
@@ -716,12 +721,18 @@ def test_stage2_band_is_the_prediction_plus_its_residual_quantiles():
 def test_stage2_band_never_collapses_onto_the_point_estimate():
     """Sweep the prediction far outside the stage-1 lines: with re-clamped
     lines every prediction below 0.08 collapsed p10 and above 0.14 collapsed
-    p90 at this forecast; a residual band sits a fixed distance away."""
+    p90 at this forecast; a residual band sits a fixed distance away. A
+    prediction above the stage 1 p90 is not served at all (#261)."""
     resid = _resid(-0.02, 0.0, 0.03)
     collapsed = []
+    served = 0
     for forecast in (0.01, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0):
         for prediction in (0.001, 0.02, 0.05, 0.09, 0.13, 0.2, 0.4, 0.9, 2.5):
             out = _apply(_result(_bucket(), prediction, resid), forecast)
+            if prediction > _bucket().apply_all(forecast)["p90"]:
+                assert out["calibrated_source"] == "isotonic", out
+                continue
+            served += 1
             assert out["calibrated_source"] == "isotonic+stpasa", out
             assert out[BAND_SOURCE_KEY] == BAND_SOURCE_STAGE2
             v, p10, p90 = out["calibrated"], out["p10"], out["p90"]
@@ -729,6 +740,7 @@ def test_stage2_band_never_collapses_onto_the_point_estimate():
             if p90 == v or (p10 == v and p10 > 0.0):
                 collapsed.append((forecast, prediction, out))
     assert not collapsed, f"{len(collapsed)} collapsed bounds, first {collapsed[0]}"
+    assert served >= 20
 
 
 def test_lower_bound_reaching_below_zero_is_published():
@@ -747,8 +759,8 @@ def test_lower_bound_is_floored_at_the_market_floor():
 
 
 def test_a_wide_residual_band_is_published_in_full():
-    out = _apply(_result(_bucket(), 0.5, _resid(-0.3, 0.01, 0.9)), 0.2)
-    assert out["p10"] == 0.2 and out["p50"] == 0.51 and out["p90"] == 1.4
+    out = _apply(_result(_bucket(), 0.12, _resid(-0.3, 0.01, 0.9)), 0.2)
+    assert out["p10"] == -0.18 and out["p50"] == 0.13 and out["p90"] == 1.02
 
 
 def test_residual_quantiles_are_rejected_when_they_do_not_bracket_zero():
@@ -778,10 +790,11 @@ def test_fallback_reproduces_the_v340_band_and_says_so():
     assert (below["p10"], below["p50"], below["p90"]) == (0.03, 0.1, 0.14)
     _assert_consistent(below, "fallback below p10")
 
+    # Above the stage 1 p90 stage 2 is refused (#261), so the other
+    # direction of the old collapse is no longer reachable.
     above = _apply(_result(_bucket(), 0.25, None), 0.2)
-    assert above[BAND_SOURCE_KEY] == BAND_SOURCE_STAGE2_FALLBACK
-    assert (above["p10"], above["p50"], above["p90"]) == (0.08, 0.1, 0.25)
-    _assert_consistent(above, "fallback above p90")
+    assert above["calibrated_source"] == "isotonic"
+    _assert_consistent(above, "refused above p90")
 
 
 def test_the_old_collapse_side_follows_the_displacement_sign():
@@ -797,10 +810,10 @@ def test_the_old_collapse_side_follows_the_displacement_sign():
         out = _apply(_result(bucket, prediction, None), 0.2)
         assert out["p10"] == out["calibrated"], f"{prediction} should collapse p10"
         assert out["p90"] != out["calibrated"]
+    # The p90 side is now refused rather than collapsed (#261).
     for prediction in (0.141, 0.2, 0.5):
         out = _apply(_result(bucket, prediction, None), 0.2)
-        assert out["p90"] == out["calibrated"], f"{prediction} should collapse p90"
-        assert out["p10"] != out["calibrated"]
+        assert out["calibrated_source"] == "isotonic", f"{prediction} should be refused"
 
 
 def test_band_source_is_published_on_every_path():
@@ -1619,7 +1632,8 @@ def test_legacy_model_without_ranges_serves_as_before():
     """A store written before #147 has no ranges; the gate must pass."""
     _engine, result, rf = _low_demand_fit()
     result.ols_models[_FD_KEY] = OlsModel(
-        bucket_key=_FD_KEY, coef=[0.02, 1.10, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], n_train=120, r2=0.8,
+        # Stage 2 equal to stage 1, so the #261 band gate admits it too.
+        bucket_key=_FD_KEY, coef=[0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], n_train=120, r2=0.8,
     )
     assert result.ols_models[_FD_KEY].serves([0.0] * 9)
     out = _fd_apply(result, 0.12, rf, _stpasa_at_demand(_LIVE_DEMAND_MW))
