@@ -225,6 +225,13 @@ OLS_MIN_OBS = 50
 # spike, a high midday) cannot set the price for every forecast in its range
 # (#247, #264).
 ISO_FULL_SUPPORT_DAYS = 10
+# Solar elevation, degrees, above which an interval outside the peak hours is
+# labelled "solar"; from 0 to here it is "morning_ramp". 15 until #267: in
+# spring that took in shoulder hours whose prices behave differently, the
+# morning ramp from about 06:30 and 15:00 to 16:00 as prices climb into the
+# evening peak, and 25 cut out-of-sample stage-1 error on rebuilt QLD1 data
+# from 2.904 to 2.865 c.
+SOLAR_ELEVATION_MIN_DEG = 25.0
 # Inside this raw range, $/kWh, a step on fewer than ISO_FULL_SUPPORT_DAYS
 # days serves the raw forecast itself: at ordinary prices PD7DAY is about as
 # accurate as the calibration (#264). Outside it raw is far off (negative
