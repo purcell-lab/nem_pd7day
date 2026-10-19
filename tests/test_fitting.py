@@ -442,3 +442,78 @@ def test_a_bucket_without_an_isotonic_model_reports_none():
     result = ce.CalibrationResult(fitted_at="x", total_observations=1, models={"h96plus__peak": model})
     bucket = result.summary()["buckets"]["h96plus__peak"]
     assert bucket["iso_top"] is None and bucket["iso_bottom"] is None
+
+
+# ── A thin step serves raw at ordinary prices, or leans on its neighbours (#264) ──
+# On 18 Oct 2026 QLD1 served 16.9 c for a raw 10.5 c at 06:30 on the 20th: the
+# h24_48__solar step over raw 10.2 to 11.7 c held 18 rows from 13 Oct (forecast
+# 10 to 12 c, settled 17 to 32 c) beside rows from seven other days that settled
+# at 5 to 10 c. Eight days is 80 per cent support under #247, so the step was
+# barely pulled. A thin step now serves the raw forecast at ordinary prices, and
+# leans on the fully supported steps around it elsewhere; stage 2 keeps the
+# #247 map.
+
+def _ordinary_then_one_day():
+    """Supported rows at raw 0-8 c over 50 days; raw 10-12 c on three days near
+    8 c and on one day (13 Oct) at 30 c."""
+    rng = np.random.default_rng(21)
+    extra = [(float(rng.uniform(0.10, 0.12)), 0.30, 0) for _ in range(18)]
+    extra += [(float(rng.uniform(0.10, 0.12)), 0.08, int(d)) for d in (3, 9, 17)]
+    return _bucket(
+        21, 1500,
+        lambda rng, n: rng.uniform(0.0, 0.08, n),
+        lambda rng, x: 0.01 + 0.8 * x + rng.normal(0, 0.01, len(x)),
+        extra,
+    )
+
+
+def test_a_thin_step_at_ordinary_prices_serves_raw():
+    x, y, w, days = _ordinary_then_one_day()
+    model, bucket = _fit("h24_48__solar", x, y, w, days)
+    assert bucket["iso_top"]["days"] < _const.ISO_FULL_SUPPORT_DAYS
+    for raw in (0.10, 0.105, 0.11, 0.115):
+        assert _serve(model, raw) == pytest.approx(raw, abs=0.002), raw
+    # The rows below are supported and keep their fitted map.
+    assert _serve(model, 0.04) == pytest.approx(0.01 + 0.8 * 0.04, abs=0.01)
+
+
+def test_a_thin_top_step_leans_on_the_supported_step_below():
+    """Above the raw range a thin top step leans on the last step on enough
+    days, not on the p50 line extrapolated out to a spike forecast."""
+    rng = np.random.default_rng(4)
+    extra = [(float(rng.uniform(0.8, 1.0)), 0.60, 0) for _ in range(6)]
+    x, y, w, days = _bucket(
+        4, 1500,
+        lambda rng, n: rng.uniform(0.2, 0.4, n),
+        lambda rng, x: 0.05 + 0.5 * x + rng.normal(0, 0.01, len(x)),
+        extra,
+    )
+    model, bucket = _fit("h24_48__peak", x, y, w, days)
+    top = bucket["iso_top"]
+    assert top["days"] == 1
+    support = top["days"] / _const.ISO_FULL_SUPPORT_DAYS
+    below = _serve(model, 0.399)
+    for raw in (0.85, 0.9, 1.0):
+        leaning = below + support * (top["level"] - below)
+        on_the_line = model.q50.apply(raw) + support * (top["level"] - model.q50.apply(raw))
+        assert _serve(model, raw) == pytest.approx(leaning, abs=0.01), raw
+        assert _serve(model, raw) < on_the_line - 0.1, raw
+
+
+def test_stage2_reads_the_247_map():
+    """predict_feature is the #247 map: every thin step pulled toward the p50
+    line in proportion to its days, whatever the published map serves."""
+    x, y, w, days = _ordinary_then_one_day()
+    model, _ = _fit("h24_48__solar", x, y, w, days)
+    order = np.argsort(x, kind="stable")
+    xs, ys, ws, ds = x[order], y[order], w[order], days[order]
+    level = np.empty(len(xs))
+    support = np.empty(len(xs))
+    for start, end, lv in ce._pav_median_blocks(ys, ws):
+        level[start:end] = lv
+        support[start:end] = min(1.0, len(np.unique(ds[start:end])) / _const.ISO_FULL_SUPPORT_DAYS)
+    prior = model.q50.a * xs + model.q50.b
+    expected = ce._pav(prior + support * (level - prior), ws)
+    assert model.iso_model.predict_feature(xs) == pytest.approx(expected, abs=1e-12)
+    raw = 0.11
+    assert float(model.iso_model.predict_feature(np.array([raw]))[0]) > _serve(model, raw) + 0.02

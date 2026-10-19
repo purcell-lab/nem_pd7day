@@ -123,10 +123,12 @@ def stage2_iso_feature(calibrated: dict, forecast: float) -> float:
     value, and publishing 0.0 in its place turned "paid to consume" into
     "free" on about one interval in nine on the live install.
 
-    The feature and the published price are now the same number on the
-    isotonic path. The separate key is kept so a store or caller from before
-    the split keeps working, and so the two cannot drift apart again if a
-    floor is ever reintroduced on one side.
+    The feature and the published price were then the same number on the
+    isotonic path. Issue #264 parted them again, deliberately and at the map
+    rather than the floor: the published value serves a thin step raw or on
+    its supported neighbours, and the feature stays on the #247 map, which
+    stage 2 is fitted on (see IsotonicRegression.predict_feature). Both are
+    floored at the market floor alone.
 
     The dict fallbacks are for a caller holding a result dict built before this
     split existed, which degrades to the previous behaviour instead of raising.
@@ -161,6 +163,8 @@ class IsotonicModel(Protocol):
     """``calibration_engine.IsotonicRegression``, as stage 1 calls it."""
 
     def predict(self, x: np.ndarray) -> np.ndarray: ...
+
+    def predict_feature(self, x: np.ndarray) -> np.ndarray: ...
 
 
 class BucketStats(Protocol):
@@ -332,6 +336,7 @@ def stage1_isotonic(bucket: Stage1Bucket, x: float) -> dict:
     assert iso_model is not None  # BucketModel.apply_all routes here only with one
     iso_raw = float(iso_model.predict(np.asarray([x], dtype=float))[0])
     calibrated = max(iso_raw, MARKET_PRICE_FLOOR)
+    feature = max(float(iso_model.predict_feature(np.asarray([x], dtype=float))[0]), MARKET_PRICE_FLOOR)
 
     # Clamp the band so it contains calibrated and stays ordered.
     p10, p50, p90 = _clamp_band(calibrated, *bucket.raw_band(x))
@@ -345,8 +350,10 @@ def stage1_isotonic(bucket: Stage1Bucket, x: float) -> dict:
         # branch used to publish the unfloored iso_raw here instead, so a
         # fitted step dragged below MARKET_PRICE_FLOOR by a corrupt
         # observation batch fed stage 2 a feature more extreme than the
-        # price it was ever shown next to (issue #144).
-        ISO_FEATURE_KEY: round(calibrated, 6),
+        # price it was ever shown next to (issue #144). Since #264 it is
+        # read from the map stage 2 is fitted on, floored the same way; on a
+        # step with enough days the two maps agree.
+        ISO_FEATURE_KEY: round(feature, 6),
         "p10": round(p10, 6) if p10 is not None else None,
         "p50": round(p50, 6) if p50 is not None else None,
         "p90": round(p90, 6) if p90 is not None else None,

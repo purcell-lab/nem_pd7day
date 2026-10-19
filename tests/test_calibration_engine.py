@@ -72,15 +72,16 @@ def make_obs(
     horizon_hours: float = 12.0,
     hour_of_day: int = 14,
     is_intervention: bool = False,
+    day_offset: int = 0,
 ) -> Observation:
     """One observation whose interval_time matches hour_of_day, inside the window."""
-    interval_dt = _obs_day().replace(hour=hour_of_day)
+    interval_dt = _obs_day(day_offset).replace(hour=hour_of_day)
     return Observation(
         interval_time=interval_dt.isoformat(),
         horizon_hours=horizon_hours,
         pd7day_forecast=forecast,
         actual_rrp=actual,
-        forecast_run_at=_obs_iso(offset_days=-1, hour=3, minute=30),
+        forecast_run_at=_obs_iso(offset_days=day_offset - 1, hour=3, minute=30),
         hour_of_day=hour_of_day,
         day_of_week=interval_dt.weekday(),
         month=interval_dt.month,
@@ -109,9 +110,15 @@ def _make_obs_batch(
 ) -> list[Observation]:
     rng = random.Random(seed)
     obs = []
-    for _ in range(n):
-        fc = rng.uniform(0.05, 0.25)
-        obs.append(make_obs(fc, a * fc + b + rng.gauss(0, noise), horizon_hours, hour_of_day))
+    for i in range(n):
+        # Four forecast levels, each seen on many days: every isotonic step
+        # then spans ISO_FULL_SUPPORT_DAYS days and is served as fitted. A
+        # batch on one day, or on a continuum of levels each seen once, is a
+        # map of thin steps, and a thin step at ordinary prices serves raw
+        # (#264).
+        fc = rng.choice((0.06, 0.11, 0.16, 0.21))
+        obs.append(make_obs(fc, a * fc + b + rng.gauss(0, noise), horizon_hours, hour_of_day,
+                            day_offset=-(i % 30)))
     return obs
 
 

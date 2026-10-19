@@ -220,10 +220,16 @@ MIN_OBS = 10
 # and non-positive predictions clamped silently to 0.
 OLS_MIN_OBS = 50
 # An isotonic step is served as fitted only when its training rows span at
-# least this many distinct days. A step on fewer days is pulled toward the
-# bucket's p50 line in proportion, so one day's event (a pre-dawn spike, a
-# high midday) cannot set the price for every forecast in its range (#247).
+# least this many distinct days. A step on fewer days is pulled in proportion
+# toward the nearest step that does span them, so one day's event (a pre-dawn
+# spike, a high midday) cannot set the price for every forecast in its range
+# (#247, #264).
 ISO_FULL_SUPPORT_DAYS = 10
+# Inside this raw range, $/kWh, a step on fewer than ISO_FULL_SUPPORT_DAYS
+# days serves the raw forecast itself: at ordinary prices PD7DAY is about as
+# accurate as the calibration (#264). Outside it raw is far off (negative
+# troughs, price-cap evenings) and the neighbour pull applies instead.
+ISO_RAW_FALLBACK_RANGE = (0.0, 0.15)
 # Stage-2 rows whose hat-matrix leverage exceeds this multiple of the mean
 # leverage p/n are dropped and the bucket refitted once. The textbook screen
 # for influential points in OLS: one isolated row far from the cluster can
