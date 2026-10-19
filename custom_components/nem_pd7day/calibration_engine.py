@@ -33,8 +33,8 @@ Implementation of:
 
      ToD labels (solar elevation via astral, NEM UTC+10):
        peak:          NEM hour 16–20 (hardcoded, overrides solar)
-       solar:         solar elevation > 15°, not peak
-       morning_ramp:  solar elevation 0°–15°, not peak (~05:00–09:00 NEM)
+       solar:         solar elevation > 25°, not peak (#267)
+       morning_ramp:  solar elevation 0°–25°, not peak (~05:00–09:00 NEM)
        shoulder:      solar elevation ≤ 0° (overnight)
 
   4. Feature vector
@@ -113,6 +113,7 @@ from .const import (
     IRLS_TOL,
     ISO_FULL_SUPPORT_DAYS,
     ISO_RAW_FALLBACK_RANGE,
+    SOLAR_ELEVATION_MIN_DEG,
     MAX_OBS as MAX_OBS,
     MIN_OBS,
     OLS_MIN_OBS,
@@ -1211,7 +1212,7 @@ def _tod_label_solar(dt_nem: datetime, region: str, raw_label: str) -> str:
     dt_utc = dt_nem.astimezone(timezone.utc)
     el = solar_elevation(loc.observer, dt_utc)
 
-    if el > 15.0:
+    if el > SOLAR_ELEVATION_MIN_DEG:
         return "solar"
     if el > 0.0:
         return "morning_ramp"

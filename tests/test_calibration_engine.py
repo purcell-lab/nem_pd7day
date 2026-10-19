@@ -210,6 +210,11 @@ def test_tod_label_solar_fixed_windows_hold_in_every_region(region):
     (datetime(2026, 4, 15, 7, 0), "QLD1", "morning_ramp"),  # Brisbane April 7am, el ~11 deg
     (datetime(2026, 4, 15, 6, 0), "QLD1", "shoulder"),      # Brisbane April 6am, el ~ -2 deg
     (datetime(2026, 4, 15, 23, 0), "QLD1", "shoulder"),     # Brisbane 11pm
+    # Solar starts above 25 degrees (#267); 06:30 was solar under 15.
+    (datetime(2026, 10, 18, 6, 30), "QLD1", "morning_ramp"),  # el 17.0 deg
+    (datetime(2026, 10, 18, 7, 0), "QLD1", "morning_ramp"),   # el 23.6 deg
+    (datetime(2026, 10, 18, 7, 30), "QLD1", "solar"),         # el 30.2 deg
+    (datetime(2026, 10, 18, 15, 30), "QLD1", "solar"),        # el 31.7 deg, until peak
 ])
 def test_tod_label_solar_by_elevation(dt, region, expected):
     # raw_label is not "shoulder", so a shoulder answer cannot come from the

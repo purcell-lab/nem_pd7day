@@ -16,6 +16,8 @@ import io
 import logging
 from typing import TYPE_CHECKING
 
+from .const import SOLAR_ELEVATION_MIN_DEG
+
 if TYPE_CHECKING:
     from .calibration_engine import CalibrationResult
     from .tod_stats import TodStats
@@ -26,7 +28,12 @@ _LOGGER = logging.getLogger(__name__)
 _HORIZONS   = ["h00_06", "h06_12", "h12_24", "h24_48"]
 _HOR_LABELS = ["0-6h ahead", "6-12h ahead", "12-24h ahead", "24-48h ahead"]
 _TODS       = ["shoulder", "morning_ramp", "solar", "peak"]
-_TOD_LABELS = ["Shoulder\nel≤0°", "Morning Ramp\n0°<el≤15°", "Solar\nel>15°", "Peak\n16-21h"]
+_TOD_LABELS = [
+    "Shoulder\nel≤0°",
+    f"Morning Ramp\n0°<el≤{SOLAR_ELEVATION_MIN_DEG:.0f}°",
+    f"Solar\nel>{SOLAR_ELEVATION_MIN_DEG:.0f}°",
+    "Peak\n16-21h",
+]
 _TOD_COL    = {
     "shoulder":     "#7D3C98",
     "morning_ramp": "#E67E22",
