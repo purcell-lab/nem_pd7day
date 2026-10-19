@@ -286,13 +286,13 @@ def _obs_iso(hour: int, offset_days: int = 0) -> str:
     return (_OBS_ANCHOR + timedelta(days=offset_days)).replace(hour=hour).isoformat()
 
 
-def _make_obs(forecast, actual, horizon=3.0, hour=21):
+def _make_obs(forecast, actual, horizon=3.0, hour=21, day=0):
     return Observation(
-        interval_time=_obs_iso(hour=21),
+        interval_time=_obs_iso(hour=21, offset_days=day),
         horizon_hours=horizon,
         pd7day_forecast=forecast,
         actual_rrp=actual,
-        forecast_run_at=_obs_iso(hour=18),
+        forecast_run_at=_obs_iso(hour=18, offset_days=day),
         hour_of_day=hour,
         day_of_week=_OBS_ANCHOR.weekday(),
         month=_OBS_ANCHOR.month,
@@ -313,8 +313,8 @@ def test_isotonic_handles_large_negative_actuals():
     rng = random.Random(42)
     # Near-constant forecast (~0.003), actual = -3.15 → isotonic floors at 0.0
     obs = [
-        _make_obs(forecast=rng.uniform(0.001, 0.005), actual=-3.15 + rng.gauss(0, 0.01))
-        for _ in range(30)
+        _make_obs(forecast=rng.uniform(0.001, 0.005), actual=-3.15 + rng.gauss(0, 0.01), day=-(i % 15))
+        for i in range(30)
     ]
     engine = CalibrationEngine()
     result = engine.fit(obs)
@@ -344,9 +344,8 @@ def test_high_ratio_isotonic_flows_through():
         _make_obs(
             forecast=rng.uniform(0.08, 0.12),
             actual=6 * rng.uniform(0.08, 0.12) + rng.gauss(0, 0.005),
-            horizon=3.0, hour=21
-        )
-        for _ in range(40)
+            horizon=3.0, hour=21, day=-(i % 15))
+        for i in range(40)
     ]
     engine = CalibrationEngine()
     result = engine.fit(obs)
@@ -374,9 +373,8 @@ def test_sanity_guard_ratio_skipped_below_floor():
         _make_obs(
             forecast=rng.uniform(0.008, 0.012),
             actual=rng.uniform(0.050, 0.058),
-            horizon=3.0, hour=21
-        )
-        for _ in range(40)
+            horizon=3.0, hour=21, day=-(i % 40))
+        for i in range(120)
     ]
     engine = CalibrationEngine()
     result = engine.fit(obs)
@@ -403,9 +401,8 @@ def test_large_abs_diff_isotonic_flows_through():
         _make_obs(
             forecast=rng.uniform(0.08, 0.12),
             actual=4.5 * rng.uniform(0.08, 0.12) + rng.gauss(0, 0.005),
-            horizon=3.0, hour=21
-        )
-        for _ in range(40)
+            horizon=3.0, hour=21, day=-(i % 15))
+        for i in range(40)
     ]
     engine = CalibrationEngine()
     result = engine.fit(obs)

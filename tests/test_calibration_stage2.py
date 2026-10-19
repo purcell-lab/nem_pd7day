@@ -258,6 +258,10 @@ def _raw_iso(bucket: BucketModel, x: float) -> float:
     return float(bucket.iso_model.predict(np.asarray([x], dtype=float))[0])
 
 
+def _feature_iso(bucket: BucketModel, x: float) -> float:
+    return float(bucket.iso_model.predict_feature(np.asarray([x], dtype=float))[0])
+
+
 def _neg_apply(res: CalibrationResult, forecast: float) -> dict:
     return _apply(res, forecast, hour=NEG_HOUR, stpasa=ZERO_STPASA, run_features=ZERO_RUN)
 
@@ -1088,7 +1092,8 @@ def test_fit_path_uses_the_same_unfloored_feature_as_serving():
         bucket = iso_result.get_bucket(obs.horizon_hours, obs.hour_of_day, obs_dt, "QLD1")
         if bucket.is_below_domain(obs.pd7day_forecast):
             continue
-        feature = round(_raw_iso(bucket, obs.pd7day_forecast), 6)
+        # Stage 2 reads the #247 map, not the published one (#264).
+        feature = round(_feature_iso(bucket, obs.pd7day_forecast), 6)
         rows.append(([1.0] + _feature_vec(feature, rf, sf, obs.horizon_hours), obs.actual_rrp))
     assert len(rows) >= OLS_MIN_OBS
     X = np.array([r[0] for r in rows], dtype=float)
@@ -1104,7 +1109,7 @@ def test_fit_path_uses_the_same_unfloored_feature_as_serving():
     # to 0.0. The value is read from the map: since #247 a step is levelled at
     # its median and pulled toward p50 when its rows span few days.
     target = iso_result.models[TARGET]
-    depth_feature = round(_raw_iso(target, _FLOORED_DEPTH), 6)
+    depth_feature = round(_feature_iso(target, _FLOORED_DEPTH), 6)
     assert depth_feature < 0.0
     promoted = int(np.isclose(X[:, 1], depth_feature).sum())
     negatives = int((X[:, 1] < 0.0).sum())

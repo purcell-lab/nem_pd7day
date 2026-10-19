@@ -112,6 +112,7 @@ from .const import (
     IRLS_ITER,
     IRLS_TOL,
     ISO_FULL_SUPPORT_DAYS,
+    ISO_RAW_FALLBACK_RANGE,
     MAX_OBS as MAX_OBS,
     MIN_OBS,
     OLS_MIN_OBS,
@@ -251,6 +252,63 @@ def _step_summary(step: IsoStep | None) -> dict[str, Any] | None:
     }
 
 
+def _pull_toward_supported_neighbours(
+    prior: np.ndarray, xs: np.ndarray, blocks: list[tuple[int, int, float]], level: np.ndarray,
+    support: np.ndarray,
+) -> None:
+    """Point each thin step's prior at the fully supported steps around it (#264), in place.
+
+    The p50 line is a straight line through a curve, a poor stand-in for what
+    a thin step should have said: pulling harder toward it removed the 06:30
+    artefact of #264 and cost accuracy everywhere else. The steps on enough
+    days either side are evidence at neighbouring forecasts, so a thin step
+    between two of them leans on the line joining them, and a thin step above
+    the last one (the top of the map, where spike forecasts sit) leans on that
+    step's level. Below the first supported step, or in a bucket with none,
+    the p50 line stays: lifting a thin bottom step toward the step above it
+    would turn mild negative forecasts positive, the bias of #85.
+    """
+    supported = [(start, end) for start, end, _ in blocks if support[start] >= 1.0]
+    if not supported:
+        return
+    for start, end, _ in blocks:
+        if support[start] >= 1.0:
+            continue
+        lower = [b for b in supported if b[1] <= start]
+        upper = [b for b in supported if b[0] >= end]
+        if not lower:
+            continue
+        lo_end = lower[-1][1] - 1
+        if not upper:
+            prior[start:end] = level[lo_end]
+            continue
+        up_start = upper[0][0]
+        prior[start:end] = np.interp(
+            xs[start:end], (xs[lo_end], xs[up_start]), (level[lo_end], level[up_start])
+        )
+
+
+def _served_map(
+    xs: np.ndarray, ws: np.ndarray, blocks: list[tuple[int, int, float]], level: np.ndarray,
+    support: np.ndarray, prior: np.ndarray,
+) -> np.ndarray:
+    """The published map (#264), made monotone again by a weighted-mean PAV.
+
+    A thin step serves the raw forecast where it is inside
+    ISO_RAW_FALLBACK_RANGE; elsewhere it is pulled in proportion toward the
+    fully supported steps around it (see _pull_toward_supported_neighbours),
+    or toward the prior where there is none below it.
+    """
+    p = prior.copy()
+    _pull_toward_supported_neighbours(p, xs, blocks, level, support)
+    fitted = _pav(p + support * (level - p), ws)
+    lo, hi = ISO_RAW_FALLBACK_RANGE
+    raw = (support < 1.0) & (xs >= lo) & (xs <= hi)
+    if raw.any():
+        fitted = _pav(np.where(raw, xs, fitted), ws)
+    return fitted
+
+
 class IsotonicRegression:
     """Weighted isotonic regression (monotone non-decreasing) via PAV.
 
@@ -272,6 +330,9 @@ class IsotonicRegression:
         # out_of_bounds='clip' is supported (the only mode used by this integration).
         self._x_thresholds: np.ndarray | None = None
         self._y_thresholds: np.ndarray | None = None
+        # The map stage 2 reads its feature from (#264); None means the same
+        # map as the published one.
+        self._y_feature: np.ndarray | None = None
         self.bottom_step: IsoStep | None = None
         self.top_step: IsoStep | None = None
 
@@ -286,14 +347,13 @@ class IsotonicRegression:
         """Fit the map to (x, y) pairs with optional decay weights (#247).
 
         Steps are pooled at their weighted median. With ``days`` (one day key
-        per row) and ``prior`` (the value to fall back on at each row, the
-        bucket's p50 line), a step spanning fewer than ISO_FULL_SUPPORT_DAYS
-        distinct days is pulled toward the prior in proportion, and the
-        result is made monotone again by a weighted-mean PAV. Without them
-        the map is the plain weighted-median isotonic fit.
-
-        Also records the map's end steps (bottom_step, top_step) with their
-        support, for the calibration summary.
+        per row) and ``prior`` (the bucket's p50 line at each row), a step on
+        fewer than ISO_FULL_SUPPORT_DAYS distinct days is not served as fitted
+        (#247, #264): see _served_map. Stage 2 reads its feature from the
+        #247 map instead, every thin step pulled toward the prior (see
+        predict_feature). Without ``days`` and ``prior`` the map is the plain
+        weighted-median isotonic fit. Also records the map's end steps
+        (bottom_step, top_step) with their support, for the summary.
         """
         x_arr = np.asarray(x, dtype=float)
         y_arr = np.asarray(y, dtype=float)
@@ -315,12 +375,14 @@ class IsotonicRegression:
             block_days.append(n_days)
             if n_days is not None:
                 support[start:end] = min(1.0, n_days / ISO_FULL_SUPPORT_DAYS)
-        fitted = level
+        fitted = feature = level
         if prior is not None:
             p = np.asarray(prior, dtype=float)[order]
-            fitted = _pav(p + support * (level - p), ws)
+            feature = _pav(p + support * (level - p), ws)
+            fitted = feature if ds is None else _served_map(xs, ws, blocks, level, support, p)
         self._x_thresholds = xs
         self._y_thresholds = fitted
+        self._y_feature = None if fitted is feature else feature
         if blocks:
             self.bottom_step = self._step(blocks[0], block_days[0], ws)
             self.top_step = self._step(blocks[-1], block_days[-1], ws)
@@ -349,6 +411,26 @@ class IsotonicRegression:
         if self._x_thresholds is None or len(self._x_thresholds) == 0:
             return None
         return float(self._x_thresholds[0])
+
+    def predict_feature(self, x: np.ndarray) -> np.ndarray:
+        """The map stage 2 takes its first feature from (#264).
+
+        Stage 2 is fitted on, and served with, the #247 map: every thin step
+        pulled toward the p50 line. The published map is not used because its
+        rule switches by step support (raw at ordinary prices, a neighbouring
+        step elsewhere), so a few rows moving between thin and supported
+        steps move the feature in jumps, and on the #85 fixture that moved
+        the fitted iso_cal coefficient by up to 11 per cent against under 3
+        on this map. Training and serving read the same map, so the two
+        cannot drift apart.
+        """
+        if self._y_feature is None:
+            return self.predict(x)
+        assert self._x_thresholds is not None
+        return np.interp(
+            np.asarray(x, dtype=float), self._x_thresholds, self._y_feature,
+            left=self._y_feature[0], right=self._y_feature[-1],
+        )
 
     def predict(self, x: np.ndarray) -> np.ndarray:
         """Calibrate new forecast values.
