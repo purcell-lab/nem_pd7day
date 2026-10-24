@@ -361,3 +361,23 @@ def test_apply_export_tariff_to_spot_passes_the_interval_end(minute, expected_en
     end = lib.call_args.args[0]
     assert (end.hour, end.minute, end.second, end.microsecond) == (*expected_end, 0, 0)
 
+
+
+# ── Day 2-7 export: first point and interpolation mode (#270) ────────────────
+
+def test_day27_export_moves_the_first_point_past_ambers_end():
+    """As the import day 2-7 sensor: the first point a second after Amber's end,
+    interpolation_mode previous, forecast_start at the interval's own start."""
+    base = datetime(2026, 9, 2, 4, 0, tzinfo=NEM_TZ)
+    at = base + timedelta(hours=24)
+    sensor = make_export_sensor(price_periods=[
+        make_price_period(base + timedelta(minutes=30 * (i + 1)), value=0.05) for i in range(96)
+    ])
+    sensor.__class__ = _tariff_mod.ExportTariffForecastDays27Sensor
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_feed_in_tariff", return_value=5.0), \
+            patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(at, "amber")):
+        attrs = sensor.extra_state_attributes
+    assert attrs["forecast_start"] == nem_iso(at)
+    assert attrs["forecast"][0]["time"] == nem_iso(at + timedelta(seconds=1))
+    assert attrs["forecast"][1]["time"] == nem_iso(at + timedelta(minutes=30))
+    assert attrs["interpolation_mode"] == "previous"

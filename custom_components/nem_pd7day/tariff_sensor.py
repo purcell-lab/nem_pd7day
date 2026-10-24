@@ -25,10 +25,12 @@ from homeassistant.util import dt as dt_util
 from .const import (
     ATTR_FORECAST_START,
     ATTR_FORECAST_START_SOURCE,
+    ATTR_INTERPOLATION_MODE,
     DEFAULT_ADDITIONAL_FEE,
     DEFAULT_ENABLED_TARIFFS,
     DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
+    INTERPOLATION_PREVIOUS,
     additional_fee_entity_id,
     additional_fee_unique_id,
 )
@@ -37,7 +39,7 @@ from .calibrated_forecast import CalibratedForecast
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from . import tariff_pricing
 from .tariff_catalogue import library_version, seasonal as seasonal_tariff, tariff_name as catalogue_tariff_name
-from .nem_time import now_nem, parse_iso
+from .nem_time import now_nem, offset_seam_point, parse_iso
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -709,11 +711,12 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         attrs = super().extra_state_attributes
         forecast = attrs.pop("forecast", [])
+        start = None if self._price_data is None else day27_start_for(self.hass, self._amber_ids)
         attrs[ATTR_FORECAST_START] = forecast[0]["time"] if forecast else None
-        attrs[ATTR_FORECAST_START_SOURCE] = (
-            None if self._price_data is None else day27_start_for(self.hass, self._amber_ids).source
-        )
-        attrs["forecast"] = forecast
+        attrs[ATTR_FORECAST_START_SOURCE] = None if start is None else start.source
+        attrs["forecast"] = forecast if start is None else offset_seam_point(forecast, start)
+        # Each value is the price of the block starting at its time (#270)
+        attrs[ATTR_INTERPOLATION_MODE] = INTERPOLATION_PREVIOUS
         return attrs
 
 
@@ -949,9 +952,10 @@ class ExportTariffForecastDays27Sensor(NemPd7dayExportTariffSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         attrs = super().extra_state_attributes
         forecast = attrs.pop("forecast", [])
+        start = None if self._price_data is None else day27_start_for(self.hass, self._amber_ids)
         attrs[ATTR_FORECAST_START] = forecast[0]["time"] if forecast else None
-        attrs[ATTR_FORECAST_START_SOURCE] = (
-            None if self._price_data is None else day27_start_for(self.hass, self._amber_ids).source
-        )
-        attrs["forecast"] = forecast
+        attrs[ATTR_FORECAST_START_SOURCE] = None if start is None else start.source
+        attrs["forecast"] = forecast if start is None else offset_seam_point(forecast, start)
+        # Each value is the price of the block starting at its time (#270)
+        attrs[ATTR_INTERPOLATION_MODE] = INTERPOLATION_PREVIOUS
         return attrs

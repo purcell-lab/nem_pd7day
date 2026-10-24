@@ -681,6 +681,11 @@ ATTR_FORECAST = "forecast"
 # or the clock rule placed it (#235).
 ATTR_FORECAST_START = "forecast_start"
 ATTR_FORECAST_START_SOURCE = "forecast_start_source"
+# Day 2-7 sensors: how HAEO reads the forecast between its points (#270). Each
+# value is the price of the 30-minute block starting at its time, so it holds
+# until the next point.
+ATTR_INTERPOLATION_MODE = "interpolation_mode"
+INTERPOLATION_PREVIOUS = "previous"
 ATTR_SOURCE_FILE = "source_file"
 
 # ── CASESOLUTION binary sensor attributes ─────────────────────────────────────
