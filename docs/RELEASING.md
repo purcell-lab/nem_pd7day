@@ -127,8 +127,12 @@ gh release view vX.Y.Z --json tagName,isDraft,assets \
   --jq '"\(.tagName) draft=\(.isDraft) assets=\(.assets|length)"'
 ```
 
-`assets` must be `1` — the `nem_pd7day.zip` HACS installs from. A release with
-zero assets is broken even though it looks published.
+`assets` must be `1`: the `nem_pd7day.zip` for manual installs. HACS no longer
+installs from the zip (`hacs.json` `zip_release: false`): since 24 Oct 2026
+GitHub's release-download redirect carries a Content-Security-Policy header of
+about 9.2 KB, over the 8,190 bytes Home Assistant's HTTP client reads, so every
+zip download failed with "Got more than 8190 bytes when reading". HACS now
+fetches the tag's `custom_components/nem_pd7day` files through the GitHub API.
 
 ### 7. Confirm on a live install
 
