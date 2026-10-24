@@ -275,6 +275,28 @@ def test_forecast_length_by_sensor_kind(factory, expected):
     assert len(forecast) == expected
 
 
+@pytest.mark.parametrize("source, first_time", [
+    pytest.param("amber", timedelta(seconds=1), id="amber: a second after its end"),
+    pytest.param("clock", timedelta(minutes=30), id="clock: unchanged"),
+])
+def test_day27_first_point_and_interpolation_mode(source, first_time):
+    """#270: at Amber's end the first point is published a second later, and
+    every day 2-7 value holds until the next point (interpolation_mode previous).
+    forecast_start keeps the interval's own start."""
+    base = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    at = base + timedelta(hours=24)
+    periods = [make_price_period(base + timedelta(minutes=30 * (i + 1)), value=0.05) for i in range(96)]
+    sensor = make_days27_sensor(price_periods=periods)
+    with patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=10.0), \
+            patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(at, source)):
+        attrs = sensor.extra_state_attributes
+    block = at if source == "amber" else at + timedelta(minutes=30)
+    assert attrs["forecast_start"] == nem_iso(block)
+    assert attrs["forecast"][0]["time"] == nem_iso(at + first_time)
+    assert attrs["forecast"][1]["time"] == nem_iso(block + timedelta(minutes=30))
+    assert attrs["interpolation_mode"] == "previous"
+
+
 def test_stdout_suppressed_during_tariff_calculation():
     """Debug print() calls inside aemo_to_tariff never reach stdout."""
     sensor = make_tariff_sensor(price_periods=[current_interval_period()])

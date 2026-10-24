@@ -73,13 +73,19 @@ def _days27(built: harness.Built, snap: dict) -> None:
 
 
 def _days27_amber_joined(built: harness.Built, snap: dict) -> None:
-    """Both day 2-7 series start at 13:00, where Amber ends, not by the clock at 15:00 (#235)."""
+    """Both day 2-7 series start at 13:00, where Amber ends, not by the clock at 15:00 (#235).
+
+    The first point is published a second after Amber's end (#270), and every
+    value holds until the next point."""
     for suffix in ("_forecast_days27", "_6900_days27"):
         record = _one(snap, suffix)
         attrs = record["extra_state_attributes"]
-        first = next(iter(snapshot.iter_forecast(record)))
-        assert first["time"] == attrs["forecast_start"] == "2026-09-17T13:00:00+10:00", suffix
+        first, second = list(snapshot.iter_forecast(record))[:2]
+        assert attrs["forecast_start"] == "2026-09-17T13:00:00+10:00", suffix
+        assert first["time"] == "2026-09-17T13:00:01+10:00", suffix
+        assert second["time"] == "2026-09-17T15:00:00+10:00", suffix   # the scenario's next interval, unmoved
         assert attrs["forecast_start_source"] == "amber", suffix
+        assert attrs["interpolation_mode"] == "previous", suffix
     clock_first = [e["time"] for e in _forecast(snap) if e["time"] > "2026-09-17T14:18:00+10:00"][0]
     assert clock_first == "2026-09-17T15:00:00+10:00"
 

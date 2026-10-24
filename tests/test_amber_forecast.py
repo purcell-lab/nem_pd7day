@@ -60,6 +60,7 @@ CONF_AMBER = _const_mod.CONF_AMBER_FORECAST_ENTITY
 Day27Start = _nem_time.Day27Start
 amber_coverage_end = _nem_time.amber_coverage_end
 day27_start = _nem_time.day27_start
+offset_seam_point = _nem_time.offset_seam_point
 
 
 def _electric(last_start_utc: str, last_end_utc: str) -> dict:
@@ -299,9 +300,48 @@ def test_no_amber_integration_subscribes_to_nothing():
     entity.async_on_remove.assert_not_called()
 
 
+# ── The first point after Amber's end (#270) ─────────────────────────────────
+#
+# HAEO 0.5 holds Amber's last price up to and including its end and sums the
+# forecasts on their joined timestamps. A day 2-7 point at that instant was
+# added to Amber's last price, and the interpolation spread the doubled price
+# over the hour around the seam (25 Oct 2026 20:00-21:00: about 0.29 $/kWh
+# against 0.19, measured on HAEO 0.5.0rc3). One second later the two series
+# never share a point; HAEO 0.4, which does not hold Amber's last price, reads
+# the series as before.
+
+def _points(start, n=3):
+    return [{"time": nem_iso(start + timedelta(minutes=30 * i)), "value": 0.1 + i / 100, "nemtime": "x"}
+            for i in range(n)]
+
+
+def test_the_first_point_at_ambers_end_moves_one_second_later():
+    forecast = _points(END_1400)
+    published = offset_seam_point(forecast, Day27Start(END_1400, "amber"))
+
+    assert published[0] == {**forecast[0], "time": nem_iso(END_1400 + timedelta(seconds=1))}
+    assert published[1:] == forecast[1:]
+    assert forecast[0]["time"] == nem_iso(END_1400)          # the input is not changed
+
+
+@pytest.mark.parametrize(
+    "forecast, start",
+    [
+        pytest.param(_points(END_1400 + timedelta(minutes=30)), Day27Start(END_1400, "amber"),
+                     id="first point after amber's end"),
+        pytest.param(_points(END_1400), Day27Start(END_1400, "clock"), id="clock rule"),
+        pytest.param([], Day27Start(END_1400, "amber"), id="empty"),
+        pytest.param([{"value": 0.1}], Day27Start(END_1400, "amber"), id="no time"),
+        pytest.param([{"time": "garbage", "value": 0.1}], Day27Start(END_1400, "amber"), id="bad time"),
+    ],
+)
+def test_other_forecasts_are_published_as_they_are(forecast, start):
+    assert offset_seam_point(forecast, start) is forecast
+
+
 # ── The day 2-7 sensors ──────────────────────────────────────────────────────
 
-def test_the_spot_sensor_starts_exactly_where_amber_ends():
+def test_the_spot_sensor_starts_where_amber_ends():
     now = _nem_time.now_nem()
     boundary = now.replace(minute=(now.minute // 30) * 30, second=0, microsecond=0)
     amber_end = boundary + timedelta(hours=23, minutes=30)
@@ -323,8 +363,13 @@ def test_the_spot_sensor_starts_exactly_where_amber_ends():
 
     attrs = sensor.extra_state_attributes
 
-    assert attrs["forecast"][0]["time"] == nem_iso(amber_end) == attrs["forecast_start"]
+    # The series starts at Amber's end; its first point is published a second
+    # later so HAEO 0.5 does not add it to Amber's last price (#270).
+    assert attrs["forecast_start"] == nem_iso(amber_end)
+    assert attrs["forecast"][0]["time"] == nem_iso(amber_end + timedelta(seconds=1))
+    assert attrs["forecast"][1]["time"] == nem_iso(amber_end + timedelta(minutes=30))
     assert attrs["forecast_start_source"] == "amber"
+    assert attrs["interpolation_mode"] == "previous"
     assert attrs["next_value"] == attrs["forecast"][0]["value"]
     assert len(attrs["forecast"]) == 96 - 47
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .const import FETCH_TIMES_NEM, INTERVAL_DURATION, NEM_TZ
@@ -236,6 +236,36 @@ def day27_start(
     if current:
         return Day27Start(min(current), "amber")
     return Day27Start(_amber_express_cutoff(now), "clock")
+
+
+# The published day 2-7 forecast's first point sits one second after Amber's
+# end (#270). HAEO 0.5 holds Amber's last price up to and including that end
+# and sums the forecasts on their joined timestamps, so a day 2-7 point at the
+# same instant was added to it, and the interpolation spread the doubled price
+# over the hour around the seam (25 Oct 20:00-21:00: about 0.29 $/kWh against
+# 0.19). A second later the two never share a point. HAEO 0.4, which does not
+# hold Amber's last price, reads the series as before.
+SEAM_OFFSET = timedelta(seconds=1)
+
+
+def offset_seam_point(forecast: list[dict[str, Any]], start: Day27Start) -> list[dict[str, Any]]:
+    """The day 2-7 forecast to publish, its first point moved past Amber's end (#270).
+
+    Only a first point at Amber's end moves; the clock rule's series starts
+    after its cutoff and is published as it is. The entries are not changed
+    in place, so the forecast_start attribute and anything else read from the
+    same list keep the interval's own start.
+    """
+    if start.source != "amber" or not forecast:
+        return forecast
+    first = forecast[0]
+    try:
+        at_seam = parse_iso(first["time"]) == start.at
+    except (KeyError, TypeError, ValueError):
+        return forecast
+    if not at_seam:
+        return forecast
+    return [{**first, "time": to_nem_iso(start.at + SEAM_OFFSET)}, *forecast[1:]]
 
 
 def fetch_times_as_utc() -> list[str]:

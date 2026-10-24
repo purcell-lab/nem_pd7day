@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, TYPE_CHECKING
 
-from .nem_time import now_nem, parse_iso, to_nem_iso
+from .nem_time import now_nem, offset_seam_point, parse_iso, to_nem_iso
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -49,6 +49,7 @@ from .const import (
     ATTR_IC_FORECAST,
     ATTR_IMPORTLIMIT,
     ATTR_INTERCONNECTOR_ID,
+    ATTR_INTERPOLATION_MODE,
     ATTR_INTERVAL_MINUTES,
     ATTR_IS_CONSTRAINED,
     ATTR_MARGINALVALUE,
@@ -71,6 +72,7 @@ from .const import (
     DEVICE_MODEL,
     DOMAIN,
     FORECAST_MODE_DAYS_2_7,
+    INTERPOLATION_PREVIOUS,
     get_region,
     interconnectors_for_regions,
     REGION_DISTRIBUTORS,
@@ -1022,7 +1024,10 @@ class SpotPriceForecastDays27Sensor(
             ATTR_CHEAPEST_2H: cheapest_window,
             ATTR_FORECAST_START: trimmed_forecast[0]["time"] if trimmed_forecast else None,
             ATTR_FORECAST_START_SOURCE: start.source,
-            ATTR_FORECAST: trimmed_forecast,
+            # The first point moved past Amber's end (#270)
+            ATTR_FORECAST: offset_seam_point(trimmed_forecast, start),
+            # Each value is the price of the block starting at its time (#270)
+            ATTR_INTERPOLATION_MODE: INTERPOLATION_PREVIOUS,
             ATTR_SOURCE_FILE: d.source_file,
             "calibration_active": (
                 self._store is not None

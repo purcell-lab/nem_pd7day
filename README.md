@@ -128,6 +128,8 @@ To join one particular Amber forecast instead, for example with two Amber sites 
 
 The day 2-7 sensors report `forecast_start` (the first interval listed) and `forecast_start_source` (`amber` or `clock`).
 
+They also publish `interpolation_mode: previous`: each value is the price of the 30-minute interval starting at its `time`, held until the next point. When the series starts at Amber's end, the first point is published one second after that end (for example `20:30:01` for the interval starting 20:30); `forecast_start` keeps the interval's own start. HAEO 0.5 holds Amber's last price up to and including its end and sums its price inputs on their joined timestamps, so a first point at the same instant was added to Amber's last price and the interpolation spread the doubled price over the hour around the seam (on 25 Oct 2026, about 29 c/kWh instead of 19 c from 20:00 to 21:00). One second later the two never share a point; HAEO 0.4 reads the series as before (#270).
+
 ### Monitoring multiple regions
 
 Each integration instance monitors one NEM region with full independent calibration. To monitor multiple regions, add a separate integration instance for each via **Settings → Integrations → Add Integration → NEM PD7DAY**. Each instance maintains its own calibration store, observation log, and forecast sensors.
@@ -236,6 +238,7 @@ All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (
 | `cheapest_2h_window` | Best contiguous 2-hour window over the whole days 2–7 window, by design |
 | `forecast_start` | `time` of the first interval listed: where the days 2–7 window begins |
 | `forecast_start_source` | `amber` when the window starts where the Amber forecast ends, `clock` when it starts by the clock rule (see *Joining the day 2-7 series to an Amber forecast*) |
+| `interpolation_mode` | `previous`: each value holds until the next point. With an `amber` start, the first point's `time` is one second after Amber's end (#270) |
 
 Each entry in `forecast` contains:
 

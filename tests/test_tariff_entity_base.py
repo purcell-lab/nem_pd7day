@@ -72,7 +72,9 @@ IMPORT_KEYS = [
     "forecast",
 ]
 # Day 2-7 adds where its series starts and why, just before the forecast (#235).
-DAYS27_KEYS = [k for k in IMPORT_KEYS if k != "forecast"] + ["forecast_start", "forecast_start_source", "forecast"]
+DAYS27_KEYS = [k for k in IMPORT_KEYS if k != "forecast"] + [
+    "forecast_start", "forecast_start_source", "forecast", "interpolation_mode",
+]
 EXPORT_KEYS = [
     "tariff_code",
     "data_age_hours", "last_success_at", "is_stale", "stale_reason",
@@ -93,7 +95,9 @@ EXPORT_KEYS = [
     "forecast",
 ]
 # The day 2-7 export sensor adds the same two keys as the import one.
-EXPORT_DAYS27_KEYS = [k for k in EXPORT_KEYS if k != "forecast"] + ["forecast_start", "forecast_start_source", "forecast"]
+EXPORT_DAYS27_KEYS = [k for k in EXPORT_KEYS if k != "forecast"] + [
+    "forecast_start", "forecast_start_source", "forecast", "interpolation_mode",
+]
 FORECAST_ENTRY_KEYS = ["time", "nemtime", "spot_raw", "spot", "value", "period", "network_rate"]
 
 
@@ -224,7 +228,7 @@ def test_days27_trims_only_the_forecast():
         trimmed = days27.extra_state_attributes
     assert [e["time"] for e in trimmed["forecast"]] == [p.time for p in periods[3:]]
     assert trimmed["forecast"] == full["forecast"][3:]
-    day27_only = {"forecast", "forecast_start", "forecast_start_source"}
+    day27_only = {"forecast", "forecast_start", "forecast_start_source", "interpolation_mode"}
     assert {k: v for k, v in trimmed.items() if k not in day27_only} == \
         {k: v for k, v in full.items() if k != "forecast"}
     assert (trimmed["forecast_start"], trimmed["forecast_start_source"]) == (periods[3].time, "clock")
@@ -241,10 +245,12 @@ def test_export_days27_trims_only_the_forecast():
             patch.object(_tariff_mod, "day27_start_for", return_value=_nem_time.Day27Start(cutoff, "amber")):
         full = exporter.extra_state_attributes
         trimmed = days27.extra_state_attributes
-    # An Amber start is the first interval Amber does not cover, so it is listed.
-    assert [e["time"] for e in trimmed["forecast"]] == [p.time for p in periods[2:]]
-    assert trimmed["forecast"] == full["forecast"][2:]
-    day27_only = {"forecast", "forecast_start", "forecast_start_source"}
+    # An Amber start is the first interval Amber does not cover, so it is listed,
+    # its point published a second after Amber's end (#270).
+    shifted = _nem_time.to_nem_iso(cutoff + timedelta(seconds=1))
+    assert [e["time"] for e in trimmed["forecast"]] == [shifted] + [p.time for p in periods[3:]]
+    assert trimmed["forecast"] == [{**full["forecast"][2], "time": shifted}] + full["forecast"][3:]
+    day27_only = {"forecast", "forecast_start", "forecast_start_source", "interpolation_mode"}
     assert {k: v for k, v in trimmed.items() if k not in day27_only} == \
         {k: v for k, v in full.items() if k != "forecast"}
     assert (trimmed["forecast_start"], trimmed["forecast_start_source"]) == (periods[2].time, "amber")
