@@ -1,7 +1,11 @@
 name: "Release"
 
 # Tags a release commit and publishes the GitHub release with nem_pd7day.zip
-# attached, which is what HACS installs from. Same house style as
+# attached, for manual installs. HACS installs the release's files through the
+# GitHub API instead (hacs.json zip_release false since 24 Oct 2026): GitHub's
+# release-download redirect now carries a Content-Security-Policy header of
+# about 9.2 KB, over the 8,190 bytes Home Assistant's HTTP client reads, so
+# HACS could not download the zip. Same house style as
 # purcell-lab/ha-amber-v2x:
 #   tag      vX.Y.Z (annotated), message "vX.Y.Z: <summary>"
 #   release  title "vX.Y.Z - <summary>", notes from docs/releases/vX.Y.Z.md,
