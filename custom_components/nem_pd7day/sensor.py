@@ -65,7 +65,6 @@ from .const import (
     ATTR_SOURCE_FILE,
     ATTR_VIOLATIONDEGREE,
     CONF_FORECAST_MODE,
-    CONF_LOCAL_PRICE_DIAGNOSTIC,
     CONF_LOCAL_PRICE_DUIDS,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
@@ -298,23 +297,23 @@ async def _grid_entities(
 async def _local_price_entities(
     hass: HomeAssistant, entry: ConfigEntry, region: str, constraints: Any
 ) -> list[SensorEntity]:
-    """The DUID local price sensors (#275): the chosen DUIDs', enabled, and the
-    region's most constrained DUIDs', disabled. P5MIN is fetched only while a
-    forecast sensor is enabled."""
+    """One DUID local price sensor per DUID (#275): the chosen DUIDs', enabled,
+    and the region's most constrained DUIDs', disabled. P5MIN is fetched only
+    while one is enabled."""
     from .duid_catalogue import load_catalogue
     from .executor import run_in_executor
     from .local_price import parse_duids
     from .local_price_coordinator import shared_p5min
-    from .local_price_sensor import enable_chosen, local_price_entities
+    from .local_price_sensor import enable_chosen, local_price_entities, remove_retired
 
     duids, _invalid = parse_duids(entry.options.get(CONF_LOCAL_PRICE_DUIDS, ""))
     catalogue = await run_in_executor(None, load_catalogue)  # a file read: the loop's executor, HA's pool
+    remove_retired(hass, entry)
     if not duids and not catalogue.top_for(region):
         return []
     enable_chosen(hass, entry, region, duids)
     p5min = shared_p5min(hass, entry.runtime_data.dispatch)
-    diagnostic = bool(entry.options.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False))
-    return local_price_entities(constraints, p5min, entry, region, duids, diagnostic, catalogue)
+    return local_price_entities(constraints, p5min, entry, region, duids, catalogue)
 
 
 def _published_spike_credible(cal: dict, horizon_h: float | None) -> bool | None:

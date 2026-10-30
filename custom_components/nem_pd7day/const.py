@@ -183,10 +183,10 @@ AMBER_NETWORK_ALIASES = {
 # (#235). Unset, every Amber forecast sensor in the entity registry is used,
 # and with none the series starts by nem_time._amber_express_cutoff.
 CONF_AMBER_FORECAST_ENTITY = "amber_forecast_entity"
-# DUIDs whose local price adjustment is published (#275): a comma separated
-# string, and whether the local price diagnostic is added for each.
+# DUIDs whose local price adjustment is published (#275), a comma separated
+# string. 3.32's local_price_diagnostic option is gone: the local price is an
+# attribute of the one sensor per DUID; a stored value is ignored.
 CONF_LOCAL_PRICE_DUIDS = "local_price_duids"
-CONF_LOCAL_PRICE_DIAGNOSTIC = "local_price_diagnostic"
 # Integrations whose forecast attributes amber_coverage_end can read: Amber
 # Electric (core) and Amber Express. A template wrapper's last point is not an
 # interval start, so wrappers are neither searched nor offered.

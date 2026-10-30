@@ -368,9 +368,15 @@ def _constraints(prices):
     return SimpleNamespace(tracker=SimpleNamespace(latest=snapshot))
 
 
+def _duid(constraints, duid, region, p5=None, info=None):
+    return _sensor.NemPd7dayDuidLocalPriceSensor(
+        constraints, p5 if p5 is not None else SimpleNamespace(latest=None), ENTRY, region, duid, info,
+    )
+
+
 def test_adjustment_sensor_publishes_dollars_per_kwh_and_keeps_mwh(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 26))
-    sensor = _sensor.NemPd7dayLocalPriceAdjustmentSensor(_constraints(_dispatch()), ENTRY, "NSW1", "GUTHEGA")
+    sensor = _duid(_constraints(_dispatch()), "GUTHEGA", "NSW1")
     attrs = sensor.extra_state_attributes
     assert sensor.native_value == pytest.approx(0.08827)
     assert sensor._attr_native_unit_of_measurement == "$/kWh"
@@ -390,68 +396,63 @@ def test_adjustment_sensor_publishes_dollars_per_kwh_and_keeps_mwh(monkeypatch):
 
 def test_adjustment_sensor_is_unknown_not_zero_without_a_row(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 26))
-    absent = _sensor.NemPd7dayLocalPriceAdjustmentSensor(_constraints(_dispatch()), ENTRY, "QLD1", "GSTONE1")
+    absent = _duid(_constraints(_dispatch()), "GSTONE1", "QLD1")
     assert absent.native_value is None and absent.extra_state_attributes["row_status"] == "absent"
+    assert absent.extra_state_attributes["local_price"] is None
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 45))
-    stale = _sensor.NemPd7dayLocalPriceAdjustmentSensor(_constraints(_dispatch()), ENTRY, "NSW1", "GUTHEGA")
+    stale = _duid(_constraints(_dispatch()), "GUTHEGA", "NSW1")
     assert stale.native_value is None and stale.extra_state_attributes["row_status"] == "stale"
-    empty = _sensor.NemPd7dayLocalPriceAdjustmentSensor(
-        SimpleNamespace(tracker=SimpleNamespace(latest=None)), ENTRY, "NSW1", "GUTHEGA"
-    )
+    empty = _duid(SimpleNamespace(tracker=SimpleNamespace(latest=None)), "GUTHEGA", "NSW1")
     assert empty.native_value is None and empty.extra_state_attributes["row_status"] == "no_data"
 
 
-def test_local_price_diagnostic_uses_the_entry_regions_rop_and_clips(monkeypatch):
+def test_the_local_price_attributes_use_rop_and_clip_the_sum(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 26))
     prices = _dispatch()
-    nsw = _sensor.NemPd7dayLocalPriceSensor(_constraints(prices), ENTRY, "NSW1", "GUTHEGA")
-    assert nsw.native_value == pytest.approx(0.18589)
-    attrs = nsw.extra_state_attributes
+    attrs = _duid(_constraints(prices), "GUTHEGA", "NSW1").extra_state_attributes
+    assert attrs["local_price"] == pytest.approx(0.18589)
     assert attrs["rop_mwh"] == 97.62 and attrs["local_price_mwh"] == pytest.approx(185.89)
     assert (attrs["price_floor_mwh"], attrs["price_cap_mwh"]) == (-1000.0, 23200.0)
-    vic = _sensor.NemPd7dayLocalPriceSensor(_constraints(prices), ENTRY, "VIC1", "DUNDWF1")
-    assert vic.native_value == -1.0  # 0.01 - 1000.01 clipped to the floor
-    no_rop = _sensor.NemPd7dayLocalPriceSensor(
-        _constraints(replace(prices, rop={})), ENTRY, "NSW1", "GUTHEGA"
-    )
-    assert no_rop.native_value is None  # never RRP in its place
+    vic = _duid(_constraints(prices), "DUNDWF1", "VIC1").extra_state_attributes
+    assert vic["local_price"] == -1.0  # 0.01 - 1000.01 clipped to the floor
+    no_rop = _duid(_constraints(replace(prices, rop={})), "GUTHEGA", "NSW1")
+    assert no_rop.extra_state_attributes["local_price"] is None  # never RRP in its place
+    assert no_rop.native_value == pytest.approx(0.08827)  # the adjustment itself still stands
 
 
-def test_forecast_sensor_state_attributes_and_unrecorded_lists(monkeypatch):
+def test_the_forecast_rides_as_attributes_with_its_own_status(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 27))
-    sensor = _sensor.NemPd7dayLocalPriceAdjustmentForecastSensor(
-        SimpleNamespace(latest=_p5()), ENTRY, "SA1", "CATHROCK"
-    )
+    sensor = _duid(_constraints(_dispatch()), "CATHROCK", "SA1", p5=SimpleNamespace(latest=_p5()))
     attrs = sensor.extra_state_attributes
-    assert sensor.native_value == pytest.approx(-0.03036)  # the interval 21:25-21:30
-    assert sensor._attr_unique_id == "e1_SA1_CATHROCK_local_price_adjustment_forecast"
+    assert sensor.native_value == pytest.approx(-0.03392)  # dispatch, not the forecast's -0.03036
     assert attrs["forecast"][0] == {"time": "2026-10-30T21:25:00+10:00", "value": -0.03036}
-    assert attrs["run_at"] == "2026-10-30T21:25:00+10:00" and attrs["source"] == "P5MIN_LOCAL_PRICE"
+    assert attrs["forecast_run_at"] == "2026-10-30T21:25:00+10:00"
+    assert attrs["forecast_source"] == "P5MIN_LOCAL_PRICE" and attrs["forecast_status"] == "published"
     assert (attrs["interval_minutes"], attrs["interpolation_mode"]) == (5, "previous")
     assert attrs["forecast_end"] == "2026-10-30T22:20:00+10:00" and attrs["intervals_ahead"] == 11
-    assert attrs["age_seconds"] == 420  # from 21:20, the start of the run's first interval
-    assert sensor._unrecorded_attributes == frozenset({"forecast", "interval_ends", "later_observations"})
+    assert attrs["forecast_age_seconds"] == 420  # from 21:20, the start of the run's first interval
+    assert len(attrs["forecast_interval_ends"]) == len(attrs["forecast"])
+    assert sensor._unrecorded_attributes == frozenset({"forecast", "forecast_interval_ends", "later_observations"})
 
 
-def test_forecast_sensor_is_unknown_in_a_gap_and_without_a_run(monkeypatch):
+def test_a_gap_or_no_run_empties_the_forecast_but_not_the_state(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 27))
     gap = _without(P5, "CATHROCK", '"2026/10/30 21:30:00",-30.36')
-    sensor = _sensor.NemPd7dayLocalPriceAdjustmentForecastSensor(
-        SimpleNamespace(latest=_p5(gap)), ENTRY, "SA1", "CATHROCK"
-    )
-    assert sensor.native_value is None and sensor.extra_state_attributes["forecast"] == []
-    empty = _sensor.NemPd7dayLocalPriceAdjustmentForecastSensor(SimpleNamespace(latest=None), ENTRY, "SA1", "CATHROCK")
-    assert empty.native_value is None and empty.extra_state_attributes["row_status"] == "no_data"
+    sensor = _duid(_constraints(_dispatch()), "CATHROCK", "SA1", p5=SimpleNamespace(latest=_p5(gap)))
+    assert sensor.extra_state_attributes["forecast"] == []
+    assert sensor.native_value == pytest.approx(-0.03392)
+    empty = _duid(_constraints(_dispatch()), "CATHROCK", "SA1")
+    assert empty.extra_state_attributes["forecast_status"] == "no_data"
+    assert empty.extra_state_attributes["row_status"] == "published"
 
 
-def test_entities_per_duid_and_the_diagnostic_only_when_asked():
+def test_one_sensor_per_duid():
     constraints, p5 = _constraints(None), SimpleNamespace(latest=None)
-    plain = _sensor.local_price_entities(constraints, p5, ENTRY, "QLD1", ["GSTONE1", "CATHROCK"], False)
-    assert [type(e).__name__ for e in plain] == [
-        "NemPd7dayLocalPriceAdjustmentSensor", "NemPd7dayLocalPriceAdjustmentForecastSensor",
-    ] * 2
-    with_diag = _sensor.local_price_entities(constraints, p5, ENTRY, "QLD1", ["GSTONE1"], True)
-    assert type(with_diag[-1]).__name__ == "NemPd7dayLocalPriceSensor"
+    entities = _sensor.local_price_entities(constraints, p5, ENTRY, "QLD1", ["GSTONE1", "CATHROCK"])
+    assert [e._attr_unique_id for e in entities] == [
+        "e1_QLD1_GSTONE1_local_price_adjustment", "e1_QLD1_CATHROCK_local_price_adjustment",
+    ]
+    assert {e._attr_entity_category for e in entities} == {_sensor.EntityCategory.DIAGNOSTIC}
 
 
 def test_age_is_not_negative_while_the_interval_runs(monkeypatch):
@@ -459,12 +460,5 @@ def test_age_is_not_negative_while_the_interval_runs(monkeypatch):
     06:36:16 and published an age of -224 seconds; from the start it is 76."""
     prices = replace(_dispatch(), interval_end=_at(6, 40, day=31))
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(6, 36, 16, day=31))
-    sensor = _sensor.NemPd7dayLocalPriceAdjustmentSensor(_constraints(prices), ENTRY, "SA1", "CATHROCK")
+    sensor = _duid(_constraints(prices), "CATHROCK", "SA1")
     assert sensor.extra_state_attributes["age_seconds"] == 76
-
-
-def test_every_duid_sensor_is_diagnostic():
-    entities = _sensor.local_price_entities(
-        _constraints(None), SimpleNamespace(latest=None), ENTRY, "QLD1", ["GSTONE1"], True
-    )
-    assert {e._attr_entity_category for e in entities} == {_sensor.EntityCategory.DIAGNOSTIC}

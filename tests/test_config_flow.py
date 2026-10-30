@@ -325,20 +325,18 @@ def test_the_amber_field_offers_only_amber_sensors_and_suggests_the_current_one(
 
 
 def test_options_flow_saves_local_price_duids_upper_cased_and_deduplicated(flow_env):
-    """#275: DUIDs are normalised; empty is the default and makes no local price sensor."""
+    """#275: DUIDs are normalised; empty is the default. The 3.32 diagnostic toggle is gone."""
     config_flow_mod, const_mod = flow_env
     entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1"})
     base = {const_mod.CONF_REGION: "QLD1", const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7}
 
     listed = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(
-        {**base, const_mod.CONF_LOCAL_PRICE_DUIDS: "gstone1, CATHROCK\nGSTONE1",
-         const_mod.CONF_LOCAL_PRICE_DIAGNOSTIC: True}))
+        {**base, const_mod.CONF_LOCAL_PRICE_DUIDS: "gstone1, CATHROCK\nGSTONE1"}))
     omitted = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(dict(base)))
 
     assert listed["data"][const_mod.CONF_LOCAL_PRICE_DUIDS] == "GSTONE1, CATHROCK"
-    assert listed["data"][const_mod.CONF_LOCAL_PRICE_DIAGNOSTIC] is True
+    assert "local_price_diagnostic" not in listed["data"]
     assert omitted["data"][const_mod.CONF_LOCAL_PRICE_DUIDS] == ""
-    assert omitted["data"][const_mod.CONF_LOCAL_PRICE_DIAGNOSTIC] is False
 
 
 def test_options_flow_refuses_a_string_that_cannot_be_a_duid(flow_env):

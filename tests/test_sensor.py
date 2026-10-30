@@ -897,13 +897,14 @@ def test_get_tariff_name_from_library():
 
 def test_local_price_entities_chosen_enabled_and_presets_disabled(monkeypatch):
     """#275: the chosen DUIDs' sensors are enabled; the region's most constrained
-    DUIDs from the catalogue are added disabled, all three sensors each."""
+    DUIDs from the catalogue are added disabled, one sensor each."""
     import custom_components.nem_pd7day.local_price_coordinator as lpc
     import custom_components.nem_pd7day.local_price_sensor as lps
     import custom_components.nem_pd7day.duid_catalogue as cat
 
     monkeypatch.setattr(lpc, "shared_p5min", lambda hass, dispatch: MagicMock())
     monkeypatch.setattr(lps, "enable_chosen", lambda *a: 0)
+    monkeypatch.setattr(lps, "remove_retired", lambda *a: 0)
     catalogue = cat.parse_catalogue({
         "duids": {d: {"region": "QLD1", "station": d} for d in ("GSTONE1", "KEPSF1", "KEPWF1")},
         "top": {"QLD1": ["KEPSF1", "GSTONE1", "KEPWF1"]},
@@ -919,10 +920,10 @@ def test_local_price_entities_chosen_enabled_and_presets_disabled(monkeypatch):
     entry.entry_id = "e1"
     entry.options = {}
     presets_only = run_async(_sensor_mod._local_price_entities(hass, entry, "QLD1", MagicMock()))
-    assert len(presets_only) == 9 and not any(e._attr_entity_registry_enabled_default for e in presets_only)
+    assert len(presets_only) == 3 and not any(e._attr_entity_registry_enabled_default for e in presets_only)
 
-    entry.options = {"local_price_duids": "GSTONE1", "local_price_diagnostic": False}
+    entry.options = {"local_price_duids": "GSTONE1"}
     entities = run_async(_sensor_mod._local_price_entities(hass, entry, "QLD1", MagicMock()))
     chosen = [e._attr_unique_id for e in entities if e._attr_entity_registry_enabled_default]
-    assert chosen == ["e1_QLD1_GSTONE1_local_price_adjustment", "e1_QLD1_GSTONE1_local_price_adjustment_forecast"]
-    assert len(entities) == 2 + 6  # GSTONE1 is chosen, so not also a preset
+    assert chosen == ["e1_QLD1_GSTONE1_local_price_adjustment"]
+    assert len(entities) == 1 + 2  # GSTONE1 is chosen, so not also a preset

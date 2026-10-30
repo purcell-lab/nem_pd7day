@@ -1,7 +1,7 @@
 """One shared coordinator for the 5-minute pre-dispatch (P5MIN) local prices (#275).
 
 P5MIN carries every DUID with a local price adjustment and every region's ROP,
-so one fetch serves all config entries. It fetches only while a forecast
+so one fetch serves all config entries. It fetches only while a DUID
 sensor is enabled, and like the binding constraints it has no timer of its
 own: it is checked after each live dispatch poll, and a failure here never
 touches the price path. AEMO writes a run every five minutes, so the listing (about 16 KB gzip)
@@ -59,15 +59,15 @@ class P5MinCoordinator(DataUpdateCoordinator[Optional[P5LocalPriceRun]]):
     def _on_dispatch(self) -> None:
         """A dispatch poll finished. One refresh at a time, as for constraints.
 
-        Nothing is fetched while no forecast sensor listens: the region's
-        most constrained DUIDs are added disabled, and cost nothing until
-        one is enabled.
+        Nothing is fetched while no DUID sensor listens: the region's most
+        constrained DUIDs are added disabled, and cost nothing until one is
+        enabled.
         """
         if getattr(self, "_listeners", None):
             self._guard.request()
 
     def request_refresh(self) -> None:
-        """A forecast sensor was added: fetch now rather than at the next dispatch poll."""
+        """A DUID sensor was added: fetch now rather than at the next dispatch poll."""
         self._guard.request()
 
     def due(self, now: datetime) -> bool:
@@ -118,5 +118,5 @@ def shared_p5min(hass: Any, dispatch: Any) -> P5MinCoordinator:
         domain_data.pop(SHARED_P5MIN_KEY, None)
 
     domain_data.setdefault(DISPATCH_UNSUBS_KEY, []).append(_cleanup)
-    # No first fetch here: the first enabled forecast sensor asks for one.
+    # No first fetch here: the first enabled DUID sensor asks for one.
     return created

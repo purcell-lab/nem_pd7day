@@ -19,7 +19,6 @@ from .const import (
     CONF_ACTIVE_TARIFF,
     CONF_AMBER_FORECAST_ENTITY,
     CONF_FORECAST_MODE,
-    CONF_LOCAL_PRICE_DIAGNOSTIC,
     CONF_LOCAL_PRICE_DUIDS,
     CONF_ONLY_ACTIVE_TARIFF,
     CONF_REGION,
@@ -318,7 +317,7 @@ def _duid_choices(catalogue: Catalogue, region: str, current: list[str]) -> list
 
 
 def _local_price_fields(options: dict[str, Any], catalogue: Catalogue, region: str) -> dict[Any, Any]:
-    """DUIDs whose local price adjustment is published, and the local price diagnostic (#275).
+    """DUIDs whose local price adjustment is published (#275).
 
     A dropdown of the region's DUIDs from the bundled catalogue; a DUID it
     does not list, such as one registered since, can still be typed.
@@ -336,9 +335,6 @@ def _local_price_fields(options: dict[str, Any], catalogue: Catalogue, region: s
                 "mode": "dropdown",
             }
         }),
-        vol.Optional(
-            CONF_LOCAL_PRICE_DIAGNOSTIC, default=bool(options.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False))
-        ): selector.selector({"boolean": {}}),
     }
 
 
@@ -354,7 +350,6 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
         CONF_ONLY_ACTIVE_TARIFF: user_input.get(CONF_ONLY_ACTIVE_TARIFF, True),
         CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
         CONF_LOCAL_PRICE_DUIDS: ", ".join(duids),
-        CONF_LOCAL_PRICE_DIAGNOSTIC: bool(user_input.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False)),
     }, {}
 
 

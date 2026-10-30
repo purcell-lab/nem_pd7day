@@ -122,43 +122,42 @@ def _constraints():
     return SimpleNamespace(tracker=SimpleNamespace(latest=SimpleNamespace(local_prices=prices)))
 
 
+def _duid(duid, region="QLD1", info=None, p5=None):
+    return _sensor.NemPd7dayDuidLocalPriceSensor(
+        _constraints(), p5 if p5 is not None else SimpleNamespace(latest=None), ENTRY, region, duid, info,
+    )
+
+
 def test_presets_are_disabled_and_a_chosen_preset_is_not_repeated():
     entities = _sensor.local_price_entities(
-        _constraints(), SimpleNamespace(latest=None), ENTRY, "QLD1", ["GSTONE1", "CATHROCK"], False, CATALOGUE
+        _constraints(), SimpleNamespace(latest=None), ENTRY, "QLD1", ["GSTONE1", "CATHROCK"], CATALOGUE
     )
-    by_id = {e._attr_unique_id: e._attr_entity_registry_enabled_default for e in entities}
-    assert by_id["e1_QLD1_GSTONE1_local_price_adjustment"] is True
-    assert "e1_QLD1_GSTONE1_local_price" not in by_id  # chosen, and the diagnostic is off
-    assert by_id["e1_QLD1_KEPSF1_local_price"] is False  # a preset carries all three
-    assert sum(1 for k in by_id if "_GSTONE1_" in k) == 2
-    assert [k for k, on in by_id.items() if not on] == [
-        f"e1_QLD1_{d}_{s}" for d in ("KEPSF1", "KEPWF1")
-        for s in ("local_price_adjustment", "local_price_adjustment_forecast", "local_price")
+    assert [(e._attr_unique_id, e._attr_entity_registry_enabled_default) for e in entities] == [
+        ("e1_QLD1_GSTONE1_local_price_adjustment", True),
+        ("e1_QLD1_CATHROCK_local_price_adjustment", True),
+        ("e1_QLD1_KEPSF1_local_price_adjustment", False),
+        ("e1_QLD1_KEPWF1_local_price_adjustment", False),
     ]
 
 
 def test_a_catalogued_duid_publishes_its_station_and_coordinates(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: datetime(2026, 10, 30, 21, 26, tzinfo=NEM_TZ))
-    sensor = _sensor.NemPd7dayLocalPriceAdjustmentSensor(
-        _constraints(), ENTRY, "QLD1", "CATHROCK", CATALOGUE.info("CATHROCK")
-    )
-    attrs = sensor.extra_state_attributes
+    attrs = _duid("CATHROCK", info=CATALOGUE.info("CATHROCK")).extra_state_attributes
     assert (attrs["latitude"], attrs["longitude"]) == (-34.84874, 135.59265)
     assert (attrs["station"], attrs["fuel"], attrs["duid_region"]) == ("Cathedral Rocks", "wind", "SA1")
-    plain = _sensor.NemPd7dayLocalPriceAdjustmentSensor(_constraints(), ENTRY, "QLD1", "UNKNOWN1")
-    assert "latitude" not in plain.extra_state_attributes
+    assert "latitude" not in _duid("UNKNOWN1").extra_state_attributes
 
 
-def test_the_diagnostic_uses_the_duid_regions_rop():
+def test_the_local_price_uses_the_duid_regions_rop():
     """Live on 31 Oct a QLD1 entry priced CATHROCK (SA) on QLD1's ROP. With the
     catalogue it takes SA1's: 28.67941 - 33.92 = -5.24 $/MWh."""
     with patch.object(_sensor, "now_nem", lambda: datetime(2026, 10, 30, 21, 26, tzinfo=NEM_TZ)):
-        sa = _sensor.NemPd7dayLocalPriceSensor(_constraints(), ENTRY, "QLD1", "CATHROCK", CATALOGUE.info("CATHROCK"))
-        unknown = _sensor.NemPd7dayLocalPriceSensor(_constraints(), ENTRY, "QLD1", "CATHROCK")
-        assert sa.native_value == pytest.approx(-0.005241)  # rounded to 6 places
-        assert sa.extra_state_attributes["rop_region"] == "SA1"
-        assert unknown.extra_state_attributes["rop_region"] == "QLD1"  # not in the catalogue: the entry's
-        assert unknown.native_value == pytest.approx((85.25 - 33.92) / 1000)
+        sa = _duid("CATHROCK", info=CATALOGUE.info("CATHROCK")).extra_state_attributes
+        unknown = _duid("CATHROCK").extra_state_attributes
+    assert sa["local_price"] == pytest.approx(-0.005241)  # rounded to 6 places
+    assert sa["rop_region"] == "SA1"
+    assert unknown["rop_region"] == "QLD1"  # not in the catalogue: the entry's
+    assert unknown["local_price"] == pytest.approx((85.25 - 33.92) / 1000)
 
 
 # ── Enabling a chosen preset ─────────────────────────────────────────────────
@@ -183,17 +182,36 @@ def test_choosing_a_preset_enables_what_the_integration_disabled():
     user = _sensor.er.RegistryEntryDisabler.USER
     rows = {
         "sensor.a": SimpleNamespace(entity_id="sensor.a", unique_id="e1_QLD1_KEPSF1_local_price_adjustment", disabled_by=integration),
-        "sensor.b": SimpleNamespace(entity_id="sensor.b", unique_id="e1_QLD1_KEPSF1_local_price", disabled_by=user),
+        "sensor.b": SimpleNamespace(entity_id="sensor.b", unique_id="e1_QLD1_GSTONE1_local_price_adjustment", disabled_by=user),
     }
     with patch.object(_sensor.er, "async_get", return_value=_Registry(rows)):
-        assert _sensor.enable_chosen(None, ENTRY, "QLD1", ["KEPSF1"]) == 1
+        assert _sensor.enable_chosen(None, ENTRY, "QLD1", ["KEPSF1", "GSTONE1", "NOTHERE1"]) == 1
     assert rows["sensor.a"].disabled_by is None
     assert rows["sensor.b"].disabled_by == user  # the user's choice stands
 
 
+def test_the_retired_sensors_are_removed_and_the_kept_one_is_not():
+    """3.32 published three sensors per DUID; the forecast and local price ones go."""
+    rows = {
+        eid: SimpleNamespace(entity_id=eid, unique_id=uid, config_entry_id=uid.split("_")[0])
+        for eid, uid in [
+            ("sensor.keep", "e1_QLD1_GSTONE1_local_price_adjustment"),
+            ("sensor.fc", "e1_QLD1_GSTONE1_local_price_adjustment_forecast"),
+            ("sensor.lp", "e1_QLD1_GSTONE1_local_price"),
+            ("sensor.tariff", "e1_QLD1_energex_96200_tariff"),
+            ("sensor.other_entry", "e2_QLD1_GSTONE1_local_price"),
+        ]
+    }
+    removed = []
+    registry = SimpleNamespace(entities=rows, async_remove=removed.append)
+    with patch.object(_sensor.er, "async_get", return_value=registry):
+        assert _sensor.remove_retired(None, ENTRY) == 2
+    assert removed == ["sensor.fc", "sensor.lp"]
+
+
 # ── P5MIN only while a forecast sensor listens ───────────────────────────────
 
-def test_p5min_is_not_fetched_until_a_forecast_sensor_listens():
+def test_p5min_is_not_fetched_until_a_duid_sensor_listens():
     coord = _coord.P5MinCoordinator(SimpleNamespace(), None, SimpleNamespace())
     requests = []
     coord._guard = SimpleNamespace(request=lambda: requests.append(1))
@@ -206,17 +224,21 @@ def test_p5min_is_not_fetched_until_a_forecast_sensor_listens():
     assert requests == [1, 1]
 
 
-def test_an_added_forecast_sensor_asks_for_the_first_run():
-    asked = []
-    p5 = SimpleNamespace(latest=None, request_refresh=lambda: asked.append(1))
-    sensor = _sensor.NemPd7dayLocalPriceAdjustmentForecastSensor(p5, ENTRY, "QLD1", "KEPSF1")
+def test_an_added_duid_sensor_listens_to_p5min_and_asks_for_the_first_run():
+    asked, listeners = [], []
+    p5 = SimpleNamespace(
+        latest=None, request_refresh=lambda: asked.append(1),
+        async_add_listener=lambda cb: listeners.append(cb) or (lambda: None),
+    )
+    sensor = _duid("KEPSF1", p5=p5)
+    sensor.async_on_remove = lambda unsub: None
 
     async def _noop(self):
         return None
 
     with patch.object(_sensor.CoordinatorEntity, "async_added_to_hass", _noop, create=True):
         run_async(sensor.async_added_to_hass())
-    assert asked == [1]
+    assert asked == [1] and len(listeners) == 1
 
 
 def test_the_json_and_the_builder_agree_on_shape():

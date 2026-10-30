@@ -1,22 +1,25 @@
-"""DUID local price adjustment sensors, opt in per config entry (#275).
+"""One DUID local price sensor per DUID, opt in per config entry (#275).
 
-For each DUID listed in the entry's options:
+``<DUID> Local Price Adjustment``, for each DUID chosen in the options:
 
-- ``<DUID> Local Price Adjustment``: the latest dispatch interval's
-  adjustment, from the DispatchIS file the binding constraints already read.
-- ``<DUID> Local Price Adjustment Forecast``: the newest P5MIN run's
-  adjustments as a ``forecast`` list, for the intervals still to end and only
-  up to the first interval without a row.
-- ``<DUID> Local Price`` (the diagnostic option): clip(ROP + adjustment,
-  floor, cap) for the DUID's region, a diagnostic of the dispatch run, not a
-  regional, retail or settlement price.
+- **State**: the latest dispatch interval's LOCAL_PRICE_ADJUSTMENT in $/kWh,
+  from the DispatchIS file the binding constraints already read. Unknown,
+  never 0, when the DUID has no row: ``row_status`` says why.
+- **Local price**: clip(ROP + adjustment, floor, cap) for the DUID's region,
+  as attributes; a diagnostic of the dispatch run, not a regional, retail or
+  settlement price.
+- **Forecast**: the newest P5MIN run's adjustments as ``forecast``, for the
+  intervals still to end and only up to the first interval without a row,
+  with its own ``forecast_status``: a stale forecast never hides a current
+  dispatch value, nor the reverse.
 
 The region's DUIDs most often locally constrained, from the bundled catalogue,
-are added as well with all three sensors disabled; enabling one is all it
-takes. A DUID in the catalogue publishes its station, fuel, region and
-coordinates, so the sensors show on a map.
+are added as well, disabled; enabling one is all it takes. P5MIN is fetched
+only while at least one of these sensors is enabled. A DUID in the catalogue
+publishes its station, fuel, region and coordinates, so it shows on a map.
 
-A state is unknown, never 0, when the DUID has no row: ``row_status`` says why.
+Until 3.33 there were three sensors per DUID; the forecast and local price
+ones are removed from the registry (``remove_retired``).
 """
 from __future__ import annotations
 
@@ -45,13 +48,22 @@ from .nem_time import NEM_TZ, now_nem
 # Three missed intervals: older than this, a file no longer describes now.
 MAX_AGE = timedelta(minutes=15)
 UNIT = "$/kWh"
+SUFFIX = "local_price_adjustment"
+# The two sensors per DUID that 3.32 published beside this one.
+RETIRED_SUFFIXES = ("_local_price_adjustment_forecast", "_local_price")
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.astimezone(NEM_TZ).isoformat() if value is not None else None
 
 
-class _LocalPriceSensor(CoordinatorEntity, SensorEntity):
+class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
+    """State: the DUID's dispatch LOCAL_PRICE_ADJUSTMENT in $/kWh; unknown without a row.
+
+    Follows the shared ConstraintCoordinator (dispatch) as its coordinator,
+    and the shared P5MinCoordinator (forecast) as a second listener.
+    """
+
     _attr_has_entity_name = True
     _attr_icon = "mdi:map-marker-radius"
     # A DUID's signal describes one unit's connection point, not the user's
@@ -60,21 +72,22 @@ class _LocalPriceSensor(CoordinatorEntity, SensorEntity):
     _attr_native_unit_of_measurement = UNIT
     _attr_suggested_display_precision = 4
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _suffix = ""
-    _label = ""
+    # The lists grow with the horizon; the scalar state is recorded.
+    _unrecorded_attributes = frozenset({"forecast", "forecast_interval_ends", "later_observations"})
 
     def __init__(
-        self, coordinator: Any, entry: Any, region: str, duid: str,
+        self, constraints: Any, p5min: Any, entry: Any, region: str, duid: str,
         info: Optional[DuidInfo] = None, preset: bool = False,
     ) -> None:
-        super().__init__(coordinator)
+        super().__init__(constraints)
+        self._p5min = p5min
         self._region = region
         self._duid = duid
         self._info = info
         # A preset (one of the region's most constrained DUIDs, not chosen) starts disabled.
         self._attr_entity_registry_enabled_default = not preset
-        self._attr_name = f"{duid} {self._label}"
-        self._attr_unique_id = f"{entry.entry_id}_{region}_{duid}_{self._suffix}"
+        self._attr_name = f"{duid} Local Price Adjustment"
+        self._attr_unique_id = f"{entry.entry_id}_{region}_{duid}_{SUFFIX}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry.entry_id}_{region}")},
             name=f"NEM PD7DAY {region}",
@@ -83,8 +96,42 @@ class _LocalPriceSensor(CoordinatorEntity, SensorEntity):
             configuration_url=DEVICE_CONFIGURATION_URL,
         )
 
-    def _base(self, source: str) -> dict[str, Any]:
-        base: dict[str, Any] = {"region": self._region, "duid": self._duid, "source": source}
+    async def async_added_to_hass(self) -> None:
+        """Listen to P5MIN too; it is fetched only while one of these listens, so ask for a run now."""
+        await super().async_added_to_hass()
+        if self._p5min is None:
+            return
+        self.async_on_remove(self._p5min.async_add_listener(lambda: self.async_write_ha_state()))
+        if self._p5min.latest is None:
+            self._p5min.request_refresh()
+
+    @property
+    def _duid_region(self) -> str:
+        """The DUID's own region from the catalogue, else the entry's."""
+        return self._info.region if self._info is not None else self._region
+
+    def _prices(self) -> Optional[DispatchLocalPrices]:
+        snapshot = self.coordinator.tracker.latest
+        return snapshot.local_prices if snapshot is not None else None
+
+    def _local_price_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
+        """ROP, not RRP, of the same file, so of one interval and run; a missing ROP is unknown, never RRP."""
+        if dispatch_status(prices, self._duid, now, MAX_AGE) != STATUS_PUBLISHED:
+            return None
+        rop = prices.rop.get(self._duid_region)  # type: ignore[union-attr]
+        if rop is None:
+            return None
+        return local_price_mwh(rop, prices.rows[self._duid].adjustment_mwh, prices.interval_end)  # type: ignore[union-attr]
+
+    @property
+    def native_value(self) -> Optional[float]:
+        prices = self._prices()
+        if dispatch_status(prices, self._duid, now_nem(), MAX_AGE) != STATUS_PUBLISHED:
+            return None
+        return round(prices.rows[self._duid].adjustment_mwh / 1000.0, 6)  # type: ignore[union-attr]
+
+    def _identity(self) -> dict[str, Any]:
+        base: dict[str, Any] = {"region": self._region, "duid": self._duid}
         info = self._info
         if info is not None:
             base.update({
@@ -93,29 +140,18 @@ class _LocalPriceSensor(CoordinatorEntity, SensorEntity):
             })
         return base
 
-    @property
-    def _duid_region(self) -> str:
-        """The DUID's own region from the catalogue, else the entry's."""
-        return self._info.region if self._info is not None else self._region
-
-
-class _DispatchLocalPriceSensor(_LocalPriceSensor):
-    """Reads the local prices the shared ConstraintCoordinator's file carried."""
-
-    def _prices(self) -> Optional[DispatchLocalPrices]:
-        snapshot = self.coordinator.tracker.latest
-        return snapshot.local_prices if snapshot is not None else None
-
     def _dispatch_attrs(self, prices: Optional[DispatchLocalPrices], now: datetime) -> dict[str, Any]:
         row = prices.rows.get(self._duid) if prices is not None else None
-        attrs = {
-            **self._base("DISPATCH_LOCAL_PRICE"),
+        attrs: dict[str, Any] = {
+            "source": "DISPATCH_LOCAL_PRICE",
             "row_status": dispatch_status(prices, self._duid, now, MAX_AGE),
             "adjustment_mwh": row.adjustment_mwh if row is not None else None,
             "locally_constrained": row.locally_constrained if row is not None else None,
         }
         if prices is None:
             return attrs
+        value = self._local_price_mwh(prices, now)
+        floor, cap = market_price_limits(prices.interval_end)
         return {
             **attrs,
             # interval_start is the interval's start, interval_end the SETTLEMENTDATE.
@@ -126,116 +162,25 @@ class _DispatchLocalPriceSensor(_LocalPriceSensor):
             # From the interval's start: AEMO publishes the file while the
             # interval runs, so its end is still ahead.
             "age_seconds": round((now - prices.interval_end + INTERVAL).total_seconds()),
-        }
-
-
-class NemPd7dayLocalPriceAdjustmentSensor(_DispatchLocalPriceSensor):
-    """State: the DUID's dispatch LOCAL_PRICE_ADJUSTMENT in $/kWh; unknown without a row."""
-
-    _suffix = "local_price_adjustment"
-    _label = "Local Price Adjustment"
-
-    @property
-    def native_value(self) -> Optional[float]:
-        prices = self._prices()
-        if dispatch_status(prices, self._duid, now_nem(), MAX_AGE) != STATUS_PUBLISHED:
-            return None
-        return round(prices.rows[self._duid].adjustment_mwh / 1000.0, 6)  # type: ignore[union-attr]
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return self._dispatch_attrs(self._prices(), now_nem())
-
-
-class NemPd7dayLocalPriceSensor(_DispatchLocalPriceSensor):
-    """State: clip(ROP + adjustment, floor, cap) in $/kWh for the DUID's region.
-
-    ROP, not RRP: the original price before any intervention pricing. The
-    region's ROP is the same file's, so the two are of one interval and run;
-    a missing ROP leaves the state unknown rather than substituting RRP. The
-    region is the catalogue's for the DUID, the entry's for a DUID it lacks.
-    """
-
-    _suffix = "local_price"
-    _label = "Local Price"
-    _attr_icon = "mdi:cash-marker"
-
-    def _value_mwh(self, prices: Optional[DispatchLocalPrices]) -> Optional[float]:
-        if dispatch_status(prices, self._duid, now_nem(), MAX_AGE) != STATUS_PUBLISHED:
-            return None
-        rop = prices.rop.get(self._duid_region)  # type: ignore[union-attr]
-        if rop is None:
-            return None
-        return local_price_mwh(rop, prices.rows[self._duid].adjustment_mwh, prices.interval_end)  # type: ignore[union-attr]
-
-    @property
-    def native_value(self) -> Optional[float]:
-        value = self._value_mwh(self._prices())
-        return round(value / 1000.0, 6) if value is not None else None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        prices = self._prices()
-        attrs = self._dispatch_attrs(prices, now_nem())
-        if prices is None:
-            return attrs
-        floor, cap = market_price_limits(prices.interval_end)
-        return {
-            **attrs,
             "rop_region": self._duid_region,
             "rop_mwh": prices.rop.get(self._duid_region),
-            "local_price_mwh": self._value_mwh(prices),
+            "local_price": round(value / 1000.0, 6) if value is not None else None,
+            "local_price_mwh": value,
             "price_floor_mwh": floor,
             "price_cap_mwh": cap,
-            "note": "diagnostic: not the regional, retail or settlement price",
         }
 
-
-class NemPd7dayLocalPriceAdjustmentForecastSensor(_LocalPriceSensor):
-    """State: the adjustment for the interval now running, from the newest P5MIN run.
-
-    ``forecast`` holds only intervals still to end, from the first one, and
-    stops at the first interval without a row; later rows are listed apart as
-    ``later_observations``, for diagnosis only.
-    """
-
-    _suffix = "local_price_adjustment_forecast"
-    _label = "Local Price Adjustment Forecast"
-    _attr_icon = "mdi:chart-timeline-variant"
-    # The lists grow with the horizon; the scalar state is recorded.
-    _unrecorded_attributes = frozenset({"forecast", "interval_ends", "later_observations"})
-
-    async def async_added_to_hass(self) -> None:
-        """P5MIN is fetched only while a forecast sensor is listening; ask for the first run now."""
-        await super().async_added_to_hass()
-        request = getattr(self.coordinator, "request_refresh", None)
-        if request is not None and self.coordinator.latest is None:
-            request()
-
-    def _series(self, now: datetime):
-        return forecast_series(self.coordinator.latest, self._duid, now, MAX_AGE)
-
-    @property
-    def native_value(self) -> Optional[float]:
-        now = now_nem()
-        series = self._series(now)
-        if not series.points or datetime.fromisoformat(series.points[0]["time"]) > now:
-            return None
-        return series.points[0]["value"]
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        now = now_nem()
-        run = self.coordinator.latest
-        series = self._series(now)
+    def _forecast_attrs(self, now: datetime) -> dict[str, Any]:
+        run = self._p5min.latest if self._p5min is not None else None
+        series = forecast_series(run, self._duid, now, MAX_AGE)
         return {
-            **self._base("P5MIN_LOCAL_PRICE"),
-            "row_status": series.status,
-            "run_at": _iso(run.run_at) if run else None,
-            "source_file": run.source if run else None,
-            "retrieved_at": _iso(run.retrieved_at) if run else None,
+            "forecast_source": "P5MIN_LOCAL_PRICE",
+            "forecast_status": series.status,
+            "forecast_run_at": _iso(run.run_at) if run else None,
+            "forecast_source_file": run.source if run else None,
+            "forecast_retrieved_at": _iso(run.retrieved_at) if run else None,
             # From the start of the run's first interval, as for dispatch.
-            "age_seconds": round((now - run.run_at + INTERVAL).total_seconds()) if run else None,
+            "forecast_age_seconds": round((now - run.run_at + INTERVAL).total_seconds()) if run else None,
             "interval_minutes": 5,
             "interpolation_mode": "previous",
             "forecast_end": series.forecast_end,
@@ -243,16 +188,18 @@ class NemPd7dayLocalPriceAdjustmentForecastSensor(_LocalPriceSensor):
             "intervals_published": series.published,
             "intervals_ahead": series.intervals,
             "forecast": series.points,
-            "interval_ends": series.interval_ends,
+            "forecast_interval_ends": series.interval_ends,
             "later_observations": series.later,
         }
 
-
-SUFFIXES = ("local_price_adjustment", "local_price_adjustment_forecast", "local_price")
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        now = now_nem()
+        return {**self._identity(), **self._dispatch_attrs(self._prices(), now), **self._forecast_attrs(now)}
 
 
 def enable_chosen(hass: Any, entry: Any, region: str, duids: list[str]) -> int:
-    """Enable a chosen DUID's sensors that were created disabled as a preset.
+    """Enable a chosen DUID's sensor that was created disabled as a preset.
 
     Only the integration's own disabling is undone; a sensor the user
     disabled stays disabled. Returns how many were enabled.
@@ -260,28 +207,39 @@ def enable_chosen(hass: Any, entry: Any, region: str, duids: list[str]) -> int:
     registry = er.async_get(hass)
     enabled = 0
     for duid in duids:
-        for suffix in SUFFIXES:
-            entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{region}_{duid}_{suffix}")
-            if entity_id is None:
-                continue
-            reg = registry.async_get(entity_id)
-            if reg is not None and reg.disabled_by == er.RegistryEntryDisabler.INTEGRATION:
-                registry.async_update_entity(entity_id, disabled_by=None)
-                enabled += 1
+        entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{region}_{duid}_{SUFFIX}")
+        if entity_id is None:
+            continue
+        reg = registry.async_get(entity_id)
+        if reg is not None and reg.disabled_by == er.RegistryEntryDisabler.INTEGRATION:
+            registry.async_update_entity(entity_id, disabled_by=None)
+            enabled += 1
     return enabled
 
 
+def remove_retired(hass: Any, entry: Any) -> int:
+    """Remove the entry's 3.32 forecast and local price sensors, now attributes of the one sensor."""
+    registry = er.async_get(hass)
+    prefix = f"{entry.entry_id}_"
+    retired = [
+        e.entity_id for e in list(registry.entities.values())
+        if getattr(e, "config_entry_id", None) == entry.entry_id
+        and e.unique_id.startswith(prefix) and e.unique_id.endswith(RETIRED_SUFFIXES)
+    ]
+    for entity_id in retired:
+        registry.async_remove(entity_id)
+    return len(retired)
+
+
 def local_price_entities(
-    constraints: Any, p5min: Any, entry: Any, region: str, duids: list[str], diagnostic: bool,
+    constraints: Any, p5min: Any, entry: Any, region: str, duids: list[str],
     catalogue: Optional[Catalogue] = None,
 ) -> list[SensorEntity]:
     """The chosen DUIDs' sensors, enabled, then the region's most constrained others, disabled."""
-    entities: list[SensorEntity] = []
     presets = [d for d in (catalogue.top_for(region) if catalogue else ()) if d not in duids]
-    for duid, preset in [(d, False) for d in duids] + [(d, True) for d in presets]:
-        info = catalogue.info(duid) if catalogue else None
-        entities.append(NemPd7dayLocalPriceAdjustmentSensor(constraints, entry, region, duid, info, preset))
-        entities.append(NemPd7dayLocalPriceAdjustmentForecastSensor(p5min, entry, region, duid, info, preset))
-        if diagnostic or preset:
-            entities.append(NemPd7dayLocalPriceSensor(constraints, entry, region, duid, info, preset))
-    return entities
+    return [
+        NemPd7dayDuidLocalPriceSensor(
+            constraints, p5min, entry, region, duid, catalogue.info(duid) if catalogue else None, preset,
+        )
+        for duid, preset in [(d, False) for d in duids] + [(d, True) for d in presets]
+    ]
