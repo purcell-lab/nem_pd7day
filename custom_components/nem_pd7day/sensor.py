@@ -65,6 +65,8 @@ from .const import (
     ATTR_SOURCE_FILE,
     ATTR_VIOLATIONDEGREE,
     CONF_FORECAST_MODE,
+    CONF_LOCAL_PRICE_DIAGNOSTIC,
+    CONF_LOCAL_PRICE_DUIDS,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -289,7 +291,25 @@ def _grid_entities(
             NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id)
             for ic_id in sorted(interconnectors_for_regions([region]))
         ),
+        *_local_price_entities(hass, entry, region, constraints),
     ]
+
+
+def _local_price_entities(
+    hass: HomeAssistant, entry: ConfigEntry, region: str, constraints: Any
+) -> list[SensorEntity]:
+    """The DUID local price sensors the options list (#275); none, and no P5MIN fetch, by default."""
+    from .local_price import parse_duids
+
+    duids, _invalid = parse_duids(entry.options.get(CONF_LOCAL_PRICE_DUIDS, ""))
+    if not duids:
+        return []
+    from .local_price_coordinator import shared_p5min
+    from .local_price_sensor import local_price_entities
+
+    p5min = shared_p5min(hass, entry.runtime_data.dispatch)
+    diagnostic = bool(entry.options.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False))
+    return local_price_entities(constraints, p5min, entry, region, duids, diagnostic)
 
 
 def _published_spike_credible(cal: dict, horizon_h: float | None) -> bool | None:

@@ -19,6 +19,8 @@ from .const import (
     CONF_ACTIVE_TARIFF,
     CONF_AMBER_FORECAST_ENTITY,
     CONF_FORECAST_MODE,
+    CONF_LOCAL_PRICE_DIAGNOSTIC,
+    CONF_LOCAL_PRICE_DUIDS,
     CONF_ONLY_ACTIVE_TARIFF,
     CONF_REGION,
     CONF_REGIONS,
@@ -32,6 +34,7 @@ from .const import (
     REGION_DISTRIBUTORS,
     REGIONS,
 )
+from .local_price import parse_duids
 from .pd7day_client import PD7DayClient
 from .tariff_catalogue import import_tariff_codes, tariff_name as catalogue_tariff_name
 
@@ -299,6 +302,38 @@ def _amber_forecast_field(current: str) -> dict[Any, Any]:
     }
 
 
+def _local_price_fields(options: dict[str, Any]) -> dict[Any, Any]:
+    """DUIDs whose local price adjustment is published, and the local price diagnostic (#275).
+
+    Empty, no local price sensor is made and P5MIN is never fetched.
+    """
+    return {
+        vol.Optional(
+            CONF_LOCAL_PRICE_DUIDS,
+            description={"suggested_value": options.get(CONF_LOCAL_PRICE_DUIDS) or None},
+        ): selector.selector({"text": {}}),
+        vol.Optional(
+            CONF_LOCAL_PRICE_DIAGNOSTIC, default=bool(options.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False))
+        ): selector.selector({"boolean": {}}),
+    }
+
+
+def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """The options to store, and the form errors: a DUID that cannot be one is refused."""
+    duids, invalid = parse_duids(user_input.get(CONF_LOCAL_PRICE_DUIDS, ""))
+    if invalid:
+        return {}, {CONF_LOCAL_PRICE_DUIDS: "invalid_duid"}
+    return {
+        CONF_REGION: user_input[CONF_REGION],
+        CONF_FORECAST_MODE: user_input.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7),
+        CONF_ACTIVE_TARIFF: user_input.get(CONF_ACTIVE_TARIFF, ACTIVE_TARIFF_AUTO),
+        CONF_ONLY_ACTIVE_TARIFF: user_input.get(CONF_ONLY_ACTIVE_TARIFF, True),
+        CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
+        CONF_LOCAL_PRICE_DUIDS: ", ".join(duids),
+        CONF_LOCAL_PRICE_DIAGNOSTIC: bool(user_input.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False)),
+    }, {}
+
+
 def _only_active_field(current: bool) -> dict[Any, Any]:
     """Disable the region's other tariff sensors (#260)."""
     return {vol.Optional(CONF_ONLY_ACTIVE_TARIFF, default=current): selector.selector({"boolean": {}})}
@@ -319,17 +354,11 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_REGION: user_input[CONF_REGION],
-                    CONF_FORECAST_MODE: user_input.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7),
-                    CONF_ACTIVE_TARIFF: user_input.get(CONF_ACTIVE_TARIFF, ACTIVE_TARIFF_AUTO),
-                    CONF_ONLY_ACTIVE_TARIFF: user_input.get(CONF_ONLY_ACTIVE_TARIFF, True),
-                    CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
-                },
-            )
+            data, errors = _options_data(user_input)
+            if not errors:
+                return self.async_create_entry(title="", data=data)
 
         current_region = self._entry.options.get(
             CONF_REGION,
@@ -377,12 +406,14 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                 ),
                 **_only_active_field(self._entry.options.get(CONF_ONLY_ACTIVE_TARIFF, True)),
                 **_amber_forecast_field(self._entry.options.get(CONF_AMBER_FORECAST_ENTITY, "")),
+                **_local_price_fields(dict(self._entry.options)),
             }
         )
 
         return self.async_show_form(
             step_id="init",
             data_schema=schema,
+            errors=errors,
             description_placeholders={
                 "fetch_times": ", ".join(
                     f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM

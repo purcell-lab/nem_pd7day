@@ -124,6 +124,7 @@ SHARED_DISPATCH_KEY = "_shared_dispatch"
 DISPATCH_UNSUBS_KEY = "_dispatch_unsubs"
 SHARED_CONSTRAINTS_KEY = "_shared_constraints"
 SHARED_PREDISPATCH_KEY = "_shared_predispatch"
+SHARED_P5MIN_KEY = "_shared_p5min"
 
 # Market notices are global, not per region, so one fetch serves all five region
 # coordinators. These keys hold the shared in-flight lock and the timestamp of
@@ -182,6 +183,10 @@ AMBER_NETWORK_ALIASES = {
 # (#235). Unset, every Amber forecast sensor in the entity registry is used,
 # and with none the series starts by nem_time._amber_express_cutoff.
 CONF_AMBER_FORECAST_ENTITY = "amber_forecast_entity"
+# DUIDs whose local price adjustment is published (#275): a comma separated
+# string, and whether the local price diagnostic is added for each.
+CONF_LOCAL_PRICE_DUIDS = "local_price_duids"
+CONF_LOCAL_PRICE_DIAGNOSTIC = "local_price_diagnostic"
 # Integrations whose forecast attributes amber_coverage_end can read: Amber
 # Electric (core) and Amber Express. A template wrapper's last point is not an
 # interval start, so wrappers are neither searched nor offered.
@@ -194,6 +199,7 @@ FORECAST_MODE_DAYS_2_7 = "days_2_7"   # sophisticated: days 2-7, one selected ta
 TRADINGIS_BASE_URL = "https://www.nemweb.com.au/Reports/Current/TradingIS_Reports/"
 DISPATCHIS_BASE_URL = "https://www.nemweb.com.au/Reports/Current/DispatchIS_Reports/"
 PREDISPATCHIS_BASE_URL = "https://www.nemweb.com.au/Reports/Current/PredispatchIS_Reports/"
+P5MIN_BASE_URL = "https://www.nemweb.com.au/Reports/Current/P5_Reports/"
 ELEC_NEM_SUMMARY_URL = "https://visualisations.aemo.com.au/aemo/apps/api/report/ELEC_NEM_SUMMARY"
 TRADINGIS_FETCH_MINUTES = [2, 32]
 
@@ -279,6 +285,12 @@ QUANTILES = (0.1, 0.5, 0.9)
 # because negative prices are a normal NEM state and the isotonic model is
 # fitted on negative actuals like any other (issue #114).
 MARKET_PRICE_FLOOR = -1.0
+# The same floor in $/MWh, and the market price cap by financial year, keyed
+# by the year the financial year ends in (2027 is 1 July 2026 to 30 June
+# 2027), as AEMO publishes them in its schedule of reliability settings. Only
+# the DUID local price diagnostic (#275) clips to them.
+MARKET_PRICE_FLOOR_MWH = -1000.0
+MARKET_PRICE_CAP_MWH_BY_FY = {2024: 16600.0, 2025: 17500.0, 2026: 20300.0, 2027: 23200.0}
 HORIZON_EDGES = [0, 6, 12, 24, 48, 96]
 HORIZON_LABELS = ["h00_06", "h06_12", "h12_24", "h24_48", "h48_96", "h96plus"]
 TOD_LABELS = ["shoulder", "morning_ramp", "solar", "peak"]

@@ -893,3 +893,25 @@ def test_get_tariff_name_from_library():
     assert get_tariff_name("ergon", "ERTOUET1") == expected("ergon", "ERTOUET1")
     assert get_tariff_name("sapn", "RTOU") == expected("sapn", "RTOU")  # sapn is sapower in the library
     assert get_tariff_name("energex", "ZZZZZ") == "ZZZZZ"  # unknown code falls back to the code
+
+
+def test_local_price_entities_need_a_configured_duid(monkeypatch):
+    """#275: no DUID, no sensor and no P5MIN coordinator; a DUID adds the pair, the diagnostic a third."""
+    created = []
+    import custom_components.nem_pd7day.local_price_coordinator as lpc
+
+    monkeypatch.setattr(lpc, "shared_p5min", lambda hass, dispatch: created.append(dispatch) or MagicMock())
+    entry = MagicMock()
+    entry.entry_id = "e1"
+    entry.options = {}
+    assert _sensor_mod._local_price_entities(MagicMock(), entry, "QLD1", MagicMock()) == []
+    assert created == []
+
+    entry.options = {"local_price_duids": "GSTONE1", "local_price_diagnostic": True}
+    entities = _sensor_mod._local_price_entities(MagicMock(), entry, "QLD1", MagicMock())
+    assert [e._attr_unique_id for e in entities] == [
+        "e1_QLD1_GSTONE1_local_price_adjustment",
+        "e1_QLD1_GSTONE1_local_price_adjustment_forecast",
+        "e1_QLD1_GSTONE1_local_price",
+    ]
+    assert created == [entry.runtime_data.dispatch]
