@@ -262,7 +262,9 @@ def enable_chosen(hass: Any, entry: Any, region: str, duids: list[str]) -> int:
     for duid in duids:
         for suffix in SUFFIXES:
             entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{region}_{duid}_{suffix}")
-            reg = registry.async_get(entity_id) if entity_id else None
+            if entity_id is None:
+                continue
+            reg = registry.async_get(entity_id)
             if reg is not None and reg.disabled_by == er.RegistryEntryDisabler.INTEGRATION:
                 registry.async_update_entity(entity_id, disabled_by=None)
                 enabled += 1
