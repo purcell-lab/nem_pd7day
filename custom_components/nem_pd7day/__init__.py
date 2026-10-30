@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
@@ -12,6 +13,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
+from .active_tariff import resolve_active_tariff, sync_tariff_entities, watch_amber_site
 from .calibration_store import CalibrationStore
 from .const import (
     CONF_FORECAST_MODE,
@@ -69,6 +71,9 @@ class NemPd7dayEntryData:
     notice_store: GridNoticeStore
     region: str
     unsubs: list = field(default_factory=list)
+    # The tariff the day 2-7 sensors follow and the registry is synced to
+    # (#260); resolved once per setup, before the platforms read it.
+    active_tariff: Any = None
 
 
 # Typed alias for entries belonging to this integration.
@@ -355,7 +360,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
 
     trace.checkpoint("coordinators ready")
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await _forward_platforms(hass, entry, region)
     trace.checkpoint("platform setup (sensor entities)")
 
     # ── Shared calibration refit coroutine ──────────────────────────────────
@@ -583,6 +588,30 @@ async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -
             if hass.services.has_service(DOMAIN, "force_refit"):
                 hass.services.async_remove(DOMAIN, "force_refit")
     return unload_ok
+
+
+async def _forward_platforms(hass: HomeAssistant, entry: NemPd7dayConfigEntry, region: str) -> None:
+    """Set up the platforms with the active tariff resolved first, then sync the registry (#260)."""
+    entry.runtime_data.active_tariff = resolve_active_tariff(hass, entry, region)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _sync_active_tariff(hass, entry, region)
+
+
+def _sync_active_tariff(hass: HomeAssistant, entry: NemPd7dayConfigEntry, region: str) -> None:
+    """Enable the active tariff's sensors, disable the rest, watch Amber (#260)."""
+    active = entry.runtime_data.active_tariff
+    mode = entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
+    result = sync_tariff_entities(hass, entry, region, active, days27_active=mode == FORECAST_MODE_DAYS_2_7)
+    if active is not None:
+        _LOGGER.info(
+            "%s: active tariff %s from %s%s; tariff sensors enabled %d, disabled %d, "
+            "stale day 2-7 sensors removed %d",
+            region, active.key, active.source, f" ({active.detail})" if active.detail else "",
+            len(result.enabled), len(result.disabled), len(result.removed),
+        )
+    unsub = watch_amber_site(hass, entry, region, active)
+    if unsub is not None:
+        entry.async_on_unload(unsub)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
