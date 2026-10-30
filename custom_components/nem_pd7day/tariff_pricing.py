@@ -56,6 +56,54 @@ DEFAULT_MARKET: Final[float] = 1.0154
 # Published as the combined_loss_multiplier attribute of every tariff sensor.
 COMBINED_LOSS_MULTIPLIER: Final[float] = round(DEFAULT_DLF * DEFAULT_MLF * DEFAULT_MARKET, 6)
 
+# The combined factor the loss_factor option accepts. Settled Amber prices on
+# an Energex site follow RRP x 1.0272 exactly, against the library's 1.0919.
+LOSS_FACTOR_MIN: Final[float] = 0.9
+LOSS_FACTOR_MAX: Final[float] = 1.3
+
+
+@dataclass(frozen=True)
+class LossFactors:
+    """The three factors spot is scaled by, passed to the library as dlf, mlf and market."""
+
+    dlf: float
+    mlf: float
+    market: float
+    source: str = "library_default"
+
+    @property
+    def combined(self) -> float:
+        return round(self.dlf * self.mlf * self.market, 6)
+
+
+DEFAULT_LOSSES: Final = LossFactors(DEFAULT_DLF, DEFAULT_MLF, DEFAULT_MARKET)
+
+
+def losses_for(combined: Any) -> LossFactors:
+    """The library's defaults, or the one combined factor set in the options.
+
+    A combined factor is passed as the DLF with the other two at 1, so the
+    library and RetailPrice multiply spot by exactly that number. Anything
+    that is not a number in range keeps the defaults, whose prices do not
+    move by a bit (spec 001, invariant 1).
+    """
+    if isinstance(combined, bool) or not isinstance(combined, (int, float)):
+        return DEFAULT_LOSSES
+    if not LOSS_FACTOR_MIN <= combined <= LOSS_FACTOR_MAX:
+        return DEFAULT_LOSSES
+    return LossFactors(float(combined), 1.0, 1.0, "option")
+
+
+def loss_attributes(losses: LossFactors) -> dict[str, Any]:
+    """The loss factor attributes every tariff sensor publishes."""
+    return {
+        "distribution_loss_factor_dlf": losses.dlf,
+        "metering_loss_factor_mlf": losses.mlf,
+        "market_loss_factor": losses.market,
+        "combined_loss_multiplier": losses.combined,
+        "loss_factor_source": losses.source,
+    }
+
 # GST multiplier applied to the final retail price.
 GST: Final[float] = 1.1
 
@@ -153,6 +201,7 @@ class LibraryPricer:
     distributor: str
     code: str
     source: str = SOURCE_LIBRARY
+    losses: LossFactors = DEFAULT_LOSSES
 
     def import_c_kwh(self, interval_end: datetime.datetime, rrp_mwh: float) -> float:
         """The library's spot_to_tariff, with the loss factors passed explicitly.
@@ -164,13 +213,20 @@ class LibraryPricer:
         with quiet_stdout():
             return spot_to_tariff(
                 interval_end, self.distributor, self.code, rrp_mwh,
-                dlf=DEFAULT_DLF, mlf=DEFAULT_MLF, market=DEFAULT_MARKET,
+                dlf=self.losses.dlf, mlf=self.losses.mlf, market=self.losses.market,
             )
 
     def feed_in_c_kwh(self, interval_end: datetime.datetime, rrp_mwh: float) -> float:
-        """The library's spot_to_feed_in_tariff, with its own default loss factors."""
+        """The library's spot_to_feed_in_tariff, with the same loss factors as the import.
+
+        The defaults are the library's own, so passing them explicitly prices
+        as the call without them did.
+        """
         with quiet_stdout():
-            return spot_to_feed_in_tariff(interval_end, self.distributor, self.code, rrp_mwh)
+            return spot_to_feed_in_tariff(
+                interval_end, self.distributor, self.code, rrp_mwh,
+                dlf=self.losses.dlf, mlf=self.losses.mlf, market=self.losses.market,
+            )
 
     def period_rows(self, now: datetime.datetime) -> list[PeriodRow]:
         """The library's period rows at ``now``, consumed inside the suppression.
@@ -197,11 +253,12 @@ class ExtensionPricer:
     distributor: str
     code: str
     source: str = SOURCE_EXTENSION
+    losses: LossFactors = DEFAULT_LOSSES
 
     def import_c_kwh(self, interval_end: datetime.datetime, rrp_mwh: float) -> float:
         return tariff_extensions.spot_to_tariff(
             interval_end, self.distributor, self.code, rrp_mwh,
-            dlf=DEFAULT_DLF, mlf=DEFAULT_MLF, market=DEFAULT_MARKET,
+            dlf=self.losses.dlf, mlf=self.losses.mlf, market=self.losses.market,
         )
 
     def feed_in_c_kwh(self, interval_end: datetime.datetime, rrp_mwh: float) -> float:
@@ -210,7 +267,7 @@ class ExtensionPricer:
         # same way or it sits 9 per cent off the library's for the same spot.
         return tariff_extensions.spot_to_feed_in_tariff(
             interval_end, self.distributor, self.code, rrp_mwh,
-            dlf=DEFAULT_DLF, mlf=DEFAULT_MLF, market=DEFAULT_MARKET,
+            dlf=self.losses.dlf, mlf=self.losses.mlf, market=self.losses.market,
         )
 
     def period_rows(self, now: datetime.datetime) -> list[PeriodRow]:
@@ -225,11 +282,13 @@ class ExtensionPricer:
         return tariff_extensions.get_daily_fee(self.distributor, self.code)
 
 
-def pricer_for(distributor: str, code: str, *, export: bool = False) -> TariffPricer:
+def pricer_for(
+    distributor: str, code: str, *, export: bool = False, losses: LossFactors = DEFAULT_LOSSES,
+) -> TariffPricer:
     """The extension pricer exactly when the catalogue routes the code to it, else the library's."""
     if tariff_catalogue.priced_by_extension(distributor, code, export=export):
-        return ExtensionPricer(distributor, code)
-    return LibraryPricer(distributor, code)
+        return ExtensionPricer(distributor, code, losses=losses)
+    return LibraryPricer(distributor, code, losses=losses)
 
 
 @dataclass(frozen=True)
@@ -237,6 +296,7 @@ class RetailPrice:
     """The published price in $/kWh from a pricer's c/kWh result."""
 
     distributor: str
+    losses: LossFactors = DEFAULT_LOSSES
 
     def import_dollars(self, library_c_kwh: float, rrp_mwh: float, fee: float) -> float:
         """Combine a library result with the usage fee and GST, in $/kWh.
@@ -265,7 +325,8 @@ class RetailPrice:
         The float operation order is part of the contract: the published value
         must not move by a bit (spec 001, invariant 1).
         """
-        spot_c_kwh = rrp_mwh * DEFAULT_DLF * DEFAULT_MLF * DEFAULT_MARKET / 10
+        losses = self.losses
+        spot_c_kwh = rrp_mwh * losses.dlf * losses.mlf * losses.market / 10
         network_c_kwh = library_c_kwh - spot_c_kwh
         if self.distributor in LIB_APPLIES_GST:
             network_c_kwh /= GST

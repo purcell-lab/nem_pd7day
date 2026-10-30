@@ -8,7 +8,7 @@ Attributes: full 7-day tariff forecast as a list of {interval_time, tariff_$/kwh
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import datetime
@@ -26,6 +26,7 @@ from .const import (
     ATTR_FORECAST_START,
     ATTR_FORECAST_START_SOURCE,
     ATTR_INTERPOLATION_MODE,
+    CONF_LOSS_FACTOR,
     DEFAULT_ADDITIONAL_FEE,
     DEFAULT_ENABLED_TARIFFS,
     DISTRIBUTOR_DISPLAY_NAMES,
@@ -97,6 +98,17 @@ def get_tariff_name(distributor_key: str, tariff_code: str) -> str:
 def get_export_tariff_name(distributor_key: str, export_code: str) -> str:
     """Human-readable export tariff name, library first (issue #159)."""
     return catalogue_tariff_name(distributor_key, export_code, export=True)
+
+
+def _losses_of(sensor: Any) -> tariff_pricing.LossFactors:
+    """The loss factors a tariff sensor prices with: its entry's loss_factor option, else the library's.
+
+    Read from the entry each time; an options change reloads the entry, and
+    with it every price cache.
+    """
+    options = getattr(getattr(sensor, "_entry", None), "options", None)
+    value = options.get(CONF_LOSS_FACTOR) if isinstance(options, Mapping) else None
+    return tariff_pricing.losses_for(value)
 
 
 class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
@@ -449,7 +461,7 @@ class NemPd7dayTariffSensor(TariffEntityBase):
         this stays so the probes in tests/test_tariff_gst.py can price through
         a real sensor.
         """
-        return tariff_pricing.RetailPrice(self._distributor).import_dollars(result_c_kwh, rrp_mwh, fee)
+        return tariff_pricing.RetailPrice(self._distributor, _losses_of(self)).import_dollars(result_c_kwh, rrp_mwh, fee)
 
     def _compute_tariff(self, period, calibrated: float | None = None) -> float | None:
         """Compute tariff price in $/kWh for a single forecast period.
@@ -489,7 +501,7 @@ class NemPd7dayTariffSensor(TariffEntityBase):
                 return cache[1]
             interval_dt = parse_iso(period.nemtime)
             result_c_kwh = tariff_pricing.pricer_for(
-                self._distributor, self._tariff_code,
+                self._distributor, self._tariff_code, losses=_losses_of(self),
             ).import_c_kwh(interval_dt, rrp_mwh)
             result = self._retail_price(result_c_kwh, rrp_mwh, fee)
             self._period_tariff_cache = (cache_key, result)
@@ -524,7 +536,7 @@ class NemPd7dayTariffSensor(TariffEntityBase):
             if cache is not None and cache[0] == cache_key:
                 return cache[1]
             result_c_kwh = tariff_pricing.pricer_for(
-                self._distributor, self._tariff_code,
+                self._distributor, self._tariff_code, losses=_losses_of(self),
             ).import_c_kwh(nemtime_dt, rrp_mwh)
             result = self._retail_price(result_c_kwh, rrp_mwh, fee)
             self._tariff_cache = (cache_key, result)
@@ -628,7 +640,8 @@ class NemPd7dayTariffSensor(TariffEntityBase):
         )
         tariff_name = get_tariff_name(self._distributor, self._tariff_code)
 
-        combined = tariff_pricing.COMBINED_LOSS_MULTIPLIER
+        losses = _losses_of(self)
+        combined = losses.combined
 
         fee = self._get_additional_fee()
 
@@ -646,10 +659,7 @@ class NemPd7dayTariffSensor(TariffEntityBase):
             "daily_supply_charge_$": getattr(self, "_cached_daily_supply_charge", self._get_daily_supply_charge()),
             "demand_charge": None,
             # Loss factors
-            "distribution_loss_factor_dlf": tariff_pricing.DEFAULT_DLF,
-            "metering_loss_factor_mlf": tariff_pricing.DEFAULT_MLF,
-            "market_loss_factor": tariff_pricing.DEFAULT_MARKET,
-            "combined_loss_multiplier": combined,
+            **tariff_pricing.loss_attributes(losses),
             # Additional usage fee & GST
             "additional_usage_fee_$/kwh": fee,
             "gst_multiplier": tariff_pricing.GST,
@@ -658,7 +668,7 @@ class NemPd7dayTariffSensor(TariffEntityBase):
             # Description
             "forecast_description": self._build_forecast_description(
                 distributor_display, tariff_name,
-                tariff_pricing.DEFAULT_DLF, tariff_pricing.DEFAULT_MLF, combined, fee, self._region,
+                losses.dlf, losses.mlf, combined, fee, self._region,
             ),
             # Forecast time-series
             "forecast": forecast_list,
@@ -815,7 +825,7 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
                 return cache[1]
             interval_dt = parse_iso(period.nemtime)
             result_c_kwh = tariff_pricing.pricer_for(
-                self._distributor, self._export_code, export=True,
+                self._distributor, self._export_code, export=True, losses=_losses_of(self),
             ).feed_in_c_kwh(interval_dt, rrp_mwh)
             result = tariff_pricing.RetailPrice.export_dollars(result_c_kwh)
             self._period_export_tariff_cache = (cache_key, result)
@@ -846,7 +856,7 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
             if cache is not None and cache[0] == cache_key:
                 return cache[1]
             result_c_kwh = tariff_pricing.pricer_for(
-                self._distributor, self._export_code, export=True,
+                self._distributor, self._export_code, export=True, losses=_losses_of(self),
             ).feed_in_c_kwh(nemtime_dt, rrp_mwh)
             result = tariff_pricing.RetailPrice.export_dollars(result_c_kwh)
             self._export_tariff_cache = (cache_key, result)
@@ -874,7 +884,6 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
         )
         export_name = get_export_tariff_name(self._distributor, self._export_code)
 
-        combined = tariff_pricing.COMBINED_LOSS_MULTIPLIER
         fee = self._get_additional_fee()
 
         return {
@@ -885,10 +894,7 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
             "distributor": distributor_display,
             "region": self._region,
             "network": self._distributor,
-            "distribution_loss_factor_dlf": tariff_pricing.DEFAULT_DLF,
-            "metering_loss_factor_mlf": tariff_pricing.DEFAULT_MLF,
-            "market_loss_factor": tariff_pricing.DEFAULT_MARKET,
-            "combined_loss_multiplier": combined,
+            **tariff_pricing.loss_attributes(_losses_of(self)),
             "additional_usage_fee_$/kwh": fee,
             "gst_multiplier": tariff_pricing.GST,
             "library_version": library_version(),
