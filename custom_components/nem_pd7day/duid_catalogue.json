@@ -1,0 +1,7593 @@
+{
+ "generated": "2026-10-30",
+ "registration_month": "2026_09",
+ "constrained_window": [
+  "2026-10-16",
+  "2026-10-29"
+ ],
+ "sources": [
+  "AEMO MMSDM DUDETAILSUMMARY",
+  "AEMO MMSDM STATION",
+  "Open Electricity facilities",
+  "AEMO DispatchIS LOCAL_PRICE"
+ ],
+ "top": {
+  "QLD1": [
+   "KEPSF1",
+   "KEPWF1",
+   "SMCSF1",
+   "RRSF1",
+   "DAYDSF1"
+  ],
+  "NSW1": [
+   "WRSF1",
+   "WRWF1",
+   "STUBSF1",
+   "STUBSF2",
+   "STWF1"
+  ],
+  "VIC1": [
+   "KIAMSF1",
+   "DUNDWF1",
+   "DUNDWF2",
+   "DUNDWF3",
+   "GPWFEST1"
+  ],
+  "SA1": [
+   "WPWF",
+   "DALNTH1",
+   "SNOWTWN1",
+   "CNUNDAWF",
+   "CATHROCK"
+  ],
+  "TAS1": [
+   "GRANWF1",
+   "REECE2",
+   "MUSSELR1",
+   "BASTYAN",
+   "JBUTTERS"
+  ]
+ },
+ "duids": {
+  "ADPBA1": {
+   "region": "SA1",
+   "station": "Adelaide Desalination Plant",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -35.09695,
+   "lon": 138.48406,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ADPMH1": {
+   "region": "SA1",
+   "station": "Adelaide Desalination Plant",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -35.09695,
+   "lon": 138.48406,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ADPPV1": {
+   "region": "SA1",
+   "station": "Adelaide Desalination",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.09695,
+   "lon": 138.48406,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ADPPV2": {
+   "region": "SA1",
+   "station": "Adelaide Desalination",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.09695,
+   "lon": 138.48406,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ADPPV3": {
+   "region": "SA1",
+   "station": "Adelaide Desalination",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.09695,
+   "lon": 138.48406,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "AGLHAL": {
+   "region": "SA1",
+   "station": "Hallett",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -33.34931,
+   "lon": 138.75263,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 51
+  },
+  "AGLSOM": {
+   "region": "VIC1",
+   "station": "Somerton",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -37.63095,
+   "lon": 144.9531,
+   "constrained_intervals": 25,
+   "adjustment_mwh_sum": 2108
+  },
+  "ALDGASF1": {
+   "region": "QLD1",
+   "station": "Aldoga Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3715833
+  },
+  "ANGAST1": {
+   "region": "SA1",
+   "station": "Angaston",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -34.50395,
+   "lon": 139.0243,
+   "constrained_intervals": 46,
+   "adjustment_mwh_sum": 362
+  },
+  "APD01": {
+   "region": "VIC1",
+   "station": "Portland",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": -38.36142,
+   "lon": 141.38456,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "APPIN": {
+   "region": "NSW1",
+   "station": "Appin",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": -34.21087,
+   "lon": 150.79271,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ARWF1": {
+   "region": "VIC1",
+   "station": "Ararat",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.26339,
+   "lon": 143.08212,
+   "constrained_intervals": 385,
+   "adjustment_mwh_sum": 140810
+  },
+  "ASACLE01": {
+   "region": "VIC1",
+   "station": "As Aclesga V Vl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASDEVI01": {
+   "region": "VIC1",
+   "station": "As Diamd01 V Sl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASDLBY01": {
+   "region": "QLD1",
+   "station": "Dalbysga",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASENGV01": {
+   "region": "VIC1",
+   "station": "As Engie V Vl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASENGY01": {
+   "region": "NSW1",
+   "station": "As Engie N Vl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASGENE01": {
+   "region": "NSW1",
+   "station": "Asgene01",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASNAES1": {
+   "region": "NSW1",
+   "station": "As Aes",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASNBRL1": {
+   "region": "NSW1",
+   "station": "Boral Aggregated Load NSW1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASNENC1": {
+   "region": "NSW1",
+   "station": "Enoc Msap",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASPAPM01": {
+   "region": "SA1",
+   "station": "As Papowermg S 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASPBSC01": {
+   "region": "VIC1",
+   "station": "PB Community SGA",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASPSTV01": {
+   "region": "VIC1",
+   "station": "As Powersync V Vl 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASQEEV1": {
+   "region": "QLD1",
+   "station": "As Bohle Bess Q Vl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASQENC1": {
+   "region": "QLD1",
+   "station": "Enoc Masp",
+   "type": "LOAD",
+   "fuel": "aggregator_vpp",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASRMGE01": {
+   "region": "SA1",
+   "station": "Asrmge01",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASRMGE02": {
+   "region": "SA1",
+   "station": "Asrmge02",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASRMGE03": {
+   "region": "SA1",
+   "station": "Asrmge03",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASRMGE04": {
+   "region": "SA1",
+   "station": "Asrmge04",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASRMGE05": {
+   "region": "NSW1",
+   "station": "Asrmge05",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASSDE1": {
+   "region": "SA1",
+   "station": "DiscoverEnergy VPPSA",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASSENC1": {
+   "region": "SA1",
+   "station": "Enoc Masp",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASSERDV1": {
+   "region": "VIC1",
+   "station": "Shell Energy Retail DR VIC 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ASTHYD1": {
+   "region": "TAS1",
+   "station": "Hydrotas Masp Tas",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "AS_NSW1": {
+   "region": "NSW1",
+   "station": "Station ID - Dummy (NSCAS)",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "AVLSF1": {
+   "region": "NSW1",
+   "station": "Avonlie",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.91912,
+   "lon": 146.60954,
+   "constrained_intervals": 1790,
+   "adjustment_mwh_sum": 1597334
+  },
+  "BAKING1": {
+   "region": "QLD1",
+   "station": "Baking Board",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.72117,
+   "lon": 150.55417,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BALB1": {
+   "region": "VIC1",
+   "station": "Ballarat Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -37.56745,
+   "lon": 143.85274,
+   "constrained_intervals": 377,
+   "adjustment_mwh_sum": 50116
+  },
+  "BALDHWF1": {
+   "region": "VIC1",
+   "station": "Bald Hills",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.75819,
+   "lon": 145.95606,
+   "constrained_intervals": 263,
+   "adjustment_mwh_sum": 6651
+  },
+  "BANGOWF1": {
+   "region": "NSW1",
+   "station": "Bango",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.76721,
+   "lon": 148.9215,
+   "constrained_intervals": 1521,
+   "adjustment_mwh_sum": 383550
+  },
+  "BANGOWF2": {
+   "region": "NSW1",
+   "station": "Bango",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.76721,
+   "lon": 148.9215,
+   "constrained_intervals": 1521,
+   "adjustment_mwh_sum": 312585
+  },
+  "BANN1": {
+   "region": "VIC1",
+   "station": "Bannerton",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.67263,
+   "lon": 142.75036,
+   "constrained_intervals": 1924,
+   "adjustment_mwh_sum": 1108702
+  },
+  "BAPS": {
+   "region": "VIC1",
+   "station": "Banimboola",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.53452,
+   "lon": 147.45979,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BARCALDN": {
+   "region": "QLD1",
+   "station": "Barcaldine",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -23.55217,
+   "lon": 145.31485,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3113007
+  },
+  "BARCSF1": {
+   "region": "QLD1",
+   "station": "Barcaldine",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -23.54733,
+   "lon": 145.31897,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BARKIPS1": {
+   "region": "SA1",
+   "station": "Barker Inlet",
+   "type": "GENERATOR",
+   "fuel": "gas_recip",
+   "lat": -34.804,
+   "lon": 138.524,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BARRON-1": {
+   "region": "QLD1",
+   "station": "Barron Gorge",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -16.85077,
+   "lon": 145.64705,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "BARRON-2": {
+   "region": "QLD1",
+   "station": "Barron Gorge",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -16.85077,
+   "lon": 145.64705,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "BASTYAN": {
+   "region": "TAS1",
+   "station": "Bastyan",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.73623,
+   "lon": 145.53159,
+   "constrained_intervals": 42,
+   "adjustment_mwh_sum": 61
+  },
+  "BBATTERY1": {
+   "region": "QLD1",
+   "station": "Bouldercombe Battery Project",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -23.56344,
+   "lon": 150.45966,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3220800
+  },
+  "BBTHREE1": {
+   "region": "TAS1",
+   "station": "Bell Bay Three",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -41.13932,
+   "lon": 146.90552,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BBTHREE2": {
+   "region": "TAS1",
+   "station": "Bell Bay Three",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -41.13932,
+   "lon": 146.90552,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BBTHREE3": {
+   "region": "TAS1",
+   "station": "Bell Bay Three",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -41.13932,
+   "lon": 146.90552,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BDL01": {
+   "region": "VIC1",
+   "station": "Bairnsdale",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -37.84223,
+   "lon": 147.56373,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BDL02": {
+   "region": "VIC1",
+   "station": "Bairnsdale",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -37.84223,
+   "lon": 147.56373,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BDONGHYD": {
+   "region": "NSW1",
+   "station": "Burrendong",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -32.66465,
+   "lon": 149.10802,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BERYLSF1": {
+   "region": "NSW1",
+   "station": "Beryl",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -32.3475,
+   "lon": 149.46074,
+   "constrained_intervals": 723,
+   "adjustment_mwh_sum": 183232
+  },
+  "BHB1": {
+   "region": "NSW1",
+   "station": "Broken Hill Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -31.98616,
+   "lon": 141.42289,
+   "constrained_intervals": 2053,
+   "adjustment_mwh_sum": 1004181
+  },
+  "BLOWERNG": {
+   "region": "NSW1",
+   "station": "Blowering",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.3974,
+   "lon": 148.24723,
+   "constrained_intervals": 1790,
+   "adjustment_mwh_sum": 1623792
+  },
+  "BLUEGSF1": {
+   "region": "QLD1",
+   "station": "Blue Grass",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.69171,
+   "lon": 150.50004,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "BLUFF1": {
+   "region": "SA1",
+   "station": "The Bluff",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.36774,
+   "lon": 138.79379,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 51
+  },
+  "BLYTHB1": {
+   "region": "SA1",
+   "station": "Blyth Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 18,
+   "adjustment_mwh_sum": 44
+  },
+  "BNGSF1": {
+   "region": "SA1",
+   "station": "Bungala One",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -32.42332,
+   "lon": 137.8418,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "BNGSF2": {
+   "region": "SA1",
+   "station": "Bungala Two",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -32.40699,
+   "lon": 137.84093,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "BOCORWF1": {
+   "region": "NSW1",
+   "station": "Boco Rock",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -36.57453,
+   "lon": 149.12486,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 117387
+  },
+  "BODWF1": {
+   "region": "NSW1",
+   "station": "Bodangora",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -32.40713,
+   "lon": 149.04133,
+   "constrained_intervals": 723,
+   "adjustment_mwh_sum": 221831
+  },
+  "BOLIVAR1": {
+   "region": "SA1",
+   "station": "Bolivar",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -34.49548,
+   "lon": 138.38764,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BOLIVPS1": {
+   "region": "SA1",
+   "station": "Bolivar",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -34.49548,
+   "lon": 138.38764,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BOMENSF1": {
+   "region": "NSW1",
+   "station": "Bomen",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1853,
+   "adjustment_mwh_sum": 1682386
+  },
+  "BOWWBA1": {
+   "region": "SA1",
+   "station": "Bolivar Waste Water Treatment Plant",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -34.49548,
+   "lon": 138.38764,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BOWWDG1": {
+   "region": "SA1",
+   "station": "Bolivar Waste Water Treatment Plant",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -34.49548,
+   "lon": 138.38764,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BOWWPV1": {
+   "region": "SA1",
+   "station": "Bolivar",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.49548,
+   "lon": 138.38764,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BPLANDF1": {
+   "region": "QLD1",
+   "station": "Browns Plains",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -27.67458,
+   "lon": 153.0685,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BRAEMAR1": {
+   "region": "QLD1",
+   "station": "Braemar",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -27.11167,
+   "lon": 150.90765,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55780
+  },
+  "BRAEMAR2": {
+   "region": "QLD1",
+   "station": "Braemar",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -27.11167,
+   "lon": 150.90765,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55780
+  },
+  "BRAEMAR3": {
+   "region": "QLD1",
+   "station": "Braemar",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -27.11167,
+   "lon": 150.90765,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55780
+  },
+  "BRAEMAR5": {
+   "region": "QLD1",
+   "station": "Braemar 2",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -27.10987,
+   "lon": 150.90765,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55780
+  },
+  "BRAEMAR6": {
+   "region": "QLD1",
+   "station": "Braemar 2",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -27.10987,
+   "lon": 150.90765,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55780
+  },
+  "BRAEMAR7": {
+   "region": "QLD1",
+   "station": "Braemar 2",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -27.10987,
+   "lon": 150.90765,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55780
+  },
+  "BRDDBES1": {
+   "region": "QLD1",
+   "station": "Broadsound Energy Park",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3145077
+  },
+  "BRDDSF01": {
+   "region": "QLD1",
+   "station": "Broadsound Energy Park",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3175,
+   "adjustment_mwh_sum": 3044387
+  },
+  "BRNDBES1": {
+   "region": "QLD1",
+   "station": "Brendale BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BROKENH1": {
+   "region": "NSW1",
+   "station": "Broken Hill",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -31.9889,
+   "lon": 141.39155,
+   "constrained_intervals": 2053,
+   "adjustment_mwh_sum": 5109024
+  },
+  "BROWNMT": {
+   "region": "NSW1",
+   "station": "Brown Mountain",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.59499,
+   "lon": 149.474,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BRYB1WF1": {
+   "region": "VIC1",
+   "station": "Berrybank",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.98074,
+   "lon": 143.47222,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 17840
+  },
+  "BRYB2WF2": {
+   "region": "VIC1",
+   "station": "Berrybank",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.98074,
+   "lon": 143.47222,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 17840
+  },
+  "BULBES1": {
+   "region": "VIC1",
+   "station": "Bulgana Green Power Hub",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -37.03951,
+   "lon": 142.9828,
+   "constrained_intervals": 956,
+   "adjustment_mwh_sum": 194213
+  },
+  "BULGANA1": {
+   "region": "VIC1",
+   "station": "Bulgana Green Power Hub",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.03951,
+   "lon": 142.9828,
+   "constrained_intervals": 959,
+   "adjustment_mwh_sum": 194608
+  },
+  "BUNGAMB1": {
+   "region": "SA1",
+   "station": "Bungama Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 63
+  },
+  "BURRIN": {
+   "region": "NSW1",
+   "station": "Burrinjuck",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.00353,
+   "lon": 148.57989,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BUSF1": {
+   "region": "QLD1",
+   "station": "Bundaberg Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 802,
+   "adjustment_mwh_sum": 318090
+  },
+  "BUTLERSG": {
+   "region": "TAS1",
+   "station": "Butlers Gorge",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.26711,
+   "lon": 146.26213,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "BW01": {
+   "region": "NSW1",
+   "station": "Bayswater",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -32.3935,
+   "lon": 150.95396,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 556
+  },
+  "BW02": {
+   "region": "NSW1",
+   "station": "Bayswater",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -32.3935,
+   "lon": 150.95396,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 556
+  },
+  "BW03": {
+   "region": "NSW1",
+   "station": "Bayswater",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -32.3935,
+   "lon": 150.95396,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 449
+  },
+  "BW04": {
+   "region": "NSW1",
+   "station": "Bayswater",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -32.3935,
+   "lon": 150.95396,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 449
+  },
+  "BWTR1": {
+   "region": "NSW1",
+   "station": "Broadwater",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -29.01648,
+   "lon": 153.44576,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CALLNL1": {
+   "region": "QLD1",
+   "station": "Callide Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CALL_B_1": {
+   "region": "QLD1",
+   "station": "Callide B",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -24.33317,
+   "lon": 150.62632,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 2737615
+  },
+  "CALL_B_2": {
+   "region": "QLD1",
+   "station": "Callide B",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -24.33317,
+   "lon": 150.62632,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 2737615
+  },
+  "CAPBES1": {
+   "region": "NSW1",
+   "station": "Capital Battery",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 515,
+   "adjustment_mwh_sum": 118121
+  },
+  "CAPTL_WF": {
+   "region": "NSW1",
+   "station": "Capital",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -35.12353,
+   "lon": 149.50025,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CATHROCK": {
+   "region": "SA1",
+   "station": "Cathedral Rocks",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.84874,
+   "lon": 135.59265,
+   "constrained_intervals": 105,
+   "adjustment_mwh_sum": 13024
+  },
+  "CBWF1": {
+   "region": "VIC1",
+   "station": "Coonoer Bridge",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -36.47272,
+   "lon": 143.32204,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CBWWBA1": {
+   "region": "SA1",
+   "station": "Christies Beach WWTP",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -35.12596,
+   "lon": 138.47135,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CBWWBG1": {
+   "region": "SA1",
+   "station": "Christies Beach WWTP",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CBWWDG1": {
+   "region": "SA1",
+   "station": "Christies Beach WWTP",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CBWWDG2": {
+   "region": "SA1",
+   "station": "Christies Beach WWTP",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CBWWPV1": {
+   "region": "SA1",
+   "station": "Christies Beach",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.12596,
+   "lon": 138.47135,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CBWWPV2": {
+   "region": "SA1",
+   "station": "Christies Beach WWTP",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CESF1": {
+   "region": "NSW1",
+   "station": "Capital East",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.18068,
+   "lon": 149.54648,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CETHANA": {
+   "region": "TAS1",
+   "station": "Cethana",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.47985,
+   "lon": 146.13447,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CG1": {
+   "region": "NSW1",
+   "station": "Colongra",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -33.20878,
+   "lon": 151.54354,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 250
+  },
+  "CG2": {
+   "region": "NSW1",
+   "station": "Colongra",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -33.20878,
+   "lon": 151.54354,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 250
+  },
+  "CG3": {
+   "region": "NSW1",
+   "station": "Colongra",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -33.20878,
+   "lon": 151.54354,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 250
+  },
+  "CG4": {
+   "region": "NSW1",
+   "station": "Colongra",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -33.20878,
+   "lon": 151.54354,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 250
+  },
+  "CGBESS01": {
+   "region": "SA1",
+   "station": "Clements Gap BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 91
+  },
+  "CHALLHWF": {
+   "region": "VIC1",
+   "station": "Challicum Hills",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.39547,
+   "lon": 143.10459,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CHBESS1": {
+   "region": "QLD1",
+   "station": "Chinchilla BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -26.91481,
+   "lon": 150.74729,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "CHILDSF1": {
+   "region": "QLD1",
+   "station": "Childers",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -25.29503,
+   "lon": 152.40367,
+   "constrained_intervals": 3242,
+   "adjustment_mwh_sum": 1749284
+  },
+  "CHYTWF1": {
+   "region": "VIC1",
+   "station": "Cherry Tree",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 263,
+   "adjustment_mwh_sum": 6651
+  },
+  "CLARESF1": {
+   "region": "QLD1",
+   "station": "Clare",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -19.83977,
+   "lon": 147.21055,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11500254
+  },
+  "CLAYTON": {
+   "region": "VIC1",
+   "station": "Clayton",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -37.95062,
+   "lon": 145.11968,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CLEMGPWF": {
+   "region": "SA1",
+   "station": "Clements Gap",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.48977,
+   "lon": 138.11169,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 91
+  },
+  "CLERMSF1": {
+   "region": "QLD1",
+   "station": "Clermont",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -22.83941,
+   "lon": 147.54603,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11465007
+  },
+  "CLOVER": {
+   "region": "VIC1",
+   "station": "Clover",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.78515,
+   "lon": 147.21952,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CLRKCWF1": {
+   "region": "QLD1",
+   "station": "Clarke Creek Wind Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3145077
+  },
+  "CLRKCWF2": {
+   "region": "QLD1",
+   "station": "Clarke Creek Wind Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3145077
+  },
+  "CLUNY": {
+   "region": "TAS1",
+   "station": "Cluny",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.50623,
+   "lon": 146.68112,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CNUNDAWF": {
+   "region": "SA1",
+   "station": "Canunda",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.6983,
+   "lon": 140.38363,
+   "constrained_intervals": 90,
+   "adjustment_mwh_sum": 13121
+  },
+  "CODRNGTON": {
+   "region": "VIC1",
+   "station": "Codrington",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.28287,
+   "lon": 141.95496,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "COHUNSF1": {
+   "region": "VIC1",
+   "station": "Cohuna",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.88032,
+   "lon": 144.22153,
+   "constrained_intervals": 1168,
+   "adjustment_mwh_sum": 399734
+  },
+  "COLEASF1": {
+   "region": "NSW1",
+   "station": "Coleambally",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.75949,
+   "lon": 145.92984,
+   "constrained_intervals": 2054,
+   "adjustment_mwh_sum": 1573535
+  },
+  "COLUMSF1": {
+   "region": "QLD1",
+   "station": "Columboola",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.63609,
+   "lon": 150.28221,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "COLWF01": {
+   "region": "NSW1",
+   "station": "Collector",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.82388,
+   "lon": 149.3968,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 118058
+  },
+  "CONDONG1": {
+   "region": "NSW1",
+   "station": "Condong",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -28.31477,
+   "lon": 153.43381,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "COOPGWF1": {
+   "region": "QLD1",
+   "station": "Coopers Gap",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -26.717,
+   "lon": 151.44918,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 59656
+  },
+  "COPTNHYD": {
+   "region": "NSW1",
+   "station": "Copeton",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -29.90754,
+   "lon": 150.93024,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CPP_3": {
+   "region": "QLD1",
+   "station": "Callide C",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -24.34722,
+   "lon": 150.60861,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 2737615
+  },
+  "CPP_4": {
+   "region": "QLD1",
+   "station": "Callide C",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -24.34722,
+   "lon": 150.60861,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 2737615
+  },
+  "CPSA": {
+   "region": "QLD1",
+   "station": "Condamine A",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -26.66667,
+   "lon": 150.26858,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "CROOKWF2": {
+   "region": "NSW1",
+   "station": "Crookwell 2",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.54768,
+   "lon": 149.58925,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 118671
+  },
+  "CROOKWF3": {
+   "region": "NSW1",
+   "station": "Crookwell 3",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.48465,
+   "lon": 149.54447,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 118671
+  },
+  "CROWLWF1": {
+   "region": "VIC1",
+   "station": "Crowlands",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -36.97615,
+   "lon": 143.098,
+   "constrained_intervals": 388,
+   "adjustment_mwh_sum": 141002
+  },
+  "CRURWF1": {
+   "region": "NSW1",
+   "station": "Crudine Ridge",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -32.86475,
+   "lon": 149.81297,
+   "constrained_intervals": 137,
+   "adjustment_mwh_sum": 66326
+  },
+  "CRWARP1": {
+   "region": "VIC1",
+   "station": "Carwarp Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 869,
+   "adjustment_mwh_sum": 382457
+  },
+  "CRWASF1": {
+   "region": "NSW1",
+   "station": "Corowa",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.98629,
+   "lon": 146.36146,
+   "constrained_intervals": 1876,
+   "adjustment_mwh_sum": 1635676
+  },
+  "CSPVPS1": {
+   "region": "QLD1",
+   "station": "Collinsville",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -20.55714,
+   "lon": 147.82055,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11500690
+  },
+  "CTHLWF1": {
+   "region": "TAS1",
+   "station": "Cattle Hill",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -42.15484,
+   "lon": 146.69469,
+   "constrained_intervals": 6,
+   "adjustment_mwh_sum": 41
+  },
+  "CULLRGWF": {
+   "region": "NSW1",
+   "station": "Cullerin Range",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.75099,
+   "lon": 149.38103,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "CUSF1": {
+   "region": "NSW1",
+   "station": "Culcairn Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1756,
+   "adjustment_mwh_sum": 1621014
+  },
+  "DALNTH1": {
+   "region": "SA1",
+   "station": "Dalrymple North BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -34.88845,
+   "lon": 137.75811,
+   "constrained_intervals": 58,
+   "adjustment_mwh_sum": 42119
+  },
+  "DARLSF1": {
+   "region": "NSW1",
+   "station": "Darlington Point",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.64481,
+   "lon": 146.03576,
+   "constrained_intervals": 2054,
+   "adjustment_mwh_sum": 1589308
+  },
+  "DARTM1": {
+   "region": "VIC1",
+   "station": "Dartmouth",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.55529,
+   "lon": 147.51987,
+   "constrained_intervals": 383,
+   "adjustment_mwh_sum": 27672
+  },
+  "DAYDSF1": {
+   "region": "QLD1",
+   "station": "Daydream",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -20.5128,
+   "lon": 147.69197,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11502841
+  },
+  "DDPS1": {
+   "region": "QLD1",
+   "station": "Darling Downs",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -27.11685,
+   "lon": 150.89539,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 54671
+  },
+  "DDSF1": {
+   "region": "QLD1",
+   "station": "Darling Downs",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -27.112,
+   "lon": 150.8819,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 54671
+  },
+  "DEVILS_G": {
+   "region": "TAS1",
+   "station": "Devils Gate",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.34992,
+   "lon": 146.26271,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DG_NSW1": {
+   "region": "NSW1",
+   "station": "NSW1 Dummy Generator",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DG_QLD1": {
+   "region": "QLD1",
+   "station": "QLD1 Dummy Generator",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DG_SA1": {
+   "region": "SA1",
+   "station": "SA1 Dummy Generator",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DG_TAS1": {
+   "region": "TAS1",
+   "station": "TAS1 Dummy Generator",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DG_VIC1": {
+   "region": "VIC1",
+   "station": "VIC1 Dummy Generator",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DIAPURWF1": {
+   "region": "VIC1",
+   "station": "Diapur 2",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -36.33995,
+   "lon": 141.44736,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DPNTB1": {
+   "region": "NSW1",
+   "station": "Darlington Point Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -34.64667,
+   "lon": 146.03498,
+   "constrained_intervals": 1968,
+   "adjustment_mwh_sum": 1546845
+  },
+  "DRACAN1": {
+   "region": "NSW1",
+   "station": "Dr Acacia N Sl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRACAV1": {
+   "region": "VIC1",
+   "station": "Dr Acacia V 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRAESN3": {
+   "region": "NSW1",
+   "station": "Draesn3",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRAESS1": {
+   "region": "SA1",
+   "station": "Draess1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRBRLV01": {
+   "region": "VIC1",
+   "station": "Dr Boral V Sl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRFIIN01": {
+   "region": "TAS1",
+   "station": "Dr Firm Infra T 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRFIIN02": {
+   "region": "TAS1",
+   "station": "Dr Firm Intra T 2",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRGBND01": {
+   "region": "VIC1",
+   "station": "Drgbnd01",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRGBND02": {
+   "region": "SA1",
+   "station": "Drgbnd02",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRGBND03": {
+   "region": "VIC1",
+   "station": "Drgnd03",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRGBND04": {
+   "region": "NSW1",
+   "station": "Drgbnd04",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRHTVP01": {
+   "region": "NSW1",
+   "station": "Dr Hydrotasvpp N 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRHTVP03": {
+   "region": "SA1",
+   "station": "Drhtvp03",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DROZVP01": {
+   "region": "VIC1",
+   "station": "Drozvp01",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DROZVP02": {
+   "region": "SA1",
+   "station": "Drozvp02",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DROZVP03": {
+   "region": "QLD1",
+   "station": "Dr Ozvppq S 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRPSTQ01": {
+   "region": "QLD1",
+   "station": "Dr Powersync Q 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRPSTV01": {
+   "region": "VIC1",
+   "station": "Dr Powersync V 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRSHVN01": {
+   "region": "NSW1",
+   "station": "Drshvn01",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRSHVN02": {
+   "region": "NSW1",
+   "station": "Drshvn02",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRSHVQ01": {
+   "region": "QLD1",
+   "station": "Drshvq01",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRSHVS01": {
+   "region": "SA1",
+   "station": "Drshvs01",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRSHVS02": {
+   "region": "SA1",
+   "station": "VPP ShinHub DRSHVS02",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRVIOT01": {
+   "region": "SA1",
+   "station": "Dr Viotas S Sl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRVIOT02": {
+   "region": "VIC1",
+   "station": "Dr Viotas V Sl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRVIOT03": {
+   "region": "NSW1",
+   "station": "Dr Viotas N Sl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRVIOT04": {
+   "region": "QLD1",
+   "station": "Dr Viotas Q Sl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRVIOT05": {
+   "region": "TAS1",
+   "station": "Dr Viotas T Sl1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRVIOT06": {
+   "region": "SA1",
+   "station": "Dr Viotaswdr S 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRVIOT07": {
+   "region": "NSW1",
+   "station": "Dr Viotaswdr N 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRVISB01": {
+   "region": "QLD1",
+   "station": "Dr Viotaswdr Q 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNAD01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N16",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNAE01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N83",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNDA01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNDA02": {
+   "region": "NSW1",
+   "station": "Dr Enelx N31",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNDA03": {
+   "region": "NSW1",
+   "station": "Dr Enelx N32",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNDA04": {
+   "region": "NSW1",
+   "station": "Dr Enelx N34",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNDB04": {
+   "region": "NSW1",
+   "station": "Dr Enelx N44",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNDE01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N3",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNDJ01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N54",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNDW01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N42",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNFF01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N37",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNFS01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N40",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNQX01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N36",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNSS01": {
+   "region": "NSW1",
+   "station": "Drxnss01",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNTM02": {
+   "region": "NSW1",
+   "station": "Dr Enelx N55",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXNVS01": {
+   "region": "NSW1",
+   "station": "Dr Enelx N49",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXQDA01": {
+   "region": "QLD1",
+   "station": "Dr Enelx Q50",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXQQE01": {
+   "region": "QLD1",
+   "station": "Dr Enelx Q54",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXSQS01": {
+   "region": "SA1",
+   "station": "Dr Enelx S2",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXVAE01": {
+   "region": "VIC1",
+   "station": "Dr Enelx V88",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXVDJ01": {
+   "region": "VIC1",
+   "station": "Dr Enelx V1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXVDP01": {
+   "region": "VIC1",
+   "station": "Dr Enelx V17",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXVDX01": {
+   "region": "VIC1",
+   "station": "Dr Enelx V12",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXVQP01": {
+   "region": "VIC1",
+   "station": "Dr Enelx V2",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXVQX01": {
+   "region": "VIC1",
+   "station": "Dr Enelx V24",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRXVQX02": {
+   "region": "VIC1",
+   "station": "Dr Enelx V240",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRYCGT1": {
+   "region": "SA1",
+   "station": "Dry Creek",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.84729,
+   "lon": 138.5823,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRYCGT2": {
+   "region": "SA1",
+   "station": "Dry Creek",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.84729,
+   "lon": 138.5823,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRYCGT3": {
+   "region": "SA1",
+   "station": "Dry Creek",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.84729,
+   "lon": 138.5823,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DRYCNL": {
+   "region": "SA1",
+   "station": "Dry Creek Gas Turbine Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -34.84729,
+   "lon": 138.5823,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "DULAWF1": {
+   "region": "QLD1",
+   "station": "Dulacca",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -26.63749,
+   "lon": 149.87019,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "DUNDWF1": {
+   "region": "VIC1",
+   "station": "Dundonnell",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.86389,
+   "lon": 142.94345,
+   "constrained_intervals": 179,
+   "adjustment_mwh_sum": 8284379
+  },
+  "DUNDWF2": {
+   "region": "VIC1",
+   "station": "Dundonnell",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.86389,
+   "lon": 142.94345,
+   "constrained_intervals": 179,
+   "adjustment_mwh_sum": 8284379
+  },
+  "DUNDWF3": {
+   "region": "VIC1",
+   "station": "Dundonnell",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.86389,
+   "lon": 142.94345,
+   "constrained_intervals": 179,
+   "adjustment_mwh_sum": 8284379
+  },
+  "EASTCRK": {
+   "region": "NSW1",
+   "station": "Eastern Creek",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -33.81547,
+   "lon": 150.85431,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "EASTCRK2": {
+   "region": "NSW1",
+   "station": "Eastern Creek 2",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -33.81547,
+   "lon": 150.85431,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "EDENVSF1": {
+   "region": "QLD1",
+   "station": "Edenvale",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.94749,
+   "lon": 150.57849,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "EILDON1": {
+   "region": "VIC1",
+   "station": "Eildon",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -37.22126,
+   "lon": 145.92097,
+   "constrained_intervals": 84,
+   "adjustment_mwh_sum": 2945
+  },
+  "EILDON2": {
+   "region": "VIC1",
+   "station": "Eildon",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -37.22126,
+   "lon": 145.92097,
+   "constrained_intervals": 84,
+   "adjustment_mwh_sum": 2945
+  },
+  "EILDON3": {
+   "region": "VIC1",
+   "station": "Eildon",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -37.22177,
+   "lon": 145.92258,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ELAINWF1": {
+   "region": "VIC1",
+   "station": "Elaine",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 18334
+  },
+  "EMERASF1": {
+   "region": "QLD1",
+   "station": "Emerald",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -23.50879,
+   "lon": 148.12802,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11448672
+  },
+  "ER01": {
+   "region": "NSW1",
+   "station": "Eraring",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -33.06155,
+   "lon": 151.52461,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 327
+  },
+  "ER02": {
+   "region": "NSW1",
+   "station": "Eraring",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -33.06155,
+   "lon": 151.52461,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 327
+  },
+  "ER03": {
+   "region": "NSW1",
+   "station": "Eraring",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -33.06155,
+   "lon": 151.52461,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 199
+  },
+  "ER04": {
+   "region": "NSW1",
+   "station": "Eraring",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -33.06155,
+   "lon": 151.52461,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 199
+  },
+  "ERB01": {
+   "region": "NSW1",
+   "station": "Eraring Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 327
+  },
+  "ERB02": {
+   "region": "NSW1",
+   "station": "Eraring Battery Energy Storage System 2",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 327
+  },
+  "ERGT01": {
+   "region": "NSW1",
+   "station": "Eraring",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -33.06212,
+   "lon": 151.51722,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ERNL1": {
+   "region": "NSW1",
+   "station": "Eraring Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -33.06155,
+   "lon": 151.52461,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "FINLYSF1": {
+   "region": "NSW1",
+   "station": "Finley",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.64421,
+   "lon": 145.50864,
+   "constrained_intervals": 2054,
+   "adjustment_mwh_sum": 4057982
+  },
+  "FISHER": {
+   "region": "TAS1",
+   "station": "Fisher",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.67266,
+   "lon": 146.26874,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "FLYCRKWF": {
+   "region": "NSW1",
+   "station": "Flyers Creek Wind Farm",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.52148,
+   "lon": 149.04523,
+   "constrained_intervals": 1316,
+   "adjustment_mwh_sum": 1343662
+  },
+  "FSWF1": {
+   "region": "VIC1",
+   "station": "Ferguson South Wind Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GANGARR1": {
+   "region": "QLD1",
+   "station": "Gangarri",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.25481,
+   "lon": 149.9867,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "GANNB1": {
+   "region": "VIC1",
+   "station": "Gannawarra Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -35.73506,
+   "lon": 143.77946,
+   "constrained_intervals": 1168,
+   "adjustment_mwh_sum": 399734
+  },
+  "GANNSF1": {
+   "region": "VIC1",
+   "station": "Gannawarra",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.73,
+   "lon": 143.7711,
+   "constrained_intervals": 1168,
+   "adjustment_mwh_sum": 1838102
+  },
+  "GB01": {
+   "region": "NSW1",
+   "station": "Broken Hill",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -31.98631,
+   "lon": 141.42062,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GERMCRK": {
+   "region": "QLD1",
+   "station": "German Creek",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": -22.92853,
+   "lon": 148.5491,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GESF1": {
+   "region": "NSW1",
+   "station": "Glenellen Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1756,
+   "adjustment_mwh_sum": 1617111
+  },
+  "GIRGSF": {
+   "region": "VIC1",
+   "station": "Girgarre Solar Farm",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -36.42609,
+   "lon": 144.92181,
+   "constrained_intervals": 423,
+   "adjustment_mwh_sum": 36278
+  },
+  "GLADNL1": {
+   "region": "QLD1",
+   "station": "Gladstone Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GLBWNHYD": {
+   "region": "NSW1",
+   "station": "Glenbawn",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -32.10794,
+   "lon": 150.99948,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GLENMAG1": {
+   "region": "VIC1",
+   "station": "Glenmaggie",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -37.90484,
+   "lon": 146.80039,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GLENNCRK": {
+   "region": "NSW1",
+   "station": "Glennies Creek",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": -32.46434,
+   "lon": 151.13043,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GLENSF1": {
+   "region": "VIC1",
+   "station": "Glenrowan",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -36.4752,
+   "lon": 146.17988,
+   "constrained_intervals": 405,
+   "adjustment_mwh_sum": 29630
+  },
+  "GLRWNSF1": {
+   "region": "VIC1",
+   "station": "Glenrowan West",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -36.48808,
+   "lon": 146.14689,
+   "constrained_intervals": 879,
+   "adjustment_mwh_sum": 531704
+  },
+  "GNNDHSF1": {
+   "region": "NSW1",
+   "station": "Gunnedah",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -30.96547,
+   "lon": 150.36792,
+   "constrained_intervals": 756,
+   "adjustment_mwh_sum": 669196
+  },
+  "GOESF1": {
+   "region": "VIC1",
+   "station": "Goorambat East Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 147,
+   "adjustment_mwh_sum": 25881
+  },
+  "GOONSF1": {
+   "region": "NSW1",
+   "station": "Goonumbla",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1726,
+   "adjustment_mwh_sum": 1511527
+  },
+  "GORDON": {
+   "region": "TAS1",
+   "station": "Gordon",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.74016,
+   "lon": 145.98338,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GOVILLB1": {
+   "region": "TAS1",
+   "station": "Gordon",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.74016,
+   "lon": 145.98338,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GPWFEL1": {
+   "region": "VIC1",
+   "station": "Golden Plains Wind Farm East",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GPWFEST1": {
+   "region": "VIC1",
+   "station": "Golden Plains Wind Farm East",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 14,
+   "adjustment_mwh_sum": 6499753
+  },
+  "GPWFEST2": {
+   "region": "VIC1",
+   "station": "Golden Plains Wind Farm East",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 14,
+   "adjustment_mwh_sum": 6499753
+  },
+  "GPWFEST3": {
+   "region": "VIC1",
+   "station": "Golden Plains Wind Farm East",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 14,
+   "adjustment_mwh_sum": 6499753
+  },
+  "GPWFWL1": {
+   "region": "VIC1",
+   "station": "Golden Plains Wind Farm West",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GPWFWST1": {
+   "region": "VIC1",
+   "station": "Golden Plains Wind Farm West",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 6,
+   "adjustment_mwh_sum": 3753
+  },
+  "GPWFWST2": {
+   "region": "VIC1",
+   "station": "Golden Plains Wind Farm West",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 6,
+   "adjustment_mwh_sum": 3753
+  },
+  "GRANGEAV": {
+   "region": "NSW1",
+   "station": "Grange Avenue",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -33.71301,
+   "lon": 150.83316,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GRANWF1": {
+   "region": "TAS1",
+   "station": "Granville Harbour",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -41.802,
+   "lon": 145.056,
+   "constrained_intervals": 193,
+   "adjustment_mwh_sum": 1491
+  },
+  "GREENB1": {
+   "region": "QLD1",
+   "station": "Greenbank BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GRIFSF1": {
+   "region": "NSW1",
+   "station": "Griffith",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.31741,
+   "lon": 146.12074,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GROSV1": {
+   "region": "QLD1",
+   "station": "Grosvenor 1",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GROSV2": {
+   "region": "QLD1",
+   "station": "Grosvenor 1",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GSTONE1": {
+   "region": "QLD1",
+   "station": "Gladstone",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.84874,
+   "lon": 151.22079,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3817094
+  },
+  "GSTONE2": {
+   "region": "QLD1",
+   "station": "Gladstone",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.84874,
+   "lon": 151.22079,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3817094
+  },
+  "GSTONE3": {
+   "region": "QLD1",
+   "station": "Gladstone",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.84874,
+   "lon": 151.22079,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3975361
+  },
+  "GSTONE4": {
+   "region": "QLD1",
+   "station": "Gladstone",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.84874,
+   "lon": 151.22079,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3975361
+  },
+  "GSTONE5": {
+   "region": "QLD1",
+   "station": "Gladstone",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.84874,
+   "lon": 151.22079,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3817094
+  },
+  "GSTONE6": {
+   "region": "QLD1",
+   "station": "Gladstone",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.84874,
+   "lon": 151.22079,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3817094
+  },
+  "GSWF1A": {
+   "region": "SA1",
+   "station": "Goyder South",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.6822,
+   "lon": 138.93625,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 46
+  },
+  "GSWF1B1": {
+   "region": "SA1",
+   "station": "Goyder South Wind Farm 1B",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 46
+  },
+  "GULLRSF1": {
+   "region": "NSW1",
+   "station": "Gullen Range",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.62451,
+   "lon": 149.45855,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 118414
+  },
+  "GULLRWF1": {
+   "region": "NSW1",
+   "station": "Gullen Range",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.62451,
+   "lon": 149.45855,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 118414
+  },
+  "GULLRWF2": {
+   "region": "NSW1",
+   "station": "Biala",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.58784,
+   "lon": 149.36985,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 118414
+  },
+  "GUNNING1": {
+   "region": "NSW1",
+   "station": "Gunning",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.67636,
+   "lon": 149.66443,
+   "constrained_intervals": 1458,
+   "adjustment_mwh_sum": 308478
+  },
+  "GUSF1": {
+   "region": "QLD1",
+   "station": "Gunsynd Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "GUTHEGA": {
+   "region": "NSW1",
+   "station": "Guthega",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.34977,
+   "lon": 148.41403,
+   "constrained_intervals": 882,
+   "adjustment_mwh_sum": 141991
+  },
+  "GUTHNL1": {
+   "region": "NSW1",
+   "station": "Guthega Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -36.34977,
+   "lon": 148.41403,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HALAMRD1": {
+   "region": "VIC1",
+   "station": "Hallam Road",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -38.05218,
+   "lon": 145.2678,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HALLWF1": {
+   "region": "SA1",
+   "station": "Hallett 1",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.32843,
+   "lon": 138.70467,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 51
+  },
+  "HALLWF2": {
+   "region": "SA1",
+   "station": "Hallett 2",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.53821,
+   "lon": 138.85721,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 49
+  },
+  "HAMISF1": {
+   "region": "QLD1",
+   "station": "Hamilton",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -20.46859,
+   "lon": 147.79948,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11500458
+  },
+  "HASTING1": {
+   "region": "VIC1",
+   "station": "Hastings Generation Site",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HASTING2": {
+   "region": "VIC1",
+   "station": "Hastings Generation Site",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HASTING3": {
+   "region": "VIC1",
+   "station": "Hastings Generation Site",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HAUGHT11": {
+   "region": "QLD1",
+   "station": "Haughton",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -19.73217,
+   "lon": 147.07614,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11502756
+  },
+  "HAUGHTSS": {
+   "region": "QLD1",
+   "station": "Haughton Synchronous Condenser",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HAYMSF1": {
+   "region": "QLD1",
+   "station": "Hayman",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -20.53616,
+   "lon": 147.84606,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11502841
+  },
+  "HBESS1": {
+   "region": "VIC1",
+   "station": "Hazelwood Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -38.26922,
+   "lon": 146.39472,
+   "constrained_intervals": 263,
+   "adjustment_mwh_sum": 6651
+  },
+  "HD1WF1": {
+   "region": "VIC1",
+   "station": "Hawkesdale Wind Farm",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.1477,
+   "lon": 142.3602,
+   "constrained_intervals": 322,
+   "adjustment_mwh_sum": 59154
+  },
+  "HDWF1": {
+   "region": "SA1",
+   "station": "Hornsdale",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.05982,
+   "lon": 138.53767,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 53
+  },
+  "HDWF2": {
+   "region": "SA1",
+   "station": "Hornsdale 2",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.05982,
+   "lon": 138.53767,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 53
+  },
+  "HDWF3": {
+   "region": "SA1",
+   "station": "Hornsdale 3",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.05982,
+   "lon": 138.53767,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 53
+  },
+  "HEZ1": {
+   "region": "NSW1",
+   "station": "Hunter Economic Zone",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -32.83548,
+   "lon": 151.45103,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 413
+  },
+  "HILLSTN1": {
+   "region": "NSW1",
+   "station": "Hillston Sun",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -33.53299,
+   "lon": 145.52228,
+   "constrained_intervals": 1876,
+   "adjustment_mwh_sum": 1549452
+  },
+  "HLMSEW01": {
+   "region": "VIC1",
+   "station": "Hallam",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -38.14333,
+   "lon": 145.11996,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HPR1": {
+   "region": "SA1",
+   "station": "Hornsdale Power Reserve",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -33.08552,
+   "lon": 138.52191,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 53
+  },
+  "HUGSF1": {
+   "region": "QLD1",
+   "station": "Hughenden",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -20.85479,
+   "lon": 144.18605,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HUMENSW": {
+   "region": "NSW1",
+   "station": "Hume",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.10638,
+   "lon": 147.03226,
+   "constrained_intervals": 2150,
+   "adjustment_mwh_sum": 1716335
+  },
+  "HUMEV": {
+   "region": "VIC1",
+   "station": "Hume",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.10689,
+   "lon": 147.03257,
+   "constrained_intervals": 930,
+   "adjustment_mwh_sum": 31046
+  },
+  "HUNTER1": {
+   "region": "NSW1",
+   "station": "Hunter Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 412
+  },
+  "HUNTER2": {
+   "region": "NSW1",
+   "station": "Hunter Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 412
+  },
+  "HVWWBA1": {
+   "region": "SA1",
+   "station": "Happy Valley WTP",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -35.06312,
+   "lon": 138.56476,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "HVWWPV1": {
+   "region": "SA1",
+   "station": "Happy Valley",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.06312,
+   "lon": 138.56476,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ICSM": {
+   "region": "QLD1",
+   "station": "Isis Central Sugar Mill",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biomass",
+   "lat": -25.19762,
+   "lon": 152.20695,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "INVICTA": {
+   "region": "QLD1",
+   "station": "Invicta Sugar Mill",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biomass",
+   "lat": -19.51579,
+   "lon": 147.10653,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JACKSGUL": {
+   "region": "NSW1",
+   "station": "Jacks Gully",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -34.07296,
+   "lon": 150.74369,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JBUTTERS": {
+   "region": "TAS1",
+   "station": "John Butters",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.15589,
+   "lon": 145.53651,
+   "constrained_intervals": 42,
+   "adjustment_mwh_sum": 61
+  },
+  "JEMALNG1": {
+   "region": "NSW1",
+   "station": "Jemalong",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -33.38876,
+   "lon": 147.66938,
+   "constrained_intervals": 1781,
+   "adjustment_mwh_sum": 1326511
+  },
+  "JLA01": {
+   "region": "VIC1",
+   "station": "Jeeralang A",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.27511,
+   "lon": 146.42705,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JLA02": {
+   "region": "VIC1",
+   "station": "Jeeralang A",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.27511,
+   "lon": 146.42705,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JLA03": {
+   "region": "VIC1",
+   "station": "Jeeralang A",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.27511,
+   "lon": 146.42705,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JLA04": {
+   "region": "VIC1",
+   "station": "Jeeralang A",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.27511,
+   "lon": 146.42705,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JLB01": {
+   "region": "VIC1",
+   "station": "Jeeralang B",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.27384,
+   "lon": 146.42483,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JLB02": {
+   "region": "VIC1",
+   "station": "Jeeralang B",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.27384,
+   "lon": 146.42483,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JLB03": {
+   "region": "VIC1",
+   "station": "Jeeralang B",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.27384,
+   "lon": 146.42483,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JNDABNE1": {
+   "region": "NSW1",
+   "station": "Jindabyne",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.43492,
+   "lon": 148.63057,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JOUNAMA1": {
+   "region": "NSW1",
+   "station": "Jounama",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.56127,
+   "lon": 148.30638,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "JUNEESF1": {
+   "region": "NSW1",
+   "station": "Junee",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.81124,
+   "lon": 147.5721,
+   "constrained_intervals": 1853,
+   "adjustment_mwh_sum": 1689381
+  },
+  "KABANWF1": {
+   "region": "QLD1",
+   "station": "Kaban",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -17.56061,
+   "lon": 145.41312,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11502755
+  },
+  "KAREEYA1": {
+   "region": "QLD1",
+   "station": "Kareeya",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -17.76646,
+   "lon": 145.57688,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "KAREEYA2": {
+   "region": "QLD1",
+   "station": "Kareeya",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -17.76646,
+   "lon": 145.57688,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "KAREEYA3": {
+   "region": "QLD1",
+   "station": "Kareeya",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -17.76646,
+   "lon": 145.57688,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "KAREEYA4": {
+   "region": "QLD1",
+   "station": "Kareeya",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -17.76646,
+   "lon": 145.57688,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "KAREEYA5": {
+   "region": "QLD1",
+   "station": "Kareeya",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -17.76646,
+   "lon": 145.57688,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "KARSF1": {
+   "region": "VIC1",
+   "station": "Karadoc",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.2279,
+   "lon": 142.28033,
+   "constrained_intervals": 1940,
+   "adjustment_mwh_sum": 913191
+  },
+  "KEEPIT": {
+   "region": "NSW1",
+   "station": "Keepit",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -30.87868,
+   "lon": 150.49188,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "KEPBG1": {
+   "region": "QLD1",
+   "station": "Kennedy Energy Park",
+   "type": "GENERATOR",
+   "fuel": "battery_discharging",
+   "lat": -20.87279,
+   "lon": 144.41303,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "KEPBL1": {
+   "region": "QLD1",
+   "station": "Kennedy Energy Park",
+   "type": "LOAD",
+   "fuel": "battery_charging",
+   "lat": -20.87279,
+   "lon": 144.41303,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "KEPSF1": {
+   "region": "QLD1",
+   "station": "Kennedy Energy Park",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -20.87279,
+   "lon": 144.41303,
+   "constrained_intervals": 3273,
+   "adjustment_mwh_sum": 11504802
+  },
+  "KEPWF1": {
+   "region": "QLD1",
+   "station": "Kennedy Energy Park",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -20.87279,
+   "lon": 144.41303,
+   "constrained_intervals": 3273,
+   "adjustment_mwh_sum": 11504802
+  },
+  "KERNGSP1": {
+   "region": "VIC1",
+   "station": "Kerang Solar Plant",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1168,
+   "adjustment_mwh_sum": 399734
+  },
+  "KESSB1": {
+   "region": "VIC1",
+   "station": "Koorangie Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1874,
+   "adjustment_mwh_sum": 463617
+  },
+  "KIAMSF1": {
+   "region": "VIC1",
+   "station": "Kiamal",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.01813,
+   "lon": 142.30295,
+   "constrained_intervals": 1940,
+   "adjustment_mwh_sum": 88219914
+  },
+  "KIATAWF1": {
+   "region": "VIC1",
+   "station": "Kiata",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -36.39769,
+   "lon": 141.74683,
+   "constrained_intervals": 1108,
+   "adjustment_mwh_sum": 999321
+  },
+  "KIDSPHG1": {
+   "region": "QLD1",
+   "station": "Kidston Hydro Project",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3175,
+   "adjustment_mwh_sum": 3050150
+  },
+  "KIDSPHG2": {
+   "region": "QLD1",
+   "station": "Kidston Hydro Project",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3175,
+   "adjustment_mwh_sum": 3050150
+  },
+  "KIDSPHL1": {
+   "region": "QLD1",
+   "station": "Kidston Hydro Project",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3175,
+   "adjustment_mwh_sum": 3050150
+  },
+  "KIDSPHL2": {
+   "region": "QLD1",
+   "station": "Kidston Hydro Project",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3175,
+   "adjustment_mwh_sum": 3050150
+  },
+  "KINGASF1": {
+   "region": "QLD1",
+   "station": "Kingaroy Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 53310
+  },
+  "KPP_1": {
+   "region": "QLD1",
+   "station": "Kogan Creek",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -26.91528,
+   "lon": 150.74895,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "KSP1": {
+   "region": "QLD1",
+   "station": "Kidston",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -18.88,
+   "lon": 144.151,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11502755
+  },
+  "LADBROK1": {
+   "region": "SA1",
+   "station": "Ladbroke Grove",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -37.45618,
+   "lon": 140.7827,
+   "constrained_intervals": 86,
+   "adjustment_mwh_sum": 5667
+  },
+  "LADBROK2": {
+   "region": "SA1",
+   "station": "Ladbroke Grove",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -37.45618,
+   "lon": 140.7827,
+   "constrained_intervals": 86,
+   "adjustment_mwh_sum": 5667
+  },
+  "LANCSF1": {
+   "region": "VIC1",
+   "station": "Lancaster Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 423,
+   "adjustment_mwh_sum": 36281
+  },
+  "LBB1": {
+   "region": "SA1",
+   "station": "Lake Bonney BESS1",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -37.73879,
+   "lon": 140.38467,
+   "constrained_intervals": 90,
+   "adjustment_mwh_sum": 9066
+  },
+  "LDBESS1": {
+   "region": "NSW1",
+   "station": "Liddell Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 51,
+   "adjustment_mwh_sum": 1059
+  },
+  "LEM_WIL": {
+   "region": "TAS1",
+   "station": "Lemonthyme / Wilmot",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.48314,
+   "lon": 146.12534,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LGAPBS1": {
+   "region": "SA1",
+   "station": "Lincoln Gap Wind Farm",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -32.54633,
+   "lon": 137.55276,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "LGAPWF1": {
+   "region": "SA1",
+   "station": "Lincoln Gap",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -32.54633,
+   "lon": 137.55276,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "LGAPWF2": {
+   "region": "SA1",
+   "station": "Lincoln Gap",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -32.54633,
+   "lon": 137.55276,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "LIDDNL1": {
+   "region": "NSW1",
+   "station": "Liddell Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -32.36903,
+   "lon": 150.98011,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LILYSF1": {
+   "region": "QLD1",
+   "station": "Lilyvale",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -23.0705,
+   "lon": 148.41386,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3113234
+  },
+  "LIMBESS1": {
+   "region": "NSW1",
+   "station": "Limondale Battery",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1801,
+   "adjustment_mwh_sum": 1192169
+  },
+  "LIMOSF11": {
+   "region": "NSW1",
+   "station": "Limondale",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.7755,
+   "lon": 143.50805,
+   "constrained_intervals": 2053,
+   "adjustment_mwh_sum": 2077208
+  },
+  "LIMOSF21": {
+   "region": "NSW1",
+   "station": "Limondale 2",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.7755,
+   "lon": 143.50805,
+   "constrained_intervals": 2053,
+   "adjustment_mwh_sum": 2884576
+  },
+  "LI_WY_CA": {
+   "region": "TAS1",
+   "station": "Catagunya / Liapootah / Wayatinah",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.37613,
+   "lon": 146.50982,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LKBONNY1": {
+   "region": "SA1",
+   "station": "Lake Bonney",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.7605,
+   "lon": 140.40554,
+   "constrained_intervals": 90,
+   "adjustment_mwh_sum": 10233
+  },
+  "LKBONNY2": {
+   "region": "SA1",
+   "station": "Lake Bonney 2",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.7605,
+   "lon": 140.40554,
+   "constrained_intervals": 90,
+   "adjustment_mwh_sum": 10020
+  },
+  "LKBONNY3": {
+   "region": "SA1",
+   "station": "Lake Bonney 3",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.7605,
+   "lon": 140.40554,
+   "constrained_intervals": 90,
+   "adjustment_mwh_sum": 10020
+  },
+  "LK_ECHO": {
+   "region": "TAS1",
+   "station": "Lake Echo",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.25334,
+   "lon": 146.62051,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LNGS1": {
+   "region": "VIC1",
+   "station": "Laverton North",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -37.84169,
+   "lon": 144.78801,
+   "constrained_intervals": 25,
+   "adjustment_mwh_sum": 2108
+  },
+  "LNGS2": {
+   "region": "VIC1",
+   "station": "Laverton North",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -37.84169,
+   "lon": 144.78801,
+   "constrained_intervals": 25,
+   "adjustment_mwh_sum": 2108
+  },
+  "LONGFORD": {
+   "region": "VIC1",
+   "station": "Longford",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.22324,
+   "lon": 147.1631,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LONSDALE": {
+   "region": "SA1",
+   "station": "Lonsdale",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -35.10972,
+   "lon": 138.49096,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LOYYB1": {
+   "region": "VIC1",
+   "station": "Loy Yang B",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.25362,
+   "lon": 146.58559,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LOYYB2": {
+   "region": "VIC1",
+   "station": "Loy Yang B",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.25362,
+   "lon": 146.58559,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LRSF1": {
+   "region": "QLD1",
+   "station": "Longreach",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -23.45505,
+   "lon": 144.22792,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LUCAS2S2": {
+   "region": "NSW1",
+   "station": "Lucas Heights 2",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -34.04409,
+   "lon": 150.97248,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LUCASHGT": {
+   "region": "NSW1",
+   "station": "Lucas Heights 2",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -34.04409,
+   "lon": 150.97248,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LVES1": {
+   "region": "VIC1",
+   "station": "Latrobe Valley BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LYA1": {
+   "region": "VIC1",
+   "station": "Loy Yang A",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.25062,
+   "lon": 146.57636,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LYA2": {
+   "region": "VIC1",
+   "station": "Loy Yang A",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.25062,
+   "lon": 146.57636,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LYA3": {
+   "region": "VIC1",
+   "station": "Loy Yang A",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.25062,
+   "lon": 146.57636,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LYA4": {
+   "region": "VIC1",
+   "station": "Loy Yang A",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.25062,
+   "lon": 146.57636,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "LYNL1": {
+   "region": "VIC1",
+   "station": "Loy Yang A Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -38.25062,
+   "lon": 146.57636,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "L_W_CNL1": {
+   "region": "TAS1",
+   "station": "Catagunya / Liapootah / Wayatinah Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -42.37613,
+   "lon": 146.50982,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MACARTH1": {
+   "region": "VIC1",
+   "station": "Macarthur",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.04348,
+   "lon": 142.17908,
+   "constrained_intervals": 322,
+   "adjustment_mwh_sum": 59154
+  },
+  "MACKNTSH": {
+   "region": "TAS1",
+   "station": "Mackintosh",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.70136,
+   "lon": 145.64656,
+   "constrained_intervals": 42,
+   "adjustment_mwh_sum": 61
+  },
+  "MANNSF2": {
+   "region": "SA1",
+   "station": "Mannum 2 Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 31
+  },
+  "MANNUMB1": {
+   "region": "SA1",
+   "station": "Mannum Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 31
+  },
+  "MANSLR1": {
+   "region": "NSW1",
+   "station": "Manildra",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -33.17283,
+   "lon": 148.71824,
+   "constrained_intervals": 1444,
+   "adjustment_mwh_sum": 2108210
+  },
+  "MAPS2PV1": {
+   "region": "SA1",
+   "station": "Mannum",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.92022,
+   "lon": 139.31444,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 41
+  },
+  "MAPS3PV1": {
+   "region": "SA1",
+   "station": "Mannum",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.92022,
+   "lon": 139.31444,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 43
+  },
+  "MAROOWF1": {
+   "region": "VIC1",
+   "station": "Maroona",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.41875,
+   "lon": 142.82434,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MARYRSF1": {
+   "region": "QLD1",
+   "station": "Maryrorough",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -27.70897,
+   "lon": 151.54687,
+   "constrained_intervals": 66,
+   "adjustment_mwh_sum": 48401
+  },
+  "MBAHNTH": {
+   "region": "QLD1",
+   "station": "Moranbah North",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": -21.97848,
+   "lon": 148.00481,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MBPS2PV1": {
+   "region": "SA1",
+   "station": "Murray Bridge-Onkaparinga",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.09409,
+   "lon": 139.21151,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MCINTYR1": {
+   "region": "QLD1",
+   "station": "MacIntyre Wind Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MCKAY1": {
+   "region": "VIC1",
+   "station": "Bogong / Mackay",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.80547,
+   "lon": 147.22784,
+   "constrained_intervals": 717,
+   "adjustment_mwh_sum": 30313
+  },
+  "MEADOWBK": {
+   "region": "TAS1",
+   "station": "Meadowbank",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.61083,
+   "lon": 146.84639,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MERCER01": {
+   "region": "VIC1",
+   "station": "Mt Mercer",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.84759,
+   "lon": 143.87018,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 18334
+  },
+  "METZSF1": {
+   "region": "NSW1",
+   "station": "Metz N",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 262,
+   "adjustment_mwh_sum": 50056
+  },
+  "MEWF1": {
+   "region": "QLD1",
+   "station": "Mt Emerald",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -17.13325,
+   "lon": 145.38004,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11502755
+  },
+  "MIDDLSF1": {
+   "region": "QLD1",
+   "station": "Middlemount",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -22.82223,
+   "lon": 148.72012,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3109842
+  },
+  "MIDLDPS1": {
+   "region": "TAS1",
+   "station": "Midlands",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.08575,
+   "lon": 147.27456,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MINTARO": {
+   "region": "SA1",
+   "station": "Mintaro",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -33.90315,
+   "lon": 138.7388,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 146
+  },
+  "MINTNL1": {
+   "region": "SA1",
+   "station": "Mintaro",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -33.90315,
+   "lon": 138.7388,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MLB01": {
+   "region": "VIC1",
+   "station": "Mortlake Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MLSP1": {
+   "region": "NSW1",
+   "station": "Mugga Lane",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.39844,
+   "lon": 149.14906,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MLWF1": {
+   "region": "VIC1",
+   "station": "Mortons Lane",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.83319,
+   "lon": 142.46529,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MOKOSF1": {
+   "region": "VIC1",
+   "station": "Mokoan Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 879,
+   "adjustment_mwh_sum": 531704
+  },
+  "MOLNGSF1": {
+   "region": "NSW1",
+   "station": "Molong",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -33.08258,
+   "lon": 148.90007,
+   "constrained_intervals": 1240,
+   "adjustment_mwh_sum": 1852718
+  },
+  "MOORABS1": {
+   "region": "VIC1",
+   "station": "Moorabool Wind Farm",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MOORAWF1": {
+   "region": "VIC1",
+   "station": "Moorabool",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.73943,
+   "lon": 144.17199,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 18334
+  },
+  "MORANBAH": {
+   "region": "QLD1",
+   "station": "Moranbah",
+   "type": "GENERATOR",
+   "fuel": "gas_recip",
+   "lat": -21.96247,
+   "lon": 148.006,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MOREESF1": {
+   "region": "NSW1",
+   "station": "Moree",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -29.57261,
+   "lon": 149.86127,
+   "constrained_intervals": 762,
+   "adjustment_mwh_sum": 386010
+  },
+  "MORTLK11": {
+   "region": "VIC1",
+   "station": "Mortlake",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.06263,
+   "lon": 142.66633,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MORTLK12": {
+   "region": "VIC1",
+   "station": "Mortlake",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.06263,
+   "lon": 142.66633,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MOUSF1": {
+   "region": "QLD1",
+   "station": "Moura",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -24.50963,
+   "lon": 150.07665,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 2807930
+  },
+  "MP1": {
+   "region": "NSW1",
+   "station": "Mt Piper",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -33.36072,
+   "lon": 150.0357,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 198
+  },
+  "MP2": {
+   "region": "NSW1",
+   "station": "Mt Piper",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -33.36072,
+   "lon": 150.0357,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 198
+  },
+  "MPNL1": {
+   "region": "NSW1",
+   "station": "Mt Piper Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -33.36072,
+   "lon": 150.0357,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MPP_1": {
+   "region": "QLD1",
+   "station": "Millmerran",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -27.96166,
+   "lon": 151.28091,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MPP_2": {
+   "region": "QLD1",
+   "station": "Millmerran",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -27.96166,
+   "lon": 151.28091,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MREHA1": {
+   "region": "VIC1",
+   "station": "Melbourne Renewable Energy Hub Connection A1",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MREHA2": {
+   "region": "VIC1",
+   "station": "Melbourne Renewable Energy Hub Connection A2",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MREHA3": {
+   "region": "VIC1",
+   "station": "Melbourne Renewable Energy Hub Connection A3",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MRNBESS1": {
+   "region": "VIC1",
+   "station": "Mornington BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 263,
+   "adjustment_mwh_sum": 6638
+  },
+  "MRTLSWF1": {
+   "region": "VIC1",
+   "station": "Mortlake South",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.14797,
+   "lon": 142.88225,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 16137
+  },
+  "MSTUART1": {
+   "region": "QLD1",
+   "station": "Mt Stuart",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -19.33716,
+   "lon": 146.85124,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "MSTUART2": {
+   "region": "QLD1",
+   "station": "Mt Stuart",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -19.33716,
+   "lon": 146.85124,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "MSTUART3": {
+   "region": "QLD1",
+   "station": "Mt Stuart",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -19.33716,
+   "lon": 146.85124,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "MTGELWF1": {
+   "region": "VIC1",
+   "station": "Mt Gellibrand",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.25766,
+   "lon": 143.79865,
+   "constrained_intervals": 267,
+   "adjustment_mwh_sum": 6680
+  },
+  "MTMILLAR": {
+   "region": "SA1",
+   "station": "Mt Millar",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.61934,
+   "lon": 136.71757,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "MUCRKSF1": {
+   "region": "QLD1",
+   "station": "Munna Creek Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3242,
+   "adjustment_mwh_sum": 1084443
+  },
+  "MULWASF1": {
+   "region": "NSW1",
+   "station": "Mulwala Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1790,
+   "adjustment_mwh_sum": 1630661
+  },
+  "MURAYNL1": {
+   "region": "VIC1",
+   "station": "Murray Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -36.24599,
+   "lon": 148.18855,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURAYNL2": {
+   "region": "VIC1",
+   "station": "Murray Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -36.24599,
+   "lon": 148.18855,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURAYNL3": {
+   "region": "VIC1",
+   "station": "Murray Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -36.24599,
+   "lon": 148.18855,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-1": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-10": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-2": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-3": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-4": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-5": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-6": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-7": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-8": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR1-9": {
+   "region": "VIC1",
+   "station": "Murray1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR2-1": {
+   "region": "VIC1",
+   "station": "Murray2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR2-2": {
+   "region": "VIC1",
+   "station": "Murray2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR2-3": {
+   "region": "VIC1",
+   "station": "Murray2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURR2-4": {
+   "region": "VIC1",
+   "station": "Murray2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "MURRAY": {
+   "region": "VIC1",
+   "station": "Murray",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.24599,
+   "lon": 148.18855,
+   "constrained_intervals": 1557,
+   "adjustment_mwh_sum": 72084
+  },
+  "MUSSELR1": {
+   "region": "TAS1",
+   "station": "Musselroe",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -40.77711,
+   "lon": 148.00631,
+   "constrained_intervals": 70,
+   "adjustment_mwh_sum": 771
+  },
+  "MUWAWF1": {
+   "region": "VIC1",
+   "station": "Murra Warra",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -36.43882,
+   "lon": 142.246,
+   "constrained_intervals": 1957,
+   "adjustment_mwh_sum": 588894
+  },
+  "MUWAWF2": {
+   "region": "VIC1",
+   "station": "Murra Warra",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -36.43882,
+   "lon": 142.246,
+   "constrained_intervals": 1957,
+   "adjustment_mwh_sum": 588894
+  },
+  "MWPS1PV1": {
+   "region": "SA1",
+   "station": "Morganwhyalla Pipeline",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 90
+  },
+  "MWPS2PV1": {
+   "region": "SA1",
+   "station": "Morganwhyalla Pipeline",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 90
+  },
+  "MWPS3PV1": {
+   "region": "SA1",
+   "station": "Morganwhyalla Pipeline",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 90
+  },
+  "MWPS4PV1": {
+   "region": "SA1",
+   "station": "Morganwhyalla Pipeline",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 108
+  },
+  "NASF1": {
+   "region": "NSW1",
+   "station": "Narromine",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -32.21832,
+   "lon": 148.25452,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "NBHWF1": {
+   "region": "SA1",
+   "station": "North Brown Hill",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.22812,
+   "lon": 138.71689,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 51
+  },
+  "NESBESS1": {
+   "region": "NSW1",
+   "station": "New England BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 354,
+   "adjustment_mwh_sum": 16313
+  },
+  "NESBESS2": {
+   "region": "NSW1",
+   "station": "New England BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 354,
+   "adjustment_mwh_sum": 16313
+  },
+  "NEVERSF1": {
+   "region": "NSW1",
+   "station": "Nevertire",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -31.83104,
+   "lon": 147.70518,
+   "constrained_intervals": 1316,
+   "adjustment_mwh_sum": 525982
+  },
+  "NEWENSF1": {
+   "region": "NSW1",
+   "station": "New England",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -30.62732,
+   "lon": 151.55642,
+   "constrained_intervals": 262,
+   "adjustment_mwh_sum": 7932
+  },
+  "NEWENSF2": {
+   "region": "NSW1",
+   "station": "New England",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -30.62732,
+   "lon": 151.55642,
+   "constrained_intervals": 262,
+   "adjustment_mwh_sum": 7932
+  },
+  "NPS": {
+   "region": "VIC1",
+   "station": "Newport",
+   "type": "GENERATOR",
+   "fuel": "gas_steam",
+   "lat": -37.84137,
+   "lon": 144.89548,
+   "constrained_intervals": 25,
+   "adjustment_mwh_sum": 2108
+  },
+  "NUMURSF1": {
+   "region": "VIC1",
+   "station": "Numurkah",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -36.15928,
+   "lon": 145.47389,
+   "constrained_intervals": 423,
+   "adjustment_mwh_sum": 36278
+  },
+  "NYNGAN1": {
+   "region": "NSW1",
+   "station": "Nyngan",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -31.56319,
+   "lon": 147.0742,
+   "constrained_intervals": 1316,
+   "adjustment_mwh_sum": 525982
+  },
+  "OAKEY1": {
+   "region": "QLD1",
+   "station": "Oakey",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -27.41821,
+   "lon": 151.67889,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "OAKEY1SF": {
+   "region": "QLD1",
+   "station": "Oakey",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -27.40245,
+   "lon": 151.64258,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "OAKEY2": {
+   "region": "QLD1",
+   "station": "Oakey",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -27.41821,
+   "lon": 151.67889,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "OAKEY2SF": {
+   "region": "QLD1",
+   "station": "Oakey 2",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -27.40245,
+   "lon": 151.64258,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "OAKLAND1": {
+   "region": "VIC1",
+   "station": "Oaklands Hill",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.67948,
+   "lon": 142.55299,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 15872
+  },
+  "OAKY2": {
+   "region": "QLD1",
+   "station": "Oaky Creek 2",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": -23.04872,
+   "lon": 148.48446,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "OAKYCREK": {
+   "region": "QLD1",
+   "station": "Oaky Creek",
+   "type": "GENERATOR",
+   "fuel": "gas_recip",
+   "lat": -23.04872,
+   "lon": 148.48446,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ORABESS1": {
+   "region": "NSW1",
+   "station": "Orana Bess",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 572,
+   "adjustment_mwh_sum": 102991
+  },
+  "OSB-AG": {
+   "region": "SA1",
+   "station": "Osborne",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -34.7977,
+   "lon": 138.5081,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "PALOONA": {
+   "region": "TAS1",
+   "station": "Paloona",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.28268,
+   "lon": 146.24858,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "PAREPS1": {
+   "region": "SA1",
+   "station": "Port Augusta Energy Park",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -32.59561,
+   "lon": 137.88563,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "PAREPW1": {
+   "region": "SA1",
+   "station": "Port Augusta Energy Park",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -32.59561,
+   "lon": 137.88563,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "PARSF1": {
+   "region": "NSW1",
+   "station": "Parkes",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -33.11306,
+   "lon": 148.07637,
+   "constrained_intervals": 1726,
+   "adjustment_mwh_sum": 1511527
+  },
+  "PIBESS1": {
+   "region": "VIC1",
+   "station": "Phillip Island BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -38.48329,
+   "lon": 145.22488,
+   "constrained_intervals": 263,
+   "adjustment_mwh_sum": 6651
+  },
+  "PINDARI": {
+   "region": "NSW1",
+   "station": "Pindari",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -29.38803,
+   "lon": 151.24477,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "PIONEER": {
+   "region": "QLD1",
+   "station": "Pioneer Sugar Mill",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biomass",
+   "lat": -19.55755,
+   "lon": 147.33083,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "PLBESS1": {
+   "region": "VIC1",
+   "station": "Pine Lodge BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 160,
+   "adjustment_mwh_sum": 28341
+  },
+  "PO110NL1": {
+   "region": "TAS1",
+   "station": "Poatina",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.80507,
+   "lon": 146.92437,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "POAT110": {
+   "region": "TAS1",
+   "station": "Poatina",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.80507,
+   "lon": 146.92437,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "POAT220": {
+   "region": "TAS1",
+   "station": "Poatina",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.80507,
+   "lon": 146.92437,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "POR01": {
+   "region": "SA1",
+   "station": "Port Lincoln",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -34.70062,
+   "lon": 135.80453,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 58
+  },
+  "POR03": {
+   "region": "SA1",
+   "station": "Port Lincoln",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -34.70062,
+   "lon": 135.80453,
+   "constrained_intervals": 105,
+   "adjustment_mwh_sum": 13024
+  },
+  "PORTWF": {
+   "region": "VIC1",
+   "station": "Portland",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.36142,
+   "lon": 141.38456,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "PPCCGT": {
+   "region": "SA1",
+   "station": "Pelican Point",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -34.76437,
+   "lon": 138.5054,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "PTSTAN1": {
+   "region": "SA1",
+   "station": "Port Stanvac",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -35.11035,
+   "lon": 138.49087,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "PUMP1": {
+   "region": "QLD1",
+   "station": "Wivenhoe",
+   "type": "LOAD",
+   "fuel": "pumps",
+   "lat": -27.37222,
+   "lon": 152.63236,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "PUMP2": {
+   "region": "QLD1",
+   "station": "Wivenhoe",
+   "type": "LOAD",
+   "fuel": "pumps",
+   "lat": -27.37222,
+   "lon": 152.63236,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "QBYNB1": {
+   "region": "NSW1",
+   "station": "Queanbeyan BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -35.33943,
+   "lon": 149.21607,
+   "constrained_intervals": 515,
+   "adjustment_mwh_sum": 118121
+  },
+  "QPS1": {
+   "region": "SA1",
+   "station": "Quarantine",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.77907,
+   "lon": 138.52245,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "QPS2": {
+   "region": "SA1",
+   "station": "Quarantine",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.77907,
+   "lon": 138.52245,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "QPS3": {
+   "region": "SA1",
+   "station": "Quarantine",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.77907,
+   "lon": 138.52245,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "QPS4": {
+   "region": "SA1",
+   "station": "Quarantine",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.77907,
+   "lon": 138.52245,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "QPS5": {
+   "region": "SA1",
+   "station": "Quarantine",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.77907,
+   "lon": 138.52245,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "QPSFB1": {
+   "region": "NSW1",
+   "station": "Quorn Park Solar Hybrid",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1726,
+   "adjustment_mwh_sum": 1493675
+  },
+  "QPSFB2": {
+   "region": "NSW1",
+   "station": "Quorn Park Solar Hybrid",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1726,
+   "adjustment_mwh_sum": 1493675
+  },
+  "RACOMIL1": {
+   "region": "QLD1",
+   "station": "Racecourse Mill",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biomass",
+   "lat": -21.16384,
+   "lon": 149.13574,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RANGEB1": {
+   "region": "VIC1",
+   "station": "Rangebank BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 263,
+   "adjustment_mwh_sum": 6651
+  },
+  "REECE1": {
+   "region": "TAS1",
+   "station": "Reece",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.72313,
+   "lon": 145.13647,
+   "constrained_intervals": 42,
+   "adjustment_mwh_sum": 61
+  },
+  "REECE2": {
+   "region": "TAS1",
+   "station": "Reece",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.72313,
+   "lon": 145.13647,
+   "constrained_intervals": 129,
+   "adjustment_mwh_sum": 1428
+  },
+  "REPULSE": {
+   "region": "TAS1",
+   "station": "Repulse",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.50799,
+   "lon": 146.64717,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RESS1": {
+   "region": "NSW1",
+   "station": "Riverina BESS 1",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -34.64667,
+   "lon": 146.03498,
+   "constrained_intervals": 1968,
+   "adjustment_mwh_sum": 1546781
+  },
+  "RIVNB2": {
+   "region": "NSW1",
+   "station": "Riverina Energy Storage System 2",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1968,
+   "adjustment_mwh_sum": 1546781
+  },
+  "ROMA_7": {
+   "region": "QLD1",
+   "station": "Roma",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -26.57679,
+   "lon": 148.83949,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "ROMA_8": {
+   "region": "QLD1",
+   "station": "Roma",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -26.57679,
+   "lon": 148.83949,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "ROWALLAN": {
+   "region": "TAS1",
+   "station": "Rowallan",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.72957,
+   "lon": 146.21809,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ROYALLA1": {
+   "region": "NSW1",
+   "station": "Royalla",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.48605,
+   "lon": 149.14197,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RPCG": {
+   "region": "QLD1",
+   "station": "Rocky Point Cogen",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biomass",
+   "lat": -27.73356,
+   "lon": 153.32646,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RRSF1": {
+   "region": "QLD1",
+   "station": "Ross River",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -19.4253,
+   "lon": 146.71569,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11502901
+  },
+  "RT_NSW1": {
+   "region": "NSW1",
+   "station": "Reserve Trader Nsw1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_NSW2": {
+   "region": "NSW1",
+   "station": "Reserve Trader Nsw1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_NSW3": {
+   "region": "NSW1",
+   "station": "Reserve Trader Nsw1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_NSW4": {
+   "region": "NSW1",
+   "station": "Reserve Trader Nsw1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_NSW5": {
+   "region": "NSW1",
+   "station": "Reserve Trader Nsw1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_NSW6": {
+   "region": "NSW1",
+   "station": "Reserve Trader Nsw1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_QLD1": {
+   "region": "QLD1",
+   "station": "Reserve Trader Qld1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_SA1": {
+   "region": "SA1",
+   "station": "Reserve Trader Sa1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_SA2": {
+   "region": "SA1",
+   "station": "Reserve Trader Sa1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_SA3": {
+   "region": "SA1",
+   "station": "Reserve Trader Sa1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_SA4": {
+   "region": "SA1",
+   "station": "Reserve Trader Sa1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_SA5": {
+   "region": "SA1",
+   "station": "Reserve Trader Sa1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_SA6": {
+   "region": "SA1",
+   "station": "Reserve Trader Sa1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_TAS1": {
+   "region": "TAS1",
+   "station": "Reserve Trader Tas1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC1": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC10": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC11": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC12": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC2": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC3": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC4": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC5": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC6": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC7": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC8": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RT_VIC9": {
+   "region": "VIC1",
+   "station": "Reserve Trader Vic1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RUBICON": {
+   "region": "VIC1",
+   "station": "Rubicon",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -37.29245,
+   "lon": 145.8182,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "RUGBYR1": {
+   "region": "QLD1",
+   "station": "Rugby Run",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -21.94047,
+   "lon": 147.88088,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11493962
+  },
+  "RYANCWF1": {
+   "region": "VIC1",
+   "station": "Ryan Corner Wind Farm",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.27132,
+   "lon": 142.14029,
+   "constrained_intervals": 322,
+   "adjustment_mwh_sum": 59154
+  },
+  "RYEPARK1": {
+   "region": "NSW1",
+   "station": "Rye Park",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.63317,
+   "lon": 148.95364,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 117583
+  },
+  "SALTCRK1": {
+   "region": "VIC1",
+   "station": "Salt Creek",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.9187,
+   "lon": 142.79603,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 15872
+  },
+  "SAPHWF1": {
+   "region": "NSW1",
+   "station": "Sapphire",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -29.71027,
+   "lon": 151.44558,
+   "constrained_intervals": 328,
+   "adjustment_mwh_sum": 9587
+  },
+  "SEBSF1": {
+   "region": "NSW1",
+   "station": "Sebastopol",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.60329,
+   "lon": 147.55476,
+   "constrained_intervals": 1853,
+   "adjustment_mwh_sum": 1682421
+  },
+  "SHGEN": {
+   "region": "NSW1",
+   "station": "Shoalhaven",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -34.73308,
+   "lon": 150.4667,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SHOAL1": {
+   "region": "NSW1",
+   "station": "Shoalhaven Starches",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.85487,
+   "lon": 150.6164,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SHPUMP": {
+   "region": "NSW1",
+   "station": "Shoalhaven",
+   "type": "LOAD",
+   "fuel": "pumps",
+   "lat": -34.73308,
+   "lon": 150.4667,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SITHE01": {
+   "region": "NSW1",
+   "station": "Smithfield",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -33.85002,
+   "lon": 150.95005,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SKSF1": {
+   "region": "NSW1",
+   "station": "South Keswick",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -32.27286,
+   "lon": 148.64984,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SMCSF1": {
+   "region": "QLD1",
+   "station": "Sun Metals",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -19.43732,
+   "lon": 146.69601,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11503746
+  },
+  "SMFBESS1": {
+   "region": "SA1",
+   "station": "Summerfield BESS1",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SMFBESS2": {
+   "region": "SA1",
+   "station": "Summerfield BESS2",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SMTHBES1": {
+   "region": "NSW1",
+   "station": "Smithfield Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SNAPPER1": {
+   "region": "SA1",
+   "station": "Snapper Point",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.76452,
+   "lon": 138.50819,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SNB01": {
+   "region": "QLD1",
+   "station": "Supernode BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SNB02": {
+   "region": "QLD1",
+   "station": "Supernode BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SNOWNTH1": {
+   "region": "SA1",
+   "station": "Snowtown North",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.75648,
+   "lon": 138.14304,
+   "constrained_intervals": 18,
+   "adjustment_mwh_sum": 44
+  },
+  "SNOWSTH1": {
+   "region": "SA1",
+   "station": "Snowtown South",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.86262,
+   "lon": 138.13037,
+   "constrained_intervals": 18,
+   "adjustment_mwh_sum": 44
+  },
+  "SNOWTWN1": {
+   "region": "SA1",
+   "station": "Snowtown",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.6916,
+   "lon": 138.16602,
+   "constrained_intervals": 58,
+   "adjustment_mwh_sum": 42100
+  },
+  "SNOWYGJP": {
+   "region": "VIC1",
+   "station": "Jindabyne Pump At Guthega",
+   "type": "GENERATOR",
+   "fuel": "pumps",
+   "lat": -36.43492,
+   "lon": 148.63057,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SNOWYP": {
+   "region": "NSW1",
+   "station": "Tumut 3",
+   "type": "LOAD",
+   "fuel": "pumps",
+   "lat": -35.61082,
+   "lon": 148.29264,
+   "constrained_intervals": 887,
+   "adjustment_mwh_sum": 122145
+  },
+  "SNUG1": {
+   "region": "SA1",
+   "station": "Snuggery",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -37.665,
+   "lon": 140.41469,
+   "constrained_intervals": 90,
+   "adjustment_mwh_sum": 12991
+  },
+  "SNUG2": {
+   "region": "SA1",
+   "station": "Snuggery",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -37.665,
+   "lon": 140.41469,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SNUG3": {
+   "region": "SA1",
+   "station": "Snuggery",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -37.665,
+   "lon": 140.41469,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SNUGNL1": {
+   "region": "SA1",
+   "station": "Snuggery",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -37.665,
+   "lon": 140.41469,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SRSF1": {
+   "region": "QLD1",
+   "station": "Susan River",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -25.42028,
+   "lon": 152.74203,
+   "constrained_intervals": 3242,
+   "adjustment_mwh_sum": 2339157
+  },
+  "STABESS1": {
+   "region": "QLD1",
+   "station": "Stanwell Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3175,
+   "adjustment_mwh_sum": 3031191
+  },
+  "STAN-1": {
+   "region": "QLD1",
+   "station": "Stanwell",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.5075,
+   "lon": 150.31788,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3132136
+  },
+  "STAN-2": {
+   "region": "QLD1",
+   "station": "Stanwell",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.5075,
+   "lon": 150.31788,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3132136
+  },
+  "STAN-3": {
+   "region": "QLD1",
+   "station": "Stanwell",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.5075,
+   "lon": 150.31788,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3132136
+  },
+  "STAN-4": {
+   "region": "QLD1",
+   "station": "Stanwell",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -23.5075,
+   "lon": 150.31788,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3132136
+  },
+  "STANNL1": {
+   "region": "QLD1",
+   "station": "Stanwell Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -23.5075,
+   "lon": 150.31788,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "STAPYLTON1": {
+   "region": "QLD1",
+   "station": "Stapylton",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "STARHLWF": {
+   "region": "SA1",
+   "station": "Starfish Hill",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -35.57898,
+   "lon": 138.13965,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "STGEORG1": {
+   "region": "NSW1",
+   "station": "St George Leagues Club",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -33.97482,
+   "lon": 151.12935,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "STOCKYD1": {
+   "region": "VIC1",
+   "station": "Stockyard Hill",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.53568,
+   "lon": 143.25255,
+   "constrained_intervals": 67,
+   "adjustment_mwh_sum": 52805
+  },
+  "STUBSF1": {
+   "region": "NSW1",
+   "station": "Stubbo Solar Farm 1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 96,
+   "adjustment_mwh_sum": 7326326
+  },
+  "STUBSF2": {
+   "region": "NSW1",
+   "station": "Stubbo Solar Farm 2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 96,
+   "adjustment_mwh_sum": 7326326
+  },
+  "STWF1": {
+   "region": "NSW1",
+   "station": "Silverton",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -31.86095,
+   "lon": 141.29635,
+   "constrained_intervals": 2053,
+   "adjustment_mwh_sum": 6687832
+  },
+  "SUNRSF1": {
+   "region": "NSW1",
+   "station": "Sunraysia",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.82149,
+   "lon": 143.50916,
+   "constrained_intervals": 2053,
+   "adjustment_mwh_sum": 1262033
+  },
+  "SUNTPSF1": {
+   "region": "NSW1",
+   "station": "Suntop",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -32.5742,
+   "lon": 148.86047,
+   "constrained_intervals": 1369,
+   "adjustment_mwh_sum": 989870
+  },
+  "SWANBBF1": {
+   "region": "QLD1",
+   "station": "Swanbank BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "SWAN_E": {
+   "region": "QLD1",
+   "station": "Swanbank E",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -27.65529,
+   "lon": 152.81864,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TABMILL2": {
+   "region": "QLD1",
+   "station": "Tableland Mill",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biomass",
+   "lat": -17.11981,
+   "lon": 145.34513,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TAHMOOR1": {
+   "region": "NSW1",
+   "station": "Tahmoor",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": -34.24912,
+   "lon": 150.57772,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TALWA1": {
+   "region": "NSW1",
+   "station": "Tallawarra",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -34.52309,
+   "lon": 150.80857,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TALWB1": {
+   "region": "NSW1",
+   "station": "Tallawarra B",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -34.52309,
+   "lon": 150.80857,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TARALGA1": {
+   "region": "NSW1",
+   "station": "Taralga",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -34.42539,
+   "lon": 149.8596,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TARBESS1": {
+   "region": "QLD1",
+   "station": "Tarong BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 53310
+  },
+  "TARNL1": {
+   "region": "QLD1",
+   "station": "Tarong Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -26.7744,
+   "lon": 151.91784,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TARONG#1": {
+   "region": "QLD1",
+   "station": "Tarong",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -26.7744,
+   "lon": 151.91784,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 53310
+  },
+  "TARONG#2": {
+   "region": "QLD1",
+   "station": "Tarong",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -26.7744,
+   "lon": 151.91784,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 53310
+  },
+  "TARONG#3": {
+   "region": "QLD1",
+   "station": "Tarong",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -26.7744,
+   "lon": 151.91784,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 53310
+  },
+  "TARONG#4": {
+   "region": "QLD1",
+   "station": "Tarong",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -26.7744,
+   "lon": 151.91784,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 53310
+  },
+  "TARRALEA": {
+   "region": "TAS1",
+   "station": "Tarraleah",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.30174,
+   "lon": 146.45666,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TATIARA1": {
+   "region": "SA1",
+   "station": "Tataria",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -36.32698,
+   "lon": 140.73704,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TB2B1": {
+   "region": "SA1",
+   "station": "Tailem Bend 2 Hybrid Renewable Power Station",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 7119
+  },
+  "TB2SF1": {
+   "region": "SA1",
+   "station": "Tailem Bend 2",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.28,
+   "lon": 139.49,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 7119
+  },
+  "TB3B1": {
+   "region": "SA1",
+   "station": "Tailem Bend 3 BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TBSF1": {
+   "region": "SA1",
+   "station": "Tailem Bend",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.28,
+   "lon": 139.49,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 7119
+  },
+  "TEMPB1": {
+   "region": "SA1",
+   "station": "Templers Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 46,
+   "adjustment_mwh_sum": 345
+  },
+  "TGNSS1": {
+   "region": "VIC1",
+   "station": "Traralgon Network Support",
+   "type": "GENERATOR",
+   "fuel": "gas_recip",
+   "lat": -37.83351,
+   "lon": 144.96596,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "THEDROP1": {
+   "region": "NSW1",
+   "station": "The Drop",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.97353,
+   "lon": 145.99927,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TIB1": {
+   "region": "SA1",
+   "station": "Torrens Island BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -34.80583,
+   "lon": 138.52419,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TIMWEST": {
+   "region": "VIC1",
+   "station": "Timboon West",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.52835,
+   "lon": 142.91623,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TITREE": {
+   "region": "QLD1",
+   "station": "Veolia Ti Tree",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -27.69555,
+   "lon": 152.65031,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TNPS1": {
+   "region": "QLD1",
+   "station": "Tarong North",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -26.7744,
+   "lon": 151.91784,
+   "constrained_intervals": 372,
+   "adjustment_mwh_sum": 54899
+  },
+  "TOORAWF": {
+   "region": "VIC1",
+   "station": "Toora",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.65353,
+   "lon": 146.33977,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TORNL1": {
+   "region": "SA1",
+   "station": "Torrens Island Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -34.80456,
+   "lon": 138.52223,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TORRB1": {
+   "region": "SA1",
+   "station": "Torrens Island",
+   "type": "GENERATOR",
+   "fuel": "gas_steam",
+   "lat": -34.80456,
+   "lon": 138.52223,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TORRB2": {
+   "region": "SA1",
+   "station": "Torrens Island",
+   "type": "GENERATOR",
+   "fuel": "gas_steam",
+   "lat": -34.80456,
+   "lon": 138.52223,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TORRB3": {
+   "region": "SA1",
+   "station": "Torrens Island",
+   "type": "GENERATOR",
+   "fuel": "gas_steam",
+   "lat": -34.80456,
+   "lon": 138.52223,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TORRB4": {
+   "region": "SA1",
+   "station": "Torrens Island",
+   "type": "GENERATOR",
+   "fuel": "gas_steam",
+   "lat": -34.80456,
+   "lon": 138.52223,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TOWER": {
+   "region": "NSW1",
+   "station": "Tower",
+   "type": "GENERATOR",
+   "fuel": "gas_wcmg",
+   "lat": -34.21946,
+   "lon": 150.71801,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TREVALLN": {
+   "region": "TAS1",
+   "station": "Trevallyn",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.4223,
+   "lon": 147.11203,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TRGBESS1": {
+   "region": "VIC1",
+   "station": "Terang Bess",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 347,
+   "adjustment_mwh_sum": 16137
+  },
+  "TRIBNL1": {
+   "region": "TAS1",
+   "station": "Tribute",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.81147,
+   "lon": 145.65325,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TRIBUTE": {
+   "region": "TAS1",
+   "station": "Tribute",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -41.81147,
+   "lon": 145.65325,
+   "constrained_intervals": 42,
+   "adjustment_mwh_sum": 61
+  },
+  "TULLYSM1": {
+   "region": "QLD1",
+   "station": "Tully Sugar Mill",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMT3NL1": {
+   "region": "NSW1",
+   "station": "Tumut 3 Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMT3NL2": {
+   "region": "NSW1",
+   "station": "Tumut 3 Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMT3NL3": {
+   "region": "NSW1",
+   "station": "Tumut 3 Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT1-1": {
+   "region": "NSW1",
+   "station": "Tumut1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT1-2": {
+   "region": "NSW1",
+   "station": "Tumut1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT1-3": {
+   "region": "NSW1",
+   "station": "Tumut1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT1-4": {
+   "region": "NSW1",
+   "station": "Tumut1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT2-1": {
+   "region": "NSW1",
+   "station": "Tumut2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT2-2": {
+   "region": "NSW1",
+   "station": "Tumut2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT2-3": {
+   "region": "NSW1",
+   "station": "Tumut2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT2-4": {
+   "region": "NSW1",
+   "station": "Tumut2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT3": {
+   "region": "NSW1",
+   "station": "Tumut 3",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.61082,
+   "lon": 148.29264,
+   "constrained_intervals": 832,
+   "adjustment_mwh_sum": 121039
+  },
+  "TUMUT3-1": {
+   "region": "NSW1",
+   "station": "Tumut 3",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.61082,
+   "lon": 148.29264,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT3-2": {
+   "region": "NSW1",
+   "station": "Tumut 3",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.61082,
+   "lon": 148.29264,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT3-3": {
+   "region": "NSW1",
+   "station": "Tumut 3",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.61082,
+   "lon": 148.29264,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT3-4": {
+   "region": "NSW1",
+   "station": "Tumut 3",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.61082,
+   "lon": 148.29264,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT3-5": {
+   "region": "NSW1",
+   "station": "Tumut 3",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.61082,
+   "lon": 148.29264,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUMUT3-6": {
+   "region": "NSW1",
+   "station": "Tumut 3",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.61082,
+   "lon": 148.29264,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TUNGATIN": {
+   "region": "TAS1",
+   "station": "Tungatinah",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -42.2964,
+   "lon": 146.45588,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TVCC201": {
+   "region": "TAS1",
+   "station": "Tamar Valley",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -41.13927,
+   "lon": 146.90618,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "TVPP104": {
+   "region": "TAS1",
+   "station": "Bell Bay Three",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -41.13932,
+   "lon": 146.90552,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "ULPBESS1": {
+   "region": "QLD1",
+   "station": "Ulinda Park BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "UPPTUMUT": {
+   "region": "NSW1",
+   "station": "Tumut",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -35.95349,
+   "lon": 148.36969,
+   "constrained_intervals": 832,
+   "adjustment_mwh_sum": 123291
+  },
+  "URANQ11": {
+   "region": "NSW1",
+   "station": "Uranquinty",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -35.18023,
+   "lon": 147.21566,
+   "constrained_intervals": 2023,
+   "adjustment_mwh_sum": 1631612
+  },
+  "URANQ12": {
+   "region": "NSW1",
+   "station": "Uranquinty",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -35.18023,
+   "lon": 147.21566,
+   "constrained_intervals": 2023,
+   "adjustment_mwh_sum": 1631612
+  },
+  "URANQ13": {
+   "region": "NSW1",
+   "station": "Uranquinty",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -35.18023,
+   "lon": 147.21566,
+   "constrained_intervals": 2023,
+   "adjustment_mwh_sum": 1631612
+  },
+  "URANQ14": {
+   "region": "NSW1",
+   "station": "Uranquinty",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -35.18023,
+   "lon": 147.21566,
+   "constrained_intervals": 2023,
+   "adjustment_mwh_sum": 1631612
+  },
+  "UWF1": {
+   "region": "NSW1",
+   "station": "Uungula Wind Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 460,
+   "adjustment_mwh_sum": 61114
+  },
+  "VALDORA1": {
+   "region": "QLD1",
+   "station": "Sunshine Coast",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.5608,
+   "lon": 153.02595,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VBB1": {
+   "region": "VIC1",
+   "station": "Victorian Big Battery",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -38.03828,
+   "lon": 144.291,
+   "constrained_intervals": 263,
+   "adjustment_mwh_sum": 6651
+  },
+  "VENUS1": {
+   "region": "VIC1",
+   "station": "ENOC MSAP",
+   "type": "LOAD",
+   "fuel": "aggregator_vpp",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VICMILL1": {
+   "region": "QLD1",
+   "station": "Victoria Mill",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biomass",
+   "lat": -18.65021,
+   "lon": 146.20087,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VP5": {
+   "region": "NSW1",
+   "station": "Vales Point B",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -33.16464,
+   "lon": 151.54412,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 276
+  },
+  "VP6": {
+   "region": "NSW1",
+   "station": "Vales Point B",
+   "type": "GENERATOR",
+   "fuel": "coal_black",
+   "lat": -33.16464,
+   "lon": 151.54412,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 276
+  },
+  "VPGS1": {
+   "region": "VIC1",
+   "station": "Valley Aking",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.2526,
+   "lon": 146.58891,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VPGS2": {
+   "region": "VIC1",
+   "station": "Valley Aking",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.2526,
+   "lon": 146.58891,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VPGS3": {
+   "region": "VIC1",
+   "station": "Valley Aking",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.2526,
+   "lon": 146.58891,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VPGS4": {
+   "region": "VIC1",
+   "station": "Valley Aking",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.2526,
+   "lon": 146.58891,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VPGS5": {
+   "region": "VIC1",
+   "station": "Valley Aking",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.2526,
+   "lon": 146.58891,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VPGS6": {
+   "region": "VIC1",
+   "station": "Valley Aking",
+   "type": "GENERATOR",
+   "fuel": "gas_ocgt",
+   "lat": -38.2526,
+   "lon": 146.58891,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VPNL1": {
+   "region": "NSW1",
+   "station": "Vales Point \"B\" Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -33.16464,
+   "lon": 151.54412,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VSNEL2S1": {
+   "region": "NSW1",
+   "station": "VPP Energy Locals NSW 2",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VSQHT1V1": {
+   "region": "QLD1",
+   "station": "Vpp Ht Qld 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VSSAE1V1": {
+   "region": "SA1",
+   "station": "Vpp Agle Sa 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VSSSE1V1": {
+   "region": "SA1",
+   "station": "VPP Simply SA 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VSSSH1S1": {
+   "region": "SA1",
+   "station": "VPP ShinHub SA 1",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "VSVEL2S1": {
+   "region": "VIC1",
+   "station": "VPP Energy Locals VIC 2",
+   "type": "LOAD",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "W/HOE#1": {
+   "region": "QLD1",
+   "station": "Wivenhoe",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -27.37222,
+   "lon": 152.63236,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "W/HOE#2": {
+   "region": "QLD1",
+   "station": "Wivenhoe",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -27.37222,
+   "lon": 152.63236,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WAGGNSF1": {
+   "region": "NSW1",
+   "station": "Wagga North",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -35.06908,
+   "lon": 147.43823,
+   "constrained_intervals": 1853,
+   "adjustment_mwh_sum": 1682386
+  },
+  "WALGRV1": {
+   "region": "NSW1",
+   "station": "Wallgrove BESS 1",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": -33.81748,
+   "lon": 150.82728,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WAMBOWF1": {
+   "region": "QLD1",
+   "station": "Wambo Wind Farm 1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 418,
+   "adjustment_mwh_sum": 67684
+  },
+  "WAMBOWF2": {
+   "region": "QLD1",
+   "station": "Wambo Wind Farm 2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 418,
+   "adjustment_mwh_sum": 67684
+  },
+  "WANDB1": {
+   "region": "QLD1",
+   "station": "Wandoan BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "WANDSF1": {
+   "region": "QLD1",
+   "station": "Wandoan Solar Farm",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.26356,
+   "lon": 149.77224,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "WANDSF2": {
+   "region": "QLD1",
+   "station": "Wandoan Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -26.26356,
+   "lon": 149.77224,
+   "constrained_intervals": 346,
+   "adjustment_mwh_sum": 55134
+  },
+  "WARWSF1": {
+   "region": "QLD1",
+   "station": "Warwick",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -28.18321,
+   "lon": 152.06679,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WARWSF2": {
+   "region": "QLD1",
+   "station": "Warwick",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -28.18321,
+   "lon": 152.06679,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WATERLWF": {
+   "region": "SA1",
+   "station": "Waterloo",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.9911,
+   "lon": 138.91572,
+   "constrained_intervals": 8,
+   "adjustment_mwh_sum": 40
+  },
+  "WAUBRAWF": {
+   "region": "VIC1",
+   "station": "Waubra",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.35798,
+   "lon": 143.5926,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WDBESS1": {
+   "region": "QLD1",
+   "station": "Western Downs Battery Energy Storage System (BESS)",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "WDBESS2": {
+   "region": "QLD1",
+   "station": "Western Downs Battery Energy Storage System (BESS)",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "WDGPH1": {
+   "region": "QLD1",
+   "station": "Western Downs",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.92792,
+   "lon": 150.60154,
+   "constrained_intervals": 352,
+   "adjustment_mwh_sum": 55961
+  },
+  "WDLNGN01": {
+   "region": "NSW1",
+   "station": "Woodlawn",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -35.05928,
+   "lon": 149.5749,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WELLSF1": {
+   "region": "NSW1",
+   "station": "Wellington",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1237,
+   "adjustment_mwh_sum": 430102
+  },
+  "WELNSF1": {
+   "region": "NSW1",
+   "station": "Wellington North",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 572,
+   "adjustment_mwh_sum": 102991
+  },
+  "WEMENSF1": {
+   "region": "VIC1",
+   "station": "Wemen",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.80259,
+   "lon": 142.54335,
+   "constrained_intervals": 1924,
+   "adjustment_mwh_sum": 1104755
+  },
+  "WESTILL1": {
+   "region": "NSW1",
+   "station": "West Illawarra Leagues Club",
+   "type": "GENERATOR",
+   "fuel": "distillate",
+   "lat": -34.45164,
+   "lon": 150.84304,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WGWF1": {
+   "region": "SA1",
+   "station": "Willogoleche",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -33.39357,
+   "lon": 138.84821,
+   "constrained_intervals": 20,
+   "adjustment_mwh_sum": 50
+  },
+  "WHILL1": {
+   "region": "QLD1",
+   "station": "Windy Hill",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -17.5904,
+   "lon": 145.52968,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WHITSF1": {
+   "region": "QLD1",
+   "station": "Whitsunday",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -20.53726,
+   "lon": 147.80475,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 11500490
+  },
+  "WILGAPK": {
+   "region": "NSW1",
+   "station": "Wilga Park",
+   "type": "GENERATOR",
+   "fuel": "gas_recip",
+   "lat": -30.31444,
+   "lon": 149.65277,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WILGB01": {
+   "region": "NSW1",
+   "station": "Wilga Park B",
+   "type": "GENERATOR",
+   "fuel": "gas_recip",
+   "lat": -30.31444,
+   "lon": 149.65277,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WILLBES1": {
+   "region": "NSW1",
+   "station": "Williamsdale BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 117387
+  },
+  "WILLHOV1": {
+   "region": "VIC1",
+   "station": "William Hovell Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WINGF1_1": {
+   "region": "SA1",
+   "station": "Wingfield",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -34.83514,
+   "lon": 138.54895,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WINGF2_1": {
+   "region": "SA1",
+   "station": "Wingfield 2",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -34.83514,
+   "lon": 138.54895,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WINTSF1": {
+   "region": "VIC1",
+   "station": "Winton",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -36.4997,
+   "lon": 146.11455,
+   "constrained_intervals": 879,
+   "adjustment_mwh_sum": 531704
+  },
+  "WKIEWA1": {
+   "region": "VIC1",
+   "station": "West Kiewa",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.75967,
+   "lon": 147.18608,
+   "constrained_intervals": 383,
+   "adjustment_mwh_sum": 27672
+  },
+  "WKIEWA2": {
+   "region": "VIC1",
+   "station": "West Kiewa",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.75967,
+   "lon": 147.18608,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WLWLSF1": {
+   "region": "NSW1",
+   "station": "Walla Walla Solar Farm 1",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1762,
+   "adjustment_mwh_sum": 6492339
+  },
+  "WLWLSF2": {
+   "region": "NSW1",
+   "station": "Walla Walla Solar Farm 2",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 1762,
+   "adjustment_mwh_sum": 6492339
+  },
+  "WNSF1": {
+   "region": "VIC1",
+   "station": "Wangaratta Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WOLARSF1": {
+   "region": "NSW1",
+   "station": "Wollar Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 131,
+   "adjustment_mwh_sum": 21347
+  },
+  "WOLLERT1": {
+   "region": "VIC1",
+   "station": "Wollert",
+   "type": "GENERATOR",
+   "fuel": "bioenergy_biogas",
+   "lat": -37.59179,
+   "lon": 145.04303,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WONWP": {
+   "region": "VIC1",
+   "station": "Wonthaggi",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.60513,
+   "lon": 145.54629,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WOODLWN1": {
+   "region": "NSW1",
+   "station": "Woodlawn",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -35.08167,
+   "lon": 149.57051,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WOOLES1": {
+   "region": "QLD1",
+   "station": "Woolooga BESS",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 3146,
+   "adjustment_mwh_sum": 1037510
+  },
+  "WOOLGSF1": {
+   "region": "QLD1",
+   "station": "Woolooga",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -26.08452,
+   "lon": 152.44123,
+   "constrained_intervals": 3242,
+   "adjustment_mwh_sum": 1084443
+  },
+  "WOOLNTH1": {
+   "region": "TAS1",
+   "station": "Woolnorth",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -40.73637,
+   "lon": 144.69482,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WOORB1": {
+   "region": "VIC1",
+   "station": "Wooreen Battery Energy Storage System",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WPWF": {
+   "region": "SA1",
+   "station": "Wattle Point",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -35.11541,
+   "lon": 137.71867,
+   "constrained_intervals": 58,
+   "adjustment_mwh_sum": 48852
+  },
+  "WRSF1": {
+   "region": "NSW1",
+   "station": "White Rock",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -29.76329,
+   "lon": 151.55021,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 1901785655
+  },
+  "WRWF1": {
+   "region": "NSW1",
+   "station": "White Rock",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -29.82918,
+   "lon": 151.54539,
+   "constrained_intervals": 483,
+   "adjustment_mwh_sum": 1901785655
+  },
+  "WSTWYSF1": {
+   "region": "NSW1",
+   "station": "West Wyalong",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -33.79564,
+   "lon": 147.31454,
+   "constrained_intervals": 1852,
+   "adjustment_mwh_sum": 1644610
+  },
+  "WTAHB1": {
+   "region": "NSW1",
+   "station": "Waratah Super Battery",
+   "type": "BIDIRECTIONAL",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 50,
+   "adjustment_mwh_sum": 250
+  },
+  "WUNUSF1": {
+   "region": "VIC1",
+   "station": "Wunghnu Solar Farm",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": null,
+   "lon": null,
+   "constrained_intervals": 423,
+   "adjustment_mwh_sum": 36278
+  },
+  "WYA252B1": {
+   "region": "TAS1",
+   "station": "Catagunya / Liapootah / Wayatinah Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -42.37613,
+   "lon": 146.50982,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WYANGALA": {
+   "region": "NSW1",
+   "station": "Wyangala A",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -33.98037,
+   "lon": 148.94738,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WYANGALB": {
+   "region": "NSW1",
+   "station": "Wyangala B",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -33.98037,
+   "lon": 148.94738,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "WYASF1": {
+   "region": "NSW1",
+   "station": "Wyalong Solar Farm",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -33.80494,
+   "lon": 147.29516,
+   "constrained_intervals": 1859,
+   "adjustment_mwh_sum": 1688604
+  },
+  "WYB252B1": {
+   "region": "TAS1",
+   "station": "Catagunya / Liapootah / Wayatinah Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -42.37613,
+   "lon": 146.50982,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "YABULU": {
+   "region": "QLD1",
+   "station": "Townsville",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -19.20037,
+   "lon": 146.61826,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "YABULU2": {
+   "region": "QLD1",
+   "station": "Townsville",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -19.20037,
+   "lon": 146.61826,
+   "constrained_intervals": 3271,
+   "adjustment_mwh_sum": 3150755
+  },
+  "YAMBUKWF": {
+   "region": "VIC1",
+   "station": "Yambuk",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -38.30528,
+   "lon": 142.01844,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "YARANSF1": {
+   "region": "QLD1",
+   "station": "Yarranlea",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -27.70894,
+   "lon": 151.5327,
+   "constrained_intervals": 66,
+   "adjustment_mwh_sum": 48401
+  },
+  "YARWUN_1": {
+   "region": "QLD1",
+   "station": "Yarwun",
+   "type": "GENERATOR",
+   "fuel": "gas_ccgt",
+   "lat": -23.8302,
+   "lon": 151.14969,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "YATSF1": {
+   "region": "VIC1",
+   "station": "Yatpool",
+   "type": "GENERATOR",
+   "fuel": "solar_utility",
+   "lat": -34.38073,
+   "lon": 142.20534,
+   "constrained_intervals": 1940,
+   "adjustment_mwh_sum": 879252
+  },
+  "YAWWF1": {
+   "region": "VIC1",
+   "station": "Yawong",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -36.47102,
+   "lon": 143.36172,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "YENDWF1": {
+   "region": "VIC1",
+   "station": "Yendon",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.63095,
+   "lon": 144.02246,
+   "constrained_intervals": 377,
+   "adjustment_mwh_sum": 50063
+  },
+  "YSWF1": {
+   "region": "VIC1",
+   "station": "Yaloak South",
+   "type": "GENERATOR",
+   "fuel": "wind",
+   "lat": -37.71647,
+   "lon": 144.24195,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "YWNGAHYD": {
+   "region": "VIC1",
+   "station": "Yarrawonga",
+   "type": "GENERATOR",
+   "fuel": "hydro",
+   "lat": -36.00947,
+   "lon": 145.99957,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "YWNL1": {
+   "region": "VIC1",
+   "station": "Yallourn 'W' Power Station",
+   "type": "GENERATOR",
+   "fuel": null,
+   "lat": -38.1776,
+   "lon": 146.34751,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "YWPS1": {
+   "region": "VIC1",
+   "station": "Yallourn W",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.1776,
+   "lon": 146.34751,
+   "constrained_intervals": 0,
+   "adjustment_mwh_sum": 0
+  },
+  "YWPS2": {
+   "region": "VIC1",
+   "station": "Yallourn W",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.1776,
+   "lon": 146.34751,
+   "constrained_intervals": 260,
+   "adjustment_mwh_sum": 5356
+  },
+  "YWPS3": {
+   "region": "VIC1",
+   "station": "Yallourn W",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.1776,
+   "lon": 146.34751,
+   "constrained_intervals": 260,
+   "adjustment_mwh_sum": 5356
+  },
+  "YWPS4": {
+   "region": "VIC1",
+   "station": "Yallourn W",
+   "type": "GENERATOR",
+   "fuel": "coal_brown",
+   "lat": -38.1776,
+   "lon": 146.34751,
+   "constrained_intervals": 260,
+   "adjustment_mwh_sum": 5356
+  }
+ }
+}

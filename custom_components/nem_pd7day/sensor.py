@@ -65,7 +65,6 @@ from .const import (
     ATTR_SOURCE_FILE,
     ATTR_VIOLATIONDEGREE,
     CONF_FORECAST_MODE,
-    CONF_LOCAL_PRICE_DIAGNOSTIC,
     CONF_LOCAL_PRICE_DUIDS,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
@@ -195,7 +194,7 @@ async def async_setup_entry(
     entities.append(PD7DayCalibrationSensor(coordinator, store, entry, region))
     entities.append(PD7DayTodSensor(coordinator, entry, region))
 
-    entities.extend(_grid_entities(hass, coordinator, entry, region))
+    entities.extend(await _grid_entities(hass, coordinator, entry, region))
 
     # Tariff forecast sensors — one per (distributor, tariff_code) for this
     # region, enumerated from aemo_to_tariff's own catalogue so a tariff the
@@ -263,7 +262,7 @@ def _days27_tariff_entities(
     return entities
 
 
-def _grid_entities(
+async def _grid_entities(
     hass: HomeAssistant, coordinator: PD7DayCoordinator, entry: ConfigEntry, region: str
 ) -> list[SensorEntity]:
     """Grid notices, binding constraints from the shared dispatch file, and the
@@ -291,25 +290,30 @@ def _grid_entities(
             NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id)
             for ic_id in sorted(interconnectors_for_regions([region]))
         ),
-        *_local_price_entities(hass, entry, region, constraints),
+        *await _local_price_entities(hass, entry, region, constraints),
     ]
 
 
-def _local_price_entities(
+async def _local_price_entities(
     hass: HomeAssistant, entry: ConfigEntry, region: str, constraints: Any
 ) -> list[SensorEntity]:
-    """The DUID local price sensors the options list (#275); none, and no P5MIN fetch, by default."""
+    """One DUID local price sensor per DUID (#275): the chosen DUIDs', enabled,
+    and the region's most constrained DUIDs', disabled. P5MIN is fetched only
+    while one is enabled."""
+    from .duid_catalogue import load_catalogue
+    from .executor import run_in_executor
     from .local_price import parse_duids
+    from .local_price_coordinator import shared_p5min
+    from .local_price_sensor import enable_chosen, local_price_entities, remove_retired
 
     duids, _invalid = parse_duids(entry.options.get(CONF_LOCAL_PRICE_DUIDS, ""))
-    if not duids:
+    catalogue = await run_in_executor(None, load_catalogue)  # a file read: the loop's executor, HA's pool
+    remove_retired(hass, entry)
+    if not duids and not catalogue.top_for(region):
         return []
-    from .local_price_coordinator import shared_p5min
-    from .local_price_sensor import local_price_entities
-
+    enable_chosen(hass, entry, region, duids)
     p5min = shared_p5min(hass, entry.runtime_data.dispatch)
-    diagnostic = bool(entry.options.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False))
-    return local_price_entities(constraints, p5min, entry, region, duids, diagnostic)
+    return local_price_entities(constraints, p5min, entry, region, duids, catalogue)
 
 
 def _published_spike_credible(cal: dict, horizon_h: float | None) -> bool | None:

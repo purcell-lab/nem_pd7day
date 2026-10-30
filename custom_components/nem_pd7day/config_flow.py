@@ -19,7 +19,6 @@ from .const import (
     CONF_ACTIVE_TARIFF,
     CONF_AMBER_FORECAST_ENTITY,
     CONF_FORECAST_MODE,
-    CONF_LOCAL_PRICE_DIAGNOSTIC,
     CONF_LOCAL_PRICE_DUIDS,
     CONF_LOSS_FACTOR,
     CONF_ONLY_ACTIVE_TARIFF,
@@ -35,6 +34,7 @@ from .const import (
     REGION_DISTRIBUTORS,
     REGIONS,
 )
+from .duid_catalogue import Catalogue, load_catalogue
 from .local_price import parse_duids
 from .pd7day_client import PD7DayClient
 from .tariff_pricing import COMBINED_LOSS_MULTIPLIER, LOSS_FACTOR_MAX, LOSS_FACTOR_MIN
@@ -304,19 +304,39 @@ def _amber_forecast_field(current: str) -> dict[Any, Any]:
     }
 
 
-def _local_price_fields(options: dict[str, Any]) -> dict[Any, Any]:
-    """DUIDs whose local price adjustment is published, and the local price diagnostic (#275).
+async def _async_catalogue(hass: Any) -> Catalogue:
+    """The bundled DUID catalogue, read in the executor (it is a file read)."""
+    if hass is None:
+        return load_catalogue()
+    return await hass.async_add_executor_job(load_catalogue)
 
-    Empty, no local price sensor is made and P5MIN is never fetched.
+
+def _duid_choices(catalogue: Catalogue, region: str, current: list[str]) -> list[dict[str, str]]:
+    """The region's DUIDs, most constrained first, and any chosen DUID the catalogue lacks."""
+    choices = [{"value": i.duid, "label": i.label} for i in catalogue.region_duids(region)]
+    listed = {c["value"] for c in choices}
+    return choices + [{"value": d, "label": d} for d in current if d not in listed]
+
+
+def _local_price_fields(options: dict[str, Any], catalogue: Catalogue, region: str) -> dict[Any, Any]:
+    """DUIDs whose local price adjustment is published (#275).
+
+    A dropdown of the region's DUIDs from the bundled catalogue; a DUID it
+    does not list, such as one registered since, can still be typed.
     """
+    current, _invalid = parse_duids(options.get(CONF_LOCAL_PRICE_DUIDS, ""))
     return {
         vol.Optional(
             CONF_LOCAL_PRICE_DUIDS,
-            description={"suggested_value": options.get(CONF_LOCAL_PRICE_DUIDS) or None},
-        ): selector.selector({"text": {}}),
-        vol.Optional(
-            CONF_LOCAL_PRICE_DIAGNOSTIC, default=bool(options.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False))
-        ): selector.selector({"boolean": {}}),
+            description={"suggested_value": current or None},
+        ): selector.selector({
+            "select": {
+                "options": _duid_choices(catalogue, region, current),
+                "multiple": True,
+                "custom_value": True,
+                "mode": "dropdown",
+            }
+        }),
     }
 
 
@@ -332,7 +352,6 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
         CONF_ONLY_ACTIVE_TARIFF: user_input.get(CONF_ONLY_ACTIVE_TARIFF, True),
         CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
         CONF_LOCAL_PRICE_DUIDS: ", ".join(duids),
-        CONF_LOCAL_PRICE_DIAGNOSTIC: bool(user_input.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False)),
         # Cleared, the library's defaults are used again.
         CONF_LOSS_FACTOR: user_input.get(CONF_LOSS_FACTOR),
     }, {}
@@ -393,6 +412,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
         current_mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
         current_tariff = self._entry.options.get(CONF_ACTIVE_TARIFF, "") or ACTIVE_TARIFF_AUTO
         tariff_options = _active_tariff_options(current_region, self._amber_tariff(current_region), current_tariff)
+        catalogue = await _async_catalogue(getattr(self, "hass", None))
 
         schema = vol.Schema(
             {
@@ -429,7 +449,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                 ),
                 **_only_active_field(self._entry.options.get(CONF_ONLY_ACTIVE_TARIFF, True)),
                 **_amber_forecast_field(self._entry.options.get(CONF_AMBER_FORECAST_ENTITY, "")),
-                **_local_price_fields(dict(self._entry.options)),
+                **_local_price_fields(dict(self._entry.options), catalogue, current_region),
                 **_loss_factor_field(self._entry.options.get(CONF_LOSS_FACTOR)),
             }
         )

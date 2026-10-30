@@ -154,14 +154,21 @@ The options form shows the factor in Amber Express's current settled feed-in int
 
 ### DUID local price adjustments (optional)
 
-The options list two more fields, both off by default:
-
 | Field | Default | Description |
 |---|---|---|
-| DUID local price adjustments | empty | DUIDs, comma separated, such as `GSTONE1, CATHROCK`. Each is upper-cased and must be up to ten letters, digits or underscores; anything else is refused. For each DUID a dispatch adjustment sensor and a P5MIN forecast sensor are added. Empty, no sensor is made and P5MIN is never fetched |
-| Add the DUID local price diagnostic | off | Also add a Local Price sensor per DUID |
+| DUID local price adjustments | empty | A dropdown of the region's DUIDs, most constrained first, labelled with the station and fuel (`GSTONE1 · Gladstone (coal black)`). A DUID not in the list, such as one registered since the catalogue was built, can be typed; it must be up to ten letters or digits, and may contain `_`, `-`, `#` or `/`. Each chosen DUID gets one sensor, enabled |
 
-A DUID is a generating or load unit, not your connection point. Its local price adjustment is a geographic signal of network congestion near that unit, nothing more: it is not added to any existing price, tariff or forecast. The feeds do not say which region a DUID is in, so the region is not checked; the diagnostic uses the ROP of the entry's region.
+A DUID is a generating or load unit, not your connection point. Its local price adjustment is a geographic signal of network congestion near that unit, nothing more: it is not added to any existing price, tariff or forecast.
+
+**The region's five most constrained DUIDs are always added, disabled**: enable one from the device page and it starts updating. They are the region's DUIDs with the largest sum of |adjustment| over the catalogue's two-week window. P5MIN is fetched only while at least one DUID sensor is enabled, so the disabled presets cost nothing. Choosing a preset in the options enables the sensor the integration disabled; a sensor you disabled stays disabled.
+
+**The DUID catalogue** (`duid_catalogue.json`) is bundled with the integration and rebuilt before each release by `scripts/build_duid_catalogue.py`. Nothing is fetched at run time. Its sources:
+
+- **AEMO MMSDM DUDETAILSUMMARY and STATION:** each DUID's region, station and dispatch type.
+- **Open Electricity's public facility files:** fuel and coordinates. Its live API needs a key, so those files are used instead; a DUID they do not list has no coordinates rather than guessed ones.
+- **AEMO DispatchIS LOCAL_PRICE rows:** the ranking.
+
+A catalogued DUID's sensor publishes `station`, `fuel`, `duid_region`, `latitude` and `longitude`, so it shows on a map card. The local price uses the ROP of the DUID's own region, and of the entry's region for a DUID the catalogue lacks.
 
 ### Monitoring multiple regions
 
@@ -229,7 +236,7 @@ The network constraints binding in each dispatch interval come from AEMO's Dispa
 - **Schedule**: no timer of its own. One shared fetch runs each time the live dispatch poll completes, and a failure here never delays or affects the price.
 - **Load**: two NEMWEB requests per interval through the shared NEMWEB request gate, the directory listing (about 17 KB compressed) and the zip (about 22 KB). That is about 576 requests and 11 MB a day. NEMWEB answers rapid callers with 403, so the requests share the gate and its spacing with every other NEMWEB fetch.
 
-### DUID local prices (every 5 minutes, after the dispatch poll, only when a DUID is configured)
+### DUID local prices (every 5 minutes, after the dispatch poll, only while a DUID sensor is enabled)
 
 - **Dispatch**: the `DISPATCH,LOCAL_PRICE` and `DISPATCH,PRICE` rows of the same DispatchIS file the binding constraints read. No extra request.
 - **Forecast**: the newest P5MIN run, `https://www.nemweb.com.au/Reports/Current/P5_Reports/`, its `LOCAL_PRICE` and `REGIONSOLUTION` tables: twelve five-minute intervals. One shared coordinator serves every entry and DUID. After each dispatch poll it reads the listing (about 16 KB compressed) once the run it holds has reached its first interval's end, and the zip (about 210 KB, about 60 MB a day) only when a newer run is listed. The CSV (about 3 MB) is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
@@ -455,36 +462,40 @@ An interconnector held at a limit separates the two regions' prices; one that is
 
 ### DUID Local Price Adjustment
 
-`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment`, for each DUID in the options, in the device's Diagnostic section like the other DUID sensors: the DUID's `LOCAL_PRICE_ADJUSTMENT` in the latest dispatch interval, in $/kWh. AEMO publishes a row only where the adjustment is not zero. An absent row is not taken to be zero: the state is unknown and `row_status` says why. A published zero is 0.
+`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment`, one per DUID, in the device's Diagnostic section: the DUID's `LOCAL_PRICE_ADJUSTMENT` in the latest dispatch interval, in $/kWh, with the P5MIN forecast and the local price as attributes. AEMO publishes a row only where the adjustment is not zero. An absent row is not taken to be zero: the state is unknown and `row_status` says why. A published zero is 0. The dispatch values and the forecast have their own status and age, so a stale forecast never hides a current reading, nor the reverse.
+
+Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast` and `..._local_price` sensors are removed from the registry on upgrade, and this one keeps its entity id and history.
+
+**Dispatch** (the state)
 
 | Attribute | Description |
 |---|---|
 | `row_status` | `published`; `absent` (the file has a LOCAL_PRICE table, but no row for the DUID); `table_missing` (no LOCAL_PRICE table in the file); `stale` (the newest interval ended more than 15 minutes ago); `no_data` (no file read yet) |
 | `adjustment_mwh`, `locally_constrained` | The published values: $/MWh, and AEMO's count of constraints locally constraining the unit |
 | `interval_start`, `interval_end` | The dispatch interval, AEST `+10:00`. `interval_end` is AEMO's SETTLEMENTDATE |
-| `source_file`, `retrieved_at`, `age_seconds` | The DispatchIS file, when it was read, and seconds since the interval started. AEMO publishes the file while its interval runs, so it is about 0 to 300 while current |
-| `region`, `duid`, `source` | The entry's region, the DUID, and `DISPATCH_LOCAL_PRICE` |
+| `source`, `source_file`, `retrieved_at`, `age_seconds` | `DISPATCH_LOCAL_PRICE`, the DispatchIS file, when it was read, and seconds since the interval started. AEMO publishes the file while its interval runs, so it is about 0 to 300 while current |
+| `region`, `duid`, `station`, `fuel`, `duid_region`, `latitude`, `longitude` | The entry's region and the DUID; the rest from the catalogue, when it lists the DUID |
 
-### DUID Local Price Adjustment Forecast
+**Local price**: clip(ROP + adjustment, floor, cap) for the same interval. ROP is the original price of the DUID's region (`rop_region`: from the catalogue, the entry's region for a DUID it lacks) from the same file, not RRP, so the two are always of one interval and run. Only the sum is clipped, never the adjustment: the floor is -$1,000/MWh and the cap is that of the interval's financial year ($23,200/MWh in 2026-27). Unknown when the row is absent or the region has no ROP. A diagnostic of the dispatch run: not the regional price, a retail price or a settlement price.
 
-`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment_forecast`: the adjustment for the interval now running, in $/kWh, from the newest P5MIN run. `forecast` lists `{time, value}`, `time` being the interval start in AEST `+10:00`, for each interval of the run still to end. It stops at the first interval without a row: no value is carried across a gap or past the run's last interval, so the list can be short or empty. Rows after a gap are kept apart in `later_observations` and are not a forecast.
+| Attribute | Description |
+|---|---|
+| `local_price`, `local_price_mwh` | The local price in $/kWh and $/MWh |
+| `rop_region`, `rop_mwh` | The region whose ROP is used, and that ROP |
+| `price_floor_mwh`, `price_cap_mwh` | The limits applied |
+
+**Forecast**: the newest P5MIN run. `forecast` lists `{time, value}`, `time` being the interval start in AEST `+10:00`, for each interval of the run still to end. It stops at the first interval without a row: no value is carried across a gap or past the run's last interval, so the list can be short or empty. Rows after a gap are kept apart in `later_observations` and are not a forecast.
 
 | Attribute | Description |
 |---|---|
 | `forecast` | `{time, value}` per covered interval, in $/kWh (not recorded) |
-| `interval_ends` | The source interval end of each `forecast` point, in the same order (not recorded) |
+| `forecast_interval_ends` | The source interval end of each `forecast` point, in the same order (not recorded) |
 | `later_observations` | Published intervals after the first gap (not recorded) |
-| `row_status` | `published`, `absent`, `table_missing`, `stale` (the run is more than 15 minutes old), `expired` (every interval has ended), `conflicting_rows` (the run held two different rows for one interval; neither is used, and the forecast stops there) or `no_data` |
-| `run_at`, `source_file`, `retrieved_at`, `age_seconds` | The run (AEMO's RUN_DATETIME, the end of its first interval), the P5MIN file, when it was read, and seconds since the start of the run's first interval |
+| `forecast_status` | `published`, `absent`, `table_missing`, `stale` (the run is more than 15 minutes old), `expired` (every interval has ended), `conflicting_rows` (the run held two different rows for one interval; neither is used, and the forecast stops there) or `no_data` |
+| `forecast_source`, `forecast_run_at`, `forecast_source_file`, `forecast_retrieved_at`, `forecast_age_seconds` | `P5MIN_LOCAL_PRICE`, the run (AEMO's RUN_DATETIME, the end of its first interval), the P5MIN file, when it was read, and seconds since the start of the run's first interval |
 | `forecast_end`, `horizon_end` | Where `forecast` stops, and the end of the run's last interval |
 | `intervals_published`, `intervals_ahead` | Intervals still to end with a row, gap or not, and intervals still to end |
 | `interval_minutes`, `interpolation_mode` | `5` and `previous`: each value holds from its `time` to the next |
-
-### DUID Local Price (diagnostic option)
-
-`sensor.nem_pd7day_{region}_{duid}_local_price`, only with the diagnostic option: clip(ROP + adjustment, floor, cap) / 1000, in $/kWh, for the latest dispatch interval. ROP is the entry region's original price from the same file, not RRP, so the two are always of one interval and run. Only the sum is clipped, never the adjustment: the floor is -$1,000/MWh and the cap is that of the interval's financial year ($23,200/MWh in 2026-27). Unknown when the row is absent or the region has no ROP. This is a diagnostic of the dispatch run: not the regional price, a retail price or a settlement price.
-
-Extra attributes beyond the adjustment sensor's: `rop_mwh`, `local_price_mwh`, `price_floor_mwh` and `price_cap_mwh`.
 
 ### PD7DAY Data / STPASA Data (diagnostic)
 
@@ -678,7 +689,7 @@ The `nemtime` field in forecast periods is the **interval end** timestamp (AEMO 
 - **Calibration warm-up** — the two-stage pipeline requires historical data to activate. Isotonic calibration starts at ~5–7 days; STPASA OLS correction (h22–h120) activates after the first nightly refit once STPASA feature data has been joined to observations. Expect isotonic-only output for the first 24 hours after install.
 - **STPASA OLS limited to h22–h120** — beyond h120, STPASA supply/demand signals degrade and the model falls back to isotonic calibration only.
 - **Spike forecasts are capped** — raw PD7DAY values ≥ $3/kWh are treated as bid-based pre-dispatch placeholders and are capped at the isotonic model maximum. Genuine scarcity spikes are flagged via `spike_credible` but are not passed through at face value.
-- **DUID local prices: the next hour only** — the forecast is the public P5MIN run, twelve five-minute intervals. AEMO's 30-minute `PREDISPATCH_LOCAL_PRICE` is not public in real time, so there is no longer horizon, and no 30-minute aggregate. A DUID's region cannot be checked from these feeds.
+- **DUID local prices: the next hour only** — the forecast is the public P5MIN run, twelve five-minute intervals. AEMO's 30-minute `PREDISPATCH_LOCAL_PRICE` is not public in real time, so there is no longer horizon, and no 30-minute aggregate. A DUID's region comes from the bundled catalogue; a DUID registered after it was built has no region, name or coordinates until the next release.
 - **Python 3.12+ required** — the integration uses `asyncio.run()` and other Python 3.12 patterns.
 - **matplotlib build dependency** — on some HA OS versions (notably Python 3.14 environments), matplotlib may fail to build from source. If this occurs, the chart camera entities will be unavailable but all price forecast and tariff sensors continue to function normally.
 

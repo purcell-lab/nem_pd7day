@@ -37,9 +37,9 @@ from .nem_time import NEM_TZ
 
 INTERVAL = timedelta(minutes=5)
 _P5_FILE_RE = re.compile(r"(PUBLIC_P5MIN_(\d{12})_(\d{14})\.zip)", re.IGNORECASE)
-# A DUID is up to ten characters of upper-case letters, digits and underscores
-# in the MMS data model.
-DUID_RE = re.compile(r"^[A-Z0-9_]{1,10}$")
+# A DUID is up to ten characters in the MMS data model: upper-case letters,
+# digits, and in registered DUIDs also _, -, # and / (BARRON-1, W/HOE#1).
+DUID_RE = re.compile(r"^[A-Z0-9_#/-]{1,10}$")
 
 STATUS_PUBLISHED = "published"
 STATUS_ABSENT = "absent"                 # file read, LOCAL_PRICE table present, no row for the DUID
