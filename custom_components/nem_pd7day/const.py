@@ -187,6 +187,9 @@ CONF_AMBER_FORECAST_ENTITY = "amber_forecast_entity"
 # string. 3.32's local_price_diagnostic option is gone: the local price is an
 # attribute of the one sensor per DUID; a stored value is ignored.
 CONF_LOCAL_PRICE_DUIDS = "local_price_duids"
+# One combined factor spot is scaled by in every tariff price, import and
+# export, in place of the library's Energex defaults. Unset keeps them.
+CONF_LOSS_FACTOR = "loss_factor"
 # Integrations whose forecast attributes amber_coverage_end can read: Amber
 # Electric (core) and Amber Express. A template wrapper's last point is not an
 # interval start, so wrappers are neither searched nor offered.

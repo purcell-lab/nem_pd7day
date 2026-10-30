@@ -287,6 +287,37 @@ def export_partner(active: ActiveTariff) -> str | None:
     return export_programs(active.distributor).get(active.code)
 
 
+def amber_loss_factor(hass: HomeAssistant | None) -> float | None:
+    """The spot multiplier in the current settled interval of an Amber Express feed-in price.
+
+    Amber Express publishes each interval's price (``per_kwh``) beside the
+    spot price with GST (``spot_per_kwh``). Outside an export credit or
+    charge window a settled feed-in price is spot without GST times the
+    site's loss factor: RRP x 1.0272 on the live Energex site, in every one of
+    576 intervals checked against NEMWEB. Forecast intervals follow Amber's
+    own prediction, not spot, so only the settled one is read. Shown in the
+    options as a suggestion; never applied by itself.
+    """
+    if hass is None:
+        return None
+    registry = er.async_get(hass)
+    for e in registry.entities.values():
+        if e.domain != "sensor" or e.platform not in AMBER_FORECAST_PLATFORMS or "feed_in" not in e.entity_id:
+            continue
+        state = hass.states.get(e.entity_id)
+        rows = state.attributes.get("detailedForecast") if state is not None else None
+        settled = next((r for r in rows or () if isinstance(r, Mapping) and r.get("estimate") is False), None)
+        if settled is None:
+            continue
+        try:
+            price, spot = float(settled["per_kwh"]), float(settled["spot_per_kwh"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if spot >= 0.01:  # 1 c/kWh: a ratio of near-zero prices says nothing
+            return round(price * 1.1 / spot, 4)  # spot_per_kwh carries GST, per_kwh does not
+    return None
+
+
 def watch_amber_site(hass: HomeAssistant, entry: ConfigEntry, region: str, active: ActiveTariff | None) -> Any:
     """Reload the entry once an Amber site sensor reports a different tariff.
 

@@ -140,6 +140,18 @@ The day 2-7 sensors report `forecast_start` (the first interval listed) and `for
 
 They also publish `interpolation_mode: previous`: each value is the price of the 30-minute interval starting at its `time`, held until the next point. When the series starts at Amber's end, the first point is published one second after that end (for example `20:30:01` for the interval starting 20:30); `forecast_start` keeps the interval's own start. HAEO 0.5 holds Amber's last price up to and including its end and sums its price inputs on their joined timestamps, so a first point at the same instant was added to Amber's last price and the interpolation spread the doubled price over the hour around the seam (on 25 Oct 2026, about 29 c/kWh instead of 19 c from 20:00 to 21:00). One second later the two never share a point; HAEO 0.4 reads the series as before (#270).
 
+### Loss factor (optional)
+
+Every tariff price scales spot by a loss factor before adding the network rate. By default it is the tariff library's Energex defaults, DLF 1.05905 × MLF 1.0154 × market 1.0154 = **1.0919**, for every distributor.
+
+| Field | Default | Description |
+|---|---|---|
+| Loss factor (spot multiplier) | empty | One combined factor used for every import and export tariff price in place of the defaults, from 0.9 to 1.3. Empty uses the defaults |
+
+Retailers apply the site's own factor. On an Amber Energex site, settled prices follow RRP × **1.0272** exactly: feed-in = RRP × 1.0272 (less the 2.21 c charge from 11:00 to 13:00, April to October), and import = (RRP × 1.0272 + network rate + Amber's fee) × 1.1. That held in all 576 intervals checked against NEMWEB, so the default overstated the spot part of both prices by about 6.3%.
+
+The options form shows the factor in Amber Express's current settled feed-in interval: its `per_kwh` × 1.1 / `spot_per_kwh`, since `spot_per_kwh` carries GST. It is only a suggestion and is never applied by itself; inside an export charge or credit window it is not the loss factor. The tariff sensors publish what they use as `combined_loss_multiplier`, and `loss_factor_source` (`option` or `library_default`).
+
 ### DUID local price adjustments (optional)
 
 | Field | Default | Description |

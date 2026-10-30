@@ -74,20 +74,22 @@
     "step": {
       "init": {
         "title": "NEM PD7DAY Options",
-        "description": "Forecasts are fetched at {fetch_times} NEM time (AEST).",
+        "description": "Forecasts are fetched at {fetch_times} NEM time (AEST). Loss factor: the library's default is {library_loss_factor}; Amber's current settled feed-in interval shows {amber_loss_factor}.",
         "data": {
           "region": "NEM Region",
           "forecast_mode": "Forecast mode",
           "active_tariff": "Active tariff",
           "amber_forecast_entity": "Amber forecast override (days 2-7 mode)",
           "only_active_tariff": "Enable only the active tariff's sensors",
-          "local_price_duids": "DUID local price adjustments"
+          "local_price_duids": "DUID local price adjustments",
+          "loss_factor": "Loss factor (spot multiplier)"
         },
         "data_description": {
           "amber_forecast_entity": "Leave empty: the day 2-7 series starts where the Amber Electric or Amber Express forecast ends, found automatically. Choose one Amber forecast sensor only to use it alone, for example when two Amber sites are installed. With no Amber integration it starts by the clock.",
           "active_tariff": "Automatic: the tariff your Amber site reports (Amber Express site sensor), else the region's default. The day 2-7 tariff sensors follow it.",
           "only_active_tariff": "On: the region's other tariff sensors are disabled, so only the active tariff and its export tariff update. Applies only when the tariff is chosen here or reported by Amber. A sensor you enable yourself is left on.",
-          "local_price_duids": "Optional. Pick DUIDs of this region from the list, or type any DUID. Each gets one sensor, enabled: its dispatch local price adjustment, with the 5-minute pre-dispatch forecast and the local price as attributes. The region's five most constrained DUIDs are always added too, disabled, and P5MIN is fetched only while one of these sensors is enabled. A DUID is a geographic signal, not your connection point's price."
+          "local_price_duids": "Optional. Pick DUIDs of this region from the list, or type any DUID. Each gets one sensor, enabled: its dispatch local price adjustment, with the 5-minute pre-dispatch forecast and the local price as attributes. The region's five most constrained DUIDs are always added too, disabled, and P5MIN is fetched only while one of these sensors is enabled. A DUID is a geographic signal, not your connection point's price.",
+          "loss_factor": "Optional. One factor spot is scaled by in every tariff price, import and export, in place of the library's Energex defaults. Amber prices an Energex site at 1.0272. Outside an export charge or credit window, Amber's settled feed-in interval shows your site's factor (above). Empty uses the library's defaults."
         }
       }
     },
