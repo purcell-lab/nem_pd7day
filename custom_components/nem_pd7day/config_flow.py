@@ -12,11 +12,14 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import selector
 
+from .active_tariff import default_tariff, detect_amber_tariff
 from .const import (
+    ACTIVE_TARIFF_AUTO,
     AMBER_FORECAST_PLATFORMS,
     CONF_ACTIVE_TARIFF,
     CONF_AMBER_FORECAST_ENTITY,
     CONF_FORECAST_MODE,
+    CONF_ONLY_ACTIVE_TARIFF,
     CONF_REGION,
     CONF_REGIONS,
     DEFAULT_ENABLED_TARIFFS,
@@ -56,11 +59,32 @@ def _tariff_options_for_region(region: str) -> list[dict[str, str]]:
 
 def _default_tariff_for_region(region: str) -> str | None:
     """Return the first default-enabled tariff key for the region."""
-    for distributor in REGION_DISTRIBUTORS.get(region, []):
-        for tariff_code in import_tariff_codes(distributor):
-            if (distributor, tariff_code) in DEFAULT_ENABLED_TARIFFS:
-                return f"{distributor}/{tariff_code}"
-    return None
+    found = default_tariff(region)
+    return f"{found[0]}/{found[1]}" if found else None
+
+
+def _tariff_label(distributor: str, tariff_code: str) -> str:
+    display_name = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+    return f"{display_name} {catalogue_tariff_name(distributor, tariff_code)}"
+
+
+def _active_tariff_options(region: str, amber: tuple[str, str] | None, current: str) -> list[dict[str, str]]:
+    """Automatic first, then the region's default-enabled tariffs (#260).
+
+    The tariff Amber reports, and a current choice, are offered even when
+    they are not default-enabled, so they can be kept or picked.
+    """
+    auto = "Automatic: from Amber, else the region default"
+    if amber is not None:
+        auto = f"Automatic: {_tariff_label(*amber)} (from Amber)"
+    options = [{"value": ACTIVE_TARIFF_AUTO, "label": auto}]
+    listed = _tariff_options_for_region(region)
+    values = {o["value"] for o in listed}
+    for extra in (f"{amber[0]}/{amber[1]}" if amber else "", current):
+        if extra and extra != ACTIVE_TARIFF_AUTO and "/" in extra and extra not in values:
+            listed.append({"value": extra, "label": _tariff_label(*extra.split("/", 1))})
+            values.add(extra)
+    return options + listed
 
 
 class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -275,11 +299,22 @@ def _amber_forecast_field(current: str) -> dict[Any, Any]:
     }
 
 
+def _only_active_field(current: bool) -> dict[Any, Any]:
+    """Disable the region's other tariff sensors (#260)."""
+    return {vol.Optional(CONF_ONLY_ACTIVE_TARIFF, default=current): selector.selector({"boolean": {}})}
+
+
 class PD7DayOptionsFlow(config_entries.OptionsFlow):
     """Allow changing region, forecast mode, and active tariff after initial setup."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
+
+    def _amber_tariff(self, region: str) -> tuple[str, str] | None:
+        """The tariff an Amber site sensor reports, offered as the automatic choice."""
+        hass = getattr(self, "hass", None)
+        found = detect_amber_tariff(hass, self._entry, region) if hass is not None else None
+        return (found.distributor, found.code) if found else None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -290,7 +325,8 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                 data={
                     CONF_REGION: user_input[CONF_REGION],
                     CONF_FORECAST_MODE: user_input.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7),
-                    CONF_ACTIVE_TARIFF: user_input.get(CONF_ACTIVE_TARIFF, ""),
+                    CONF_ACTIVE_TARIFF: user_input.get(CONF_ACTIVE_TARIFF, ACTIVE_TARIFF_AUTO),
+                    CONF_ONLY_ACTIVE_TARIFF: user_input.get(CONF_ONLY_ACTIVE_TARIFF, True),
                     CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
                 },
             )
@@ -303,10 +339,8 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
              else self._entry.data.get(CONF_REGIONS, DEFAULT_REGION))
         )
         current_mode = self._entry.options.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7)
-        current_tariff = self._entry.options.get(CONF_ACTIVE_TARIFF, "")
-
-        tariff_options = _tariff_options_for_region(current_region)
-        default_tariff = current_tariff or _default_tariff_for_region(current_region) or ""
+        current_tariff = self._entry.options.get(CONF_ACTIVE_TARIFF, "") or ACTIVE_TARIFF_AUTO
+        tariff_options = _active_tariff_options(current_region, self._amber_tariff(current_region), current_tariff)
 
         schema = vol.Schema(
             {
@@ -331,7 +365,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                     }
                 ),
                 vol.Optional(
-                    CONF_ACTIVE_TARIFF, default=default_tariff
+                    CONF_ACTIVE_TARIFF, default=current_tariff
                 ): selector.selector(
                     {
                         "select": {
@@ -341,6 +375,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                         }
                     }
                 ),
+                **_only_active_field(self._entry.options.get(CONF_ONLY_ACTIVE_TARIFF, True)),
                 **_amber_forecast_field(self._entry.options.get(CONF_AMBER_FORECAST_ENTITY, "")),
             }
         )

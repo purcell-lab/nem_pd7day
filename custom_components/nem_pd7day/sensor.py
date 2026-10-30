@@ -64,9 +64,7 @@ from .const import (
     ATTR_RUN_DATETIME,
     ATTR_SOURCE_FILE,
     ATTR_VIOLATIONDEGREE,
-    CONF_ACTIVE_TARIFF,
     CONF_FORECAST_MODE,
-    DEFAULT_ENABLED_TARIFFS,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -91,6 +89,7 @@ from .calibration_inputs import (
     stpasa_effective_min_horizon_h,
     stpasa_features_for_interval,
 )
+from .active_tariff import resolve_active_tariff
 from .amber_forecast import day27_start_for, track_day27_start
 from .calibrated_forecast import CalibratedForecast, WarmOutcome
 from .coordinator import PD7DayCoordinator, staleness_attributes
@@ -231,20 +230,13 @@ async def async_setup_entry(
     if mode == FORECAST_MODE_DAYS_2_7:
         entities.append(SpotPriceForecastDays27Sensor(coordinator, store, entry, region))
 
-        # Day 2-7 tariff sensor — only for the active tariff
-        active_tariff = entry.options.get(CONF_ACTIVE_TARIFF, "")
-        if not active_tariff:
-            # Default: first enabled tariff for the region's first distributor
-            for dist in REGION_DISTRIBUTORS.get(region, []):
-                for code in import_tariff_codes(dist):
-                    if (dist, code) in DEFAULT_ENABLED_TARIFFS:
-                        active_tariff = f"{dist}/{code}"
-                        break
-                if active_tariff:
-                    break
-        if active_tariff and "/" in active_tariff:
-            dist, code = active_tariff.split("/", 1)
-            entities.extend(_days27_tariff_entities(coordinator, entry, region, dist, code, store))
+        # Day 2-7 tariff sensor — only for the active tariff: the option, else
+        # the tariff Amber reports, else the region's default (#260).
+        active = getattr(entry.runtime_data, "active_tariff", None)
+        if active is None:
+            active = resolve_active_tariff(hass, entry, region)
+        if active is not None:
+            entities.extend(_days27_tariff_entities(coordinator, entry, region, active.distributor, active.code, store))
 
     async_add_entities(entities, update_before_add=True)
 
