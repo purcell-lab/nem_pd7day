@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -46,6 +47,9 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 class _LocalPriceSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     _attr_icon = "mdi:map-marker-radius"
+    # A DUID's signal describes one unit's connection point, not the user's
+    # prices, so it sits with the diagnostics rather than the region's prices.
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_native_unit_of_measurement = UNIT
     _attr_suggested_display_precision = 4
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -94,7 +98,9 @@ class _DispatchLocalPriceSensor(_LocalPriceSensor):
             "interval_end": _iso(prices.interval_end),
             "source_file": prices.source,
             "retrieved_at": _iso(prices.retrieved_at),
-            "age_seconds": round((now - prices.interval_end).total_seconds()),
+            # From the interval's start: AEMO publishes the file while the
+            # interval runs, so its end is still ahead.
+            "age_seconds": round((now - prices.interval_end + INTERVAL).total_seconds()),
         }
 
 
@@ -194,7 +200,8 @@ class NemPd7dayLocalPriceAdjustmentForecastSensor(_LocalPriceSensor):
             "run_at": _iso(run.run_at) if run else None,
             "source_file": run.source if run else None,
             "retrieved_at": _iso(run.retrieved_at) if run else None,
-            "age_seconds": round((now - run.run_at).total_seconds()) if run else None,
+            # From the start of the run's first interval, as for dispatch.
+            "age_seconds": round((now - run.run_at + INTERVAL).total_seconds()) if run else None,
             "interval_minutes": 5,
             "interpolation_mode": "previous",
             "forecast_end": series.forecast_end,
