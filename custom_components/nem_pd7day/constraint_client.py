@@ -23,7 +23,7 @@ import io
 import logging
 import re
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
 
@@ -31,7 +31,8 @@ import aiohttp
 
 from .const import DISPATCHIS_BASE_URL, NEMWEB_HEADERS
 from .executor import ExecutorJob, run_in_executor
-from .nem_time import NEM_TZ
+from .local_price import DispatchLocalPrices, parse_dispatch_local_prices
+from .nem_time import NEM_TZ, now_nem
 from .nemweb_retry import classify_status, fetch_with_retry
 
 _LOGGER = logging.getLogger(__name__)
@@ -144,6 +145,8 @@ class ConstraintSnapshot:
     source: str                # the DispatchIS file name
     constraints: tuple[BindingConstraint, ...]
     evaluated: int             # every CONSTRAINT row for the interval, binding or not
+    # The same file's DUID local price adjustments and region ROPs (#275).
+    local_prices: Optional[DispatchLocalPrices] = None
 
 
 def _number(value: Any) -> Optional[float]:
@@ -284,8 +287,15 @@ class ConstraintClient:
         return latest_file(html)
 
     async def _parse_off_loop(self, content: str, name: str) -> Any:
-        """A DispatchIS file is small enough to parse on the loop, as before."""
-        return parse_constraints(content, name)
+        """A DispatchIS file is small enough to parse on the loop, as before.
+
+        Its LOCAL_PRICE rows ride on the same fetch, so the local price
+        adjustment sensors cost no request of their own (#275).
+        """
+        snapshot = parse_constraints(content, name)
+        if snapshot is None:
+            return None
+        return replace(snapshot, local_prices=parse_dispatch_local_prices(content, name, now_nem()))
 
     async def _get(self, url: str, *, text: bool) -> Any:
         """One attempt. A 404 on the zip means not published yet."""

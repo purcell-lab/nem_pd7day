@@ -79,12 +79,19 @@
           "region": "NEM Region",
           "forecast_mode": "Forecast mode",
           "active_tariff": "Active tariff (days 2-7 mode)",
-          "amber_forecast_entity": "Amber forecast override (days 2-7 mode)"
+          "amber_forecast_entity": "Amber forecast override (days 2-7 mode)",
+          "local_price_duids": "DUID local price adjustments",
+          "local_price_diagnostic": "Add the DUID local price diagnostic"
         },
         "data_description": {
-          "amber_forecast_entity": "Leave empty: the day 2-7 series starts where the Amber Electric or Amber Express forecast ends, found automatically. Choose one Amber forecast sensor only to use it alone, for example when two Amber sites are installed. With no Amber integration it starts by the clock."
+          "amber_forecast_entity": "Leave empty: the day 2-7 series starts where the Amber Electric or Amber Express forecast ends, found automatically. Choose one Amber forecast sensor only to use it alone, for example when two Amber sites are installed. With no Amber integration it starts by the clock.",
+          "local_price_duids": "Optional. DUIDs, comma separated, for example GSTONE1, CATHROCK. For each, a sensor of its dispatch local price adjustment and one of the 5-minute pre-dispatch forecast are added. Empty, none are made and the P5MIN file is never fetched. A DUID is a geographic signal, not your connection point's price.",
+          "local_price_diagnostic": "Also add a Local Price sensor per DUID: the region's original price plus the adjustment, between the market floor and cap. A diagnostic, not a regional, retail or settlement price."
         }
       }
+    },
+    "error": {
+      "invalid_duid": "A DUID is up to ten letters, digits or underscores."
     }
   }
 }
