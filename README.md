@@ -116,6 +116,16 @@ The integration is configured via a single-step UI flow.
 
 The configured region is used for both price forecasting and calibration. No additional settings are required.
 
+Options (Settings → Devices & services → NEM PD7DAY → Configure) also hold:
+
+| Option | Default | Description |
+|---|---|---|
+| Active tariff | Automatic | The tariff the day 2-7 tariff sensors follow. Automatic takes the tariff your Amber site reports (an Amber Express site sensor's `network` and the `tariff` of its `general` channel), and otherwise the region's first default-enabled tariff. |
+| Enable only the active tariff's sensors | On | Disables the region's other tariff sensors, leaving the active tariff and its export partner. It applies only when the tariff is chosen here or reported by Amber, never on the default guess; a sensor you enable yourself is left on, and turning the option off re-enables what it disabled. |
+| Amber forecast override | empty | See *Joining the day 2-7 series to an Amber forecast*. |
+
+The Day 2-7 sensors of a tariff that is no longer active are removed from the entity registry when the integration loads ([#260](https://github.com/purcell-lab/nem_pd7day/issues/260)).
+
 No `configuration.yaml` entries are required.
 
 ### Joining the day 2-7 series to an Amber forecast

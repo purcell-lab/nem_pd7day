@@ -162,6 +162,23 @@ CONF_REGION = "region"
 CONF_REGIONS = "regions"  # kept for migration from old list-based config
 CONF_FORECAST_MODE = "forecast_mode"
 CONF_ACTIVE_TARIFF = "active_tariff"
+# The active_tariff value that means "the tariff Amber reports, else the
+# region's default" (#260). An empty string, as older entries store, means
+# the same.
+ACTIVE_TARIFF_AUTO = "auto"
+# Disable the region's tariff sensors other than the active tariff and its
+# export partner (#260). On by default; nothing is disabled on a default guess.
+CONF_ONLY_ACTIVE_TARIFF = "only_active_tariff"
+# Amber network names that neither a distributor key nor its display name
+# matches; network_distributor() also matches on a prefix either way.
+AMBER_NETWORK_ALIASES = {
+    "SAPN": "sapn",
+    "SA Power": "sapn",
+    "Tas Networks": "tasnetworks",
+    "Ergon Energy": "ergon",
+    "Energex Brisbane": "energex",
+    "AusNet Services": "ausnet",
+}
 # An optional override: the one Amber forecast entity the day 2-7 series joins
 # (#235). Unset, every Amber forecast sensor in the entity registry is used,
 # and with none the series starts by nem_time._amber_express_cutoff.
