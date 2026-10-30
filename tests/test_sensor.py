@@ -895,23 +895,34 @@ def test_get_tariff_name_from_library():
     assert get_tariff_name("energex", "ZZZZZ") == "ZZZZZ"  # unknown code falls back to the code
 
 
-def test_local_price_entities_need_a_configured_duid(monkeypatch):
-    """#275: no DUID, no sensor and no P5MIN coordinator; a DUID adds the pair, the diagnostic a third."""
-    created = []
+def test_local_price_entities_chosen_enabled_and_presets_disabled(monkeypatch):
+    """#275: the chosen DUIDs' sensors are enabled; the region's most constrained
+    DUIDs from the catalogue are added disabled, all three sensors each."""
     import custom_components.nem_pd7day.local_price_coordinator as lpc
+    import custom_components.nem_pd7day.local_price_sensor as lps
+    import custom_components.nem_pd7day.duid_catalogue as cat
 
-    monkeypatch.setattr(lpc, "shared_p5min", lambda hass, dispatch: created.append(dispatch) or MagicMock())
+    monkeypatch.setattr(lpc, "shared_p5min", lambda hass, dispatch: MagicMock())
+    monkeypatch.setattr(lps, "enable_chosen", lambda *a: 0)
+    catalogue = cat.parse_catalogue({
+        "duids": {d: {"region": "QLD1", "station": d} for d in ("GSTONE1", "KEPSF1", "KEPWF1")},
+        "top": {"QLD1": ["KEPSF1", "GSTONE1", "KEPWF1"]},
+    })
+    monkeypatch.setattr(cat, "load_catalogue", lambda: catalogue)
+
+    async def _executor(func, *args):
+        return func(*args)
+
+    hass = MagicMock()
+    hass.async_add_executor_job = _executor
     entry = MagicMock()
     entry.entry_id = "e1"
     entry.options = {}
-    assert _sensor_mod._local_price_entities(MagicMock(), entry, "QLD1", MagicMock()) == []
-    assert created == []
+    presets_only = run_async(_sensor_mod._local_price_entities(hass, entry, "QLD1", MagicMock()))
+    assert len(presets_only) == 9 and not any(e._attr_entity_registry_enabled_default for e in presets_only)
 
-    entry.options = {"local_price_duids": "GSTONE1", "local_price_diagnostic": True}
-    entities = _sensor_mod._local_price_entities(MagicMock(), entry, "QLD1", MagicMock())
-    assert [e._attr_unique_id for e in entities] == [
-        "e1_QLD1_GSTONE1_local_price_adjustment",
-        "e1_QLD1_GSTONE1_local_price_adjustment_forecast",
-        "e1_QLD1_GSTONE1_local_price",
-    ]
-    assert created == [entry.runtime_data.dispatch]
+    entry.options = {"local_price_duids": "GSTONE1", "local_price_diagnostic": False}
+    entities = run_async(_sensor_mod._local_price_entities(hass, entry, "QLD1", MagicMock()))
+    chosen = [e._attr_unique_id for e in entities if e._attr_entity_registry_enabled_default]
+    assert chosen == ["e1_QLD1_GSTONE1_local_price_adjustment", "e1_QLD1_GSTONE1_local_price_adjustment_forecast"]
+    assert len(entities) == 2 + 6  # GSTONE1 is chosen, so not also a preset

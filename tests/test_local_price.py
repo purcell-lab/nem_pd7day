@@ -59,7 +59,7 @@ def _p5(text=P5):
 
 def test_parse_duids_normalises_and_separates_the_invalid():
     assert _lp.parse_duids(" gstone1,CATHROCK;\nGSTONE1  por03 ") == (["GSTONE1", "CATHROCK", "POR03"], [])
-    assert _lp.parse_duids("GSTONE1, TOOLONGDUID9, BAD-ID") == (["GSTONE1"], ["TOOLONGDUID9", "BAD-ID"])
+    assert _lp.parse_duids("GSTONE1, TOOLONGDUID9, BAD@ID") == (["GSTONE1"], ["TOOLONGDUID9", "BAD@ID"])
     assert _lp.parse_duids("") == ([], []) and _lp.parse_duids(None) == ([], [])
     assert _lp.parse_duids(["dundwf1"]) == (["DUNDWF1"], [])
 
@@ -350,7 +350,8 @@ def test_shared_p5min_created_once_and_cleaned_up():
     hass, dispatch = _Hass(), _Dispatch()
     first = _coord.shared_p5min(hass, dispatch)
     assert _coord.shared_p5min(hass, dispatch) is first
-    assert hass.tasks == ["nem_pd7day_p5min_first"] and len(dispatch.listeners) == 1
+    # No first fetch on creation: the first enabled forecast sensor asks for it.
+    assert hass.tasks == [] and len(dispatch.listeners) == 1
     for cleanup in hass.data[_const.DOMAIN][_const.DISPATCH_UNSUBS_KEY]:
         cleanup()
     assert _const.SHARED_P5MIN_KEY not in hass.data[_const.DOMAIN]

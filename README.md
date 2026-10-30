@@ -146,10 +146,20 @@ The options list two more fields, both off by default:
 
 | Field | Default | Description |
 |---|---|---|
-| DUID local price adjustments | empty | DUIDs, comma separated, such as `GSTONE1, CATHROCK`. Each is upper-cased and must be up to ten letters, digits or underscores; anything else is refused. For each DUID a dispatch adjustment sensor and a P5MIN forecast sensor are added. Empty, no sensor is made and P5MIN is never fetched |
+| DUID local price adjustments | empty | A dropdown of the region's DUIDs, most constrained first, labelled with the station and fuel (`GSTONE1 · Gladstone (coal black)`). A DUID not in the list, such as one registered since the catalogue was built, can be typed; it must be up to ten letters or digits, and may contain `_`, `-`, `#` or `/`. Each chosen DUID gets a dispatch adjustment sensor and a P5MIN forecast sensor, enabled |
 | Add the DUID local price diagnostic | off | Also add a Local Price sensor per DUID |
 
-A DUID is a generating or load unit, not your connection point. Its local price adjustment is a geographic signal of network congestion near that unit, nothing more: it is not added to any existing price, tariff or forecast. The feeds do not say which region a DUID is in, so the region is not checked; the diagnostic uses the ROP of the entry's region.
+A DUID is a generating or load unit, not your connection point. Its local price adjustment is a geographic signal of network congestion near that unit, nothing more: it is not added to any existing price, tariff or forecast.
+
+**The region's five most constrained DUIDs are always added, disabled**, with all three sensors each: enable one from the device page and it starts updating. They are the region's DUIDs with the largest sum of |adjustment| over the catalogue's two-week window. P5MIN is fetched only while at least one forecast sensor is enabled, so the disabled presets cost nothing. Choosing a preset in the options enables the sensors the integration disabled; a sensor you disabled stays disabled.
+
+**The DUID catalogue** (`duid_catalogue.json`) is bundled with the integration and rebuilt before each release by `scripts/build_duid_catalogue.py`. Nothing is fetched at run time. Its sources:
+
+- **AEMO MMSDM DUDETAILSUMMARY and STATION:** each DUID's region, station and dispatch type.
+- **Open Electricity's public facility files:** fuel and coordinates. Its live API needs a key, so those files are used instead; a DUID they do not list has no coordinates rather than guessed ones.
+- **AEMO DispatchIS LOCAL_PRICE rows:** the ranking.
+
+A catalogued DUID's sensors publish `station`, `fuel`, `duid_region`, `latitude` and `longitude`, so they show on a map card. The diagnostic uses the ROP of the DUID's own region, and of the entry's region for a DUID the catalogue lacks.
 
 ### Monitoring multiple regions
 
@@ -470,7 +480,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 
 ### DUID Local Price (diagnostic option)
 
-`sensor.nem_pd7day_{region}_{duid}_local_price`, only with the diagnostic option: clip(ROP + adjustment, floor, cap) / 1000, in $/kWh, for the latest dispatch interval. ROP is the entry region's original price from the same file, not RRP, so the two are always of one interval and run. Only the sum is clipped, never the adjustment: the floor is -$1,000/MWh and the cap is that of the interval's financial year ($23,200/MWh in 2026-27). Unknown when the row is absent or the region has no ROP. This is a diagnostic of the dispatch run: not the regional price, a retail price or a settlement price.
+`sensor.nem_pd7day_{region}_{duid}_local_price`, with the diagnostic option, and for each disabled preset: clip(ROP + adjustment, floor, cap) / 1000, in $/kWh, for the latest dispatch interval. ROP is the original price of the DUID's region (from the catalogue; the entry's region for a DUID it lacks, shown as `rop_region`) from the same file, not RRP, so the two are always of one interval and run. Only the sum is clipped, never the adjustment: the floor is -$1,000/MWh and the cap is that of the interval's financial year ($23,200/MWh in 2026-27). Unknown when the row is absent or the region has no ROP. This is a diagnostic of the dispatch run: not the regional price, a retail price or a settlement price.
 
 Extra attributes beyond the adjustment sensor's: `rop_mwh`, `local_price_mwh`, `price_floor_mwh` and `price_cap_mwh`.
 
@@ -666,7 +676,7 @@ The `nemtime` field in forecast periods is the **interval end** timestamp (AEMO 
 - **Calibration warm-up** — the two-stage pipeline requires historical data to activate. Isotonic calibration starts at ~5–7 days; STPASA OLS correction (h22–h120) activates after the first nightly refit once STPASA feature data has been joined to observations. Expect isotonic-only output for the first 24 hours after install.
 - **STPASA OLS limited to h22–h120** — beyond h120, STPASA supply/demand signals degrade and the model falls back to isotonic calibration only.
 - **Spike forecasts are capped** — raw PD7DAY values ≥ $3/kWh are treated as bid-based pre-dispatch placeholders and are capped at the isotonic model maximum. Genuine scarcity spikes are flagged via `spike_credible` but are not passed through at face value.
-- **DUID local prices: the next hour only** — the forecast is the public P5MIN run, twelve five-minute intervals. AEMO's 30-minute `PREDISPATCH_LOCAL_PRICE` is not public in real time, so there is no longer horizon, and no 30-minute aggregate. A DUID's region cannot be checked from these feeds.
+- **DUID local prices: the next hour only** — the forecast is the public P5MIN run, twelve five-minute intervals. AEMO's 30-minute `PREDISPATCH_LOCAL_PRICE` is not public in real time, so there is no longer horizon, and no 30-minute aggregate. A DUID's region comes from the bundled catalogue; a DUID registered after it was built has no region, name or coordinates until the next release.
 - **Python 3.12+ required** — the integration uses `asyncio.run()` and other Python 3.12 patterns.
 - **matplotlib build dependency** — on some HA OS versions (notably Python 3.14 environments), matplotlib may fail to build from source. If this occurs, the chart camera entities will be unavailable but all price forecast and tariff sensors continue to function normally.
 

@@ -8,8 +8,13 @@ For each DUID listed in the entry's options:
   adjustments as a ``forecast`` list, for the intervals still to end and only
   up to the first interval without a row.
 - ``<DUID> Local Price`` (the diagnostic option): clip(ROP + adjustment,
-  floor, cap) for the entry's region, a diagnostic of the dispatch run, not a
+  floor, cap) for the DUID's region, a diagnostic of the dispatch run, not a
   regional, retail or settlement price.
+
+The region's DUIDs most often locally constrained, from the bundled catalogue,
+are added as well with all three sensors disabled; enabling one is all it
+takes. A DUID in the catalogue publishes its station, fuel, region and
+coordinates, so the sensors show on a map.
 
 A state is unknown, never 0, when the DUID has no row: ``row_status`` says why.
 """
@@ -20,10 +25,12 @@ from typing import Any, Optional
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DEVICE_CONFIGURATION_URL, DEVICE_MANUFACTURER, DEVICE_MODEL, DOMAIN
+from .duid_catalogue import Catalogue, DuidInfo
 from .local_price import (
     INTERVAL,
     STATUS_PUBLISHED,
@@ -56,10 +63,16 @@ class _LocalPriceSensor(CoordinatorEntity, SensorEntity):
     _suffix = ""
     _label = ""
 
-    def __init__(self, coordinator: Any, entry: Any, region: str, duid: str) -> None:
+    def __init__(
+        self, coordinator: Any, entry: Any, region: str, duid: str,
+        info: Optional[DuidInfo] = None, preset: bool = False,
+    ) -> None:
         super().__init__(coordinator)
         self._region = region
         self._duid = duid
+        self._info = info
+        # A preset (one of the region's most constrained DUIDs, not chosen) starts disabled.
+        self._attr_entity_registry_enabled_default = not preset
         self._attr_name = f"{duid} {self._label}"
         self._attr_unique_id = f"{entry.entry_id}_{region}_{duid}_{self._suffix}"
         self._attr_device_info = DeviceInfo(
@@ -71,7 +84,19 @@ class _LocalPriceSensor(CoordinatorEntity, SensorEntity):
         )
 
     def _base(self, source: str) -> dict[str, Any]:
-        return {"region": self._region, "duid": self._duid, "source": source}
+        base: dict[str, Any] = {"region": self._region, "duid": self._duid, "source": source}
+        info = self._info
+        if info is not None:
+            base.update({
+                "station": info.station, "fuel": info.fuel, "duid_region": info.region,
+                "latitude": info.latitude, "longitude": info.longitude,
+            })
+        return base
+
+    @property
+    def _duid_region(self) -> str:
+        """The DUID's own region from the catalogue, else the entry's."""
+        return self._info.region if self._info is not None else self._region
 
 
 class _DispatchLocalPriceSensor(_LocalPriceSensor):
@@ -123,11 +148,12 @@ class NemPd7dayLocalPriceAdjustmentSensor(_DispatchLocalPriceSensor):
 
 
 class NemPd7dayLocalPriceSensor(_DispatchLocalPriceSensor):
-    """State: clip(ROP + adjustment, floor, cap) in $/kWh for the entry's region.
+    """State: clip(ROP + adjustment, floor, cap) in $/kWh for the DUID's region.
 
     ROP, not RRP: the original price before any intervention pricing. The
     region's ROP is the same file's, so the two are of one interval and run;
-    a missing ROP leaves the state unknown rather than substituting RRP.
+    a missing ROP leaves the state unknown rather than substituting RRP. The
+    region is the catalogue's for the DUID, the entry's for a DUID it lacks.
     """
 
     _suffix = "local_price"
@@ -137,7 +163,7 @@ class NemPd7dayLocalPriceSensor(_DispatchLocalPriceSensor):
     def _value_mwh(self, prices: Optional[DispatchLocalPrices]) -> Optional[float]:
         if dispatch_status(prices, self._duid, now_nem(), MAX_AGE) != STATUS_PUBLISHED:
             return None
-        rop = prices.rop.get(self._region)  # type: ignore[union-attr]
+        rop = prices.rop.get(self._duid_region)  # type: ignore[union-attr]
         if rop is None:
             return None
         return local_price_mwh(rop, prices.rows[self._duid].adjustment_mwh, prices.interval_end)  # type: ignore[union-attr]
@@ -156,7 +182,8 @@ class NemPd7dayLocalPriceSensor(_DispatchLocalPriceSensor):
         floor, cap = market_price_limits(prices.interval_end)
         return {
             **attrs,
-            "rop_mwh": prices.rop.get(self._region),
+            "rop_region": self._duid_region,
+            "rop_mwh": prices.rop.get(self._duid_region),
             "local_price_mwh": self._value_mwh(prices),
             "price_floor_mwh": floor,
             "price_cap_mwh": cap,
@@ -177,6 +204,13 @@ class NemPd7dayLocalPriceAdjustmentForecastSensor(_LocalPriceSensor):
     _attr_icon = "mdi:chart-timeline-variant"
     # The lists grow with the horizon; the scalar state is recorded.
     _unrecorded_attributes = frozenset({"forecast", "interval_ends", "later_observations"})
+
+    async def async_added_to_hass(self) -> None:
+        """P5MIN is fetched only while a forecast sensor is listening; ask for the first run now."""
+        await super().async_added_to_hass()
+        request = getattr(self.coordinator, "request_refresh", None)
+        if request is not None and self.coordinator.latest is None:
+            request()
 
     def _series(self, now: datetime):
         return forecast_series(self.coordinator.latest, self._duid, now, MAX_AGE)
@@ -214,13 +248,38 @@ class NemPd7dayLocalPriceAdjustmentForecastSensor(_LocalPriceSensor):
         }
 
 
-def local_price_entities(
-    constraints: Any, p5min: Any, entry: Any, region: str, duids: list[str], diagnostic: bool
-) -> list[SensorEntity]:
-    entities: list[SensorEntity] = []
+SUFFIXES = ("local_price_adjustment", "local_price_adjustment_forecast", "local_price")
+
+
+def enable_chosen(hass: Any, entry: Any, region: str, duids: list[str]) -> int:
+    """Enable a chosen DUID's sensors that were created disabled as a preset.
+
+    Only the integration's own disabling is undone; a sensor the user
+    disabled stays disabled. Returns how many were enabled.
+    """
+    registry = er.async_get(hass)
+    enabled = 0
     for duid in duids:
-        entities.append(NemPd7dayLocalPriceAdjustmentSensor(constraints, entry, region, duid))
-        entities.append(NemPd7dayLocalPriceAdjustmentForecastSensor(p5min, entry, region, duid))
-        if diagnostic:
-            entities.append(NemPd7dayLocalPriceSensor(constraints, entry, region, duid))
+        for suffix in SUFFIXES:
+            entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{region}_{duid}_{suffix}")
+            reg = registry.async_get(entity_id) if entity_id else None
+            if reg is not None and reg.disabled_by == er.RegistryEntryDisabler.INTEGRATION:
+                registry.async_update_entity(entity_id, disabled_by=None)
+                enabled += 1
+    return enabled
+
+
+def local_price_entities(
+    constraints: Any, p5min: Any, entry: Any, region: str, duids: list[str], diagnostic: bool,
+    catalogue: Optional[Catalogue] = None,
+) -> list[SensorEntity]:
+    """The chosen DUIDs' sensors, enabled, then the region's most constrained others, disabled."""
+    entities: list[SensorEntity] = []
+    presets = [d for d in (catalogue.top_for(region) if catalogue else ()) if d not in duids]
+    for duid, preset in [(d, False) for d in duids] + [(d, True) for d in presets]:
+        info = catalogue.info(duid) if catalogue else None
+        entities.append(NemPd7dayLocalPriceAdjustmentSensor(constraints, entry, region, duid, info, preset))
+        entities.append(NemPd7dayLocalPriceAdjustmentForecastSensor(p5min, entry, region, duid, info, preset))
+        if diagnostic or preset:
+            entities.append(NemPd7dayLocalPriceSensor(constraints, entry, region, duid, info, preset))
     return entities

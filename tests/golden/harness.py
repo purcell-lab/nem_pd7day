@@ -713,6 +713,10 @@ async def _setup(built: Built) -> None:
     await coordinator.async_fetch_notices()
 
     # ── Platform setup, then HA's add flow per entity ─────────────────────
+    # The bundled DUID catalogue changes with every rebuild, and its disabled
+    # presets with it; tests/test_duid_catalogue.py covers them, so the
+    # snapshots read an empty catalogue.
+    mods.duid_catalogue.load_catalogue = lambda: mods.duid_catalogue.EMPTY
     added: list[tuple[str, Any]] = []
     for platform in PLATFORM_ORDER:
         batch: list[Any] = []
