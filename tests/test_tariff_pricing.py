@@ -154,10 +154,14 @@ def test_library_import_passes_the_loss_factors_explicitly():
     lib.assert_called_once_with(END, "energex", "6900", 87.5, dlf=1.05905, mlf=1.0154, market=1.0154)
 
 
-def test_library_feed_in_passes_no_loss_factors():
+def test_library_feed_in_passes_the_same_loss_factors_as_the_import():
+    """It used to pass none and price with the library's own defaults, which
+    are the defaults passed now; the loss factor option needs them explicit."""
     with patch.object(tp, "spot_to_feed_in_tariff", return_value=6.1) as lib:
         assert tp.LibraryPricer("energex", "6900X").feed_in_c_kwh(END, 87.5) == 6.1
-    lib.assert_called_once_with(END, "energex", "6900X", 87.5)
+        tp.LibraryPricer("energex", "6900X", losses=tp.losses_for(1.0272)).feed_in_c_kwh(END, 87.5)
+    assert lib.call_args_list[0].kwargs == {"dlf": 1.05905, "mlf": 1.0154, "market": 1.0154}
+    assert lib.call_args_list[1].kwargs == {"dlf": 1.0272, "mlf": 1.0, "market": 1.0}
 
 
 def test_library_periods_take_the_time_and_daily_fee_takes_the_code():

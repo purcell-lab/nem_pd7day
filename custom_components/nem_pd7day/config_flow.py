@@ -12,7 +12,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import selector
 
-from .active_tariff import default_tariff, detect_amber_tariff
+from .active_tariff import amber_loss_factor, default_tariff, detect_amber_tariff
 from .const import (
     ACTIVE_TARIFF_AUTO,
     AMBER_FORECAST_PLATFORMS,
@@ -21,6 +21,7 @@ from .const import (
     CONF_FORECAST_MODE,
     CONF_LOCAL_PRICE_DIAGNOSTIC,
     CONF_LOCAL_PRICE_DUIDS,
+    CONF_LOSS_FACTOR,
     CONF_ONLY_ACTIVE_TARIFF,
     CONF_REGION,
     CONF_REGIONS,
@@ -36,6 +37,7 @@ from .const import (
 )
 from .local_price import parse_duids
 from .pd7day_client import PD7DayClient
+from .tariff_pricing import COMBINED_LOSS_MULTIPLIER, LOSS_FACTOR_MAX, LOSS_FACTOR_MIN
 from .tariff_catalogue import import_tariff_codes, tariff_name as catalogue_tariff_name
 
 _LOGGER = logging.getLogger(__name__)
@@ -331,7 +333,28 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
         CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
         CONF_LOCAL_PRICE_DUIDS: ", ".join(duids),
         CONF_LOCAL_PRICE_DIAGNOSTIC: bool(user_input.get(CONF_LOCAL_PRICE_DIAGNOSTIC, False)),
+        # Cleared, the library's defaults are used again.
+        CONF_LOSS_FACTOR: user_input.get(CONF_LOSS_FACTOR),
     }, {}
+
+
+def _loss_factor_field(current: Any) -> dict[Any, Any]:
+    """One combined factor spot is scaled by in every tariff price; empty keeps the library's."""
+    return {
+        vol.Optional(CONF_LOSS_FACTOR, description={"suggested_value": current}): selector.selector(
+            {"number": {"min": LOSS_FACTOR_MIN, "max": LOSS_FACTOR_MAX, "step": 0.0001, "mode": "box"}}
+        ),
+    }
+
+
+def _init_placeholders(hass: Any) -> dict[str, str]:
+    """The fetch times, the library's combined factor, and what Amber's settled interval shows."""
+    observed = amber_loss_factor(hass)
+    return {
+        "fetch_times": ", ".join(f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM),
+        "library_loss_factor": f"{COMBINED_LOSS_MULTIPLIER:.4f}",
+        "amber_loss_factor": f"{observed:.4f}" if observed is not None else "not available",
+    }
 
 
 def _only_active_field(current: bool) -> dict[Any, Any]:
@@ -407,6 +430,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                 **_only_active_field(self._entry.options.get(CONF_ONLY_ACTIVE_TARIFF, True)),
                 **_amber_forecast_field(self._entry.options.get(CONF_AMBER_FORECAST_ENTITY, "")),
                 **_local_price_fields(dict(self._entry.options)),
+                **_loss_factor_field(self._entry.options.get(CONF_LOSS_FACTOR)),
             }
         )
 
@@ -414,9 +438,5 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
             step_id="init",
             data_schema=schema,
             errors=errors,
-            description_placeholders={
-                "fetch_times": ", ".join(
-                    f"{h:02d}:{m:02d}" for h, m in FETCH_TIMES_NEM
-                )
-            },
+            description_placeholders=_init_placeholders(getattr(self, "hass", None)),
         )

@@ -413,3 +413,29 @@ def test_energex_two_way_trial_is_a_selectable_active_tariff(flow_env):
     assert "energex/96200" in values
     assert values[0] == "energex/6900"          # the default stays the first entry
     assert config_flow_mod._default_tariff_for_region("QLD1") == "energex/6900"
+
+
+def test_options_flow_saves_the_loss_factor_and_clears_it_when_omitted(flow_env):
+    config_flow_mod, const_mod = flow_env
+    entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1"})
+    base = {const_mod.CONF_REGION: "QLD1", const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7}
+
+    chosen = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(
+        {**base, const_mod.CONF_LOSS_FACTOR: 1.0272}))
+    cleared = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(dict(base)))
+
+    assert chosen["data"][const_mod.CONF_LOSS_FACTOR] == 1.0272
+    assert cleared["data"][const_mod.CONF_LOSS_FACTOR] is None
+
+
+def test_options_form_shows_the_library_and_amber_loss_factors(flow_env, monkeypatch):
+    config_flow_mod, const_mod = flow_env
+    monkeypatch.setattr(config_flow_mod, "amber_loss_factor", lambda hass: 1.0272)
+    entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1", const_mod.CONF_LOSS_FACTOR: 1.0272})
+
+    result = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init())
+
+    placeholders = result["description_placeholders"]
+    assert (placeholders["library_loss_factor"], placeholders["amber_loss_factor"]) == ("1.0919", "1.0272")
+    (marker,) = [m for m in result["data_schema"].spec if m.key == const_mod.CONF_LOSS_FACTOR]
+    assert marker.description == {"suggested_value": 1.0272}
