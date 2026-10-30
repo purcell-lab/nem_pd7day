@@ -443,14 +443,14 @@ An interconnector held at a limit separates the two regions' prices; one that is
 
 ### DUID Local Price Adjustment
 
-`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment`, for each DUID in the options: the DUID's `LOCAL_PRICE_ADJUSTMENT` in the latest dispatch interval, in $/kWh. AEMO publishes a row only where the adjustment is not zero. An absent row is not taken to be zero: the state is unknown and `row_status` says why. A published zero is 0.
+`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment`, for each DUID in the options, in the device's Diagnostic section like the other DUID sensors: the DUID's `LOCAL_PRICE_ADJUSTMENT` in the latest dispatch interval, in $/kWh. AEMO publishes a row only where the adjustment is not zero. An absent row is not taken to be zero: the state is unknown and `row_status` says why. A published zero is 0.
 
 | Attribute | Description |
 |---|---|
 | `row_status` | `published`; `absent` (the file has a LOCAL_PRICE table, but no row for the DUID); `table_missing` (no LOCAL_PRICE table in the file); `stale` (the newest interval ended more than 15 minutes ago); `no_data` (no file read yet) |
 | `adjustment_mwh`, `locally_constrained` | The published values: $/MWh, and AEMO's count of constraints locally constraining the unit |
 | `interval_start`, `interval_end` | The dispatch interval, AEST `+10:00`. `interval_end` is AEMO's SETTLEMENTDATE |
-| `source_file`, `retrieved_at`, `age_seconds` | The DispatchIS file, when it was read, and seconds since the interval ended |
+| `source_file`, `retrieved_at`, `age_seconds` | The DispatchIS file, when it was read, and seconds since the interval started. AEMO publishes the file while its interval runs, so it is about 0 to 300 while current |
 | `region`, `duid`, `source` | The entry's region, the DUID, and `DISPATCH_LOCAL_PRICE` |
 
 ### DUID Local Price Adjustment Forecast
@@ -463,7 +463,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 | `interval_ends` | The source interval end of each `forecast` point, in the same order (not recorded) |
 | `later_observations` | Published intervals after the first gap (not recorded) |
 | `row_status` | `published`, `absent`, `table_missing`, `stale` (the run is more than 15 minutes old), `expired` (every interval has ended), `conflicting_rows` (the run held two different rows for one interval; neither is used, and the forecast stops there) or `no_data` |
-| `run_at`, `source_file`, `retrieved_at`, `age_seconds` | The run (AEMO's RUN_DATETIME, the end of its first interval), the P5MIN file, when it was read, and seconds since `run_at` |
+| `run_at`, `source_file`, `retrieved_at`, `age_seconds` | The run (AEMO's RUN_DATETIME, the end of its first interval), the P5MIN file, when it was read, and seconds since the start of the run's first interval |
 | `forecast_end`, `horizon_end` | Where `forecast` stops, and the end of the run's last interval |
 | `intervals_published`, `intervals_ahead` | Intervals still to end with a row, gap or not, and intervals still to end |
 | `interval_minutes`, `interpolation_mode` | `5` and `previous`: each value holds from its `time` to the next |

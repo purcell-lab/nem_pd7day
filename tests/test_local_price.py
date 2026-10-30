@@ -380,7 +380,10 @@ def test_adjustment_sensor_publishes_dollars_per_kwh_and_keeps_mwh(monkeypatch):
     assert (attrs["interval_start"], attrs["interval_end"]) == (
         "2026-10-30T21:20:00+10:00", "2026-10-30T21:25:00+10:00",
     )
-    assert attrs["source_file"] == DISPATCH_NAME and attrs["age_seconds"] == 60
+    # Age runs from the interval's start, 21:20: AEMO publishes the file
+    # while the interval runs, so measured from its end it read negative.
+    assert attrs["source_file"] == DISPATCH_NAME and attrs["age_seconds"] == 360
+    assert sensor._attr_entity_category == _sensor.EntityCategory.DIAGNOSTIC
     assert attrs["retrieved_at"] == "2026-10-30T21:25:40+10:00"
 
 
@@ -425,6 +428,7 @@ def test_forecast_sensor_state_attributes_and_unrecorded_lists(monkeypatch):
     assert attrs["run_at"] == "2026-10-30T21:25:00+10:00" and attrs["source"] == "P5MIN_LOCAL_PRICE"
     assert (attrs["interval_minutes"], attrs["interpolation_mode"]) == (5, "previous")
     assert attrs["forecast_end"] == "2026-10-30T22:20:00+10:00" and attrs["intervals_ahead"] == 11
+    assert attrs["age_seconds"] == 420  # from 21:20, the start of the run's first interval
     assert sensor._unrecorded_attributes == frozenset({"forecast", "interval_ends", "later_observations"})
 
 
@@ -447,3 +451,19 @@ def test_entities_per_duid_and_the_diagnostic_only_when_asked():
     ] * 2
     with_diag = _sensor.local_price_entities(constraints, p5, ENTRY, "QLD1", ["GSTONE1"], True)
     assert type(with_diag[-1]).__name__ == "NemPd7dayLocalPriceSensor"
+
+
+def test_age_is_not_negative_while_the_interval_runs(monkeypatch):
+    """Live, 31 Oct 2026: the file for the interval ending 06:40 was read at
+    06:36:16 and published an age of -224 seconds; from the start it is 76."""
+    prices = replace(_dispatch(), interval_end=_at(6, 40, day=31))
+    monkeypatch.setattr(_sensor, "now_nem", lambda: _at(6, 36, 16, day=31))
+    sensor = _sensor.NemPd7dayLocalPriceAdjustmentSensor(_constraints(prices), ENTRY, "SA1", "CATHROCK")
+    assert sensor.extra_state_attributes["age_seconds"] == 76
+
+
+def test_every_duid_sensor_is_diagnostic():
+    entities = _sensor.local_price_entities(
+        _constraints(None), SimpleNamespace(latest=None), ENTRY, "QLD1", ["GSTONE1"], True
+    )
+    assert {e._attr_entity_category for e in entities} == {_sensor.EntityCategory.DIAGNOSTIC}
