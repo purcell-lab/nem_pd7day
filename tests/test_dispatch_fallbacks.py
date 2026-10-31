@@ -1,5 +1,7 @@
 """
-P5MIN as the fallback for a DispatchIS file without its LOCAL_PRICE table.
+The fallbacks for a DispatchIS file without its LOCAL_PRICE table: the P5MIN
+run covering the interval, else the 30-minute pre-dispatch period covering
+it, else no adjustment at all, the regional price.
 
 AEMO now and then publishes a DispatchIS file with no LOCAL_PRICE table at
 all, never an empty one: 11 of 576 files over 30 and 31 Oct 2026, all early
@@ -8,7 +10,7 @@ interval keeps its table, so its adjustments stand in, flagged
 ``p5min_fallback``, on the DUID, node and zone sensors; the ROP stays the
 dispatch file's.
 
-Run with:  python -m pytest tests/test_p5min_fallback.py -v
+Run with:  python -m pytest tests/test_dispatch_fallbacks.py -v
 """
 from __future__ import annotations
 
@@ -101,8 +103,8 @@ def test_a_duid_sensor_reads_the_fallback_and_says_so(monkeypatch):
     without_run = _lps.NemPd7dayDuidLocalPriceSensor(
         _constraints(_without_table()), SimpleNamespace(latest=None), ENTRY, "SA1", "CATHROCK",
     )
-    assert without_run.native_value is None
-    assert without_run.extra_state_attributes["row_status"] == "table_missing"
+    assert without_run.native_value == 0.0  # nothing to stand in: the regional price
+    assert without_run.extra_state_attributes["row_status"] == "rrp_fallback"
 
 
 def test_a_node_and_a_zone_read_it_too(monkeypatch):
@@ -120,3 +122,58 @@ def test_a_node_and_a_zone_read_it_too(monkeypatch):
     zone_attrs = zone_sensor.extra_state_attributes
     assert zone_attrs["row_status"] == "p5min_fallback" and zone_attrs["adjustment_mwh"] == 88.28
     assert zone_attrs["fallback_source_file"] == P5_NAME
+
+
+# ── Pre-dispatch, then the regional price ────────────────────────────────────
+
+def _pd(run_at=datetime(2026, 10, 30, 21, 2, tzinfo=NEM_TZ), table=True):
+    """A pre-dispatch run with its first period ending 21:30, so covering 21:25."""
+    ends = [datetime(2026, 10, 30, 21, 30, tzinfo=NEM_TZ), datetime(2026, 10, 30, 22, 0, tzinfo=NEM_TZ)]
+    return SimpleNamespace(
+        run_at=run_at, source="PUBLIC_PREDISPATCHIS_202610302130_x.zip", local_price_table=table, period_ends=ends,
+        local_prices={"CATHROCK": {ends[0]: -40.5, ends[1]: -12.0}, "GUTHEGA": {ends[1]: 7.0}},
+    )
+
+
+def test_without_p5min_the_predispatch_period_stands_in():
+    filled = _lp.with_fallbacks(_without_table(), None, _pd())
+    assert filled.fallback_status == "predispatch_fallback" and filled.fallback_source.startswith("PUBLIC_PREDISPATCHIS")
+    assert _lp.dispatch_adjustment(filled, "CATHROCK", NOW, _lps.MAX_AGE) == ("predispatch_fallback", -40.5)
+    assert _lp.dispatch_adjustment(filled, "GUTHEGA", NOW, _lps.MAX_AGE) == ("predispatch_fallback", 0.0)
+    assert filled.rop == _without_table().rop
+
+
+def test_p5min_comes_before_predispatch():
+    filled = _lp.with_fallbacks(_without_table(), _run(), _pd())
+    assert filled.fallback_status == "p5min_fallback" and filled.rows["CATHROCK"].adjustment_mwh == -34.08
+
+
+def test_an_old_or_tableless_predispatch_run_leaves_the_regional_price():
+    old = _lp.with_fallbacks(_without_table(), None, _pd(run_at=datetime(2026, 10, 30, 20, 0, tzinfo=NEM_TZ)))
+    assert old.fallback_status == "rrp_fallback" and old.rows == {} and old.fallback_source == "RRP"
+    tableless = _lp.with_fallbacks(_without_table(), None, _pd(table=False))
+    assert tableless.fallback_status == "rrp_fallback"
+    assert _lp.dispatch_adjustment(tableless, "CATHROCK", NOW, _lps.MAX_AGE) == ("rrp_fallback", 0.0)
+    # A file with its table, or none at all, is never filled.
+    with_table = _lp.parse_dispatch_local_prices(DISPATCH, "d.zip", NOW)
+    assert _lp.with_fallbacks(with_table, None, None) is with_table and _lp.with_fallbacks(None, None, None) is None
+
+
+def test_the_sensors_report_which_fallback(monkeypatch):
+    monkeypatch.setattr(_lps, "now_nem", lambda: NOW)
+    monkeypatch.setattr(_node, "now_nem", lambda: NOW)
+    pd = SimpleNamespace(latest=_pd())
+    duid = _lps.NemPd7dayDuidLocalPriceSensor(
+        _constraints(_without_table()), SimpleNamespace(latest=None), ENTRY, "SA1", "CATHROCK", predispatch=pd,
+    )
+    attrs = duid.extra_state_attributes
+    assert duid.native_value == pytest.approx(-0.0405)
+    assert (attrs["row_status"], attrs["source"]) == ("predispatch_fallback", "PREDISPATCH_LOCAL_PRICE")
+    rrp = _lps.NemPd7dayDuidLocalPriceSensor(
+        _constraints(_without_table()), SimpleNamespace(latest=None), ENTRY, "SA1", "CATHROCK",
+    )
+    assert rrp.extra_state_attributes["source"] == "RRP" and rrp.extra_state_attributes["fallback_source_file"] == "RRP"
+    node = _cat.NodeInfo("SCRK", "SA1", 0.9417, ("CATHROCK",), ("Cathedral Rocks",), -34.9, 135.6)
+    sensor = _node.NemPd7dayNodePriceSensor(_constraints(_without_table()), None, ENTRY, "SA1", "SCRK", node)
+    assert sensor.extra_state_attributes["adjustment_status"] == "rrp_fallback"
+    assert sensor.native_value == pytest.approx(28.67941 * 0.9417 / 1000, abs=1e-6)  # the static price

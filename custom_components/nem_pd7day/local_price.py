@@ -57,8 +57,17 @@ STATUS_NO_DATA = "no_data"               # no file read yet
 STATUS_STALE = "stale"                   # the newest file is too old to stand for now
 STATUS_EXPIRED = "expired"               # every interval of the run has ended
 # The DispatchIS file had no LOCAL_PRICE table, a gap in AEMO's publishing (about
-# 2% of files, early evening), so the P5MIN run covering the interval stands in.
+# 2% of files, early evening), so something stands in, in this order: the
+# P5MIN run covering the interval; the 30-minute pre-dispatch period covering
+# it; else no adjustment at all, the regional price itself.
 STATUS_P5_FALLBACK = "p5min_fallback"
+STATUS_PD_FALLBACK = "predispatch_fallback"
+STATUS_RRP_FALLBACK = "rrp_fallback"
+FALLBACK_STATUSES = frozenset({STATUS_P5_FALLBACK, STATUS_PD_FALLBACK, STATUS_RRP_FALLBACK})
+# A pre-dispatch run older than this, from its solve to the interval's end,
+# no longer stands for the interval.
+PD_FALLBACK_MAX_AGE = timedelta(minutes=75)
+PD_PERIOD = timedelta(minutes=30)
 
 
 @dataclass(frozen=True)
@@ -77,10 +86,12 @@ class DispatchLocalPrices:
     rows: dict[str, LocalPriceRow]
     rop: dict[str, float]
     retrieved_at: Optional[datetime] = None
-    # Set when the rows are a P5MIN run's for this interval (with_p5_fallback):
-    # its file, and the DUIDs whose rows conflicted there.
+    # Set when the rows stand in for a missing table (with_fallbacks): the
+    # file they came from ("RRP" for none), the DUIDs whose rows conflicted
+    # there, and the status every DUID then reads.
     fallback_source: Optional[str] = None
     fallback_conflicts: frozenset[str] = field(default_factory=frozenset)
+    fallback_status: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -266,7 +277,43 @@ def with_p5_fallback(
         return prices
     conflicts = frozenset(duid for duid, at in run.conflicts if at == end)
     rows = {duid: series[end] for duid, series in run.rows.items() if end in series and duid not in conflicts}
-    return replace(prices, table_present=True, rows=rows, fallback_source=run.source, fallback_conflicts=conflicts)
+    return replace(prices, table_present=True, rows=rows, fallback_source=run.source,
+                   fallback_conflicts=conflicts, fallback_status=STATUS_P5_FALLBACK)
+
+
+def with_predispatch_fallback(prices: Optional[DispatchLocalPrices], snapshot: Any) -> Optional[DispatchLocalPrices]:
+    """The 30-minute pre-dispatch period covering the interval, where the file has no table.
+
+    The period whose end is the first at or after the interval's end, from a
+    run solved no more than 75 minutes before it with its LOCAL_PRICE table;
+    a DUID without a row there is 0, as everywhere else.
+    """
+    if prices is None or prices.table_present or snapshot is None or not getattr(snapshot, "local_price_table", False):
+        return prices
+    end = prices.interval_end
+    if end - snapshot.run_at > PD_FALLBACK_MAX_AGE:
+        return prices
+    period = next((e for e in snapshot.period_ends if e - PD_PERIOD < end <= e), None)
+    if period is None:
+        return prices
+    rows = {duid: LocalPriceRow(series[period], None)
+            for duid, series in snapshot.local_prices.items() if period in series}
+    return replace(prices, table_present=True, rows=rows, fallback_source=snapshot.source,
+                   fallback_status=STATUS_PD_FALLBACK)
+
+
+def with_rrp_fallback(prices: Optional[DispatchLocalPrices]) -> Optional[DispatchLocalPrices]:
+    """No adjustment for anyone, where nothing else stands in: the local price is the regional price."""
+    if prices is None or prices.table_present:
+        return prices
+    return replace(prices, table_present=True, rows={}, fallback_source="RRP", fallback_status=STATUS_RRP_FALLBACK)
+
+
+def with_fallbacks(
+    prices: Optional[DispatchLocalPrices], run: Optional[P5LocalPriceRun], snapshot: Any = None,
+) -> Optional[DispatchLocalPrices]:
+    """A file without its LOCAL_PRICE table, filled from P5MIN, else pre-dispatch, else the regional price."""
+    return with_rrp_fallback(with_predispatch_fallback(with_p5_fallback(prices, run), snapshot))
 
 
 def dispatch_status(prices: Optional[DispatchLocalPrices], duid: str, now: datetime, max_age: timedelta) -> str:
@@ -276,8 +323,8 @@ def dispatch_status(prices: Optional[DispatchLocalPrices], duid: str, now: datet
         return STATUS_STALE
     if not prices.table_present:
         return STATUS_TABLE_MISSING
-    if prices.fallback_source is not None:
-        return STATUS_CONFLICT if duid in prices.fallback_conflicts else STATUS_P5_FALLBACK
+    if prices.fallback_status is not None:
+        return STATUS_CONFLICT if duid in prices.fallback_conflicts else prices.fallback_status
     return STATUS_PUBLISHED if duid in prices.rows else STATUS_ZERO
 
 
@@ -286,7 +333,7 @@ def dispatch_adjustment(
 ) -> tuple[str, Optional[float]]:
     """(status, $/MWh): the row's adjustment, 0 without one where that means 0, else unknown."""
     status = dispatch_status(prices, duid, now, max_age)
-    if status in (STATUS_PUBLISHED, STATUS_ZERO, STATUS_P5_FALLBACK):
+    if status in (STATUS_PUBLISHED, STATUS_ZERO) or status in FALLBACK_STATUSES:
         row = prices.rows.get(duid)  # type: ignore[union-attr]
         return status, row.adjustment_mwh if row is not None else 0.0
     return status, None
