@@ -927,3 +927,31 @@ def test_local_price_entities_chosen_enabled_and_presets_disabled(monkeypatch):
     chosen = [e._attr_unique_id for e in entities if e._attr_entity_registry_enabled_default]
     assert chosen == ["e1_QLD1_GSTONE1_local_price_adjustment"]
     assert len(entities) == 1 + 2  # GSTONE1 is chosen, so not also a preset
+
+
+def test_zones_take_the_options_radius_and_skip_home_without_a_location():
+    """#288: the chosen zones are built for the entry's region; Home needs HA's location."""
+    import custom_components.nem_pd7day.duid_catalogue as cat
+    from dataclasses import replace as _replace
+
+    node = cat.NodeInfo("QNEAR1", "QLD1", 1.0, ("NEAR1",), ("Near",), -27.5, 153.0)
+    catalogue = _replace(cat.EMPTY, nodes={"QNEAR1": node})
+    entry = MagicMock()
+    entry.options = {"price_zones": "brisbane, home, sydney", "zone_radius_km": 50}
+    located = MagicMock()
+    located.config.latitude, located.config.longitude = -27.4, 153.0
+    unset = MagicMock()
+    unset.config.latitude, unset.config.longitude = None, None
+
+    zones = _sensor_mod._zones(located, entry, "QLD1", catalogue)
+    assert [z.key for z in zones] == ["brisbane", "home"] and zones[0].radius_km == 50.0
+    import custom_components.nem_pd7day.load_points as ldp
+
+    loads = ldp.parse_load_points({"points": {"QBMH": {"region": "QLD1", "name": "Belmont", "kv": "110", "mlf": 1.0128}}})
+    entry.options = {"price_zones": "home", "zone_radius_km": 50, "home_load_point": "QBMH"}
+    (home,) = _sensor_mod._zones(located, entry, "QLD1", catalogue, loads)
+    assert home.mlf == 1.0128 and home.mlf_source == "load_tni"
+    entry.options = {"price_zones": "brisbane, home, sydney", "zone_radius_km": 50}
+    assert [z.key for z in _sensor_mod._zones(unset, entry, "QLD1", catalogue)] == ["brisbane"]
+    entry.options = {"price_zones": "brisbane", "zone_radius_km": "nonsense"}
+    assert _sensor_mod._zones(located, entry, "QLD1", catalogue)[0].radius_km == 100.0

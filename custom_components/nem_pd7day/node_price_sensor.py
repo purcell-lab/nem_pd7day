@@ -120,16 +120,7 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         return round(static + adjustment, 4) if static is not None and adjustment is not None else None
 
     def _adjustment(self, prices: Optional[DispatchLocalPrices], now: datetime) -> tuple[str, Optional[float]]:
-        """(status, $/MWh): the node's DUIDs' published adjustment, 0 for no row in a fresh file."""
-        if not self._duids:
-            return STATUS_UNKNOWN_NODE, None
-        statuses = {dispatch_status(prices, duid, now, MAX_AGE) for duid in self._duids}
-        if statuses - {STATUS_PUBLISHED, STATUS_ZERO}:
-            return sorted(statuses - {STATUS_PUBLISHED, STATUS_ZERO})[0], None
-        values = {prices.rows[d].adjustment_mwh for d in self._duids if d in prices.rows}  # type: ignore[union-attr]
-        if len(values) > 1:
-            return STATUS_CONFLICT, None
-        return (STATUS_PUBLISHED, values.pop()) if values else (STATUS_ZERO, 0.0)
+        return node_adjustment(prices, self._duids, now)
 
     @property
     def native_value(self) -> Optional[float]:
@@ -204,7 +195,22 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-def _p5_adjustment(run: P5LocalPriceRun, duids: tuple[str, ...], end: datetime) -> Optional[float]:
+def node_adjustment(
+    prices: Optional[DispatchLocalPrices], duids: tuple[str, ...], now: datetime,
+) -> tuple[str, Optional[float]]:
+    """(status, $/MWh): a node's DUIDs' published adjustment, 0 for no row in a fresh file."""
+    if not duids:
+        return STATUS_UNKNOWN_NODE, None
+    statuses = {dispatch_status(prices, duid, now, MAX_AGE) for duid in duids}
+    if statuses - {STATUS_PUBLISHED, STATUS_ZERO}:
+        return sorted(statuses - {STATUS_PUBLISHED, STATUS_ZERO})[0], None
+    values = {prices.rows[d].adjustment_mwh for d in duids if d in prices.rows}  # type: ignore[union-attr]
+    if len(values) > 1:
+        return STATUS_CONFLICT, None
+    return (STATUS_PUBLISHED, values.pop()) if values else (STATUS_ZERO, 0.0)
+
+
+def p5_adjustment(run: P5LocalPriceRun, duids: tuple[str, ...], end: datetime) -> Optional[float]:
     """The DUIDs' common adjustment for one P5MIN interval, 0 without a row; None where they conflict."""
     if any((duid, end) in run.conflicts for duid in duids):
         return None
@@ -235,7 +241,7 @@ def node_forecast(
         return STATUS_EXPIRED, []
     points: list[dict[str, Any]] = []
     for end in ahead:
-        adjustment = _p5_adjustment(run, duids, end)
+        adjustment = p5_adjustment(run, duids, end)
         if adjustment is None:
             return STATUS_CONFLICT, points
         points.append({"time": (end - INTERVAL).isoformat(), "interval_end": end.isoformat(),

@@ -83,7 +83,10 @@
           "only_active_tariff": "Enable only the active tariff's sensors",
           "local_price_duids": "DUID local price adjustments",
           "loss_factor": "Loss factor (spot multiplier)",
-          "transmission_nodes": "Transmission node prices"
+          "transmission_nodes": "Transmission node prices",
+          "price_zones": "City and zone price proxies",
+          "zone_radius_km": "Zone radius",
+          "home_load_point": "Home load connection point"
         },
         "data_description": {
           "amber_forecast_entity": "Leave empty: the day 2-7 series starts where the Amber Electric or Amber Express forecast ends, found automatically. Choose one Amber forecast sensor only to use it alone, for example when two Amber sites are installed. With no Amber integration it starts by the clock.",
@@ -91,7 +94,10 @@
           "only_active_tariff": "On: the region's other tariff sensors are disabled, so only the active tariff and its export tariff update. Applies only when the tariff is chosen here or reported by Amber. A sensor you enable yourself is left on.",
           "local_price_duids": "Optional. Pick DUIDs of this region from the list, or type any DUID. Each gets one sensor, enabled: its dispatch local price adjustment, with the 5-minute pre-dispatch forecast and the local price as attributes. The region's five most constrained DUIDs are always added too, disabled, and P5MIN is fetched only while one of these sensors is enabled. A DUID is a geographic signal, not your connection point's price.",
           "loss_factor": "Optional. One factor spot is scaled by in every tariff price, import and export, in place of the library's Energex defaults. Amber prices an Energex site at 1.0272. Outside an export charge or credit window, Amber's settled feed-in interval shows your site's factor (above). Empty uses the library's defaults.",
-          "transmission_nodes": "Optional. Pick connection points (TNIs) of this region, or type one. Each gets a sensor of its static node price: the region's original price times the node's marginal loss factor, now and for the next hour. A diagnostic, not a settlement price."
+          "transmission_nodes": "Optional. Pick connection points (TNIs) of this region, or type one. Each gets a sensor of its static node price: the region's original price times the node's marginal loss factor, now and for the next hour. A diagnostic, not a settlement price.",
+          "price_zones": "Optional. A preset city of this region, or Home (Home Assistant's own location). Each gets a sensor of a proxy price: the region's original price times the place's load loss factor, plus the median local price adjustment of the generation nodes within the radius. A geographic proxy, not your meter's price.",
+          "zone_radius_km": "How far from the city, or Home, a node counts as nearby. Where none is that close, the nearest node stands in.",
+          "home_load_point": "Optional. The bulk supply point that serves your area, as AEMO's MLF report names it. Its marginal loss factor is the Home zone's; without one, nearby generation stands in."
         }
       }
     },
