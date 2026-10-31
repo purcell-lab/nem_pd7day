@@ -28,11 +28,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .local_price import (
     INTERVAL,
     STATUS_CONFLICT,
+    STATUS_DISPATCH_ZERO,
     STATUS_EXPIRED,
     STATUS_NO_DATA,
     STATUS_PUBLISHED,
     STATUS_STALE,
-    STATUS_TABLE_MISSING,
     STATUS_ZERO,
     DispatchLocalPrices,
     P5LocalPriceRun,
@@ -44,7 +44,6 @@ from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustm
 from .zones import Zone, zone_adjustment
 
 SUFFIX = "zone_price_proxy"
-_UNKNOWN = (STATUS_STALE, STATUS_NO_DATA, STATUS_TABLE_MISSING)
 
 
 @dataclass
@@ -77,8 +76,6 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
     members = []
     for member in zone.members:
         status, adjustment = node_adjustment(prices, member.node.duids, now)
-        if status in _UNKNOWN:
-            return ZoneDispatch(status, rop)
         members.append({
             "tni": member.node.tni, "stations": list(member.node.stations), "distance_km": member.distance_km,
             "mlf": member.node.mlf, "adjustment_mwh": adjustment, "adjustment_status": status,
@@ -87,7 +84,7 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
     if adjustment is None:
         status = STATUS_CONFLICT
     else:
-        status = prices.fallback_status or STATUS_PUBLISHED
+        status = prices.fallback_status or (STATUS_PUBLISHED if prices.table_present else STATUS_DISPATCH_ZERO)
     return ZoneDispatch(status, rop, round(rop * mlf, 4), adjustment, members)
 
 
@@ -100,8 +97,6 @@ def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5LocalPriceRun], no
         return STATUS_NO_DATA, []
     if now - run.run_at > MAX_AGE:
         return STATUS_STALE, []
-    if not run.table_present:
-        return STATUS_TABLE_MISSING, []
     series = run.rop.get(region)
     if not series:
         return STATUS_NO_ROP, []
@@ -165,7 +160,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
         await listen_to_forecasts(self, super().async_added_to_hass)
 
     def _dispatch(self, now: datetime) -> tuple[Optional[DispatchLocalPrices], ZoneDispatch]:
-        prices = dispatch_prices(self)
+        prices = dispatch_prices(self, now)
         return prices, dispatch_zone(self._zone, self._region, prices, now)
 
     @property

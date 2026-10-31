@@ -81,9 +81,10 @@ def test_ended_periods_are_dropped(run):
     assert series.periods[0][0] == _at(14, 0) and len(series.periods) == 77
 
 
-def test_stale_missing_table_no_data_and_expired_give_no_points(run):
+def test_stale_no_data_and_expired_give_no_points_and_a_missing_table_is_zero(run):
     assert _pdl.predispatch_adjustments(run, ["URANQ14"], _at(14, 30)).status == "stale"
-    assert _pdl.predispatch_adjustments(replace(run, local_price_table=False), ["URANQ14"], _at(13, 10)).status == "table_missing"
+    no_table = _pdl.predispatch_adjustments(replace(run, local_price_table=False, local_prices={}), ["URANQ14"], _at(13, 10))
+    assert no_table.status == "zero_by_omission" and {v for _e, v in no_table.periods} == {0.0}  # #309
     assert _pdl.predispatch_adjustments(None, ["URANQ14"], _at(13, 10)).status == "no_data"
     late = replace(run, run_at=datetime(2026, 11, 2, 4, 0, tzinfo=NEM_TZ))
     expired = _pdl.predispatch_adjustments(late, ["URANQ14"], datetime(2026, 11, 2, 4, 10, tzinfo=NEM_TZ))

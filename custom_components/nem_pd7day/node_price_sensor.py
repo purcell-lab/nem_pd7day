@@ -34,10 +34,11 @@ from .local_price import (
     STATUS_CONFLICT,
     STATUS_EXPIRED,
     FALLBACK_STATUSES,
+    KNOWN_STATUSES,
+    STATUS_DISPATCH_ZERO,
     STATUS_NO_DATA,
     STATUS_PUBLISHED,
     STATUS_STALE,
-    STATUS_TABLE_MISSING,
     STATUS_ZERO,
     DispatchLocalPrices,
     P5LocalPriceRun,
@@ -105,8 +106,8 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
     def _mlf(self) -> Optional[float]:
         return self._node.mlf if self._node is not None else None
 
-    def _prices(self) -> Optional[DispatchLocalPrices]:
-        return dispatch_prices(self)
+    def _prices(self, now: datetime) -> Optional[DispatchLocalPrices]:
+        return dispatch_prices(self, now)
 
     def _status(self, prices: Optional[DispatchLocalPrices], now: datetime) -> str:
         if self._mlf is None:
@@ -133,7 +134,8 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> Optional[float]:
-        value = self._node_price_mwh(self._prices(), now_nem())
+        now = now_nem()
+        value = self._node_price_mwh(self._prices(now), now)
         return round(value / 1000.0, 6) if value is not None else None
 
     def _identity(self) -> dict[str, Any]:
@@ -200,7 +202,7 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         now = now_nem()
         return {
-            **self._identity(), **self._dispatch_attrs(self._prices(), now),
+            **self._identity(), **self._dispatch_attrs(self._prices(now), now),
             **self._forecast_attrs(now), **self._predispatch_attrs(now),
         }
 
@@ -212,13 +214,12 @@ def node_adjustment(
     if not duids:
         return STATUS_UNKNOWN_NODE, None
     statuses = {dispatch_status(prices, duid, now, MAX_AGE) for duid in duids}
-    known = {STATUS_PUBLISHED, STATUS_ZERO} | FALLBACK_STATUSES
-    if statuses - known:
-        return sorted(statuses - known)[0], None
+    if statuses - KNOWN_STATUSES:
+        return sorted(statuses - KNOWN_STATUSES)[0], None
     values = {prices.rows[d].adjustment_mwh for d in duids if d in prices.rows}  # type: ignore[union-attr]
     if len(values) > 1:
         return STATUS_CONFLICT, None
-    fallback = statuses & FALLBACK_STATUSES
+    fallback = statuses & (FALLBACK_STATUSES | {STATUS_DISPATCH_ZERO})
     if fallback:
         return fallback.pop(), values.pop() if values else 0.0
     return (STATUS_PUBLISHED, values.pop()) if values else (STATUS_ZERO, 0.0)
@@ -245,8 +246,6 @@ def node_forecast(
         return STATUS_NO_DATA, []
     if now - run.run_at > MAX_AGE:
         return STATUS_STALE, []
-    if not run.table_present:
-        return STATUS_TABLE_MISSING, []
     series = run.rop.get(region)
     if not series:
         return STATUS_NO_ROP, []

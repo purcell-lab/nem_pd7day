@@ -20,9 +20,11 @@ are not applied here. Two public feeds carry it:
 AEMO publishes a row only where the adjustment is non-zero, so a DUID without
 a row in a fresh file that has the LOCAL_PRICE table is taken as 0, with the
 status ``zero_by_omission`` so an inferred 0 stays apart from a published one.
-A file whose LOCAL_PRICE table is missing altogether, a stale file and a
-conflicting interval say nothing, and are never filled. Nothing is carried
-past the run's last interval.
+AEMO also leaves the table out altogether when no unit has an adjustment
+(it never writes an empty one), so a fresh file without it is 0 for every
+DUID, ``dispatch_zero`` in dispatch (#309). A stale file and a conflicting
+interval say nothing, and are never filled; nothing is carried past the run's
+last interval.
 
 All times are NEM time, UTC+10 without daylight saving; INTERVAL_DATETIME and
 SETTLEMENTDATE are interval ends, and a forecast point's ``time`` is the
@@ -32,7 +34,7 @@ from __future__ import annotations
 
 import csv
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -51,19 +53,23 @@ STATUS_PUBLISHED = "published"
 # File read, LOCAL_PRICE table present, no row for the DUID: AEMO publishes a
 # row only where the adjustment is not zero, so the value is taken as 0.
 STATUS_ZERO = "zero_by_omission"
-STATUS_TABLE_MISSING = "table_missing"   # the file has no LOCAL_PRICE table at all
 STATUS_CONFLICT = "conflicting_rows"     # two different rows for one DUID and interval
 STATUS_NO_DATA = "no_data"               # no file read yet
 STATUS_STALE = "stale"                   # the newest file is too old to stand for now
 STATUS_EXPIRED = "expired"               # every interval of the run has ended
-# The DispatchIS file had no LOCAL_PRICE table, a gap in AEMO's publishing (about
-# 2% of files, early evening), so something stands in, in this order: the
-# P5MIN run covering the interval; the 30-minute pre-dispatch period covering
-# it; else no adjustment at all, the regional price itself.
+# A DispatchIS file read whole, without a LOCAL_PRICE table: AEMO leaves the
+# table out when no unit has an adjustment (it never writes an empty one), so
+# every DUID is 0 (#309). On 31 Oct 2026 the table was missing exactly when
+# the only network constraint binding had no unit terms (L_PEC_X_6C_6G_6H_XST).
+STATUS_DISPATCH_ZERO = "dispatch_zero"
+# No dispatch file fresh enough to stand for now, so the current interval comes
+# from the P5MIN run covering it, else the 30-minute pre-dispatch period: its
+# price and its adjustments.
 STATUS_P5_FALLBACK = "p5min_fallback"
 STATUS_PD_FALLBACK = "predispatch_fallback"
-STATUS_RRP_FALLBACK = "rrp_fallback"
-FALLBACK_STATUSES = frozenset({STATUS_P5_FALLBACK, STATUS_PD_FALLBACK, STATUS_RRP_FALLBACK})
+FALLBACK_STATUSES = frozenset({STATUS_P5_FALLBACK, STATUS_PD_FALLBACK})
+# Statuses whose value is known: the row's adjustment, else 0.
+KNOWN_STATUSES = frozenset({STATUS_PUBLISHED, STATUS_ZERO, STATUS_DISPATCH_ZERO}) | FALLBACK_STATUSES
 # A pre-dispatch run older than this, from its solve to the interval's end,
 # no longer stands for the interval.
 PD_FALLBACK_MAX_AGE = timedelta(minutes=75)
@@ -86,9 +92,9 @@ class DispatchLocalPrices:
     rows: dict[str, LocalPriceRow]
     rop: dict[str, float]
     retrieved_at: Optional[datetime] = None
-    # Set when the rows stand in for a missing table (with_fallbacks): the
-    # file they came from ("RRP" for none), the DUIDs whose rows conflicted
-    # there, and the status every DUID then reads.
+    # Set when a P5MIN run or pre-dispatch period stands in for a missing or
+    # stale file (with_fallbacks): the file it came from, the DUIDs whose rows
+    # conflicted there, and the status every DUID then reads.
     fallback_source: Optional[str] = None
     fallback_conflicts: frozenset[str] = field(default_factory=frozenset)
     fallback_status: Optional[str] = None
@@ -257,71 +263,59 @@ def local_price_mwh(rop: float, adjustment: float) -> float:
     return round(rop + adjustment, 4)
 
 
-def with_p5_fallback(
-    prices: Optional[DispatchLocalPrices], run: Optional[P5LocalPriceRun],
-) -> Optional[DispatchLocalPrices]:
-    """The dispatch interval's rows, from the P5MIN run covering it when the file has no LOCAL_PRICE table.
+def _interval_end(now: datetime) -> datetime:
+    """The end of the 5-minute dispatch interval running at ``now``."""
+    local = now.astimezone(NEM_TZ)
+    floor = local.replace(minute=local.minute - local.minute % 5, second=0, microsecond=0)
+    return floor if floor == local else floor + INTERVAL
 
-    AEMO now and then publishes a DispatchIS file without the table at all,
-    never with an empty one (11 of 576 files over 30 and 31 Oct 2026, all
-    early evening), so its absence says nothing about the adjustments. The
-    P5MIN run solved for the same interval keeps its table; its adjustments
-    stand in, flagged ``p5min_fallback``, while the ROP stays the dispatch
-    file's own. Where the file has the table, or no run covers the interval,
-    the file is returned as it is.
+
+def p5_fallback(run: Optional[P5LocalPriceRun], end: datetime, max_age: timedelta) -> Optional[DispatchLocalPrices]:
+    """The interval ending ``end`` from a fresh P5MIN run covering it: its ROPs and its rows.
+
+    A run without the LOCAL_PRICE table, or without a row for a DUID, is 0
+    for it, as dispatch is (#309).
     """
-    if prices is None or prices.table_present or run is None or not run.table_present:
-        return prices
-    end = prices.interval_end
-    if end not in run.interval_ends:
-        return prices
+    if run is None or end not in run.interval_ends or end - run.run_at > max_age:
+        return None
     conflicts = frozenset(duid for duid, at in run.conflicts if at == end)
     rows = {duid: series[end] for duid, series in run.rows.items() if end in series and duid not in conflicts}
-    if not rows and not conflicts:
-        return prices  # the run has nothing for this interval, for anyone: not a stand-in
-    return replace(prices, table_present=True, rows=rows, fallback_source=run.source,
-                   fallback_conflicts=conflicts, fallback_status=STATUS_P5_FALLBACK)
+    rop = {region: series[end] for region, series in run.rop.items() if end in series}
+    return DispatchLocalPrices(end, run.source, True, rows, rop, run.retrieved_at, run.source, conflicts,
+                               STATUS_P5_FALLBACK)
 
 
-def with_predispatch_fallback(prices: Optional[DispatchLocalPrices], snapshot: Any) -> Optional[DispatchLocalPrices]:
-    """The 30-minute pre-dispatch period covering the interval, where the file has no table.
+def predispatch_fallback(snapshot: Any, end: datetime) -> Optional[DispatchLocalPrices]:
+    """The interval ending ``end`` from the pre-dispatch period covering it: RRP and the period's rows.
 
-    The period whose end is the first at or after the interval's end, from a
-    run solved no more than 75 minutes before it with its LOCAL_PRICE table;
-    a DUID without a row there is 0, as everywhere else. A period with no row
-    for any DUID is not a stand-in: when AEMO's local prices fail, they fail
-    for the near term in every feed (on 31 Oct 2026 the 20:32 run had rows
-    only from midnight on), and a whole NEM without one adjustment for hours
-    says the rows are missing, not zero. The same holds for a P5MIN interval.
+    The period whose end is the first at or after ``end``, from a run solved
+    no more than 75 minutes before it. Pre-dispatch publishes RRP, not ROP.
     """
-    if prices is None or prices.table_present or snapshot is None or not getattr(snapshot, "local_price_table", False):
-        return prices
-    end = prices.interval_end
-    if end - snapshot.run_at > PD_FALLBACK_MAX_AGE:
-        return prices
+    if snapshot is None or end - snapshot.run_at > PD_FALLBACK_MAX_AGE:
+        return None
     period = next((e for e in snapshot.period_ends if e - PD_PERIOD < end <= e), None)
     if period is None:
-        return prices
+        return None
     rows = {duid: LocalPriceRow(series[period], None)
-            for duid, series in snapshot.local_prices.items() if period in series}
-    if not rows:
-        return prices  # the run has nothing for this period, for anyone: not a stand-in
-    return replace(prices, table_present=True, rows=rows, fallback_source=snapshot.source,
-                   fallback_status=STATUS_PD_FALLBACK)
-
-
-def with_rrp_fallback(prices: Optional[DispatchLocalPrices]) -> Optional[DispatchLocalPrices]:
-    """No adjustment for anyone, where nothing else stands in: the local price is the regional price."""
-    if prices is None or prices.table_present:
-        return prices
-    return replace(prices, table_present=True, rows={}, fallback_source="RRP", fallback_status=STATUS_RRP_FALLBACK)
+            for duid, series in getattr(snapshot, "local_prices", {}).items() if period in series}
+    rop = {region: series[period] for region, series in snapshot.prices.items() if period in series}
+    return DispatchLocalPrices(end, snapshot.source, True, rows, rop, None, snapshot.source,
+                               fallback_status=STATUS_PD_FALLBACK)
 
 
 def with_fallbacks(
-    prices: Optional[DispatchLocalPrices], run: Optional[P5LocalPriceRun], snapshot: Any = None,
+    prices: Optional[DispatchLocalPrices], run: Optional[P5LocalPriceRun], snapshot: Any,
+    now: datetime, max_age: timedelta,
 ) -> Optional[DispatchLocalPrices]:
-    """A file without its LOCAL_PRICE table, filled from P5MIN, else pre-dispatch, else the regional price."""
-    return with_rrp_fallback(with_predispatch_fallback(with_p5_fallback(prices, run), snapshot))
+    """The dispatch file while it is fresh, with or without its LOCAL_PRICE table; when it is missing
+    or stale, the current interval from the P5MIN run covering it, else the pre-dispatch period.
+
+    Neither found leaves the file as it is, so the sensors read stale or no_data.
+    """
+    if prices is not None and now - prices.interval_end <= max_age:
+        return prices
+    end = _interval_end(now)
+    return p5_fallback(run, end, max_age) or predispatch_fallback(snapshot, end) or prices
 
 
 def dispatch_status(prices: Optional[DispatchLocalPrices], duid: str, now: datetime, max_age: timedelta) -> str:
@@ -329,10 +323,10 @@ def dispatch_status(prices: Optional[DispatchLocalPrices], duid: str, now: datet
         return STATUS_NO_DATA
     if now - prices.interval_end > max_age:
         return STATUS_STALE
-    if not prices.table_present:
-        return STATUS_TABLE_MISSING
     if prices.fallback_status is not None:
         return STATUS_CONFLICT if duid in prices.fallback_conflicts else prices.fallback_status
+    if not prices.table_present:
+        return STATUS_DISPATCH_ZERO
     return STATUS_PUBLISHED if duid in prices.rows else STATUS_ZERO
 
 
@@ -341,7 +335,7 @@ def dispatch_adjustment(
 ) -> tuple[str, Optional[float]]:
     """(status, $/MWh): the row's adjustment, 0 without one where that means 0, else unknown."""
     status = dispatch_status(prices, duid, now, max_age)
-    if status in (STATUS_PUBLISHED, STATUS_ZERO) or status in FALLBACK_STATUSES:
+    if status in KNOWN_STATUSES:
         row = prices.rows.get(duid)  # type: ignore[union-attr]
         return status, row.adjustment_mwh if row is not None else 0.0
     return status, None
@@ -351,8 +345,8 @@ def dispatch_adjustment(
 class ForecastSeries:
     """A DUID's P5MIN forecast: the run's intervals still to end, up to a conflict.
 
-    An interval without a row, in a run whose LOCAL_PRICE table is present,
-    is 0 and listed in ``inferred``: AEMO publishes only non-zero rows.
+    An interval without a row is 0 and listed in ``inferred``: AEMO
+    publishes only non-zero rows, and no table at all when there are none.
     """
 
     status: str
@@ -370,16 +364,15 @@ def forecast_series(run: Optional[P5LocalPriceRun], duid: str, now: datetime, ma
     """The run's intervals still to end, in order, up to the first conflicting interval.
 
     An interval that has ended is dropped; once every interval has ended the
-    run says nothing more (STATUS_EXPIRED). An interval without a row is 0; a
-    stale run, or one without the LOCAL_PRICE table, gives no points at all,
-    and nothing is carried past the run's last interval.
+    run says nothing more (STATUS_EXPIRED). An interval without a row is 0,
+    and so is every interval of a run without the LOCAL_PRICE table, which is
+    AEMO's zero for all (#309); a stale run gives no points at all, and nothing
+    is carried past the run's last interval.
     """
     if run is None:
         return ForecastSeries(STATUS_NO_DATA, [], [], [], 0, 0, None)
     if now - run.run_at > max_age:
         return ForecastSeries(STATUS_STALE, [], [], [], 0, len(run.interval_ends), None)
-    if not run.table_present:
-        return ForecastSeries(STATUS_TABLE_MISSING, [], [], [], 0, len(run.interval_ends), None)
     ahead = [end for end in run.interval_ends if end > now]
     if not ahead:
         return ForecastSeries(STATUS_EXPIRED, [], [], [], 0, 0, None)

@@ -230,8 +230,9 @@ def test_stale_no_data_no_rop_and_no_mlf_leave_it_unknown():
     late = datetime(2026, 10, 30, 21, 50, tzinfo=NEM_TZ)
     assert _zs.dispatch_zone(zone, "NSW1", _dispatch(), late).price_mwh is None
     assert _zs.dispatch_zone(zone, "NSW1", replace(_dispatch(), rop={}), NOW).status == "no_rop"
-    no_table = replace(_dispatch(), table_present=False)
-    assert _zs.dispatch_zone(zone, "NSW1", no_table, NOW).status == "table_missing"
+    no_table = replace(_dispatch(), table_present=False, rows={})
+    zero = _zs.dispatch_zone(zone, "NSW1", no_table, NOW)  # AEMO's zero (#309)
+    assert zero.status == "dispatch_zero" and zero.adjustment_mwh == 0.0
     unknown = replace(zone, members=(_zones.Member(replace(NEAR, mlf=None), 1.0),))
     assert _zs.dispatch_zone(unknown, "NSW1", _dispatch(), NOW).status == "unknown_node"
 
@@ -257,7 +258,8 @@ def test_the_p5min_forecast_takes_the_median_per_interval():
     expected = (run.rop["SA1"][first] * zone.mlf + run.rows["CATHROCK"][first].adjustment_mwh) / 1000
     assert status == "published" and points[0]["value"] == round(expected, 6)
     assert _zs.zone_p5_forecast(zone, "SA1", None, now) == ("no_data", [])
-    assert _zs.zone_p5_forecast(zone, "SA1", replace(run, table_present=False), now) == ("table_missing", [])
+    status, points = _zs.zone_p5_forecast(zone, "SA1", replace(run, table_present=False, rows={}), now)
+    assert status == "published" and points[0]["value"] == round(run.rop["SA1"][first] * zone.mlf / 1000, 6)
 
 
 def test_the_predispatch_forecast_takes_the_median_per_period():

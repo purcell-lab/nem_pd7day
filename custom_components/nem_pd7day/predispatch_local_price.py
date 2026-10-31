@@ -6,10 +6,10 @@ period end), DUID, LOCAL_PRICE_ADJUSTMENT and LOCALLY_CONSTRAINED, for every
 P5MIN for the next hour. The shared pre-dispatch coordinator already reads the
 file every half hour, so the rows ride on that fetch.
 
-As there, AEMO publishes a row only where the adjustment is not zero: a period
-without one, in a fresh run whose LOCAL_PRICE table is present, is 0 and
-counted in ``predispatch_intervals_inferred_zero``. A stale run, or one
-without the table, gives no points. A node with several DUIDs takes their
+As there, AEMO publishes a row only where the adjustment is not zero, and no
+table at all when there is none (#309): a period without one, in a fresh run,
+is 0 and counted in ``predispatch_intervals_inferred_zero``. A stale run
+gives no points. A node with several DUIDs takes their
 common adjustment; where they differ the series stops there.
 """
 from __future__ import annotations
@@ -24,7 +24,6 @@ from .local_price import (
     STATUS_NO_DATA,
     STATUS_PUBLISHED,
     STATUS_STALE,
-    STATUS_TABLE_MISSING,
     STATUS_ZERO,
 )
 from .nem_time import NEM_TZ
@@ -48,8 +47,6 @@ def predispatch_adjustments(snapshot: Any, duids: Sequence[str], now: datetime) 
         return PredispatchAdjustments(STATUS_NO_DATA)
     if now - snapshot.run_at > MAX_AGE:
         return PredispatchAdjustments(STATUS_STALE)
-    if not snapshot.local_price_table:
-        return PredispatchAdjustments(STATUS_TABLE_MISSING)
     ends = [end for end in snapshot.period_ends if end > now]
     if not ends:
         return PredispatchAdjustments(STATUS_EXPIRED)

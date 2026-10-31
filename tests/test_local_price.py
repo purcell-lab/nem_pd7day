@@ -103,7 +103,8 @@ def test_dispatch_statuses_zero_by_omission_missing_stale_and_no_data():
     assert _lp.dispatch_status(None, "GUTHEGA", _at(21, 26), age) == _lp.STATUS_NO_DATA
     no_table = _dispatch(_without(DISPATCH, "LOCAL_PRICE"))
     assert not no_table.table_present and no_table.rows == {}
-    assert _lp.dispatch_status(no_table, "GUTHEGA", _at(21, 26), age) == _lp.STATUS_TABLE_MISSING
+    # A complete file without the table: AEMO's zero for every DUID (#309).
+    assert _lp.dispatch_adjustment(no_table, "GUTHEGA", _at(21, 26), age) == (_lp.STATUS_DISPATCH_ZERO, 0.0)
 
 
 def test_dispatch_malformed_values_and_other_intervals_are_skipped():
@@ -223,14 +224,19 @@ def test_a_duid_with_no_rows_in_the_run_is_zero_throughout():
     assert [p["value"] for p in series.points] == [0.0] * 12 and len(series.inferred) == 12
 
 
-def test_stale_missing_table_and_no_run_are_never_filled():
+def test_stale_and_no_run_are_never_filled():
     run = _p5()
     for series, status in [
         (_lp.forecast_series(run, "CATHROCK", _at(21, 41), AGE), _lp.STATUS_STALE),
         (_lp.forecast_series(None, "CATHROCK", _at(21, 22), AGE), _lp.STATUS_NO_DATA),
-        (_lp.forecast_series(_p5(_without(P5, "P5MIN,LOCAL_PRICE")), "CATHROCK", _at(21, 22), AGE), _lp.STATUS_TABLE_MISSING),
     ]:
         assert series.status == status and series.points == [] and series.inferred == []
+
+
+def test_a_run_without_the_table_is_zero_for_every_interval():
+    """AEMO leaves the table out when no unit has an adjustment, in P5MIN as in dispatch (#309)."""
+    series = _lp.forecast_series(_p5(_without(P5, "P5MIN,LOCAL_PRICE")), "CATHROCK", _at(21, 22), AGE)
+    assert series.status == _lp.STATUS_ZERO and [p["value"] for p in series.points] == [0.0] * 12
 
 
 # ── Price limits ─────────────────────────────────────────────────────────────
@@ -407,16 +413,16 @@ def test_no_row_in_a_fresh_file_is_zero_and_flagged(monkeypatch):
     assert attrs["local_price"] == pytest.approx(0.08525)  # the QLD1 ROP, 85.25 $/MWh
 
 
-def test_stale_and_no_data_stay_unknown_and_a_missing_table_falls_back(monkeypatch):
+def test_stale_and_no_data_stay_unknown_and_a_missing_table_is_zero(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 45))
     stale = _duid(_constraints(_dispatch()), "GSTONE1", "QLD1")
     assert stale.native_value is None and stale.extra_state_attributes["row_status"] == "stale"
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 26))
     empty = _duid(SimpleNamespace(tracker=SimpleNamespace(latest=None)), "GSTONE1", "QLD1")
     assert empty.native_value is None and empty.extra_state_attributes["row_status"] == "no_data"
-    # No table and nothing to stand in: no adjustment, the regional price (test_dispatch_fallbacks.py).
+    # A fresh file without the table: AEMO's zero (#309, test_dispatch_fallbacks.py).
     no_table = _duid(_constraints(_dispatch(_without(DISPATCH, "LOCAL_PRICE"))), "GSTONE1", "QLD1")
-    assert no_table.native_value == 0.0 and no_table.extra_state_attributes["row_status"] == "rrp_fallback"
+    assert no_table.native_value == 0.0 and no_table.extra_state_attributes["row_status"] == "dispatch_zero"
     assert no_table.extra_state_attributes["local_price_mwh"] == 85.25  # QLD1's ROP
 
 
