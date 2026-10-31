@@ -196,10 +196,13 @@ The MLF scales the adjustment too: NEMDE refers every offer to the regional refe
 | Zone radius | 100 km | How far from the centre a catalogue node counts as nearby |
 | Home load connection point | empty | The bulk supply point serving your area, from a dropdown of the region's load connection points as AEMO's MLF report names them (`Belmont 110 kV (QBMH) · MLF 1.0128`). Its MLF is the Home zone's |
 
-A zone's price is a **proxy**: (ROP + the median local price adjustment of the region's catalogue nodes within the radius) × zone MLF, the nearest node alone standing in where none is that close.
+A zone's price is a **proxy**: (ROP + the zone's local price adjustment) × zone MLF. The adjustment comes from the region's catalogue nodes within the radius, with the nearest node alone standing in where none is that close.
 
 - **Zone MLF**: the mean MLF of the place's own load connection points. Each preset city lists the bulk supply points that serve it (Brisbane 15, from Algester to Tennyson: 1.0120; Sydney 48: 1.0035; Melbourne 43: 1.0004; Adelaide 13: 1.0012; Hobart 11: 1.0373; Townsville 5: 0.9998), and Home the one chosen above. They come from `load_points.json`, the load tables of AEMO's *Marginal Loss Factors: Financial Year 2026-27* report (513 load points), built by `scripts/build_load_points.py` from the report's PDF, which aemo.com.au does not serve to scripts; every MLF matches MMSDM's TRANSMISSIONLOSSFACTOR. Where no load point is known, the inverse-distance-weighted mean of the nearby nodes' MLFs stands in (`zone_mlf_source: nearby_generation_idw`).
-- **Adjustment**: city load is not a variable in NEMDE's constraint equations, so it has no local price adjustment of its own; the nearby generation and storage nodes' adjustments stand in. The median means one constrained unit does not move the zone, while most of them do.
+- **Adjustment**: city load is not a variable in NEMDE's constraint equations, so it has no local price adjustment of its own; the nearby generation and storage nodes' adjustments stand in.
+  - **One vote per station** (#314): a station with several connection points takes one vote, its members' median. Wivenhoe's four TNIs once took 4 of the Sunshine Coast zone's 6 votes from 91 km away; now it is one of three stations.
+  - **The median of the stations**: one constrained station does not move the zone, while most of them do.
+  - **Below three stations, the nearest station alone** (#315): a median of two is their mean, so one unit would move the zone by half its adjustment. The Home zone of Valdora and Woolooga takes Valdora's, with an `aggregation_note` saying so.
 
 Not a settlement or retail price, and not the price at your meter.
 
@@ -564,19 +567,20 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 ### Zone Price Proxy
 
-`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per chosen zone (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: (ROP + the members' median local price adjustment) × zone MLF, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out of the median; a fresh file without the LOCAL_PRICE table is 0 for every member (`dispatch_zero`), and a stale file or none, with nothing to stand in, leaves the state unknown. With a 100 km radius Brisbane has 8 member nodes, Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
+`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per chosen zone (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: (ROP + the zone's local price adjustment, one vote per station as above) × zone MLF, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out; a fresh file without the LOCAL_PRICE table is 0 for every member (`dispatch_zero`), and a stale file or none, with nothing to stand in, leaves the state unknown. With a 100 km radius Brisbane has 8 member nodes, Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
 
 | Attribute | Description |
 |---|---|
 | `proxy` | Always `true` |
-| `zone`, `latitude`, `longitude`, `radius_km`, `nearest_only`, `member_count` | The centre and radius, and whether the nearest node stood in for none in reach |
+| `zone`, `latitude`, `longitude`, `radius_km`, `nearest_only`, `member_count`, `member_stations` | The centre and radius, whether the nearest node stood in for none in reach, and the members' TNIs and stations (each station once, nearest first) |
 | `zone_mlf`, `zone_mlf_source`, `load_points` | The zone MLF; `load_tni` (the mean of `load_points`, each with `tni`, `name`, `kv` and `mlf`, not recorded) or `nearby_generation_idw` |
-| `price_mwh`, `static_price_mwh`, `rop_mwh`, `adjustment_mwh`, `adjustment_aggregate`, `formula` | The state in $/MWh, ROP × zone MLF, the ROP, the median adjustment, `median`, and `(ROP + median LOCAL_PRICE_ADJUSTMENT) x zone MLF` |
+| `price_mwh`, `static_price_mwh`, `rop_mwh`, `adjustment_mwh`, `formula` | The state in $/MWh, ROP × zone MLF, the ROP, the zone's adjustment, and `(ROP + zone LOCAL_PRICE_ADJUSTMENT) x zone MLF` |
+| `adjustment_aggregate`, `aggregation_note` | `station_median` (three or more stations) or `nearest_station` (fewer), and, for the latter, why |
 | `members_constrained`, `adjustment_min_mwh`, `adjustment_max_mwh` | How many members have a non-zero adjustment, and the spread |
-| `members` | Each member's `tni`, `stations`, `distance_km`, `mlf`, `adjustment_mwh` and `adjustment_status`, nearest first (not recorded) |
+| `members` | Each member's `tni`, `stations`, `station` (the one it votes for), `distance_km`, `mlf`, `adjustment_mwh` and `adjustment_status`, nearest first (not recorded) |
 | `row_status`, `interval_end`, `source_file`, `fallback_source_file` | `published`, `dispatch_zero` (a fresh file without the LOCAL_PRICE table: every member 0), `p5min_fallback` or `predispatch_fallback` (what stood in for a missing or stale file), `conflicting_rows` (every member left out), `stale`, `no_rop`, `unknown_node` or `no_data`; the dispatch interval and file |
-| `forecast`, `forecast_status`, `forecast_run_at` | `{time, interval_end, value}` per P5MIN interval still to end: (ROP + the members' median P5MIN adjustment) × zone MLF (not recorded) |
-| `predispatch_forecast` and the other `predispatch_*` | Per 30-minute pre-dispatch period to the end of the next trading day: (RRP + the members' median adjustment) × zone MLF (not recorded). `predispatch_intervals_published` counts the periods where at least one member has an adjustment |
+| `forecast`, `forecast_status`, `forecast_run_at` | `{time, interval_end, value}` per P5MIN interval still to end: (ROP + the zone's P5MIN adjustment, voted as above) × zone MLF (not recorded) |
+| `predispatch_forecast` and the other `predispatch_*` | Per 30-minute pre-dispatch period to the end of the next trading day: (RRP + the zone's adjustment, voted as above) × zone MLF (not recorded). `predispatch_intervals_published` counts the periods where at least one member has an adjustment |
 
 ### PD7DAY Data / STPASA Data (diagnostic)
 
