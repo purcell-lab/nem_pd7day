@@ -241,7 +241,7 @@ def render_chart(stats: TodStats, region: str = "QLD1") -> bytes:
         import matplotlib.ticker as ticker
         from matplotlib.backends.backend_agg import FigureCanvasAgg
     except ImportError:
-        _LOGGER.warning("tod_stats: matplotlib not available, chart unavailable")
+        _LOGGER.debug("tod_stats: matplotlib not available, chart unavailable")
         return b""
 
     BG      = "#F8F9FA"

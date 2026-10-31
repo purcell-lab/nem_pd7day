@@ -461,6 +461,7 @@ class _FakeHass:
 
     def __init__(self) -> None:
         self.background_tasks: list[asyncio.Task] = []
+        self.data: dict = {}
 
     async def async_add_executor_job(self, func, *args):
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)

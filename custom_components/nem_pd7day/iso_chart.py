@@ -87,7 +87,7 @@ def render_iso_chart(
         import matplotlib.gridspec as gridspec
         from matplotlib.backends.backend_agg import FigureCanvasAgg
     except ImportError:
-        _LOGGER.warning("matplotlib not available, returning placeholder image for iso chart")
+        _LOGGER.debug("matplotlib not available, returning placeholder image for iso chart")
         return _placeholder_png(
             "Iso chart unavailable\n(matplotlib not installed)"
         )
