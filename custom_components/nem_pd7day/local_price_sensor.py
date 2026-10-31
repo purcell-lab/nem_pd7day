@@ -3,15 +3,18 @@
 ``<DUID> Local Price Adjustment``, for each DUID chosen in the options:
 
 - **State**: the latest dispatch interval's LOCAL_PRICE_ADJUSTMENT in $/kWh,
-  from the DispatchIS file the binding constraints already read. Unknown,
-  never 0, when the DUID has no row: ``row_status`` says why.
+  from the DispatchIS file the binding constraints already read. AEMO
+  publishes only non-zero rows, so no row in a fresh file with the
+  LOCAL_PRICE table is 0 (``row_status: zero_by_omission``); a stale file, or
+  one without the table, leaves it unknown.
 - **Local price**: clip(ROP + adjustment, floor, cap) for the DUID's region,
   as attributes; a diagnostic of the dispatch run, not a regional, retail or
   settlement price.
 - **Forecast**: the newest P5MIN run's adjustments as ``forecast``, for the
-  intervals still to end and only up to the first interval without a row,
-  with its own ``forecast_status``: a stale forecast never hides a current
-  dispatch value, nor the reverse.
+  intervals still to end, an interval without a row being 0 (listed in
+  ``inferred_zero_times``), up to a conflicting interval, with its own
+  ``forecast_status``: a stale forecast never hides a current dispatch value,
+  nor the reverse.
 
 The region's DUIDs most often locally constrained, from the bundled catalogue,
 are added as well, disabled; enabling one is all it takes. P5MIN is fetched
@@ -37,6 +40,7 @@ from .duid_catalogue import Catalogue, DuidInfo
 from .local_price import (
     INTERVAL,
     STATUS_PUBLISHED,
+    STATUS_ZERO,
     DispatchLocalPrices,
     dispatch_status,
     forecast_series,
@@ -73,7 +77,9 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
     _attr_suggested_display_precision = 4
     _attr_state_class = SensorStateClass.MEASUREMENT
     # The lists grow with the horizon; the scalar state is recorded.
-    _unrecorded_attributes = frozenset({"forecast", "forecast_interval_ends", "later_observations"})
+    _unrecorded_attributes = frozenset(
+        {"forecast", "forecast_interval_ends", "later_observations", "inferred_zero_times"}
+    )
 
     def __init__(
         self, constraints: Any, p5min: Any, entry: Any, region: str, duid: str,
@@ -114,21 +120,25 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         snapshot = self.coordinator.tracker.latest
         return snapshot.local_prices if snapshot is not None else None
 
+    def _adjustment_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
+        """The published adjustment; 0 for no row in a fresh file with the table; else unknown."""
+        status = dispatch_status(prices, self._duid, now, MAX_AGE)
+        if status == STATUS_PUBLISHED:
+            return prices.rows[self._duid].adjustment_mwh  # type: ignore[union-attr]
+        return 0.0 if status == STATUS_ZERO else None
+
     def _local_price_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
         """ROP, not RRP, of the same file, so of one interval and run; a missing ROP is unknown, never RRP."""
-        if dispatch_status(prices, self._duid, now, MAX_AGE) != STATUS_PUBLISHED:
+        adjustment = self._adjustment_mwh(prices, now)
+        rop = prices.rop.get(self._duid_region) if prices is not None else None
+        if adjustment is None or rop is None:
             return None
-        rop = prices.rop.get(self._duid_region)  # type: ignore[union-attr]
-        if rop is None:
-            return None
-        return local_price_mwh(rop, prices.rows[self._duid].adjustment_mwh, prices.interval_end)  # type: ignore[union-attr]
+        return local_price_mwh(rop, adjustment, prices.interval_end)  # type: ignore[union-attr]
 
     @property
     def native_value(self) -> Optional[float]:
-        prices = self._prices()
-        if dispatch_status(prices, self._duid, now_nem(), MAX_AGE) != STATUS_PUBLISHED:
-            return None
-        return round(prices.rows[self._duid].adjustment_mwh / 1000.0, 6)  # type: ignore[union-attr]
+        adjustment = self._adjustment_mwh(self._prices(), now_nem())
+        return round(adjustment / 1000.0, 6) if adjustment is not None else None
 
     def _identity(self) -> dict[str, Any]:
         base: dict[str, Any] = {"region": self._region, "duid": self._duid}
@@ -145,7 +155,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         attrs: dict[str, Any] = {
             "source": "DISPATCH_LOCAL_PRICE",
             "row_status": dispatch_status(prices, self._duid, now, MAX_AGE),
-            "adjustment_mwh": row.adjustment_mwh if row is not None else None,
+            "adjustment_mwh": self._adjustment_mwh(prices, now),
             "locally_constrained": row.locally_constrained if row is not None else None,
         }
         if prices is None:
@@ -186,10 +196,12 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
             "forecast_end": series.forecast_end,
             "horizon_end": series.horizon_end,
             "intervals_published": series.published,
+            "intervals_inferred_zero": len(series.inferred),
             "intervals_ahead": series.intervals,
             "forecast": series.points,
             "forecast_interval_ends": series.interval_ends,
             "later_observations": series.later,
+            "inferred_zero_times": series.inferred,
         }
 
     @property

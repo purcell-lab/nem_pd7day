@@ -462,7 +462,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 
 ### DUID Local Price Adjustment
 
-`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment`, one per DUID, in the device's Diagnostic section: the DUID's `LOCAL_PRICE_ADJUSTMENT` in the latest dispatch interval, in $/kWh, with the P5MIN forecast and the local price as attributes. AEMO publishes a row only where the adjustment is not zero. An absent row is not taken to be zero: the state is unknown and `row_status` says why. A published zero is 0. The dispatch values and the forecast have their own status and age, so a stale forecast never hides a current reading, nor the reverse.
+`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment`, one per DUID, in the device's Diagnostic section: the DUID's `LOCAL_PRICE_ADJUSTMENT` in the latest dispatch interval, in $/kWh, with the P5MIN forecast and the local price as attributes. AEMO publishes a row only where the adjustment is not zero, so no row for the DUID in a fresh file that has the LOCAL_PRICE table is 0, with `row_status: zero_by_omission` so an inferred 0 stays apart from a published one. A stale file, or one without the table, leaves the state unknown. The dispatch values and the forecast have their own status and age, so a stale forecast never hides a current reading, nor the reverse.
 
 Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast` and `..._local_price` sensors are removed from the registry on upgrade, and this one keeps its entity id and history.
 
@@ -470,13 +470,13 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 | Attribute | Description |
 |---|---|
-| `row_status` | `published`; `absent` (the file has a LOCAL_PRICE table, but no row for the DUID); `table_missing` (no LOCAL_PRICE table in the file); `stale` (the newest interval ended more than 15 minutes ago); `no_data` (no file read yet) |
+| `row_status` | `published`; `zero_by_omission` (the file has a LOCAL_PRICE table but no row for the DUID: 0); `table_missing` (no LOCAL_PRICE table in the file: unknown); `stale` (the newest interval ended more than 15 minutes ago: unknown); `no_data` (no file read yet: unknown) |
 | `adjustment_mwh`, `locally_constrained` | The published values: $/MWh, and AEMO's count of constraints locally constraining the unit |
 | `interval_start`, `interval_end` | The dispatch interval, AEST `+10:00`. `interval_end` is AEMO's SETTLEMENTDATE |
 | `source`, `source_file`, `retrieved_at`, `age_seconds` | `DISPATCH_LOCAL_PRICE`, the DispatchIS file, when it was read, and seconds since the interval started. AEMO publishes the file while its interval runs, so it is about 0 to 300 while current |
 | `region`, `duid`, `station`, `fuel`, `duid_region`, `latitude`, `longitude` | The entry's region and the DUID; the rest from the catalogue, when it lists the DUID |
 
-**Local price**: clip(ROP + adjustment, floor, cap) for the same interval. ROP is the original price of the DUID's region (`rop_region`: from the catalogue, the entry's region for a DUID it lacks) from the same file, not RRP, so the two are always of one interval and run. Only the sum is clipped, never the adjustment: the floor is -$1,000/MWh and the cap is that of the interval's financial year ($23,200/MWh in 2026-27). Unknown when the row is absent or the region has no ROP. A diagnostic of the dispatch run: not the regional price, a retail price or a settlement price.
+**Local price**: clip(ROP + adjustment, floor, cap) for the same interval. ROP is the original price of the DUID's region (`rop_region`: from the catalogue, the entry's region for a DUID it lacks) from the same file, not RRP, so the two are always of one interval and run. Only the sum is clipped, never the adjustment: the floor is -$1,000/MWh and the cap is that of the interval's financial year ($23,200/MWh in 2026-27). With no row it is the ROP itself; unknown when the state is unknown or the region has no ROP. A diagnostic of the dispatch run: not the regional price, a retail price or a settlement price.
 
 | Attribute | Description |
 |---|---|
@@ -484,17 +484,18 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `rop_region`, `rop_mwh` | The region whose ROP is used, and that ROP |
 | `price_floor_mwh`, `price_cap_mwh` | The limits applied |
 
-**Forecast**: the newest P5MIN run. `forecast` lists `{time, value}`, `time` being the interval start in AEST `+10:00`, for each interval of the run still to end. It stops at the first interval without a row: no value is carried across a gap or past the run's last interval, so the list can be short or empty. Rows after a gap are kept apart in `later_observations` and are not a forecast.
+**Forecast**: the newest P5MIN run. `forecast` lists `{time, value}`, `time` being the interval start in AEST `+10:00`, for each interval of the run still to end. An interval without a row is 0 and listed in `inferred_zero_times`. The list stops at an interval with conflicting rows, and rows after it are kept apart in `later_observations`; nothing is carried past the run's last interval, and a stale run or one without the LOCAL_PRICE table gives no points.
 
 | Attribute | Description |
 |---|---|
 | `forecast` | `{time, value}` per covered interval, in $/kWh (not recorded) |
 | `forecast_interval_ends` | The source interval end of each `forecast` point, in the same order (not recorded) |
-| `later_observations` | Published intervals after the first gap (not recorded) |
-| `forecast_status` | `published`, `absent`, `table_missing`, `stale` (the run is more than 15 minutes old), `expired` (every interval has ended), `conflicting_rows` (the run held two different rows for one interval; neither is used, and the forecast stops there) or `no_data` |
+| `later_observations` | Published intervals after a conflicting interval (not recorded) |
+| `inferred_zero_times`, `intervals_inferred_zero` | The `forecast` points taken as 0 for want of a row (not recorded), and how many |
+| `forecast_status` | `published`, `zero_by_omission` (no row for the DUID in the whole run: all 0), `table_missing`, `stale` (the run is more than 15 minutes old), `expired` (every interval has ended), `conflicting_rows` (the run held two different rows for one interval; neither is used, and the forecast stops there) or `no_data` |
 | `forecast_source`, `forecast_run_at`, `forecast_source_file`, `forecast_retrieved_at`, `forecast_age_seconds` | `P5MIN_LOCAL_PRICE`, the run (AEMO's RUN_DATETIME, the end of its first interval), the P5MIN file, when it was read, and seconds since the start of the run's first interval |
 | `forecast_end`, `horizon_end` | Where `forecast` stops, and the end of the run's last interval |
-| `intervals_published`, `intervals_ahead` | Intervals still to end with a row, gap or not, and intervals still to end |
+| `intervals_published`, `intervals_ahead` | Intervals still to end with a row, and intervals still to end |
 | `interval_minutes`, `interpolation_mode` | `5` and `previous`: each value holds from its `time` to the next |
 
 ### PD7DAY Data / STPASA Data (diagnostic)
