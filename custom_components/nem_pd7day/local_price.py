@@ -1,5 +1,7 @@
 """DUID local price adjustments from NEMWEB: dispatch and the 5-minute pre-dispatch (#275).
 
+The 30-minute pre-dispatch rows are read in predispatch_local_price (#287).
+
 Where a constraint separates a unit from its region, NEMDE publishes a local
 price adjustment for its DUID: the unit's local price is the region's original
 price (ROP) plus the adjustment, between the market floor and the cap (AEMO,

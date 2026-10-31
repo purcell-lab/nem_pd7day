@@ -13,6 +13,12 @@ It is the static node price, the price a generator at the node is settled at
 before any local price adjustment; a diagnostic, not a retail or settlement
 price. A TNI not in the catalogue has no MLF, so it stays unknown
 (``row_status: unknown_node``).
+
+Since #287 it also publishes the node's local price adjustment: the published
+DISPATCH_LOCAL_PRICE of the node's DUIDs (0 when a fresh file has no row for
+them), and the local node price, ROP x MLF + adjustment. ``predispatch_forecast``
+carries RRP x MLF + adjustment from the 30-minute pre-dispatch, to the end of
+the next trading day; pre-dispatch publishes RRP, not ROP.
 """
 from __future__ import annotations
 
@@ -26,15 +32,19 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .duid_catalogue import Catalogue, NodeInfo
 from .local_price import (
     INTERVAL,
+    STATUS_CONFLICT,
     STATUS_EXPIRED,
     STATUS_NO_DATA,
     STATUS_PUBLISHED,
     STATUS_STALE,
+    STATUS_ZERO,
     DispatchLocalPrices,
     P5LocalPriceRun,
+    dispatch_status,
 )
-from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info
+from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, listen_to_forecasts
 from .nem_time import now_nem
+from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 
 SUFFIX = "node_price"
 STATUS_UNKNOWN_NODE = "unknown_node"   # no MLF: the TNI is not in the catalogue
@@ -54,13 +64,17 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
     _attr_native_unit_of_measurement = UNIT
     _attr_suggested_display_precision = 4
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _unrecorded_attributes = frozenset({"forecast", "forecast_interval_ends", "duids", "stations"})
+    _unrecorded_attributes = frozenset(
+        {"forecast", "forecast_interval_ends", "duids", "stations", "predispatch_forecast"}
+    )
 
     def __init__(
         self, constraints: Any, p5min: Any, entry: Any, region: str, tni: str, node: Optional[NodeInfo] = None,
+        predispatch: Any = None,
     ) -> None:
         super().__init__(constraints)
         self._p5min = p5min
+        self._predispatch = predispatch
         self._region = region
         self._tni = tni
         self._node = node
@@ -69,13 +83,7 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_info = device_info(entry, region)
 
     async def async_added_to_hass(self) -> None:
-        """Listen to P5MIN too; it is fetched only while one of these listens, so ask for a run now."""
-        await super().async_added_to_hass()
-        if self._p5min is None:
-            return
-        self.async_on_remove(self._p5min.async_add_listener(lambda: self.async_write_ha_state()))
-        if self._p5min.latest is None:
-            self._p5min.request_refresh()
+        await listen_to_forecasts(self, super().async_added_to_hass)
 
     @property
     def _node_region(self) -> str:
@@ -104,6 +112,22 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         return round(prices.rop[self._node_region] * self._mlf, 4)  # type: ignore[union-attr,operator]
 
     @property
+    def _duids(self) -> tuple[str, ...]:
+        return self._node.duids if self._node is not None else ()
+
+    def _adjustment(self, prices: Optional[DispatchLocalPrices], now: datetime) -> tuple[str, Optional[float]]:
+        """(status, $/MWh): the node's DUIDs' published adjustment, 0 for no row in a fresh file."""
+        if not self._duids:
+            return STATUS_UNKNOWN_NODE, None
+        statuses = {dispatch_status(prices, duid, now, MAX_AGE) for duid in self._duids}
+        if statuses - {STATUS_PUBLISHED, STATUS_ZERO}:
+            return sorted(statuses - {STATUS_PUBLISHED, STATUS_ZERO})[0], None
+        values = {prices.rows[d].adjustment_mwh for d in self._duids if d in prices.rows}  # type: ignore[union-attr]
+        if len(values) > 1:
+            return STATUS_CONFLICT, None
+        return (STATUS_PUBLISHED, values.pop()) if values else (STATUS_ZERO, 0.0)
+
+    @property
     def native_value(self) -> Optional[float]:
         value = self._price_mwh(self._prices(), now_nem())
         return round(value / 1000.0, 6) if value is not None else None
@@ -120,6 +144,15 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
 
     def _dispatch_attrs(self, prices: Optional[DispatchLocalPrices], now: datetime) -> dict[str, Any]:
         attrs: dict[str, Any] = {"source": "DISPATCH_PRICE_ROP", "row_status": self._status(prices, now)}
+        adjustment_status, adjustment = self._adjustment(prices, now)
+        static = self._price_mwh(prices, now)
+        local = round(static + adjustment, 4) if static is not None and adjustment is not None else None
+        attrs.update({
+            "adjustment_status": adjustment_status,
+            "adjustment_mwh": adjustment,
+            "local_price": round(local / 1000.0, 6) if local is not None else None,
+            "local_price_mwh": local,
+        })
         if prices is None:
             return attrs
         return {
@@ -148,10 +181,26 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
             "forecast_interval_ends": [p["interval_end"] for p in points],
         }
 
+    def _predispatch_attrs(self, now: datetime) -> dict[str, Any]:
+        snapshot = getattr(self._predispatch, "latest", None)
+        mlf = self._mlf
+        if mlf is None:
+            return predispatch_attrs(PredispatchAdjustments(STATUS_UNKNOWN_NODE), snapshot, lambda *_: None)
+        rrp = snapshot.prices.get(self._node_region, {}) if snapshot is not None else {}
+
+        def value(end: datetime, adjustment: float) -> Optional[float]:
+            price = rrp.get(end)
+            return (price * mlf + adjustment) / 1000.0 if price is not None else None
+
+        return predispatch_attrs(predispatch_adjustments(snapshot, self._duids, now), snapshot, value)
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         now = now_nem()
-        return {**self._identity(), **self._dispatch_attrs(self._prices(), now), **self._forecast_attrs(now)}
+        return {
+            **self._identity(), **self._dispatch_attrs(self._prices(), now),
+            **self._forecast_attrs(now), **self._predispatch_attrs(now),
+        }
 
 
 def node_forecast(
@@ -180,9 +229,12 @@ def node_forecast(
 
 def node_price_entities(
     constraints: Any, p5min: Any, entry: Any, region: str, tnis: list[str], catalogue: Optional[Catalogue] = None,
+    predispatch: Any = None,
 ) -> list[SensorEntity]:
     """The chosen nodes' sensors, enabled; there are no presets."""
     return [
-        NemPd7dayNodePriceSensor(constraints, p5min, entry, region, tni, catalogue.node(tni) if catalogue else None)
+        NemPd7dayNodePriceSensor(
+            constraints, p5min, entry, region, tni, catalogue.node(tni) if catalogue else None, predispatch,
+        )
         for tni in tnis
     ]

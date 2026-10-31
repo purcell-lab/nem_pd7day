@@ -291,12 +291,12 @@ async def _grid_entities(
             NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id)
             for ic_id in sorted(interconnectors_for_regions([region]))
         ),
-        *await _local_price_entities(hass, entry, region, constraints),
+        *await _local_price_entities(hass, entry, region, constraints, predispatch),
     ]
 
 
 async def _local_price_entities(
-    hass: HomeAssistant, entry: ConfigEntry, region: str, constraints: Any
+    hass: HomeAssistant, entry: ConfigEntry, region: str, constraints: Any, predispatch: Any = None,
 ) -> list[SensorEntity]:
     """One DUID local price sensor per DUID (#275): the chosen DUIDs', enabled,
     and the region's most constrained DUIDs', disabled; and one node price
@@ -318,8 +318,8 @@ async def _local_price_entities(
     enable_chosen(hass, entry, region, duids)
     p5min = shared_p5min(hass, entry.runtime_data.dispatch)
     return [
-        *local_price_entities(constraints, p5min, entry, region, duids, catalogue),
-        *node_price_entities(constraints, p5min, entry, region, tnis, catalogue),
+        *local_price_entities(constraints, p5min, entry, region, duids, catalogue, predispatch),
+        *node_price_entities(constraints, p5min, entry, region, tnis, catalogue, predispatch),
     ]
 
 
