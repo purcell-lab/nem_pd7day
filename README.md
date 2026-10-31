@@ -469,7 +469,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 
 ### DUID Local Price Adjustment
 
-`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment`, one per DUID, in the device's Diagnostic section: the DUID's `LOCAL_PRICE_ADJUSTMENT` in the latest dispatch interval, in $/kWh, with the P5MIN forecast and the local price as attributes. AEMO publishes a row only where the adjustment is not zero, so no row for the DUID in a fresh file that has the LOCAL_PRICE table is 0, with `row_status: zero_by_omission` so an inferred 0 stays apart from a published one. A stale file, or one without the table, leaves the state unknown. The dispatch values and the forecast have their own status and age, so a stale forecast never hides a current reading, nor the reverse.
+`sensor.nem_pd7day_{region}_{duid}_local_price_adjustment`, one per DUID, in the device's Diagnostic section, named with the catalogue's station as the options list shows it (`Gladstone (GSTONE1) Local Price Adjustment`; the DUID alone when the catalogue has no other name for it). The entity id is the DUID's alone. The state is the DUID's `LOCAL_PRICE_ADJUSTMENT` in the latest dispatch interval, in $/kWh, with the P5MIN forecast and the local price as attributes. AEMO publishes a row only where the adjustment is not zero, so no row for the DUID in a fresh file that has the LOCAL_PRICE table is 0, with `row_status: zero_by_omission` so an inferred 0 stays apart from a published one. A stale file, or one without the table, leaves the state unknown. The dispatch values and the forecast have their own status and age, so a stale forecast never hides a current reading, nor the reverse.
 
 Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast` and `..._local_price` sensors are removed from the registry on upgrade, and this one keeps its entity id and history.
 
@@ -516,7 +516,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 ### Node Price
 
-`sensor.nem_pd7day_{region}_{tni}_node_price`, one per chosen transmission node, in the device's Diagnostic section: ROP × MLF in $/kWh for the latest dispatch interval, from the same DispatchIS file, with the P5MIN forecast, the node's local price adjustment and the pre-dispatch forecast to the end of the next trading day as attributes. Not clipped: the floor and cap apply to the regional price. Unknown when the file is stale or not yet read, when it has no ROP for the node's region, or when the catalogue does not list the TNI (no MLF).
+`sensor.nem_pd7day_{region}_{tni}_node_price`, one per chosen transmission node, in the device's Diagnostic section, named with its stations (`Wivenhoe (QWIV1) Node Price`); the entity id is the TNI's alone. The state is ROP × MLF in $/kWh for the latest dispatch interval, from the same DispatchIS file, with the P5MIN forecast, the node's local price adjustment and the pre-dispatch forecast to the end of the next trading day as attributes. Not clipped: the floor and cap apply to the regional price. Unknown when the file is stale or not yet read, when it has no ROP for the node's region, or when the catalogue does not list the TNI (no MLF).
 
 | Attribute | Description |
 |---|---|

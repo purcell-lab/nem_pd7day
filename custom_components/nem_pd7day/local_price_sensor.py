@@ -1,6 +1,6 @@
 """One DUID local price sensor per DUID, opt in per config entry (#275).
 
-``<DUID> Local Price Adjustment``, for each DUID chosen in the options:
+``<station> (<DUID>) Local Price Adjustment``, for each DUID chosen in the options:
 
 - **State**: the latest dispatch interval's LOCAL_PRICE_ADJUSTMENT in $/kWh,
   from the DispatchIS file the binding constraints already read. AEMO
@@ -26,6 +26,7 @@ ones are removed from the registry (``remove_retired``).
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -60,6 +61,21 @@ RETIRED_SUFFIXES = ("_local_price_adjustment_forecast", "_local_price")
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.astimezone(NEM_TZ).isoformat() if value is not None else None
+
+
+def entity_name(code: str, names: tuple[str, ...], kind: str) -> str:
+    """``Gladstone (GSTONE1) Local Price Adjustment``: the catalogue's names where
+    they say more than the code, the code, and the kind of sensor."""
+    named = [n for n in names if n and n != code]
+    return f"{', '.join(named)} ({code}) {kind}" if named else f"{code} {kind}"
+
+
+def entity_id_for(region: str, code: str, suffix: str) -> str:
+    """The entity id the code alone gives, as before names carried the station:
+    a new sensor's id does not depend on the catalogue, and an existing one
+    keeps its registry entry either way."""
+    slug = re.sub(r"[^a-z0-9]+", "_", f"nem_pd7day_{region}_{code}_{suffix}".lower()).strip("_")
+    return f"sensor.{slug}"
 
 
 def device_info(entry: Any, region: str) -> DeviceInfo:
@@ -105,8 +121,9 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         self._info = info
         # A preset (one of the region's most constrained DUIDs, not chosen) starts disabled.
         self._attr_entity_registry_enabled_default = not preset
-        self._attr_name = f"{duid} Local Price Adjustment"
+        self._attr_name = entity_name(duid, (info.station,) if info is not None else (), "Local Price Adjustment")
         self._attr_unique_id = f"{entry.entry_id}_{region}_{duid}_{SUFFIX}"
+        self.entity_id = entity_id_for(region, duid, SUFFIX)
         self._attr_device_info = device_info(entry, region)
 
     async def async_added_to_hass(self) -> None:

@@ -62,7 +62,8 @@ def test_the_node_price_is_rop_times_mlf(monkeypatch):
     assert attrs["stations"] == ["Wivenhoe"] and attrs["duids"] == ["W/HOE#1"]
     assert (attrs["latitude"], attrs["longitude"]) == (-27.37, 152.63)
     assert sensor._attr_unique_id == "e1_QLD1_QWIV1_node_price"
-    assert sensor._attr_name == "QWIV1 Node Price"
+    assert sensor._attr_name == "Wivenhoe (QWIV1) Node Price"
+    assert sensor.entity_id == "sensor.nem_pd7day_qld1_qwiv1_node_price"
     assert sensor._attr_entity_category == _lps.EntityCategory.DIAGNOSTIC
 
 
@@ -163,6 +164,34 @@ def test_the_builder_groups_duids_by_their_connection_point():
     assert nodes["QAAA1"]["lat"] == pytest.approx(-27.1) and nodes["QAAA1"]["lon"] == pytest.approx(152.1)
     assert nodes["QBBB1"]["lat"] is None and nodes["QBBB1"]["mlf"] is None
     assert builder._mlf("0.98765") == 0.9877 and builder._mlf("") is None and builder._mlf(None) is None
+
+
+def test_names_carry_the_station_and_ids_stay_the_codes():
+    """The dropdown's names stay on the entity: Gladstone (GSTONE1), Wivenhoe (QWIV1).
+    The entity id is the code's alone, so it does not move with the catalogue."""
+    gstone = _cat.parse_catalogue({"duids": {
+        "GSTONE1": {"region": "QLD1", "station": "Gladstone"},
+        "ASGENE01": {"region": "QLD1", "station": "ASGENE01"},
+        "W/HOE#1": {"region": "QLD1", "station": "Wivenhoe"},
+    }})
+    duid = _lps.NemPd7dayDuidLocalPriceSensor(
+        _constraints(None), None, ENTRY, "QLD1", "GSTONE1", gstone.info("GSTONE1"))
+    assert duid._attr_name == "Gladstone (GSTONE1) Local Price Adjustment"
+    assert duid.entity_id == "sensor.nem_pd7day_qld1_gstone1_local_price_adjustment"
+    internal = _lps.NemPd7dayDuidLocalPriceSensor(
+        _constraints(None), None, ENTRY, "QLD1", "ASGENE01", gstone.info("ASGENE01"))
+    assert internal._attr_name == "ASGENE01 Local Price Adjustment"  # the station is only the code
+    typed = _lps.NemPd7dayDuidLocalPriceSensor(_constraints(None), None, ENTRY, "QLD1", "NEWDUID1")
+    assert typed._attr_name == "NEWDUID1 Local Price Adjustment"
+    hoe = _lps.NemPd7dayDuidLocalPriceSensor(
+        _constraints(None), None, ENTRY, "QLD1", "W/HOE#1", gstone.info("W/HOE#1"))
+    assert hoe._attr_name == "Wivenhoe (W/HOE#1) Local Price Adjustment"
+    assert hoe.entity_id == "sensor.nem_pd7day_qld1_w_hoe_1_local_price_adjustment"  # as HA slugified the name
+    two = _cat.NodeInfo("QTWO1", "QLD1", 1.0, ("A1", "B1"), ("Alpha", "Beta"), None, None)
+    node = _node.NemPd7dayNodePriceSensor(_constraints(None), None, ENTRY, "QLD1", "QTWO1", two)
+    assert node._attr_name == "Alpha, Beta (QTWO1) Node Price"
+    unknown = _node.NemPd7dayNodePriceSensor(_constraints(None), None, ENTRY, "QLD1", "QNEW1", None)
+    assert unknown._attr_name == "QNEW1 Node Price" and unknown.entity_id == "sensor.nem_pd7day_qld1_qnew1_node_price"
 
 
 def test_parse_tnis():
