@@ -945,6 +945,13 @@ def test_zones_take_the_options_radius_and_skip_home_without_a_location():
 
     zones = _sensor_mod._zones(located, entry, "QLD1", catalogue)
     assert [z.key for z in zones] == ["brisbane", "home"] and zones[0].radius_km == 50.0
+    import custom_components.nem_pd7day.load_points as ldp
+
+    loads = ldp.parse_load_points({"points": {"QBMH": {"region": "QLD1", "name": "Belmont", "kv": "110", "mlf": 1.0128}}})
+    entry.options = {"price_zones": "home", "zone_radius_km": 50, "home_load_point": "QBMH"}
+    (home,) = _sensor_mod._zones(located, entry, "QLD1", catalogue, loads)
+    assert home.mlf == 1.0128 and home.mlf_source == "load_tni"
+    entry.options = {"price_zones": "brisbane, home, sydney", "zone_radius_km": 50}
     assert [z.key for z in _sensor_mod._zones(unset, entry, "QLD1", catalogue)] == ["brisbane"]
     entry.options = {"price_zones": "brisbane", "zone_radius_km": "nonsense"}
     assert _sensor_mod._zones(located, entry, "QLD1", catalogue)[0].radius_km == 100.0

@@ -486,6 +486,11 @@ def test_the_zone_fields_list_the_regions_cities_and_home(flow_env, monkeypatch)
     (zones,) = [c["select"] for c in configs if "select" in c
                 and any(isinstance(o, dict) and o["value"] == "home" for o in c["select"]["options"])]
     assert zones["options"][0] == {"value": "brisbane", "label": "Brisbane"} and zones["multiple"] is True
+    (home_load,) = [c["select"] for c in configs if "select" in c
+                    and any(isinstance(o, dict) and o["value"] == "QBMH" for o in c["select"]["options"])]
+    assert home_load["multiple"] is False
+    assert {"value": "QBMH", "label": "Belmont 110 kV (QBMH) · MLF 1.0128"} in home_load["options"]
+    assert all(o["value"][0] == "Q" for o in home_load["options"])  # QLD1's points only
     (radius,) = [m for m in result["data_schema"].spec if m.key == const_mod.CONF_ZONE_RADIUS]
     assert (radius.default() if callable(radius.default) else radius.default) == 80
 
@@ -496,11 +501,14 @@ def test_zones_are_saved_for_the_region_and_the_radius_defaults(flow_env):
     base = {const_mod.CONF_REGION: "QLD1", const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7}
 
     saved = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(
-        {**base, const_mod.CONF_ZONES: ["home", "Brisbane", "sydney"], const_mod.CONF_ZONE_RADIUS: 150}))
+        {**base, const_mod.CONF_ZONES: ["home", "Brisbane", "sydney"], const_mod.CONF_ZONE_RADIUS: 150,
+         const_mod.CONF_HOME_LOAD_POINT: "qbmh"}))
     omitted = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(dict(base)))
 
     assert saved["data"][const_mod.CONF_ZONES] == "home, brisbane"
+    assert saved["data"][const_mod.CONF_HOME_LOAD_POINT] == "QBMH"
     assert saved["data"][const_mod.CONF_ZONE_RADIUS] == 150
+    assert omitted["data"][const_mod.CONF_HOME_LOAD_POINT] == ""
     assert omitted["data"][const_mod.CONF_ZONES] == "" and omitted["data"][const_mod.CONF_ZONE_RADIUS] == 100
 
 

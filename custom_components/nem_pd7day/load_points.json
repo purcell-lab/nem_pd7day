@@ -1,0 +1,3084 @@
+{
+ "financial_year": "2026-27",
+ "source": "AEMO, Marginal Loss Factors: Financial Year report, load tables",
+ "points": {
+  "AAVT": {
+   "region": "NSW1",
+   "name": "ACT VTN",
+   "kv": "132",
+   "mlf": 0.9903
+  },
+  "AAXG": {
+   "region": "NSW1",
+   "name": "Angle Crossing",
+   "kv": "132",
+   "mlf": 0.9681
+  },
+  "ABCN": {
+   "region": "NSW1",
+   "name": "Belconnen",
+   "kv": "132",
+   "mlf": 0.9861
+  },
+  "ACTE": {
+   "region": "NSW1",
+   "name": "City East",
+   "kv": "132",
+   "mlf": 0.9893
+  },
+  "ACVC": {
+   "region": "NSW1",
+   "name": "Civic",
+   "kv": "132",
+   "mlf": 0.9871
+  },
+  "AELK": {
+   "region": "NSW1",
+   "name": "East Lake",
+   "kv": "132",
+   "mlf": 0.9885
+  },
+  "AGCK": {
+   "region": "NSW1",
+   "name": "Gold Creek",
+   "kv": "132",
+   "mlf": 0.9924
+  },
+  "AGLM": {
+   "region": "NSW1",
+   "name": "Gilmore",
+   "kv": "132",
+   "mlf": 0.9897
+  },
+  "AHRM": {
+   "region": "NSW1",
+   "name": "Harman",
+   "kv": "11",
+   "mlf": 0.992
+  },
+  "ALTM": {
+   "region": "NSW1",
+   "name": "Latham",
+   "kv": "132",
+   "mlf": 0.9886
+  },
+  "AMLG": {
+   "region": "NSW1",
+   "name": "Molonglo",
+   "kv": "132",
+   "mlf": 1.0131
+  },
+  "AQB1": {
+   "region": "NSW1",
+   "name": "Queanbeyan (ACTEW)",
+   "kv": "66",
+   "mlf": 1.0026
+  },
+  "AQB2": {
+   "region": "NSW1",
+   "name": "Queanbeyan (Essential Energy)",
+   "kv": "66",
+   "mlf": 1.0026
+  },
+  "ATDR": {
+   "region": "NSW1",
+   "name": "Theodore",
+   "kv": "132",
+   "mlf": 0.9993
+  },
+  "ATLP": {
+   "region": "NSW1",
+   "name": "Telopea Park",
+   "kv": "132",
+   "mlf": 0.9891
+  },
+  "AWDN": {
+   "region": "NSW1",
+   "name": "Woden",
+   "kv": "132",
+   "mlf": 0.993
+  },
+  "AWSA": {
+   "region": "NSW1",
+   "name": "Wanniassa",
+   "kv": "132",
+   "mlf": 0.9938
+  },
+  "NALB": {
+   "region": "NSW1",
+   "name": "Albury",
+   "kv": "132",
+   "mlf": 0.9865
+  },
+  "NALX": {
+   "region": "NSW1",
+   "name": "Alexandria",
+   "kv": "33",
+   "mlf": 1.0021
+  },
+  "NANM": {
+   "region": "NSW1",
+   "name": "Australian Newsprint Mill",
+   "kv": "132",
+   "mlf": 0.9556
+  },
+  "NAR1": {
+   "region": "NSW1",
+   "name": "Armidale",
+   "kv": "66",
+   "mlf": 0.9024
+  },
+  "NBAL": {
+   "region": "NSW1",
+   "name": "Balranald",
+   "kv": "22",
+   "mlf": 0.9415
+  },
+  "NBER": {
+   "region": "NSW1",
+   "name": "Beryl",
+   "kv": "66",
+   "mlf": 0.9786
+  },
+  "NBFN": {
+   "region": "NSW1",
+   "name": "Beaconsfield North",
+   "kv": "132",
+   "mlf": 1.0015
+  },
+  "NBFS": {
+   "region": "NSW1",
+   "name": "Beaconsfield South",
+   "kv": "132",
+   "mlf": 1.0018
+  },
+  "NBG1": {
+   "region": "NSW1",
+   "name": "Bunnerong",
+   "kv": "132",
+   "mlf": 1.0023
+  },
+  "NBG3": {
+   "region": "NSW1",
+   "name": "Bunnerong",
+   "kv": "33",
+   "mlf": 1.0035
+  },
+  "NBGE": {
+   "region": "NSW1",
+   "name": "Boggabri East",
+   "kv": "132",
+   "mlf": 0.9405
+  },
+  "NBGN": {
+   "region": "NSW1",
+   "name": "Boggabri North",
+   "kv": "132",
+   "mlf": 0.9415
+  },
+  "NBHL": {
+   "region": "NSW1",
+   "name": "Brandy Hill",
+   "kv": "11",
+   "mlf": 0.9932
+  },
+  "NBHX": {
+   "region": "NSW1",
+   "name": "Brandy Hill (Essential Energy)",
+   "kv": "11",
+   "mlf": 0.9932
+  },
+  "NBKG": {
+   "region": "NSW1",
+   "name": "Broken Hill",
+   "kv": "22",
+   "mlf": 0.9505
+  },
+  "NBKH": {
+   "region": "NSW1",
+   "name": "Broken Hill",
+   "kv": "220",
+   "mlf": 0.9234
+  },
+  "NBKP": {
+   "region": "NSW1",
+   "name": "Broken Hill (Transgrid)",
+   "kv": "22",
+   "mlf": 0.9505
+  },
+  "NBM1": {
+   "region": "NSW1",
+   "name": "Belmore Park",
+   "kv": "132",
+   "mlf": 1.0022
+  },
+  "NBMP": {
+   "region": "NSW1",
+   "name": "Belmore Park",
+   "kv": "11",
+   "mlf": 1.0052
+  },
+  "NBRG": {
+   "region": "NSW1",
+   "name": "Buronga",
+   "kv": "220",
+   "mlf": 0.942
+  },
+  "NBU2": {
+   "region": "NSW1",
+   "name": "Burrinjuck",
+   "kv": "132",
+   "mlf": 0.9704
+  },
+  "NCAR": {
+   "region": "NSW1",
+   "name": "Carlingford",
+   "kv": "132",
+   "mlf": 1.0016
+  },
+  "NCBS": {
+   "region": "NSW1",
+   "name": "Campbell Street",
+   "kv": "11",
+   "mlf": 1.0038
+  },
+  "NCH1": {
+   "region": "NSW1",
+   "name": "Coffs Harbour",
+   "kv": "66",
+   "mlf": 0.9244
+  },
+  "NCHM": {
+   "region": "NSW1",
+   "name": "Charmhaven",
+   "kv": "11",
+   "mlf": 0.993
+  },
+  "NCK4": {
+   "region": "NSW1",
+   "name": "Crookwell 415V",
+   "kv": "0.5",
+   "mlf": 0.9712
+  },
+  "NCLY": {
+   "region": "NSW1",
+   "name": "Coleambally",
+   "kv": "132",
+   "mlf": 0.9536
+  },
+  "NCM2": {
+   "region": "NSW1",
+   "name": "Cooma (AusNet Services)",
+   "kv": "66",
+   "mlf": 0.9912
+  },
+  "NCMA": {
+   "region": "NSW1",
+   "name": "Cooma",
+   "kv": "66",
+   "mlf": 0.9912
+  },
+  "NCR1": {
+   "region": "NSW1",
+   "name": "Cronulla",
+   "kv": "132",
+   "mlf": 1.0016
+  },
+  "NCS1": {
+   "region": "NSW1",
+   "name": "Campbell Street",
+   "kv": "132",
+   "mlf": 1.0022
+  },
+  "NCSN": {
+   "region": "NSW1",
+   "name": "Casino",
+   "kv": "132",
+   "mlf": 0.9356
+  },
+  "NCTB": {
+   "region": "NSW1",
+   "name": "Canterbury",
+   "kv": "33",
+   "mlf": 1.0042
+  },
+  "NCW8": {
+   "region": "NSW1",
+   "name": "Cowra",
+   "kv": "66",
+   "mlf": 0.998
+  },
+  "NDN7": {
+   "region": "NSW1",
+   "name": "Deniliquin",
+   "kv": "66",
+   "mlf": 0.9943
+  },
+  "NDNT": {
+   "region": "NSW1",
+   "name": "Darlington Point",
+   "kv": "132",
+   "mlf": 0.9576
+  },
+  "NDOR": {
+   "region": "NSW1",
+   "name": "Dorrigo",
+   "kv": "132",
+   "mlf": 0.9191
+  },
+  "NDT1": {
+   "region": "NSW1",
+   "name": "Dapto (Endeavour Energy)",
+   "kv": "132",
+   "mlf": 0.994
+  },
+  "NDT2": {
+   "region": "NSW1",
+   "name": "Dapto (Essential Energy)",
+   "kv": "132",
+   "mlf": 0.994
+  },
+  "NDUN": {
+   "region": "NSW1",
+   "name": "Dunoon",
+   "kv": "132",
+   "mlf": 0.9541
+  },
+  "NFB2": {
+   "region": "NSW1",
+   "name": "Forbes",
+   "kv": "66",
+   "mlf": 0.9999
+  },
+  "NFN2": {
+   "region": "NSW1",
+   "name": "Finley",
+   "kv": "132",
+   "mlf": 0.8708
+  },
+  "NFNY": {
+   "region": "NSW1",
+   "name": "Finley",
+   "kv": "66",
+   "mlf": 0.9944
+  },
+  "NGAD": {
+   "region": "NSW1",
+   "name": "Gadara",
+   "kv": "132",
+   "mlf": 0.9845
+  },
+  "NGB1": {
+   "region": "NSW1",
+   "name": "Gwawley Bay",
+   "kv": "132",
+   "mlf": 1.0006
+  },
+  "NGF3": {
+   "region": "NSW1",
+   "name": "Gosford",
+   "kv": "66",
+   "mlf": 1.0011
+  },
+  "NGFT": {
+   "region": "NSW1",
+   "name": "Grafton East 132",
+   "kv": "132",
+   "mlf": 0.9221
+  },
+  "NGLN": {
+   "region": "NSW1",
+   "name": "Glen Innes",
+   "kv": "66",
+   "mlf": 0.9003
+  },
+  "NGN2": {
+   "region": "NSW1",
+   "name": "Gunnedah",
+   "kv": "66",
+   "mlf": 0.9472
+  },
+  "NGRF": {
+   "region": "NSW1",
+   "name": "Griffith",
+   "kv": "33",
+   "mlf": 0.9792
+  },
+  "NGSF": {
+   "region": "NSW1",
+   "name": "Gosford",
+   "kv": "33",
+   "mlf": 1.0019
+  },
+  "NGSQ": {
+   "region": "NSW1",
+   "name": "Green Square",
+   "kv": "11",
+   "mlf": 1.0033
+  },
+  "NGWF": {
+   "region": "NSW1",
+   "name": "West Gosford",
+   "kv": "11",
+   "mlf": 1.0026
+  },
+  "NHBB": {
+   "region": "NSW1",
+   "name": "Homebush Bay",
+   "kv": "11",
+   "mlf": 1.0128
+  },
+  "NHLD": {
+   "region": "NSW1",
+   "name": "Holroyd",
+   "kv": "132",
+   "mlf": 1.0017
+  },
+  "NHLX": {
+   "region": "NSW1",
+   "name": "Holroyd (Ausgrid)",
+   "kv": "132",
+   "mlf": 1.0017
+  },
+  "NHNC": {
+   "region": "NSW1",
+   "name": "Heron's Creek",
+   "kv": "132",
+   "mlf": 1.0038
+  },
+  "NHVN": {
+   "region": "NSW1",
+   "name": "Hurstville North",
+   "kv": "11",
+   "mlf": 1.0012
+  },
+  "NHYM": {
+   "region": "NSW1",
+   "name": "Haymarket",
+   "kv": "132",
+   "mlf": 1.0021
+  },
+  "NING": {
+   "region": "NSW1",
+   "name": "Ingleburn",
+   "kv": "66",
+   "mlf": 0.9959
+  },
+  "NKCK": {
+   "region": "NSW1",
+   "name": "Kemps Creek",
+   "kv": "330",
+   "mlf": 0.9937
+  },
+  "NKHN": {
+   "region": "VIC1",
+   "name": "Khancoban",
+   "kv": "330",
+   "mlf": 0.9922
+  },
+  "NKL6": {
+   "region": "NSW1",
+   "name": "Koolkhan",
+   "kv": "66",
+   "mlf": 0.9428
+  },
+  "NKN1": {
+   "region": "NSW1",
+   "name": "Kurnell",
+   "kv": "132",
+   "mlf": 1.0022
+  },
+  "NKNL": {
+   "region": "NSW1",
+   "name": "Kurnell",
+   "kv": "11",
+   "mlf": 1.0027
+  },
+  "NKOG": {
+   "region": "NSW1",
+   "name": "Kogarah",
+   "kv": "11",
+   "mlf": 1.0036
+  },
+  "NKS2": {
+   "region": "NSW1",
+   "name": "Kempsey",
+   "kv": "66",
+   "mlf": 0.9582
+  },
+  "NKS3": {
+   "region": "NSW1",
+   "name": "Kempsey",
+   "kv": "33",
+   "mlf": 0.9666
+  },
+  "NLCV": {
+   "region": "NSW1",
+   "name": "Lane Cove",
+   "kv": "132",
+   "mlf": 1.0092
+  },
+  "NLD3": {
+   "region": "NSW1",
+   "name": "Liddell",
+   "kv": "33",
+   "mlf": 0.9642
+  },
+  "NLFD": {
+   "region": "NSW1",
+   "name": "Ilford",
+   "kv": "132",
+   "mlf": 0.9662
+  },
+  "NLP1": {
+   "region": "NSW1",
+   "name": "Liverpool",
+   "kv": "132",
+   "mlf": 0.9998
+  },
+  "NLS2": {
+   "region": "NSW1",
+   "name": "Lismore",
+   "kv": "132",
+   "mlf": 0.9485
+  },
+  "NMBK": {
+   "region": "NSW1",
+   "name": "Meadowbank",
+   "kv": "11",
+   "mlf": 1.0129
+  },
+  "NMBM": {
+   "region": "NSW1",
+   "name": "Murrumbateman",
+   "kv": "132",
+   "mlf": 0.988
+  },
+  "NMC1": {
+   "region": "NSW1",
+   "name": "Macarthur",
+   "kv": "132",
+   "mlf": 0.9917
+  },
+  "NMC2": {
+   "region": "NSW1",
+   "name": "Macarthur",
+   "kv": "66",
+   "mlf": 0.9948
+  },
+  "NMCV": {
+   "region": "NSW1",
+   "name": "Macksville",
+   "kv": "132",
+   "mlf": 0.9488
+  },
+  "NMDG": {
+   "region": "NSW1",
+   "name": "Mudgee",
+   "kv": "132",
+   "mlf": 0.9802
+  },
+  "NMKV": {
+   "region": "NSW1",
+   "name": "Marrickville",
+   "kv": "11",
+   "mlf": 1.0053
+  },
+  "NML1": {
+   "region": "NSW1",
+   "name": "Mullumbimby",
+   "kv": "11",
+   "mlf": 0.9636
+  },
+  "NMLB": {
+   "region": "NSW1",
+   "name": "Mullumbimby",
+   "kv": "132",
+   "mlf": 0.9619
+  },
+  "NMLD": {
+   "region": "NSW1",
+   "name": "Manildra",
+   "kv": "132",
+   "mlf": 1.0014
+  },
+  "NMOL": {
+   "region": "NSW1",
+   "name": "Molong",
+   "kv": "132",
+   "mlf": 1.0164
+  },
+  "NMP6": {
+   "region": "NSW1",
+   "name": "Mt Piper",
+   "kv": "66",
+   "mlf": 0.9736
+  },
+  "NMPK": {
+   "region": "NSW1",
+   "name": "Mason Park",
+   "kv": "132",
+   "mlf": 1.0102
+  },
+  "NMQP": {
+   "region": "NSW1",
+   "name": "Macquarie Park",
+   "kv": "11",
+   "mlf": 1.0136
+  },
+  "NMQS": {
+   "region": "NSW1",
+   "name": "Macquarie Park",
+   "kv": "33",
+   "mlf": 1.0091
+  },
+  "NMR1": {
+   "region": "NSW1",
+   "name": "Marulan (Endeavour Energy)",
+   "kv": "132",
+   "mlf": 1.0029
+  },
+  "NMR2": {
+   "region": "NSW1",
+   "name": "Marulan (Essential Energy)",
+   "kv": "132",
+   "mlf": 1.0029
+  },
+  "NMRE": {
+   "region": "NSW1",
+   "name": "Moree",
+   "kv": "66",
+   "mlf": 0.9513
+  },
+  "NMRK": {
+   "region": "NSW1",
+   "name": "Muswellbrook",
+   "kv": "132",
+   "mlf": 0.9721
+  },
+  "NMRU": {
+   "region": "NSW1",
+   "name": "Murrumburrah",
+   "kv": "66",
+   "mlf": 0.9877
+  },
+  "NMU3": {
+   "region": "NSW1",
+   "name": "Munmorah STS 33",
+   "kv": "33",
+   "mlf": 0.9898
+  },
+  "NMUN": {
+   "region": "NSW1",
+   "name": "Lake Munmorah",
+   "kv": "132",
+   "mlf": 0.9836
+  },
+  "NMVN": {
+   "region": "NSW1",
+   "name": "Morven",
+   "kv": "132",
+   "mlf": 0.9791
+  },
+  "NMY1": {
+   "region": "NSW1",
+   "name": "Munyang",
+   "kv": "11",
+   "mlf": 1.0048
+  },
+  "NMYG": {
+   "region": "NSW1",
+   "name": "Munyang",
+   "kv": "33",
+   "mlf": 1.0048
+  },
+  "NNAM": {
+   "region": "NSW1",
+   "name": "Nambucca Heads",
+   "kv": "132",
+   "mlf": 0.9425
+  },
+  "NNB2": {
+   "region": "NSW1",
+   "name": "Narrabri",
+   "kv": "66",
+   "mlf": 0.9594
+  },
+  "NNEW": {
+   "region": "NSW1",
+   "name": "Newcastle",
+   "kv": "132",
+   "mlf": 0.9905
+  },
+  "NNEX": {
+   "region": "NSW1",
+   "name": "Newcastle (Essential Energy)",
+   "kv": "132",
+   "mlf": 0.9905
+  },
+  "NNVL": {
+   "region": "NSW1",
+   "name": "Inverell",
+   "kv": "66",
+   "mlf": 0.9111
+  },
+  "NONO": {
+   "region": "NSW1",
+   "name": "Orange North",
+   "kv": "132",
+   "mlf": 1.0194
+  },
+  "NOR1": {
+   "region": "NSW1",
+   "name": "Ourimbah",
+   "kv": "132",
+   "mlf": 1.0
+  },
+  "NOR6": {
+   "region": "NSW1",
+   "name": "Ourimbah",
+   "kv": "66",
+   "mlf": 0.9979
+  },
+  "NORB": {
+   "region": "NSW1",
+   "name": "Ourimbah",
+   "kv": "33",
+   "mlf": 1.0015
+  },
+  "NPHL": {
+   "region": "NSW1",
+   "name": "Potts Hill",
+   "kv": "11",
+   "mlf": 1.0055
+  },
+  "NPHT": {
+   "region": "NSW1",
+   "name": "Peakhurst",
+   "kv": "33",
+   "mlf": 1.0008
+  },
+  "NPK6": {
+   "region": "NSW1",
+   "name": "Parkes",
+   "kv": "66",
+   "mlf": 1.024
+  },
+  "NPKS": {
+   "region": "NSW1",
+   "name": "Parkes",
+   "kv": "132",
+   "mlf": 0.9895
+  },
+  "NPMA": {
+   "region": "NSW1",
+   "name": "Panorama",
+   "kv": "66",
+   "mlf": 1.018
+  },
+  "NPMQ": {
+   "region": "NSW1",
+   "name": "Pt Macquarie",
+   "kv": "33",
+   "mlf": 0.9927
+  },
+  "NPO1": {
+   "region": "NSW1",
+   "name": "Potts Hill",
+   "kv": "132",
+   "mlf": 1.001
+  },
+  "NQBY": {
+   "region": "NSW1",
+   "name": "Queanbeyan",
+   "kv": "132",
+   "mlf": 1.0134
+  },
+  "NRAL": {
+   "region": "NSW1",
+   "name": "Raleigh",
+   "kv": "132",
+   "mlf": 0.9331
+  },
+  "NRGE": {
+   "region": "NSW1",
+   "name": "Orange",
+   "kv": "66",
+   "mlf": 1.028
+  },
+  "NRGV": {
+   "region": "NSW1",
+   "name": "Regentville",
+   "kv": "132",
+   "mlf": 0.9981
+  },
+  "NRKD": {
+   "region": "NSW1",
+   "name": "Rockdale (Ausgrid)",
+   "kv": "11",
+   "mlf": 1.003
+  },
+  "NRSB": {
+   "region": "NSW1",
+   "name": "Rose Bay",
+   "kv": "11",
+   "mlf": 1.0042
+  },
+  "NRVA": {
+   "region": "NSW1",
+   "name": "Riverina 415V",
+   "kv": "0.42",
+   "mlf": 0.9567
+  },
+  "NRVN": {
+   "region": "NSW1",
+   "name": "Ravine",
+   "kv": "330",
+   "mlf": 0.9665
+  },
+  "NRWR": {
+   "region": "NSW1",
+   "name": "Rookwood Road",
+   "kv": "132",
+   "mlf": 1.001
+  },
+  "NSAD": {
+   "region": "NSW1",
+   "name": "Snowy Adit",
+   "kv": "132",
+   "mlf": 1.0048
+  },
+  "NSE2": {
+   "region": "NSW1",
+   "name": "Sydney East",
+   "kv": "132",
+   "mlf": 1.0054
+  },
+  "NSFS": {
+   "region": "NSW1",
+   "name": "Strathfield South",
+   "kv": "11",
+   "mlf": 1.0037
+  },
+  "NSMB": {
+   "region": "NSW1",
+   "name": "Somersby",
+   "kv": "11",
+   "mlf": 1.0023
+  },
+  "NSN1": {
+   "region": "NSW1",
+   "name": "Sydney North (Ausgrid)",
+   "kv": "132",
+   "mlf": 1.0021
+  },
+  "NSN2": {
+   "region": "NSW1",
+   "name": "Sydney North (Endeavour Energy)",
+   "kv": "132",
+   "mlf": 1.0021
+  },
+  "NSPT": {
+   "region": "NSW1",
+   "name": "St Peters",
+   "kv": "11",
+   "mlf": 1.0041
+  },
+  "NSRD": {
+   "region": "NSW1",
+   "name": "Stroud",
+   "kv": "132",
+   "mlf": 1.0018
+  },
+  "NSW1": {
+   "region": "NSW1",
+   "name": "Sydney West (Ausgrid)",
+   "kv": "132",
+   "mlf": 1.0016
+  },
+  "NSW2": {
+   "region": "NSW1",
+   "name": "Sydney West (Endeavour Energy)",
+   "kv": "132",
+   "mlf": 1.0016
+  },
+  "NSYS": {
+   "region": "NSW1",
+   "name": "Sydney South",
+   "kv": "132",
+   "mlf": 0.9983
+  },
+  "NTA2": {
+   "region": "NSW1",
+   "name": "Tamworth",
+   "kv": "66",
+   "mlf": 0.9391
+  },
+  "NTG3": {
+   "region": "NSW1",
+   "name": "Tuggerah",
+   "kv": "132",
+   "mlf": 0.995
+  },
+  "NTMC": {
+   "region": "NSW1",
+   "name": "Tomago (Essential Energy)",
+   "kv": "132",
+   "mlf": 0.994
+  },
+  "NTME": {
+   "region": "NSW1",
+   "name": "Tomago (Ausgrid)",
+   "kv": "132",
+   "mlf": 0.994
+  },
+  "NTMG": {
+   "region": "NSW1",
+   "name": "Tomago",
+   "kv": "330",
+   "mlf": 0.9914
+  },
+  "NTNR": {
+   "region": "NSW1",
+   "name": "Terranora",
+   "kv": "110",
+   "mlf": 0.8761
+  },
+  "NTPR": {
+   "region": "NSW1",
+   "name": "Top Ryde",
+   "kv": "11",
+   "mlf": 1.0116
+  },
+  "NTR2": {
+   "region": "NSW1",
+   "name": "Taree (Essential Energy)",
+   "kv": "132",
+   "mlf": 1.0141
+  },
+  "NTTF": {
+   "region": "NSW1",
+   "name": "Tenterfield",
+   "kv": "132",
+   "mlf": 0.9214
+  },
+  "NTU2": {
+   "region": "NSW1",
+   "name": "Tumut",
+   "kv": "66",
+   "mlf": 0.9887
+  },
+  "NTUX": {
+   "region": "NSW1",
+   "name": "Tumut 66 (AusNet DNSP)",
+   "kv": "66",
+   "mlf": 0.9887
+  },
+  "NUT4": {
+   "region": "NSW1",
+   "name": "Upper Tumut 11kV (Essential Energy)",
+   "kv": "11",
+   "mlf": 0.965
+  },
+  "NVP1": {
+   "region": "NSW1",
+   "name": "Vales Pt.",
+   "kv": "132",
+   "mlf": 0.9867
+  },
+  "NVYD": {
+   "region": "NSW1",
+   "name": "Vineyard",
+   "kv": "132",
+   "mlf": 0.9993
+  },
+  "NWAV": {
+   "region": "NSW1",
+   "name": "Waverley",
+   "kv": "11",
+   "mlf": 1.0041
+  },
+  "NWD1": {
+   "region": "NSW1",
+   "name": "Williamsdale (Essential Energy) (Bogong)",
+   "kv": "132",
+   "mlf": 1.0088
+  },
+  "NWG2": {
+   "region": "NSW1",
+   "name": "Wagga",
+   "kv": "66",
+   "mlf": 0.9708
+  },
+  "NWG6": {
+   "region": "NSW1",
+   "name": "Wagga North",
+   "kv": "66",
+   "mlf": 0.965
+  },
+  "NWGN": {
+   "region": "NSW1",
+   "name": "Wagga North",
+   "kv": "132",
+   "mlf": 0.9927
+  },
+  "NWL8": {
+   "region": "NSW1",
+   "name": "Wellington",
+   "kv": "132",
+   "mlf": 0.9699
+  },
+  "NWR1": {
+   "region": "NSW1",
+   "name": "BHP (Waratah)",
+   "kv": "132",
+   "mlf": 0.9908
+  },
+  "NWST": {
+   "region": "NSW1",
+   "name": "Boambee South",
+   "kv": "132",
+   "mlf": 0.9314
+  },
+  "NWW4": {
+   "region": "NSW1",
+   "name": "Wallerawang 66 (Essential Energy)",
+   "kv": "66",
+   "mlf": 0.9747
+  },
+  "NWW5": {
+   "region": "NSW1",
+   "name": "Wallerawang (Essential Energy)",
+   "kv": "132",
+   "mlf": 0.9743
+  },
+  "NWW6": {
+   "region": "NSW1",
+   "name": "Wallerawang (Endeavour Energy)",
+   "kv": "132",
+   "mlf": 0.9743
+  },
+  "NWW7": {
+   "region": "NSW1",
+   "name": "Wallerawang 66",
+   "kv": "66",
+   "mlf": 0.9747
+  },
+  "NWWP": {
+   "region": "NSW1",
+   "name": "Wallerawang 330 PS Load",
+   "kv": "330",
+   "mlf": 0.9733
+  },
+  "NWYG": {
+   "region": "NSW1",
+   "name": "Wyong",
+   "kv": "11",
+   "mlf": 0.9961
+  },
+  "NYA3": {
+   "region": "NSW1",
+   "name": "Yanco",
+   "kv": "33",
+   "mlf": 0.9897
+  },
+  "NYS1": {
+   "region": "NSW1",
+   "name": "Yass",
+   "kv": "132",
+   "mlf": 0.9528
+  },
+  "NYS6": {
+   "region": "NSW1",
+   "name": "Yass",
+   "kv": "66",
+   "mlf": 0.9764
+  },
+  "QABM": {
+   "region": "QLD1",
+   "name": "Abermain",
+   "kv": "33",
+   "mlf": 1.0018
+  },
+  "QABR": {
+   "region": "QLD1",
+   "name": "Abermain",
+   "kv": "110",
+   "mlf": 1.0015
+  },
+  "QAGW": {
+   "region": "QLD1",
+   "name": "Ashgrove West",
+   "kv": "33",
+   "mlf": 1.0145
+  },
+  "QALC": {
+   "region": "QLD1",
+   "name": "Alligator Creek",
+   "kv": "33",
+   "mlf": 0.9842
+  },
+  "QALG": {
+   "region": "QLD1",
+   "name": "Algester",
+   "kv": "33",
+   "mlf": 1.0181
+  },
+  "QALH": {
+   "region": "QLD1",
+   "name": "Alligator Creek",
+   "kv": "132",
+   "mlf": 0.9664
+  },
+  "QASF": {
+   "region": "QLD1",
+   "name": "Alan Sherriff",
+   "kv": "132",
+   "mlf": 0.9961
+  },
+  "QBBS": {
+   "region": "QLD1",
+   "name": "Belmont Wecker Road",
+   "kv": "33",
+   "mlf": 1.015
+  },
+  "QBDA": {
+   "region": "QLD1",
+   "name": "Bundamba",
+   "kv": "110",
+   "mlf": 1.0012
+  },
+  "QBIL": {
+   "region": "QLD1",
+   "name": "Biloela",
+   "kv": "66/11",
+   "mlf": 0.9207
+  },
+  "QBK2": {
+   "region": "QLD1",
+   "name": "Bulli Creek (Essential Energy)",
+   "kv": "132",
+   "mlf": 0.9828
+  },
+  "QBKS": {
+   "region": "QLD1",
+   "name": "Blackstone",
+   "kv": "110",
+   "mlf": 1.0
+  },
+  "QBLF": {
+   "region": "QLD1",
+   "name": "Bluff",
+   "kv": "132",
+   "mlf": 0.9615
+  },
+  "QBLK": {
+   "region": "QLD1",
+   "name": "Bulli Creek (Waggamba)",
+   "kv": "132",
+   "mlf": 0.9828
+  },
+  "QBMH": {
+   "region": "QLD1",
+   "name": "Belmont",
+   "kv": "110",
+   "mlf": 1.0128
+  },
+  "QBNB": {
+   "region": "QLD1",
+   "name": "Bolingbroke",
+   "kv": "132",
+   "mlf": 0.9508
+  },
+  "QBNN": {
+   "region": "QLD1",
+   "name": "Bowen North",
+   "kv": "66",
+   "mlf": 0.9646
+  },
+  "QBOH": {
+   "region": "QLD1",
+   "name": "Boyne Island",
+   "kv": "275",
+   "mlf": 0.9436
+  },
+  "QBOL": {
+   "region": "QLD1",
+   "name": "Boyne Island",
+   "kv": "132",
+   "mlf": 0.9424
+  },
+  "QBRE": {
+   "region": "QLD1",
+   "name": "Braemar – Kumbarilla Park",
+   "kv": "275",
+   "mlf": 0.9797
+  },
+  "QBUR": {
+   "region": "QLD1",
+   "name": "Burton Downs",
+   "kv": "132",
+   "mlf": 0.9683
+  },
+  "QBWH": {
+   "region": "QLD1",
+   "name": "Blackwater",
+   "kv": "132",
+   "mlf": 0.9622
+  },
+  "QBWL": {
+   "region": "QLD1",
+   "name": "Blackwater",
+   "kv": "66/11",
+   "mlf": 0.9681
+  },
+  "QCAR": {
+   "region": "QLD1",
+   "name": "Calliope River",
+   "kv": "132",
+   "mlf": 0.9353
+  },
+  "QCBB": {
+   "region": "QLD1",
+   "name": "Columboola 132 (Bellevue Liquified Natural Gas [LNG] load)",
+   "kv": "132",
+   "mlf": 0.9867
+  },
+  "QCBL": {
+   "region": "QLD1",
+   "name": "Columboola",
+   "kv": "132",
+   "mlf": 0.9858
+  },
+  "QCBW": {
+   "region": "QLD1",
+   "name": "Ashgrove West",
+   "kv": "110",
+   "mlf": 1.0117
+  },
+  "QCDW": {
+   "region": "QLD1",
+   "name": "Cardwell",
+   "kv": "22",
+   "mlf": 0.9893
+  },
+  "QCHA": {
+   "region": "QLD1",
+   "name": "Chinchilla",
+   "kv": "132",
+   "mlf": 0.9786
+  },
+  "QCLR": {
+   "region": "QLD1",
+   "name": "Clare",
+   "kv": "66",
+   "mlf": 1.0041
+  },
+  "QCMD": {
+   "region": "QLD1",
+   "name": "Callemondah (Rail)",
+   "kv": "132",
+   "mlf": 0.9334
+  },
+  "QCOL": {
+   "region": "QLD1",
+   "name": "Collinsville Load",
+   "kv": "33",
+   "mlf": 0.9472
+  },
+  "QCOP": {
+   "region": "QLD1",
+   "name": "Coppabella (Rail)",
+   "kv": "132",
+   "mlf": 0.9819
+  },
+  "QDGL": {
+   "region": "QLD1",
+   "name": "Dan Gleeson",
+   "kv": "66",
+   "mlf": 0.9995
+  },
+  "QDRG": {
+   "region": "QLD1",
+   "name": "Duaringa",
+   "kv": "132",
+   "mlf": 0.9526
+  },
+  "QDYS": {
+   "region": "QLD1",
+   "name": "Dysart",
+   "kv": "132",
+   "mlf": 0.9745
+  },
+  "QEGD": {
+   "region": "QLD1",
+   "name": "Eagle Downs Mine",
+   "kv": "132",
+   "mlf": 0.9747
+  },
+  "QEGN": {
+   "region": "QLD1",
+   "name": "Egans Hill",
+   "kv": "66",
+   "mlf": 0.931
+  },
+  "QELA": {
+   "region": "QLD1",
+   "name": "El Arish",
+   "kv": "22",
+   "mlf": 1.0012
+  },
+  "QEMS": {
+   "region": "QLD1",
+   "name": "Kemmis",
+   "kv": "66",
+   "mlf": 0.9677
+  },
+  "QEMT": {
+   "region": "QLD1",
+   "name": "Edmonton",
+   "kv": "22",
+   "mlf": 1.0095
+  },
+  "QGAR": {
+   "region": "QLD1",
+   "name": "Garbutt",
+   "kv": "66",
+   "mlf": 1.0196
+  },
+  "QGDA": {
+   "region": "QLD1",
+   "name": "Goodna",
+   "kv": "33",
+   "mlf": 1.0057
+  },
+  "QGLD": {
+   "region": "QLD1",
+   "name": "Greenland",
+   "kv": "132",
+   "mlf": 0.9742
+  },
+  "QGNG": {
+   "region": "QLD1",
+   "name": "Gin Gin",
+   "kv": "132",
+   "mlf": 0.9673
+  },
+  "QGRE": {
+   "region": "QLD1",
+   "name": "Gregory (Rail)",
+   "kv": "132",
+   "mlf": 0.9434
+  },
+  "QGRN": {
+   "region": "QLD1",
+   "name": "Grantleigh (Rail)",
+   "kv": "132",
+   "mlf": 0.9325
+  },
+  "QGST": {
+   "region": "QLD1",
+   "name": "Gladstone South",
+   "kv": "66/11",
+   "mlf": 0.9481
+  },
+  "QGYR": {
+   "region": "QLD1",
+   "name": "Goonyella Riverside Mine",
+   "kv": "132",
+   "mlf": 0.993
+  },
+  "QINF": {
+   "region": "QLD1",
+   "name": "Innisfail",
+   "kv": "22",
+   "mlf": 0.9637
+  },
+  "QING": {
+   "region": "QLD1",
+   "name": "Ingham",
+   "kv": "66",
+   "mlf": 1.0378
+  },
+  "QINH": {
+   "region": "QLD1",
+   "name": "Innisfail",
+   "kv": "132",
+   "mlf": 0.991
+  },
+  "QINV": {
+   "region": "QLD1",
+   "name": "Invicta Load",
+   "kv": "132",
+   "mlf": 0.9168
+  },
+  "QKAM": {
+   "region": "QLD1",
+   "name": "Kamerunga",
+   "kv": "22",
+   "mlf": 1.0087
+  },
+  "QKCK": {
+   "region": "QLD1",
+   "name": "King Creek",
+   "kv": "132",
+   "mlf": 0.9482
+  },
+  "QLCH": {
+   "region": "QLD1",
+   "name": "Larcom Creek",
+   "kv": "275",
+   "mlf": 0.9237
+  },
+  "QLCM": {
+   "region": "QLD1",
+   "name": "Lilyvale (Barcaldine)",
+   "kv": "132",
+   "mlf": 0.9617
+  },
+  "QLGH": {
+   "region": "QLD1",
+   "name": "Loganlea",
+   "kv": "110",
+   "mlf": 1.0127
+  },
+  "QLGL": {
+   "region": "QLD1",
+   "name": "Loganlea",
+   "kv": "33",
+   "mlf": 1.0151
+  },
+  "QLIL": {
+   "region": "QLD1",
+   "name": "Lilyvale",
+   "kv": "66",
+   "mlf": 0.9131
+  },
+  "QMAL": {
+   "region": "QLD1",
+   "name": "Molendinar",
+   "kv": "33",
+   "mlf": 1.0119
+  },
+  "QMAR": {
+   "region": "QLD1",
+   "name": "Molendinar",
+   "kv": "110",
+   "mlf": 1.0131
+  },
+  "QMGB": {
+   "region": "QLD1",
+   "name": "Mudgeeraba",
+   "kv": "110",
+   "mlf": 1.0128
+  },
+  "QMGL": {
+   "region": "QLD1",
+   "name": "Mudgeeraba",
+   "kv": "33",
+   "mlf": 1.015
+  },
+  "QMKA": {
+   "region": "QLD1",
+   "name": "Mackay",
+   "kv": "33",
+   "mlf": 0.9753
+  },
+  "QMND": {
+   "region": "QLD1",
+   "name": "Mindi (Rail)",
+   "kv": "132",
+   "mlf": 0.9447
+  },
+  "QMRA": {
+   "region": "QLD1",
+   "name": "Moura",
+   "kv": "66/11",
+   "mlf": 0.9452
+  },
+  "QMRE": {
+   "region": "QLD1",
+   "name": "Murarrie (Belmont)",
+   "kv": "110",
+   "mlf": 1.013
+  },
+  "QMRG": {
+   "region": "QLD1",
+   "name": "Middle Ridge (Ergon)",
+   "kv": "110",
+   "mlf": 0.9867
+  },
+  "QMRH": {
+   "region": "QLD1",
+   "name": "Moranbah Substation",
+   "kv": "132",
+   "mlf": 0.9811
+  },
+  "QMRL": {
+   "region": "QLD1",
+   "name": "Moranbah (Town)",
+   "kv": "11",
+   "mlf": 0.9796
+  },
+  "QMRN": {
+   "region": "QLD1",
+   "name": "Moranbah (Mine)",
+   "kv": "66",
+   "mlf": 0.9921
+  },
+  "QMRX": {
+   "region": "QLD1",
+   "name": "Middle Ridge (Energex)",
+   "kv": "110",
+   "mlf": 0.9867
+  },
+  "QMTM": {
+   "region": "QLD1",
+   "name": "Mt McLaren (Rail)",
+   "kv": "132",
+   "mlf": 0.9875
+  },
+  "QNEB": {
+   "region": "QLD1",
+   "name": "Nebo",
+   "kv": "11",
+   "mlf": 0.9495
+  },
+  "QNGY": {
+   "region": "QLD1",
+   "name": "North Goonyella",
+   "kv": "132",
+   "mlf": 0.9941
+  },
+  "QNLD": {
+   "region": "QLD1",
+   "name": "Newlands",
+   "kv": "66",
+   "mlf": 0.9809
+  },
+  "QNOR": {
+   "region": "QLD1",
+   "name": "Norwich Park (Rail)",
+   "kv": "132",
+   "mlf": 0.9606
+  },
+  "QOKT": {
+   "region": "QLD1",
+   "name": "Oakey",
+   "kv": "110",
+   "mlf": 0.9894
+  },
+  "QOON": {
+   "region": "QLD1",
+   "name": "Oonooie (Rail)",
+   "kv": "132",
+   "mlf": 0.9677
+  },
+  "QORH": {
+   "region": "QLD1",
+   "name": "Orana LNG",
+   "kv": "275",
+   "mlf": 0.9799
+  },
+  "QPAL": {
+   "region": "QLD1",
+   "name": "Pandoin",
+   "kv": "66",
+   "mlf": 0.9273
+  },
+  "QPAN": {
+   "region": "QLD1",
+   "name": "Pandoin",
+   "kv": "132",
+   "mlf": 0.922
+  },
+  "QPIV": {
+   "region": "QLD1",
+   "name": "Pioneer Valley",
+   "kv": "66",
+   "mlf": 0.9974
+  },
+  "QPKD": {
+   "region": "QLD1",
+   "name": "Peak Downs (Rail)",
+   "kv": "132",
+   "mlf": 0.9807
+  },
+  "QPRO": {
+   "region": "QLD1",
+   "name": "Proserpine",
+   "kv": "66",
+   "mlf": 0.9981
+  },
+  "QPWD": {
+   "region": "QLD1",
+   "name": "Palmwoods",
+   "kv": "132",
+   "mlf": 1.0132
+  },
+  "QQAH": {
+   "region": "QLD1",
+   "name": "Queensland Alumina Ltd (Gladstone South)",
+   "kv": "132",
+   "mlf": 0.939
+  },
+  "QQNH": {
+   "region": "QLD1",
+   "name": "Queensland Nickel (Yabulu)",
+   "kv": "132",
+   "mlf": 0.9675
+  },
+  "QRBS": {
+   "region": "QLD1",
+   "name": "Runcorn",
+   "kv": "33",
+   "mlf": 1.0182
+  },
+  "QRGL": {
+   "region": "QLD1",
+   "name": "Raglan",
+   "kv": "275",
+   "mlf": 0.9233
+  },
+  "QRLD": {
+   "region": "QLD1",
+   "name": "Richlands",
+   "kv": "33",
+   "mlf": 1.016
+  },
+  "QRLE": {
+   "region": "QLD1",
+   "name": "Rocklea (Archerfield)",
+   "kv": "110",
+   "mlf": 1.0054
+  },
+  "QROC": {
+   "region": "QLD1",
+   "name": "Rockhampton",
+   "kv": "66",
+   "mlf": 0.935
+  },
+  "QROS": {
+   "region": "QLD1",
+   "name": "Ross",
+   "kv": "132",
+   "mlf": 0.9694
+  },
+  "QRPH": {
+   "region": "QLD1",
+   "name": "Redbank Plains",
+   "kv": "110",
+   "mlf": 1.0023
+  },
+  "QRPN": {
+   "region": "QLD1",
+   "name": "Redbank Plains",
+   "kv": "11",
+   "mlf": 1.002
+  },
+  "QSPN": {
+   "region": "QLD1",
+   "name": "South Pine",
+   "kv": "110",
+   "mlf": 1.0047
+  },
+  "QSUM": {
+   "region": "QLD1",
+   "name": "Sumner",
+   "kv": "110",
+   "mlf": 1.0069
+  },
+  "QSYC": {
+   "region": "QLD1",
+   "name": "Stony Creek",
+   "kv": "132",
+   "mlf": 0.9652
+  },
+  "QTBC": {
+   "region": "QLD1",
+   "name": "Teebar Creek",
+   "kv": "132",
+   "mlf": 0.9852
+  },
+  "QTKM": {
+   "region": "QLD1",
+   "name": "Tangkem (Dalby)",
+   "kv": "110",
+   "mlf": 0.9886
+  },
+  "QTLL": {
+   "region": "QLD1",
+   "name": "Tully",
+   "kv": "22",
+   "mlf": 1.0096
+  },
+  "QTNN": {
+   "region": "QLD1",
+   "name": "Tennyson (Rail)",
+   "kv": "110",
+   "mlf": 1.0078
+  },
+  "QTNS": {
+   "region": "QLD1",
+   "name": "Tennyson",
+   "kv": "33",
+   "mlf": 1.0097
+  },
+  "QTRL": {
+   "region": "QLD1",
+   "name": "Tarong",
+   "kv": "66",
+   "mlf": 0.9755
+  },
+  "QTUH": {
+   "region": "QLD1",
+   "name": "Turkinje (Craiglie)",
+   "kv": "132",
+   "mlf": 1.0068
+  },
+  "QTUL": {
+   "region": "QLD1",
+   "name": "Turkinje",
+   "kv": "66",
+   "mlf": 1.013
+  },
+  "QTVE": {
+   "region": "QLD1",
+   "name": "Townsville East",
+   "kv": "66",
+   "mlf": 0.9913
+  },
+  "QTVS": {
+   "region": "QLD1",
+   "name": "Townsville South",
+   "kv": "66",
+   "mlf": 0.9925
+  },
+  "QTZS": {
+   "region": "QLD1",
+   "name": "Townsville South (KZ)",
+   "kv": "132",
+   "mlf": 1.0179
+  },
+  "QWAN": {
+   "region": "QLD1",
+   "name": "Wandoo (Rail)",
+   "kv": "132",
+   "mlf": 0.9492
+  },
+  "QWCB": {
+   "region": "QLD1",
+   "name": "Wycarbah",
+   "kv": "132",
+   "mlf": 0.925
+  },
+  "QWIP": {
+   "region": "QLD1",
+   "name": "Wivenhoe Pump",
+   "kv": "275",
+   "mlf": 1.0008
+  },
+  "QWLG": {
+   "region": "QLD1",
+   "name": "Woolooga (Energex)",
+   "kv": "132",
+   "mlf": 0.978
+  },
+  "QWLN": {
+   "region": "QLD1",
+   "name": "Woolooga (Ergon)",
+   "kv": "132",
+   "mlf": 0.978
+  },
+  "QWOT": {
+   "region": "QLD1",
+   "name": "Wotonga (Rail)",
+   "kv": "132",
+   "mlf": 0.9812
+  },
+  "QWRE": {
+   "region": "QLD1",
+   "name": "Woree",
+   "kv": "132",
+   "mlf": 0.9774
+  },
+  "QWSH": {
+   "region": "QLD1",
+   "name": "Wandoan South",
+   "kv": "132",
+   "mlf": 0.9998
+  },
+  "QWST": {
+   "region": "QLD1",
+   "name": "Wandoan South (NW Surat)",
+   "kv": "275",
+   "mlf": 0.9988
+  },
+  "QYAE": {
+   "region": "QLD1",
+   "name": "Yarwun – Boat Creek (Ergon)",
+   "kv": "132",
+   "mlf": 0.9247
+  },
+  "QYAR": {
+   "region": "QLD1",
+   "name": "Yarwun – Rio Tinto",
+   "kv": "132",
+   "mlf": 0.925
+  },
+  "SACR": {
+   "region": "SA1",
+   "name": "City West",
+   "kv": "66",
+   "mlf": 1.0039
+  },
+  "SANC": {
+   "region": "SA1",
+   "name": "Angas Creek",
+   "kv": "33",
+   "mlf": 1.0077
+  },
+  "SARW": {
+   "region": "SA1",
+   "name": "Ardrossan West",
+   "kv": "33",
+   "mlf": 0.9452
+  },
+  "SBAC": {
+   "region": "SA1",
+   "name": "Back Callington",
+   "kv": "11",
+   "mlf": 1.0132
+  },
+  "SBAR": {
+   "region": "SA1",
+   "name": "Baroota",
+   "kv": "33",
+   "mlf": 0.9839
+  },
+  "SBE1": {
+   "region": "SA1",
+   "name": "Berri (POWERCOR)",
+   "kv": "66",
+   "mlf": 0.8921
+  },
+  "SBER": {
+   "region": "SA1",
+   "name": "Berri",
+   "kv": "66",
+   "mlf": 0.8921
+  },
+  "SBHP": {
+   "region": "SA1",
+   "name": "Whyalla Terminal BHP",
+   "kv": "33",
+   "mlf": 0.9953
+  },
+  "SBL1": {
+   "region": "SA1",
+   "name": "Blanche (Powercor)",
+   "kv": "33",
+   "mlf": 1.0029
+  },
+  "SBLA": {
+   "region": "SA1",
+   "name": "Blanche",
+   "kv": "33",
+   "mlf": 1.0029
+  },
+  "SBRK": {
+   "region": "SA1",
+   "name": "Brinkworth",
+   "kv": "33",
+   "mlf": 0.9846
+  },
+  "SBUN": {
+   "region": "SA1",
+   "name": "Bungama Industrial",
+   "kv": "33",
+   "mlf": 0.9836
+  },
+  "SBUR": {
+   "region": "SA1",
+   "name": "Bungama Rural",
+   "kv": "33",
+   "mlf": 0.9936
+  },
+  "SCLN": {
+   "region": "SA1",
+   "name": "Clare North",
+   "kv": "33",
+   "mlf": 0.9814
+  },
+  "SDAL": {
+   "region": "SA1",
+   "name": "Dalrymple",
+   "kv": "33",
+   "mlf": 0.9151
+  },
+  "SDAV": {
+   "region": "SA1",
+   "name": "Davenport",
+   "kv": "275",
+   "mlf": 0.9852
+  },
+  "SDAW": {
+   "region": "SA1",
+   "name": "Davenport",
+   "kv": "33",
+   "mlf": 0.9834
+  },
+  "SDRN": {
+   "region": "SA1",
+   "name": "Dorrien",
+   "kv": "33",
+   "mlf": 1.0056
+  },
+  "SETC": {
+   "region": "SA1",
+   "name": "East Terrace",
+   "kv": "66",
+   "mlf": 1.0029
+  },
+  "SHUM": {
+   "region": "SA1",
+   "name": "Hummocks",
+   "kv": "33",
+   "mlf": 0.9643
+  },
+  "SHVA": {
+   "region": "SA1",
+   "name": "Happy Valley",
+   "kv": "66",
+   "mlf": 1.0022
+  },
+  "SKAD": {
+   "region": "SA1",
+   "name": "Kadina East",
+   "kv": "33",
+   "mlf": 0.9666
+  },
+  "SKAN": {
+   "region": "SA1",
+   "name": "Kanmantoo",
+   "kv": "11",
+   "mlf": 1.0122
+  },
+  "SKET": {
+   "region": "SA1",
+   "name": "Keith",
+   "kv": "33",
+   "mlf": 1.0032
+  },
+  "SKLB": {
+   "region": "SA1",
+   "name": "Kilburn",
+   "kv": "66",
+   "mlf": 1.0012
+  },
+  "SKNC": {
+   "region": "SA1",
+   "name": "Kincraig",
+   "kv": "33",
+   "mlf": 1.0023
+  },
+  "SLCS": {
+   "region": "SA1",
+   "name": "Leigh Creek South",
+   "kv": "11",
+   "mlf": 0.9878
+  },
+  "SLFE": {
+   "region": "SA1",
+   "name": "Lefevre",
+   "kv": "66",
+   "mlf": 1.0002
+  },
+  "SMA1": {
+   "region": "SA1",
+   "name": "Mannum – Adelaide Pipeline 1",
+   "kv": "3.3",
+   "mlf": 1.0088
+  },
+  "SMA2": {
+   "region": "SA1",
+   "name": "Mannum – Adelaide Pipeline 2",
+   "kv": "3.3",
+   "mlf": 1.0134
+  },
+  "SMA3": {
+   "region": "SA1",
+   "name": "Mannum – Adelaide Pipeline 3",
+   "kv": "3.3",
+   "mlf": 1.0137
+  },
+  "SMAG": {
+   "region": "SA1",
+   "name": "Magill",
+   "kv": "66",
+   "mlf": 1.0013
+  },
+  "SMAN": {
+   "region": "SA1",
+   "name": "Mannum",
+   "kv": "33",
+   "mlf": 1.0148
+  },
+  "SMBA": {
+   "region": "SA1",
+   "name": "Mt Barker",
+   "kv": "66",
+   "mlf": 1.0034
+  },
+  "SMBK": {
+   "region": "SA1",
+   "name": "Middleback",
+   "kv": "132",
+   "mlf": 1.0023
+  },
+  "SMBL": {
+   "region": "SA1",
+   "name": "Mobilong",
+   "kv": "33",
+   "mlf": 1.0079
+  },
+  "SMBS": {
+   "region": "SA1",
+   "name": "Mount Barker South",
+   "kv": "66",
+   "mlf": 1.003
+  },
+  "SMDL": {
+   "region": "SA1",
+   "name": "Middleback",
+   "kv": "33",
+   "mlf": 1.0069
+  },
+  "SMGA": {
+   "region": "SA1",
+   "name": "Mt Gambier",
+   "kv": "33",
+   "mlf": 1.0032
+  },
+  "SMGS": {
+   "region": "SA1",
+   "name": "Mt Gunson South",
+   "kv": "132",
+   "mlf": 0.9843
+  },
+  "SMGU": {
+   "region": "SA1",
+   "name": "Mt Gunson",
+   "kv": "33",
+   "mlf": 0.9876
+  },
+  "SMH1": {
+   "region": "SA1",
+   "name": "Murray Bridge – Hahndorf Pipeline 1",
+   "kv": "11",
+   "mlf": 1.0092
+  },
+  "SMH2": {
+   "region": "SA1",
+   "name": "Murray Bridge – Hahndorf Pipeline 2",
+   "kv": "11",
+   "mlf": 1.011
+  },
+  "SMH3": {
+   "region": "SA1",
+   "name": "Murray Bridge – Hahndorf Pipeline 3",
+   "kv": "11",
+   "mlf": 1.0104
+  },
+  "SMLB": {
+   "region": "SA1",
+   "name": "Millbrook",
+   "kv": "132",
+   "mlf": 1.0027
+  },
+  "SMUP": {
+   "region": "SA1",
+   "name": "Munno Para",
+   "kv": "66",
+   "mlf": 0.9986
+  },
+  "SMVE": {
+   "region": "SA1",
+   "name": "Morphett Vale East",
+   "kv": "66",
+   "mlf": 1.0033
+  },
+  "SMW1": {
+   "region": "SA1",
+   "name": "Morgan - Whyalla Pipeline 1",
+   "kv": "3.3",
+   "mlf": 0.9541
+  },
+  "SMW2": {
+   "region": "SA1",
+   "name": "Morgan - Whyalla Pipeline 2",
+   "kv": "3.3",
+   "mlf": 0.9664
+  },
+  "SMW3": {
+   "region": "SA1",
+   "name": "Morgan - Whyalla Pipeline 3",
+   "kv": "3.3",
+   "mlf": 0.9741
+  },
+  "SMW4": {
+   "region": "SA1",
+   "name": "Morgan - Whyalla Pipeline 4",
+   "kv": "3.3",
+   "mlf": 0.9773
+  },
+  "SNBN": {
+   "region": "SA1",
+   "name": "New Osborne",
+   "kv": "66",
+   "mlf": 1.0007
+  },
+  "SNEU": {
+   "region": "SA1",
+   "name": "Neuroodla",
+   "kv": "33",
+   "mlf": 0.9865
+  },
+  "SNFD": {
+   "region": "SA1",
+   "name": "Northfield",
+   "kv": "66",
+   "mlf": 1.0013
+  },
+  "SNWB": {
+   "region": "SA1",
+   "name": "North West Bend",
+   "kv": "66",
+   "mlf": 0.9477
+  },
+  "SPAA": {
+   "region": "SA1",
+   "name": "Playford",
+   "kv": "132",
+   "mlf": 0.9838
+  },
+  "SPAR": {
+   "region": "SA1",
+   "name": "Para",
+   "kv": "66",
+   "mlf": 0.9994
+  },
+  "SPEN": {
+   "region": "SA1",
+   "name": "Penola West 33",
+   "kv": "33",
+   "mlf": 0.9991
+  },
+  "SPGW": {
+   "region": "SA1",
+   "name": "Parafield Gardens West",
+   "kv": "66",
+   "mlf": 1.0002
+  },
+  "SPLN": {
+   "region": "SA1",
+   "name": "Port Lincoln",
+   "kv": "33",
+   "mlf": 0.9858
+  },
+  "SPMB": {
+   "region": "SA1",
+   "name": "Pimba",
+   "kv": "132",
+   "mlf": 0.9906
+  },
+  "SPPR": {
+   "region": "SA1",
+   "name": "Port Pirie",
+   "kv": "33",
+   "mlf": 0.9921
+  },
+  "SRSH": {
+   "region": "SA1",
+   "name": "Roseworthy",
+   "kv": "132",
+   "mlf": 1.0016
+  },
+  "SSNN": {
+   "region": "SA1",
+   "name": "Snuggery Industrial",
+   "kv": "33",
+   "mlf": 0.9934
+  },
+  "SSNR": {
+   "region": "SA1",
+   "name": "Snuggery Rural",
+   "kv": "33",
+   "mlf": 0.9787
+  },
+  "SSPN": {
+   "region": "SA1",
+   "name": "Stony Point",
+   "kv": "11",
+   "mlf": 0.9905
+  },
+  "STAL": {
+   "region": "SA1",
+   "name": "Tailem Bend",
+   "kv": "33",
+   "mlf": 1.0026
+  },
+  "STEM": {
+   "region": "SA1",
+   "name": "Templers",
+   "kv": "33",
+   "mlf": 1.0218
+  },
+  "STSY": {
+   "region": "SA1",
+   "name": "Torrens Island",
+   "kv": "66",
+   "mlf": 1.0
+  },
+  "SWAT": {
+   "region": "SA1",
+   "name": "Waterloo",
+   "kv": "33",
+   "mlf": 0.9761
+  },
+  "SWMA": {
+   "region": "SA1",
+   "name": "Woomera",
+   "kv": "132",
+   "mlf": 0.9885
+  },
+  "SWUD": {
+   "region": "SA1",
+   "name": "Wudina",
+   "kv": "66",
+   "mlf": 0.9931
+  },
+  "SWYC": {
+   "region": "SA1",
+   "name": "Whyalla Central Substation",
+   "kv": "33",
+   "mlf": 0.9922
+  },
+  "SYAD": {
+   "region": "SA1",
+   "name": "Yadnarie",
+   "kv": "66",
+   "mlf": 0.9858
+  },
+  "TAL2": {
+   "region": "TAS1",
+   "name": "Arthurs Lake",
+   "kv": "6.6",
+   "mlf": 1.012
+  },
+  "TAV2": {
+   "region": "TAS1",
+   "name": "Avoca",
+   "kv": "22",
+   "mlf": 1.0368
+  },
+  "TBU3": {
+   "region": "TAS1",
+   "name": "Burnie",
+   "kv": "22",
+   "mlf": 1.0033
+  },
+  "TBW2": {
+   "region": "TAS1",
+   "name": "Bridgewater",
+   "kv": "11",
+   "mlf": 1.045
+  },
+  "TBYA": {
+   "region": "TAS1",
+   "name": "Boyer SWA",
+   "kv": "6.6",
+   "mlf": 1.0385
+  },
+  "TBYB": {
+   "region": "TAS1",
+   "name": "Boyer SWB",
+   "kv": "6.6",
+   "mlf": 1.0466
+  },
+  "TCO1": {
+   "region": "TAS1",
+   "name": "Comalco",
+   "kv": "220",
+   "mlf": 1.0006
+  },
+  "TCR2": {
+   "region": "TAS1",
+   "name": "Creek Road",
+   "kv": "33",
+   "mlf": 1.0333
+  },
+  "TCS3": {
+   "region": "TAS1",
+   "name": "Chapel St.",
+   "kv": "11",
+   "mlf": 1.0334
+  },
+  "TDB2": {
+   "region": "TAS1",
+   "name": "Derwent Bridge",
+   "kv": "22",
+   "mlf": 0.9599
+  },
+  "TDE2": {
+   "region": "TAS1",
+   "name": "Derby",
+   "kv": "22",
+   "mlf": 0.9731
+  },
+  "TDP2": {
+   "region": "TAS1",
+   "name": "Devonport",
+   "kv": "22",
+   "mlf": 1.0034
+  },
+  "TEB2": {
+   "region": "TAS1",
+   "name": "Emu Bay",
+   "kv": "11",
+   "mlf": 0.9995
+  },
+  "TEB3": {
+   "region": "TAS1",
+   "name": "Emu Bay 22",
+   "kv": "22",
+   "mlf": 1.0016
+  },
+  "TEL2": {
+   "region": "TAS1",
+   "name": "Electrona",
+   "kv": "11",
+   "mlf": 1.0491
+  },
+  "TFI1": {
+   "region": "TAS1",
+   "name": "Fisher (Rowallan)",
+   "kv": "220",
+   "mlf": 0.9796
+  },
+  "TFI2": {
+   "region": "TAS1",
+   "name": "Fisher 220 DNSP",
+   "kv": "220",
+   "mlf": 0.9796
+  },
+  "TGO2": {
+   "region": "TAS1",
+   "name": "Gordon",
+   "kv": "22",
+   "mlf": 1.0141
+  },
+  "TGT1": {
+   "region": "TAS1",
+   "name": "George Town (Basslink)",
+   "kv": "220",
+   "mlf": 1.0
+  },
+  "TGT3": {
+   "region": "TAS1",
+   "name": "George Town",
+   "kv": "22",
+   "mlf": 1.0019
+  },
+  "THA3": {
+   "region": "TAS1",
+   "name": "Hadspen",
+   "kv": "22",
+   "mlf": 1.0034
+  },
+  "THM2": {
+   "region": "TAS1",
+   "name": "Hampshire",
+   "kv": "110",
+   "mlf": 1.0
+  },
+  "THR2": {
+   "region": "TAS1",
+   "name": "Huon River",
+   "kv": "11",
+   "mlf": 1.0487
+  },
+  "TK13": {
+   "region": "TAS1",
+   "name": "Kingston",
+   "kv": "33",
+   "mlf": 1.0394
+  },
+  "TKE2": {
+   "region": "TAS1",
+   "name": "Kermandie",
+   "kv": "11",
+   "mlf": 1.0542
+  },
+  "TKI2": {
+   "region": "TAS1",
+   "name": "Kingston",
+   "kv": "11",
+   "mlf": 1.0438
+  },
+  "TKR2": {
+   "region": "TAS1",
+   "name": "Knights Road",
+   "kv": "11",
+   "mlf": 1.0509
+  },
+  "TLF2": {
+   "region": "TAS1",
+   "name": "Lindisfarne",
+   "kv": "33",
+   "mlf": 1.0355
+  },
+  "TMB2": {
+   "region": "TAS1",
+   "name": "Meadowbank",
+   "kv": "22",
+   "mlf": 1.0148
+  },
+  "TMT2": {
+   "region": "TAS1",
+   "name": "Mornington",
+   "kv": "33",
+   "mlf": 1.0357
+  },
+  "TMY2": {
+   "region": "TAS1",
+   "name": "Mowbray",
+   "kv": "22",
+   "mlf": 1.0033
+  },
+  "TNH2": {
+   "region": "TAS1",
+   "name": "North Hobart",
+   "kv": "11",
+   "mlf": 1.0329
+  },
+  "TNN2": {
+   "region": "TAS1",
+   "name": "New Norfolk",
+   "kv": "22",
+   "mlf": 1.0318
+  },
+  "TNT2": {
+   "region": "TAS1",
+   "name": "Newton",
+   "kv": "22",
+   "mlf": 0.9938
+  },
+  "TNT3": {
+   "region": "TAS1",
+   "name": "Newton",
+   "kv": "11",
+   "mlf": 0.9793
+  },
+  "TNW2": {
+   "region": "TAS1",
+   "name": "Norwood",
+   "kv": "22",
+   "mlf": 1.0027
+  },
+  "TPL2": {
+   "region": "TAS1",
+   "name": "Port Latta",
+   "kv": "22",
+   "mlf": 0.994
+  },
+  "TPM3": {
+   "region": "TAS1",
+   "name": "Palmerston",
+   "kv": "22",
+   "mlf": 0.9971
+  },
+  "TQT2": {
+   "region": "TAS1",
+   "name": "Queenstown",
+   "kv": "22",
+   "mlf": 0.9831
+  },
+  "TQT3": {
+   "region": "TAS1",
+   "name": "Queenstown",
+   "kv": "11",
+   "mlf": 0.9616
+  },
+  "TQU2": {
+   "region": "TAS1",
+   "name": "Que",
+   "kv": "22",
+   "mlf": 0.9941
+  },
+  "TRA2": {
+   "region": "TAS1",
+   "name": "Railton",
+   "kv": "22",
+   "mlf": 1.0012
+  },
+  "TRB2": {
+   "region": "TAS1",
+   "name": "Rosebery",
+   "kv": "44",
+   "mlf": 0.987
+  },
+  "TRI3": {
+   "region": "TAS1",
+   "name": "Risdon",
+   "kv": "11",
+   "mlf": 1.0361
+  },
+  "TRI4": {
+   "region": "TAS1",
+   "name": "Risdon",
+   "kv": "33",
+   "mlf": 1.0351
+  },
+  "TRK2": {
+   "region": "TAS1",
+   "name": "Rokeby",
+   "kv": "11",
+   "mlf": 1.0402
+  },
+  "TSD2": {
+   "region": "TAS1",
+   "name": "Scottsdale",
+   "kv": "22",
+   "mlf": 0.984
+  },
+  "TSH3": {
+   "region": "TAS1",
+   "name": "Sheffield",
+   "kv": "22",
+   "mlf": 0.9995
+  },
+  "TSL2": {
+   "region": "TAS1",
+   "name": "St Leonard",
+   "kv": "22",
+   "mlf": 1.0023
+  },
+  "TSL3": {
+   "region": "TAS1",
+   "name": "St Leonards 22kV - Scheduled Load",
+   "kv": "22",
+   "mlf": 1.0017
+  },
+  "TSM2": {
+   "region": "TAS1",
+   "name": "St. Marys",
+   "kv": "22",
+   "mlf": 1.0556
+  },
+  "TSO2": {
+   "region": "TAS1",
+   "name": "Sorell",
+   "kv": "22",
+   "mlf": 1.043
+  },
+  "TSR2": {
+   "region": "TAS1",
+   "name": "Savage River",
+   "kv": "22",
+   "mlf": 1.0196
+  },
+  "TST2": {
+   "region": "TAS1",
+   "name": "Smithton",
+   "kv": "22",
+   "mlf": 0.9836
+  },
+  "TSW1": {
+   "region": "TAS1",
+   "name": "Starwood",
+   "kv": "110",
+   "mlf": 1.0004
+  },
+  "TTB2": {
+   "region": "TAS1",
+   "name": "Triabunna",
+   "kv": "22",
+   "mlf": 1.0545
+  },
+  "TTE1": {
+   "region": "TAS1",
+   "name": "Temco",
+   "kv": "110",
+   "mlf": 1.0037
+  },
+  "TTR2": {
+   "region": "TAS1",
+   "name": "Trevallyn",
+   "kv": "22",
+   "mlf": 1.0037
+  },
+  "TTU2": {
+   "region": "TAS1",
+   "name": "Tungatinah",
+   "kv": "22",
+   "mlf": 0.9627
+  },
+  "TUL2": {
+   "region": "TAS1",
+   "name": "Ulverstone",
+   "kv": "22",
+   "mlf": 1.0029
+  },
+  "TWA2": {
+   "region": "TAS1",
+   "name": "Waddamana",
+   "kv": "22",
+   "mlf": 0.9718
+  },
+  "TWV2": {
+   "region": "TAS1",
+   "name": "Wesley Vale",
+   "kv": "22",
+   "mlf": 1.0011
+  },
+  "TWY2": {
+   "region": "TAS1",
+   "name": "Wayatinah",
+   "kv": "11",
+   "mlf": 1.0075
+  },
+  "VAPD": {
+   "region": "VIC1",
+   "name": "Portland",
+   "kv": "500",
+   "mlf": 0.9962
+  },
+  "VARS": {
+   "region": "VIC1",
+   "name": "Ararat load",
+   "kv": "220",
+   "mlf": 0.9353
+  },
+  "VATS": {
+   "region": "VIC1",
+   "name": "Altona",
+   "kv": "66",
+   "mlf": 1.0068
+  },
+  "VBAT": {
+   "region": "VIC1",
+   "name": "Ballarat",
+   "kv": "66",
+   "mlf": 0.9791
+  },
+  "VBE2": {
+   "region": "VIC1",
+   "name": "Bendigo",
+   "kv": "22",
+   "mlf": 1.0047
+  },
+  "VBE6": {
+   "region": "VIC1",
+   "name": "Bendigo",
+   "kv": "66",
+   "mlf": 1.0031
+  },
+  "VBL1": {
+   "region": "VIC1",
+   "name": "Brooklyn",
+   "kv": "220",
+   "mlf": 1.0023
+  },
+  "VBL2": {
+   "region": "VIC1",
+   "name": "Brooklyn (Jemena)",
+   "kv": "22",
+   "mlf": 1.0059
+  },
+  "VBL3": {
+   "region": "VIC1",
+   "name": "Brooklyn (Powercor)",
+   "kv": "22",
+   "mlf": 1.0059
+  },
+  "VBL6": {
+   "region": "VIC1",
+   "name": "Brooklyn (Jemena)",
+   "kv": "66",
+   "mlf": 1.0029
+  },
+  "VBL7": {
+   "region": "VIC1",
+   "name": "Brooklyn (Powercor)",
+   "kv": "66",
+   "mlf": 1.0029
+  },
+  "VBT2": {
+   "region": "VIC1",
+   "name": "Brunswick (CitiPower)",
+   "kv": "22",
+   "mlf": 1.0009
+  },
+  "VBT6": {
+   "region": "VIC1",
+   "name": "Brunswick 66 (CitiPower)",
+   "kv": "66",
+   "mlf": 1.0005
+  },
+  "VBTS": {
+   "region": "VIC1",
+   "name": "Brunswick (Jemena)",
+   "kv": "22",
+   "mlf": 1.0009
+  },
+  "VCB2": {
+   "region": "VIC1",
+   "name": "Cranbourne",
+   "kv": "220",
+   "mlf": 0.9939
+  },
+  "VCB5": {
+   "region": "VIC1",
+   "name": "Cranbourne (United Energy)",
+   "kv": "66",
+   "mlf": 0.9961
+  },
+  "VCBT": {
+   "region": "VIC1",
+   "name": "Cranbourne (AusNet Services)",
+   "kv": "66",
+   "mlf": 0.9961
+  },
+  "VDPT": {
+   "region": "VIC1",
+   "name": "Deer Park",
+   "kv": "66",
+   "mlf": 1.0097
+  },
+  "VER2": {
+   "region": "VIC1",
+   "name": "East Rowville (AusNet Services)",
+   "kv": "66",
+   "mlf": 0.9959
+  },
+  "VERT": {
+   "region": "VIC1",
+   "name": "East Rowville (United Energy)",
+   "kv": "66",
+   "mlf": 0.9959
+  },
+  "VFB2": {
+   "region": "VIC1",
+   "name": "Fishermens Bend (Powercor)",
+   "kv": "66",
+   "mlf": 1.0023
+  },
+  "VFBT": {
+   "region": "VIC1",
+   "name": "Fishermens Bend (CitiPower)",
+   "kv": "66",
+   "mlf": 1.0023
+  },
+  "VFVT": {
+   "region": "VIC1",
+   "name": "Fosterville",
+   "kv": "220",
+   "mlf": 0.9938
+  },
+  "VGNT": {
+   "region": "VIC1",
+   "name": "Glenrowan",
+   "kv": "66",
+   "mlf": 0.9945
+  },
+  "VGT6": {
+   "region": "VIC1",
+   "name": "Geelong",
+   "kv": "66",
+   "mlf": 0.9963
+  },
+  "VHOT": {
+   "region": "VIC1",
+   "name": "Horsham",
+   "kv": "66",
+   "mlf": 0.9199
+  },
+  "VHTS": {
+   "region": "VIC1",
+   "name": "Heatherton",
+   "kv": "66",
+   "mlf": 1.0007
+  },
+  "VHY2": {
+   "region": "VIC1",
+   "name": "Heywood",
+   "kv": "22",
+   "mlf": 0.9945
+  },
+  "VJLA": {
+   "region": "VIC1",
+   "name": "BHP Western Port",
+   "kv": "220",
+   "mlf": 0.9955
+  },
+  "VKG2": {
+   "region": "VIC1",
+   "name": "Kerang",
+   "kv": "22",
+   "mlf": 1.0014
+  },
+  "VKG6": {
+   "region": "VIC1",
+   "name": "Kerang",
+   "kv": "66",
+   "mlf": 1.0058
+  },
+  "VKT2": {
+   "region": "VIC1",
+   "name": "Keilor (Jemena)",
+   "kv": "66",
+   "mlf": 1.0021
+  },
+  "VKTS": {
+   "region": "VIC1",
+   "name": "Keilor (Powercor)",
+   "kv": "66",
+   "mlf": 1.0021
+  },
+  "VLY6": {
+   "region": "VIC1",
+   "name": "Loy Yang Substation",
+   "kv": "66",
+   "mlf": 0.9881
+  },
+  "VMBT": {
+   "region": "VIC1",
+   "name": "Mt Beauty",
+   "kv": "66",
+   "mlf": 1.0012
+  },
+  "VMT2": {
+   "region": "VIC1",
+   "name": "Malvern",
+   "kv": "22",
+   "mlf": 0.9987
+  },
+  "VMT6": {
+   "region": "VIC1",
+   "name": "Malvern",
+   "kv": "66",
+   "mlf": 0.9977
+  },
+  "VMT7": {
+   "region": "VIC1",
+   "name": "Malvern (CitiPower)",
+   "kv": "66",
+   "mlf": 0.9977
+  },
+  "VMWG": {
+   "region": "VIC1",
+   "name": "Morwell Power Station Units 1 to 3",
+   "kv": "66",
+   "mlf": 0.9915
+  },
+  "VMWP": {
+   "region": "VIC1",
+   "name": "Morwell PS (G4&5)",
+   "kv": "11",
+   "mlf": 0.9853
+  },
+  "VMWT": {
+   "region": "VIC1",
+   "name": "Morwell TS",
+   "kv": "66",
+   "mlf": 0.992
+  },
+  "VRC2": {
+   "region": "VIC1",
+   "name": "Red Cliffs",
+   "kv": "22",
+   "mlf": 0.9801
+  },
+  "VRC6": {
+   "region": "VIC1",
+   "name": "Red Cliffs",
+   "kv": "66",
+   "mlf": 0.9811
+  },
+  "VRCA": {
+   "region": "VIC1",
+   "name": "Red Cliffs (Essential Energy)",
+   "kv": "66",
+   "mlf": 0.9811
+  },
+  "VRT2": {
+   "region": "VIC1",
+   "name": "Richmond",
+   "kv": "22",
+   "mlf": 1.0003
+  },
+  "VRT6": {
+   "region": "VIC1",
+   "name": "Richmond (United Energy)",
+   "kv": "66",
+   "mlf": 1.0002
+  },
+  "VRT7": {
+   "region": "VIC1",
+   "name": "Richmond (CitiPower)",
+   "kv": "66",
+   "mlf": 1.0002
+  },
+  "VRW2": {
+   "region": "VIC1",
+   "name": "Ringwood (United Energy)",
+   "kv": "22",
+   "mlf": 1.0002
+  },
+  "VRW3": {
+   "region": "VIC1",
+   "name": "Ringwood (AusNet Services)",
+   "kv": "22",
+   "mlf": 1.0002
+  },
+  "VRW6": {
+   "region": "VIC1",
+   "name": "Ringwood (United Energy)",
+   "kv": "66",
+   "mlf": 1.0004
+  },
+  "VRW7": {
+   "region": "VIC1",
+   "name": "Ringwood (AusNet Services)",
+   "kv": "66",
+   "mlf": 1.0004
+  },
+  "VSHT": {
+   "region": "VIC1",
+   "name": "Shepparton",
+   "kv": "66",
+   "mlf": 1.0142
+  },
+  "VSM6": {
+   "region": "VIC1",
+   "name": "South Morang (Jemena)",
+   "kv": "66",
+   "mlf": 0.9978
+  },
+  "VSMT": {
+   "region": "VIC1",
+   "name": "South Morang (AusNet Services)",
+   "kv": "66",
+   "mlf": 0.9978
+  },
+  "VSV2": {
+   "region": "VIC1",
+   "name": "Springvale (United Energy)",
+   "kv": "66",
+   "mlf": 0.9982
+  },
+  "VSVT": {
+   "region": "VIC1",
+   "name": "Springvale (CitiPower)",
+   "kv": "66",
+   "mlf": 0.9982
+  },
+  "VTBT": {
+   "region": "VIC1",
+   "name": "Tyabb",
+   "kv": "66",
+   "mlf": 0.9969
+  },
+  "VTGT": {
+   "region": "VIC1",
+   "name": "Terang",
+   "kv": "66",
+   "mlf": 0.9949
+  },
+  "VTS2": {
+   "region": "VIC1",
+   "name": "Templestowe (CitiPower)",
+   "kv": "66",
+   "mlf": 1.0006
+  },
+  "VTS3": {
+   "region": "VIC1",
+   "name": "Templestowe (AusNet Services)",
+   "kv": "66",
+   "mlf": 1.0006
+  },
+  "VTS4": {
+   "region": "VIC1",
+   "name": "Templestowe (United Energy)",
+   "kv": "66",
+   "mlf": 1.0006
+  },
+  "VTST": {
+   "region": "VIC1",
+   "name": "Templestowe (Jemena)",
+   "kv": "66",
+   "mlf": 1.0006
+  },
+  "VTT2": {
+   "region": "VIC1",
+   "name": "Thomastown (AusNet Services)",
+   "kv": "66",
+   "mlf": 1.0
+  },
+  "VTTS": {
+   "region": "VIC1",
+   "name": "Thomastown (Jemena)",
+   "kv": "66",
+   "mlf": 1.0
+  },
+  "VWEA": {
+   "region": "VIC1",
+   "name": "Wemen 66 (Essential Energy)",
+   "kv": "66",
+   "mlf": 0.9642
+  },
+  "VWET": {
+   "region": "VIC1",
+   "name": "Wemen TS",
+   "kv": "66",
+   "mlf": 0.9642
+  },
+  "VWM2": {
+   "region": "VIC1",
+   "name": "West Melbourne",
+   "kv": "22",
+   "mlf": 1.0
+  },
+  "VWM6": {
+   "region": "VIC1",
+   "name": "West Melbourne (Jemena)",
+   "kv": "66",
+   "mlf": 1.0011
+  },
+  "VWM7": {
+   "region": "VIC1",
+   "name": "West Melbourne (CitiPower)",
+   "kv": "66",
+   "mlf": 1.0011
+  },
+  "VWO2": {
+   "region": "VIC1",
+   "name": "Wodonga",
+   "kv": "22",
+   "mlf": 1.0011
+  },
+  "VWO6": {
+   "region": "VIC1",
+   "name": "Wodonga",
+   "kv": "66",
+   "mlf": 0.995
+  },
+  "VYP1": {
+   "region": "VIC1",
+   "name": "Yallourn",
+   "kv": "11",
+   "mlf": 0.9624
+  }
+ }
+}

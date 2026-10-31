@@ -9,9 +9,10 @@
   pre-dispatch period to the end of the next trading day (RRP there, as
   pre-dispatch publishes no ROP).
 
-Always a proxy: the members are generation and storage connection points
-near the place, not its load, and no zone price is a settlement or retail
-price. ``proxy: true`` and the members, with their distances and
+The zone MLF is the place's own load connection points' where they are known
+(zones.py). Always a proxy: the adjustment comes from generation and storage
+connection points near the place, not its load, and no zone price is a
+settlement or retail price. ``proxy: true`` and the members, with their distances and
 adjustments, say so on every sensor.
 """
 from __future__ import annotations
@@ -140,7 +141,9 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
     _attr_native_unit_of_measurement = UNIT
     _attr_suggested_display_precision = 4
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _unrecorded_attributes = frozenset({"members", "forecast", "forecast_interval_ends", "predispatch_forecast"})
+    _unrecorded_attributes = frozenset(
+        {"members", "load_points", "forecast", "forecast_interval_ends", "predispatch_forecast"}
+    )
 
     def __init__(
         self, constraints: Any, p5min: Any, entry: Any, region: str, zone: Zone, predispatch: Any = None,
@@ -176,7 +179,8 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             "zone": zone.key, "region": self._region,
             "latitude": zone.latitude, "longitude": zone.longitude, "radius_km": zone.radius_km,
             "nearest_only": zone.nearest_only, "member_count": len(zone.members),
-            "zone_mlf": zone.mlf, "zone_mlf_source": "nearby_generation_idw",
+            "zone_mlf": zone.mlf, "zone_mlf_source": zone.mlf_source,
+            "load_points": [{"tni": p.tni, "name": p.name, "kv": p.kv, "mlf": p.mlf} for p in zone.load_points],
             "adjustment_aggregate": "median",
             "row_status": zone_now.status,
             "price_mwh": zone_now.price_mwh, "static_price_mwh": zone_now.static_mwh,

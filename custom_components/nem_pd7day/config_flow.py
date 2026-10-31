@@ -22,6 +22,7 @@ from .const import (
     CONF_LOCAL_PRICE_DUIDS,
     CONF_LOSS_FACTOR,
     CONF_NODES,
+    CONF_HOME_LOAD_POINT,
     CONF_ZONE_RADIUS,
     CONF_ZONES,
     CONF_ONLY_ACTIVE_TARIFF,
@@ -39,6 +40,8 @@ from .const import (
 )
 from .duid_catalogue import Catalogue, load_catalogue
 from .local_price import parse_duids, parse_tnis
+from .load_points import EMPTY as LOAD_POINTS_EMPTY
+from .load_points import LoadPoints, load_load_points
 from .zones import DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_RADIUS_KM, parse_zones, zone_choices
 from .pd7day_client import PD7DayClient
 from .tariff_pricing import COMBINED_LOSS_MULTIPLIER, LOSS_FACTOR_MAX, LOSS_FACTOR_MIN
@@ -308,6 +311,13 @@ def _amber_forecast_field(current: str) -> dict[Any, Any]:
     }
 
 
+async def _async_load_points(hass: Any) -> LoadPoints:
+    """The bundled load connection points, read in the executor (it is a file read)."""
+    if hass is None:
+        return load_load_points()
+    return await hass.async_add_executor_job(load_load_points)
+
+
 async def _async_catalogue(hass: Any) -> Catalogue:
     """The bundled DUID catalogue, read in the executor (it is a file read)."""
     if hass is None:
@@ -322,7 +332,9 @@ def _duid_choices(catalogue: Catalogue, region: str, current: list[str]) -> list
     return choices + [{"value": d, "label": d} for d in current if d not in listed]
 
 
-def _local_price_fields(options: dict[str, Any], catalogue: Catalogue, region: str) -> dict[Any, Any]:
+def _local_price_fields(
+    options: dict[str, Any], catalogue: Catalogue, region: str, loads: LoadPoints = LOAD_POINTS_EMPTY,
+) -> dict[Any, Any]:
     """DUIDs whose local price adjustment is published (#275).
 
     A dropdown of the region's DUIDs from the bundled catalogue; a DUID it
@@ -342,14 +354,17 @@ def _local_price_fields(options: dict[str, Any], catalogue: Catalogue, region: s
             }
         }),
         **_node_field(options, catalogue, region),
-        **_zone_fields(options, region),
+        **_zone_fields(options, region, loads),
     }
 
 
-def _zone_fields(options: dict[str, Any], region: str) -> dict[Any, Any]:
-    """City or zone price proxies (#288): the region's preset cities and Home, and the radius."""
+def _zone_fields(options: dict[str, Any], region: str, loads: LoadPoints) -> dict[Any, Any]:
+    """City or zone price proxies (#288): the region's preset cities and Home, the radius,
+    and Home's load connection point, whose MLF is the Home zone's."""
     current = parse_zones(options.get(CONF_ZONES, ""), region)
     choices = [{"value": key, "label": name} for key, name in zone_choices(region)]
+    home_load = options.get(CONF_HOME_LOAD_POINT) or None
+    points = [{"value": p.tni, "label": p.label} for p in loads.region_points(region)]
     return {
         vol.Optional(CONF_ZONES, description={"suggested_value": current or None}): selector.selector({
             "select": {"options": choices, "multiple": True, "mode": "dropdown"}
@@ -357,6 +372,9 @@ def _zone_fields(options: dict[str, Any], region: str) -> dict[Any, Any]:
         vol.Optional(CONF_ZONE_RADIUS, default=options.get(CONF_ZONE_RADIUS, DEFAULT_RADIUS_KM)): selector.selector({
             "number": {"min": MIN_RADIUS_KM, "max": MAX_RADIUS_KM, "step": 5, "mode": "box",
                        "unit_of_measurement": "km"}
+        }),
+        vol.Optional(CONF_HOME_LOAD_POINT, description={"suggested_value": home_load}): selector.selector({
+            "select": {"options": points, "multiple": False, "mode": "dropdown"}
         }),
     }
 
@@ -392,6 +410,7 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
         CONF_NODES: ", ".join(nodes),
         CONF_ZONES: ", ".join(parse_zones(user_input.get(CONF_ZONES, ""), user_input[CONF_REGION])),
         CONF_ZONE_RADIUS: user_input.get(CONF_ZONE_RADIUS, DEFAULT_RADIUS_KM),
+        CONF_HOME_LOAD_POINT: str(user_input.get(CONF_HOME_LOAD_POINT) or "").strip().upper(),
         # Cleared, the library's defaults are used again.
         CONF_LOSS_FACTOR: user_input.get(CONF_LOSS_FACTOR),
     }, {}
@@ -489,7 +508,10 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                 ),
                 **_only_active_field(self._entry.options.get(CONF_ONLY_ACTIVE_TARIFF, True)),
                 **_amber_forecast_field(self._entry.options.get(CONF_AMBER_FORECAST_ENTITY, "")),
-                **_local_price_fields(dict(self._entry.options), catalogue, current_region),
+                **_local_price_fields(
+                    dict(self._entry.options), catalogue, current_region,
+                    await _async_load_points(getattr(self, "hass", None)),
+                ),
                 **_loss_factor_field(self._entry.options.get(CONF_LOSS_FACTOR)),
             }
         )

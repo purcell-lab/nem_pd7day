@@ -183,10 +183,16 @@ A TNI is a transmission connection point. Its **node price** is the region's ori
 
 | Field | Default | Description |
 |---|---|---|
-| City and zone price proxies | empty | The region's preset cities (QLD1: Brisbane, Gold Coast, Sunshine Coast, Toowoomba, Rockhampton, Mackay, Townsville, Cairns; NSW1: Sydney, Newcastle, Wollongong, Canberra, Wagga Wagga, Tamworth, Dubbo; VIC1: Melbourne, Geelong, Ballarat, Bendigo, Latrobe Valley; SA1: Adelaide, Port Augusta, Mount Gambier; TAS1: Hobart, Launceston, Burnie) and Home, Home Assistant's own location. Each gets one sensor, enabled |
+| City and zone price proxies | empty | The region's preset cities (QLD1: Brisbane, Gold Coast, Sunshine Coast, Toowoomba, Rockhampton, Mackay, Townsville, Cairns; NSW1: Sydney, Newcastle, Wollongong, Canberra, Wagga Wagga, Tamworth, Orange; VIC1: Melbourne, Geelong, Ballarat, Bendigo, Latrobe Valley; SA1: Adelaide, Port Augusta, Mount Gambier; TAS1: Hobart, Launceston, Burnie) and Home, Home Assistant's own location. Each gets one sensor, enabled |
 | Zone radius | 100 km | How far from the centre a catalogue node counts as nearby |
+| Home load connection point | empty | The bulk supply point serving your area, from a dropdown of the region's load connection points as AEMO's MLF report names them (`Belmont 110 kV (QBMH) · MLF 1.0128`). Its MLF is the Home zone's |
 
-A zone's price is a **proxy**: ROP × zone MLF + the median local price adjustment of the region's catalogue nodes within the radius (the nearest node alone where none is that close). The zone MLF is the inverse-distance-weighted mean of those nodes' MLFs. The nodes are generation and storage connection points: city load is not a variable in NEMDE's constraint equations, and AEMO publishes no names or locations for its load connection points in machine-readable form, so generation nearby stands in for the place. The median means one constrained unit does not move the zone, while most of them do. Not a settlement or retail price, and not the price at your meter.
+A zone's price is a **proxy**: ROP × zone MLF + the median local price adjustment of the region's catalogue nodes within the radius (the nearest node alone where none is that close).
+
+- **Zone MLF**: the mean MLF of the place's own load connection points. Each preset city lists the bulk supply points that serve it (Brisbane 15, from Algester to Tennyson: 1.0120; Sydney 48: 1.0035; Melbourne 43: 1.0004; Adelaide 13: 1.0012; Hobart 11: 1.0373; Townsville 5: 0.9998), and Home the one chosen above. They come from `load_points.json`, the load tables of AEMO's *Marginal Loss Factors: Financial Year 2026-27* report (513 load points), built by `scripts/build_load_points.py` from the report's PDF, which aemo.com.au does not serve to scripts; every MLF matches MMSDM's TRANSMISSIONLOSSFACTOR. Where no load point is known, the inverse-distance-weighted mean of the nearby nodes' MLFs stands in (`zone_mlf_source: nearby_generation_idw`).
+- **Adjustment**: city load is not a variable in NEMDE's constraint equations, so it has no local price adjustment of its own; the nearby generation and storage nodes' adjustments stand in. The median means one constrained unit does not move the zone, while most of them do.
+
+Not a settlement or retail price, and not the price at your meter.
 
 ### Monitoring multiple regions
 
@@ -544,13 +550,13 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 ### Zone Price Proxy
 
-`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per chosen zone (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: ROP × zone MLF + the members' median local price adjustment, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out of the median; a stale file, one without the LOCAL_PRICE table, or no file leaves the state unknown. With a 100 km radius Brisbane has 8 members (zone MLF 1.0028), Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
+`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per chosen zone (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: ROP × zone MLF + the members' median local price adjustment, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out of the median; a stale file, one without the LOCAL_PRICE table, or no file leaves the state unknown. With a 100 km radius Brisbane has 8 member nodes, Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
 
 | Attribute | Description |
 |---|---|
 | `proxy` | Always `true` |
 | `zone`, `latitude`, `longitude`, `radius_km`, `nearest_only`, `member_count` | The centre and radius, and whether the nearest node stood in for none in reach |
-| `zone_mlf`, `zone_mlf_source` | The zone MLF and how it was made: `nearby_generation_idw` |
+| `zone_mlf`, `zone_mlf_source`, `load_points` | The zone MLF; `load_tni` (the mean of `load_points`, each with `tni`, `name`, `kv` and `mlf`, not recorded) or `nearby_generation_idw` |
 | `price_mwh`, `static_price_mwh`, `rop_mwh`, `adjustment_mwh`, `adjustment_aggregate` | The state in $/MWh, its parts (ROP × zone MLF, the median adjustment), and `median` |
 | `members_constrained`, `adjustment_min_mwh`, `adjustment_max_mwh` | How many members have a non-zero adjustment, and the spread |
 | `members` | Each member's `tni`, `stations`, `distance_km`, `mlf`, `adjustment_mwh` and `adjustment_status`, nearest first (not recorded) |

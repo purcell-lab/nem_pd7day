@@ -67,6 +67,7 @@ from .const import (
     CONF_FORECAST_MODE,
     CONF_LOCAL_PRICE_DUIDS,
     CONF_NODES,
+    CONF_HOME_LOAD_POINT,
     CONF_ZONE_RADIUS,
     CONF_ZONES,
     DEVICE_CONFIGURATION_URL,
@@ -316,7 +317,10 @@ async def _local_price_entities(
     tnis, _invalid = parse_tnis(entry.options.get(CONF_NODES, ""))
     catalogue = await run_in_executor(None, load_catalogue)  # a file read: the loop's executor, HA's pool
     remove_retired(hass, entry)
-    zones = _zones(hass, entry, region, catalogue)
+    from .load_points import load_load_points
+
+    loads = await run_in_executor(None, load_load_points)  # a file read, as the catalogue
+    zones = _zones(hass, entry, region, catalogue, loads)
     if not duids and not tnis and not zones and not catalogue.top_for(region):
         return []
     enable_chosen(hass, entry, region, duids)
@@ -328,8 +332,9 @@ async def _local_price_entities(
     ]
 
 
-def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any) -> list:
-    """The chosen city or zone proxies (#288); Home is HA's own location, skipped when unset."""
+def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any, loads: Any = None) -> list:
+    """The chosen city or zone proxies (#288); Home is HA's own location, skipped when unset,
+    with the load connection point chosen for it."""
     from .zones import DEFAULT_RADIUS_KM, build_zone, parse_zones
 
     try:
@@ -339,7 +344,8 @@ def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any)
     config = getattr(hass, "config", None)
     lat, lon = getattr(config, "latitude", None), getattr(config, "longitude", None)
     home = (float(lat), float(lon)) if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) else None
-    built = (build_zone(catalogue, region, key, radius, home)
+    home_load = str(entry.options.get(CONF_HOME_LOAD_POINT) or "").strip() or None
+    built = (build_zone(catalogue, region, key, radius, home, loads, home_load)
              for key in parse_zones(entry.options.get(CONF_ZONES, ""), region))
     return [zone for zone in built if zone is not None]
 

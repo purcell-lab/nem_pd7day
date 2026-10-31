@@ -18,10 +18,10 @@ from support import NEM_TZ, install_ha_stubs, load_chain
 
 install_ha_stubs()
 
-_const, _cat, _lp, _cc, _pdc, _pdl, _coord, _lps, _node, _zones, _zs = load_chain(
+_const, _cat, _lp, _cc, _pdc, _pdl, _coord, _lps, _node, _ldp, _zones, _zs = load_chain(
     "const", "duid_catalogue", "local_price", "constraint_client", "predispatch_client",
     "predispatch_local_price", "local_price_coordinator", "local_price_sensor", "node_price_sensor",
-    "zones", "zone_sensor",
+    "load_points", "zones", "zone_sensor",
 )
 
 _DIR = Path(__file__).parent / "fixtures" / "local_price"
@@ -63,7 +63,7 @@ def test_each_region_has_its_cities_and_home():
     for region in ("QLD1", "NSW1", "VIC1", "SA1", "TAS1"):
         choices = _zones.zone_choices(region)
         assert choices[-1] == ("home", "Home") and len(choices) >= 4
-    assert ("canberra", "Canberra") in _zones.zone_choices("NSW1")
+    assert ("canberra", "Canberra") in _zones.zone_choices("NSW1") and ("orange", "Orange") in _zones.zone_choices("NSW1")
     assert _zones.parse_zones("brisbane, Townsville, sydney, brisbane, home", "QLD1") == ["brisbane", "townsville", "home"]
     assert _zones.parse_zones(["cairns"], "QLD1") == ["cairns"] and _zones.parse_zones("", "QLD1") == []
 
@@ -77,7 +77,7 @@ def test_members_are_the_nodes_within_the_radius_nearest_first():
 
 
 def test_with_no_node_in_reach_the_nearest_stands_in():
-    zone = _zones.build_zone(CAT, "NSW1", "dubbo", 10)
+    zone = _zones.build_zone(CAT, "NSW1", "orange", 10)
     assert zone.nearest_only and len(zone.members) == 1
 
 
@@ -113,6 +113,96 @@ def test_the_bundled_catalogue_has_members_near_every_capital():
         assert zone.members and not zone.nearest_only, city
         assert 0.85 < zone.mlf < 1.1, (city, zone.mlf)
         assert all(m.node.region == region for m in zone.members)
+
+
+# ── Load connection points ───────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def loads():
+    _ldp.load_load_points.cache_clear()
+    return _ldp.load_load_points()
+
+
+def test_the_bundled_load_points_come_from_the_2026_27_report(loads):
+    assert loads.financial_year == "2026-27" and len(loads.points) > 500
+    assert {p.region for p in loads.points.values()} == {"QLD1", "NSW1", "VIC1", "SA1", "TAS1"}
+    assert all(0.8 < p.mlf < 1.1 for p in loads.points.values())
+    belmont = loads.get("QBMH")
+    assert (belmont.name, belmont.kv, belmont.mlf) == ("Belmont", "110", 1.0128)
+    assert belmont.label == "Belmont 110 kV (QBMH) · MLF 1.0128"
+    assert loads.get("QPIV").mlf == 0.9974  # the dual-MLF point's load row, not its generation row
+    assert loads.get("QINF").mlf == 0.9637  # Innisfail's row effective from 1 July 2026
+    names = [p.name for p in loads.region_points("TAS1")]
+    assert names == sorted(names)
+
+
+def test_every_preset_citys_load_points_are_bundled_in_its_region(loads):
+    for region, cities in _zones.CITIES.items():
+        for key, _name, _lat, _lon, tnis in cities:
+            assert tnis, key
+            for tni in tnis:
+                assert loads.get(tni) is not None and loads.get(tni).region == region, (key, tni)
+
+
+def test_a_city_takes_its_load_points_mlf(loads):
+    _cat.load_catalogue.cache_clear()
+    catalogue = _cat.load_catalogue()
+    brisbane = _zones.build_zone(catalogue, "QLD1", "brisbane", 100, loads=loads)
+    expected = [loads.get(t).mlf for t in _zones.CITIES["QLD1"][0][4]]
+    assert brisbane.mlf == round(sum(expected) / len(expected), 4) == 1.012
+    assert brisbane.mlf_source == "load_tni" and len(brisbane.load_points) == 15
+    townsville = _zones.build_zone(catalogue, "QLD1", "townsville", 100, loads=loads)
+    assert townsville.mlf == 0.9998  # nearby generation alone said 0.951
+    without = _zones.build_zone(catalogue, "QLD1", "townsville", 100)
+    assert without.mlf_source == "nearby_generation_idw" and without.mlf != townsville.mlf
+
+
+def test_home_takes_its_chosen_load_point(loads):
+    home = _zones.build_zone(CAT, "NSW1", "home", 100, home=(-33.9, 151.2), loads=loads, home_load="NSYS")
+    assert home.mlf == loads.get("NSYS").mlf and home.mlf_source == "load_tni"
+    other = _zones.build_zone(CAT, "NSW1", "home", 100, home=(-33.9, 151.2), loads=loads, home_load="QBMH")
+    assert other.load_points == () and other.mlf_source == "nearby_generation_idw"  # another region's point
+    unset = _zones.build_zone(CAT, "NSW1", "home", 100, home=(-33.9, 151.2), loads=loads)
+    assert unset.mlf_source == "nearby_generation_idw"
+
+
+def test_load_points_parse_tolerantly():
+    points = _ldp.parse_load_points({"financial_year": "2026-27", "points": {
+        "QOK1": {"region": "QLD1", "name": "Ok", "kv": "33", "mlf": 1.0},
+        "QBAD": {"region": "QLD1", "name": "Bad", "mlf": "x"},
+        "QNO": "row",
+    }})
+    assert list(points.points) == ["QOK1"]
+    assert _ldp.parse_load_points("nonsense") == _ldp.EMPTY
+
+
+def test_the_builder_keeps_load_rows_and_the_rows_from_1_july():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "build_load_points", Path(__file__).parents[1] / "scripts" / "build_load_points.py",
+    )
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    text = "\n".join([
+        "Table 1 Queensland loads",
+        "Location Voltage (kV*) TNI code 2026-27 MLF 2025-26 MLF",
+        "Belmont 110 QBMH 1.0128 1.0102",
+        "Pioneer Valley - Dual MLF (Generation) 66 QPIV 0.8765 0.9",
+        "Pioneer Valley - Dual MLF (Load) 66 QPIV 0.9974 0.99",
+        "Innisfail (effective prior to 01/07/2026) 22 QINF 0.9921 0.99",
+        "Innisfail (effective from 01/07/2026) 22 QINF 0.9637",
+        "Biloela 66/11 QBIL 0.9207 0.9313",
+        "Table 2 Queensland generation",
+        "Gladstone PS 275 GSTONE1 QGLD1 QGLD 0.9299 0.93",
+        "Table 7 Australian Capital Territory loads",
+        "Civic 132 ACVC 0.9871 0.98",
+    ])
+    points = builder.parse(text)
+    assert set(points) == {"QBMH", "QPIV", "QINF", "QBIL", "ACVC"}
+    assert points["QPIV"] == {"region": "QLD1", "name": "Pioneer Valley", "kv": "66", "mlf": 0.9974}
+    assert points["QINF"]["mlf"] == 0.9637 and points["QINF"]["name"] == "Innisfail"
+    assert points["QBIL"]["kv"] == "66/11" and points["ACVC"]["region"] == "NSW1"
 
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -201,6 +291,7 @@ def test_the_sensor_is_a_labelled_proxy(monkeypatch):
     assert sensor.native_value == pytest.approx(97.62 * zone.mlf / 1000, abs=1e-6)
     attrs = sensor.extra_state_attributes
     assert attrs["proxy"] is True and attrs["zone_mlf_source"] == "nearby_generation_idw"
+    assert attrs["load_points"] == [] and "load_points" in sensor._unrecorded_attributes
     assert attrs["adjustment_aggregate"] == "median" and attrs["member_count"] == 3
     assert attrs["members_constrained"] == 2
     assert (attrs["adjustment_min_mwh"], attrs["adjustment_max_mwh"]) == (-385.47, 88.27)

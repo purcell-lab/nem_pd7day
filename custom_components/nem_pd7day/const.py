@@ -194,6 +194,9 @@ CONF_NODES = "transmission_nodes"
 # string, and the radius their member nodes are taken from.
 CONF_ZONES = "price_zones"
 CONF_ZONE_RADIUS = "zone_radius_km"
+# Home's load connection point (TNI), from the bundled MLF report tables: its
+# MLF is the Home zone's.
+CONF_HOME_LOAD_POINT = "home_load_point"
 # One combined factor spot is scaled by in every tariff price, import and
 # export, in place of the library's Energex defaults. Unset keeps them.
 CONF_LOSS_FACTOR = "loss_factor"
