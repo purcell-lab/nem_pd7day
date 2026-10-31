@@ -483,6 +483,23 @@ def test_a_dropdown_choice_is_saved_as_the_comma_separated_string(flow_env):
     assert result["data"][const_mod.CONF_LOCAL_PRICE_DUIDS] == "KEPSF1, BARRON-1"
 
 
+def test_every_number_selector_step_is_one_home_assistant_accepts(flow_env, monkeypatch):
+    """HA's NumberSelector takes a step of "any" or at least 0.001; 0.0001 made
+    the whole options form fail to open (HTTP 400), the UI's Configure included."""
+    config_flow_mod, const_mod = flow_env
+    configs: list = []
+    monkeypatch.setattr(config_flow_mod.selector, "selector", lambda cfg: configs.append(cfg) or (lambda v: v))
+    entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1", const_mod.CONF_LOSS_FACTOR: 1.0272})
+
+    run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init())
+
+    numbers = [c["number"] for c in configs if "number" in c]
+    assert numbers, "the loss factor is a number selector"
+    for number in numbers:
+        step = number.get("step", 1)
+        assert step == "any" or step >= 1e-3, number
+
+
 def test_options_flow_saves_the_loss_factor_and_clears_it_when_omitted(flow_env):
     config_flow_mod, const_mod = flow_env
     entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1"})

@@ -380,7 +380,7 @@ def _loss_factor_field(current: Any) -> dict[Any, Any]:
     """One combined factor spot is scaled by in every tariff price; empty keeps the library's."""
     return {
         vol.Optional(CONF_LOSS_FACTOR, description={"suggested_value": current}): selector.selector(
-            {"number": {"min": LOSS_FACTOR_MIN, "max": LOSS_FACTOR_MAX, "step": 0.0001, "mode": "box"}}
+            {"number": {"min": LOSS_FACTOR_MIN, "max": LOSS_FACTOR_MAX, "step": "any", "mode": "box"}}
         ),
     }
 
