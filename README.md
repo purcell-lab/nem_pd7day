@@ -176,8 +176,19 @@ A catalogued DUID's sensor publishes `station`, `fuel`, `duid_region`, `tni`, `m
 |---|---|---|
 | Transmission node prices | empty | A dropdown of the region's connection points (TNIs), labelled with their stations and DUIDs (`QWIV1 · Wivenhoe (W/HOE#1)`). A TNI not in the list can be typed: two to ten letters or digits. Each chosen node gets one sensor, enabled |
 
-A TNI is a transmission connection point. Its **static node price** is the region's original price (ROP) times the node's marginal loss factor (MLF): what a generator connected there is paid per MWh sent out, before any local price adjustment. Nodes upstream of losses have an MLF below 1, so their node price is below the regional price. The catalogue takes each DUID's TNI and MLF from AEMO's DUDETAILSUMMARY, and groups the DUIDs by TNI. There are no presets. A diagnostic, not a retail or settlement price, and not the price at your own meter: a household is settled at the regional price times its distribution and transmission losses (see the loss factor above).
+A TNI is a transmission connection point. Its **node price** is the region's original price (ROP) times the node's marginal loss factor (MLF), plus the node's local price adjustment: the **static price**, ROP × MLF, is what a generator connected there is paid per MWh sent out; the adjustment is what binding network constraints near it are worth at the margin, 0 most of the time. Nodes upstream of losses have an MLF below 1, so their static price is below the regional price. The catalogue takes each DUID's TNI and MLF from AEMO's DUDETAILSUMMARY, and groups the DUIDs by TNI. There are no presets. A diagnostic, not a retail or settlement price, and not the price at your own meter: a household is settled at the regional price times its distribution and transmission losses (see the loss factor above).
 
+
+### City and zone price proxies (optional)
+
+| Field | Default | Description |
+|---|---|---|
+| City and zone price proxies | empty | The region's preset cities (QLD1: Brisbane, Gold Coast, Sunshine Coast, Toowoomba, Rockhampton, Mackay, Townsville, Cairns; NSW1: Sydney, Newcastle, Wollongong, Canberra, Wagga Wagga, Tamworth, Dubbo; VIC1: Melbourne, Geelong, Ballarat, Bendigo, Latrobe Valley; SA1: Adelaide, Port Augusta, Mount Gambier; TAS1: Hobart, Launceston, Burnie) and Home, Home Assistant's own location. Each gets one sensor, enabled |
+| Zone radius | 100 km | How far from the centre a catalogue node counts as nearby |
+
+A zone's price is a **proxy**: ROP × zone MLF + the median local price adjustment of the region's catalogue nodes within the radius (the nearest node alone where none is that close). The zone MLF is the inverse-distance-weighted mean of those nodes' MLFs. The nodes are generation and storage connection points: city load is not a variable in NEMDE's constraint equations, and AEMO publishes no names or locations for its load connection points in machine-readable form, so generation nearby stands in for the place. The median means one constrained unit does not move the zone, while most of them do. Not a settlement or retail price, and not the price at your meter.
+
+### Monitoring multiple regions
 
 Each integration instance monitors one NEM region with full independent calibration. To monitor multiple regions, add a separate integration instance for each via **Settings → Integrations → Add Integration → NEM PD7DAY**. Each instance maintains its own calibration store, observation log, and forecast sensors.
 
@@ -530,6 +541,22 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `forecast_status` | `published`, `stale`, `expired`, `table_missing`, `conflicting_rows`, `no_rop`, `unknown_node` or `no_data` |
 | `forecast_source`, `forecast_run_at`, `forecast_source_file` | `P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE`, the run and the P5MIN file |
 | `predispatch_forecast` | `{time, value}` per 30-minute pre-dispatch period still to end, RRP × MLF + the DUIDs' adjustment, in $/kWh, to the end of the next trading day (not recorded). The other `predispatch_*` attributes are as for the DUID sensor |
+
+### Zone Price Proxy
+
+`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per chosen zone (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: ROP × zone MLF + the members' median local price adjustment, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out of the median; a stale file, one without the LOCAL_PRICE table, or no file leaves the state unknown. With a 100 km radius Brisbane has 8 members (zone MLF 1.0028), Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
+
+| Attribute | Description |
+|---|---|
+| `proxy` | Always `true` |
+| `zone`, `latitude`, `longitude`, `radius_km`, `nearest_only`, `member_count` | The centre and radius, and whether the nearest node stood in for none in reach |
+| `zone_mlf`, `zone_mlf_source` | The zone MLF and how it was made: `nearby_generation_idw` |
+| `price_mwh`, `static_price_mwh`, `rop_mwh`, `adjustment_mwh`, `adjustment_aggregate` | The state in $/MWh, its parts (ROP × zone MLF, the median adjustment), and `median` |
+| `members_constrained`, `adjustment_min_mwh`, `adjustment_max_mwh` | How many members have a non-zero adjustment, and the spread |
+| `members` | Each member's `tni`, `stations`, `distance_km`, `mlf`, `adjustment_mwh` and `adjustment_status`, nearest first (not recorded) |
+| `row_status`, `interval_end`, `source_file` | `published`, `conflicting_rows` (every member left out), `stale`, `table_missing`, `no_rop`, `unknown_node` or `no_data`; the dispatch interval and file |
+| `forecast`, `forecast_status`, `forecast_run_at` | `{time, interval_end, value}` per P5MIN interval still to end: ROP × zone MLF + the members' median P5MIN adjustment (not recorded) |
+| `predispatch_forecast` and the other `predispatch_*` | Per 30-minute pre-dispatch period to the end of the next trading day: RRP × zone MLF + the members' median adjustment (not recorded). `predispatch_intervals_published` counts the periods where at least one member has an adjustment |
 
 ### PD7DAY Data / STPASA Data (diagnostic)
 

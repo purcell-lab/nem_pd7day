@@ -22,6 +22,8 @@ from .const import (
     CONF_LOCAL_PRICE_DUIDS,
     CONF_LOSS_FACTOR,
     CONF_NODES,
+    CONF_ZONE_RADIUS,
+    CONF_ZONES,
     CONF_ONLY_ACTIVE_TARIFF,
     CONF_REGION,
     CONF_REGIONS,
@@ -37,6 +39,7 @@ from .const import (
 )
 from .duid_catalogue import Catalogue, load_catalogue
 from .local_price import parse_duids, parse_tnis
+from .zones import DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_RADIUS_KM, parse_zones, zone_choices
 from .pd7day_client import PD7DayClient
 from .tariff_pricing import COMBINED_LOSS_MULTIPLIER, LOSS_FACTOR_MAX, LOSS_FACTOR_MIN
 from .tariff_catalogue import import_tariff_codes, tariff_name as catalogue_tariff_name
@@ -339,6 +342,22 @@ def _local_price_fields(options: dict[str, Any], catalogue: Catalogue, region: s
             }
         }),
         **_node_field(options, catalogue, region),
+        **_zone_fields(options, region),
+    }
+
+
+def _zone_fields(options: dict[str, Any], region: str) -> dict[Any, Any]:
+    """City or zone price proxies (#288): the region's preset cities and Home, and the radius."""
+    current = parse_zones(options.get(CONF_ZONES, ""), region)
+    choices = [{"value": key, "label": name} for key, name in zone_choices(region)]
+    return {
+        vol.Optional(CONF_ZONES, description={"suggested_value": current or None}): selector.selector({
+            "select": {"options": choices, "multiple": True, "mode": "dropdown"}
+        }),
+        vol.Optional(CONF_ZONE_RADIUS, default=options.get(CONF_ZONE_RADIUS, DEFAULT_RADIUS_KM)): selector.selector({
+            "number": {"min": MIN_RADIUS_KM, "max": MAX_RADIUS_KM, "step": 5, "mode": "box",
+                       "unit_of_measurement": "km"}
+        }),
     }
 
 
@@ -371,6 +390,8 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
         CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
         CONF_LOCAL_PRICE_DUIDS: ", ".join(duids),
         CONF_NODES: ", ".join(nodes),
+        CONF_ZONES: ", ".join(parse_zones(user_input.get(CONF_ZONES, ""), user_input[CONF_REGION])),
+        CONF_ZONE_RADIUS: user_input.get(CONF_ZONE_RADIUS, DEFAULT_RADIUS_KM),
         # Cleared, the library's defaults are used again.
         CONF_LOSS_FACTOR: user_input.get(CONF_LOSS_FACTOR),
     }, {}

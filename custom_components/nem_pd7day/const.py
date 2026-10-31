@@ -190,6 +190,10 @@ CONF_LOCAL_PRICE_DUIDS = "local_price_duids"
 # Transmission nodes (TNIs) whose static node price, ROP x MLF, is published
 # (#286), a comma separated string.
 CONF_NODES = "transmission_nodes"
+# City or zone price proxies (#288): zone keys (zones.py), a comma separated
+# string, and the radius their member nodes are taken from.
+CONF_ZONES = "price_zones"
+CONF_ZONE_RADIUS = "zone_radius_km"
 # One combined factor spot is scaled by in every tariff price, import and
 # export, in place of the library's Energex defaults. Unset keeps them.
 CONF_LOSS_FACTOR = "loss_factor"
