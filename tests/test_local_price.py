@@ -407,15 +407,17 @@ def test_no_row_in_a_fresh_file_is_zero_and_flagged(monkeypatch):
     assert attrs["local_price"] == pytest.approx(0.08525)  # the QLD1 ROP, 85.25 $/MWh
 
 
-def test_stale_no_data_and_a_missing_table_stay_unknown(monkeypatch):
+def test_stale_and_no_data_stay_unknown_and_a_missing_table_falls_back(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 45))
     stale = _duid(_constraints(_dispatch()), "GSTONE1", "QLD1")
     assert stale.native_value is None and stale.extra_state_attributes["row_status"] == "stale"
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 26))
     empty = _duid(SimpleNamespace(tracker=SimpleNamespace(latest=None)), "GSTONE1", "QLD1")
     assert empty.native_value is None and empty.extra_state_attributes["row_status"] == "no_data"
+    # No table and nothing to stand in: no adjustment, the regional price (test_dispatch_fallbacks.py).
     no_table = _duid(_constraints(_dispatch(_without(DISPATCH, "LOCAL_PRICE"))), "GSTONE1", "QLD1")
-    assert no_table.native_value is None and no_table.extra_state_attributes["local_price"] is None
+    assert no_table.native_value == 0.0 and no_table.extra_state_attributes["row_status"] == "rrp_fallback"
+    assert no_table.extra_state_attributes["local_price_mwh"] == 85.25  # QLD1's ROP
 
 
 def test_the_local_price_attributes_use_rop_and_keep_the_raw_sum(monkeypatch):

@@ -30,7 +30,6 @@ from .local_price import (
     STATUS_CONFLICT,
     STATUS_EXPIRED,
     STATUS_NO_DATA,
-    STATUS_P5_FALLBACK,
     STATUS_PUBLISHED,
     STATUS_STALE,
     STATUS_TABLE_MISSING,
@@ -88,7 +87,7 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
     if adjustment is None:
         status = STATUS_CONFLICT
     else:
-        status = STATUS_P5_FALLBACK if prices.fallback_source else STATUS_PUBLISHED
+        status = prices.fallback_status or STATUS_PUBLISHED
     return ZoneDispatch(status, rop, round(rop * mlf, 4), adjustment, members)
 
 

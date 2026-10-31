@@ -33,8 +33,8 @@ from .local_price import (
     INTERVAL,
     STATUS_CONFLICT,
     STATUS_EXPIRED,
+    FALLBACK_STATUSES,
     STATUS_NO_DATA,
-    STATUS_P5_FALLBACK,
     STATUS_PUBLISHED,
     STATUS_STALE,
     STATUS_TABLE_MISSING,
@@ -212,14 +212,15 @@ def node_adjustment(
     if not duids:
         return STATUS_UNKNOWN_NODE, None
     statuses = {dispatch_status(prices, duid, now, MAX_AGE) for duid in duids}
-    known = {STATUS_PUBLISHED, STATUS_ZERO, STATUS_P5_FALLBACK}
+    known = {STATUS_PUBLISHED, STATUS_ZERO} | FALLBACK_STATUSES
     if statuses - known:
         return sorted(statuses - known)[0], None
     values = {prices.rows[d].adjustment_mwh for d in duids if d in prices.rows}  # type: ignore[union-attr]
     if len(values) > 1:
         return STATUS_CONFLICT, None
-    if STATUS_P5_FALLBACK in statuses:
-        return STATUS_P5_FALLBACK, values.pop() if values else 0.0
+    fallback = statuses & FALLBACK_STATUSES
+    if fallback:
+        return fallback.pop(), values.pop() if values else 0.0
     return (STATUS_PUBLISHED, values.pop()) if values else (STATUS_ZERO, 0.0)
 
 

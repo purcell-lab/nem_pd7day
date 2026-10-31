@@ -40,13 +40,16 @@ from .const import DEVICE_CONFIGURATION_URL, DEVICE_MANUFACTURER, DEVICE_MODEL, 
 from .duid_catalogue import Catalogue, DuidInfo
 from .local_price import (
     INTERVAL,
+    STATUS_P5_FALLBACK,
+    STATUS_PD_FALLBACK,
+    STATUS_RRP_FALLBACK,
     DispatchLocalPrices,
     dispatch_adjustment,
     dispatch_status,
     forecast_series,
     local_price_mwh,
     market_price_limits,
-    with_p5_fallback,
+    with_fallbacks,
 )
 from .nem_time import NEM_TZ, now_nem
 from .predispatch_local_price import predispatch_adjustments, predispatch_attrs
@@ -55,6 +58,12 @@ from .predispatch_local_price import predispatch_adjustments, predispatch_attrs
 MAX_AGE = timedelta(minutes=15)
 UNIT = "$/kWh"
 SUFFIX = "local_price_adjustment"
+# What the dispatch values came from, by fallback status.
+_SOURCES = {
+    STATUS_P5_FALLBACK: "P5MIN_LOCAL_PRICE",
+    STATUS_PD_FALLBACK: "PREDISPATCH_LOCAL_PRICE",
+    STATUS_RRP_FALLBACK: "RRP",
+}
 # The two sensors per DUID that 3.32 published beside this one.
 RETIRED_SUFFIXES = ("_local_price_adjustment_forecast", "_local_price")
 
@@ -168,7 +177,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
     def _dispatch_attrs(self, prices: Optional[DispatchLocalPrices], now: datetime) -> dict[str, Any]:
         row = prices.rows.get(self._duid) if prices is not None else None
         attrs: dict[str, Any] = {
-            "source": "P5MIN_LOCAL_PRICE" if prices is not None and prices.fallback_source else "DISPATCH_LOCAL_PRICE",
+            "source": _SOURCES.get(prices.fallback_status or "", "DISPATCH_LOCAL_PRICE") if prices else "DISPATCH_LOCAL_PRICE",
             "row_status": dispatch_status(prices, self._duid, now, MAX_AGE),
             "adjustment_mwh": self._adjustment_mwh(prices, now),
             "locally_constrained": row.locally_constrained if row is not None else None,
@@ -236,10 +245,13 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
 
 
 def dispatch_prices(sensor: Any) -> Optional[DispatchLocalPrices]:
-    """The sensor's dispatch interval, from the P5MIN run covering it where the file has no table."""
+    """The sensor's dispatch interval; where the file has no LOCAL_PRICE table, from the P5MIN run
+    covering it, else the pre-dispatch period, else the regional price (local_price.with_fallbacks)."""
     snapshot = sensor.coordinator.tracker.latest
     prices = snapshot.local_prices if snapshot is not None else None
-    return with_p5_fallback(prices, getattr(sensor._p5min, "latest", None))
+    return with_fallbacks(
+        prices, getattr(sensor._p5min, "latest", None), getattr(sensor._predispatch, "latest", None),
+    )
 
 
 async def listen_to_forecasts(sensor: Any, added: Any) -> None:
