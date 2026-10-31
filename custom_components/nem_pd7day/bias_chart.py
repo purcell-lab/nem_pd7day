@@ -105,7 +105,7 @@ def render_chart(
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.colors import TwoSlopeNorm
     except ImportError:
-        _LOGGER.warning("bias_chart: matplotlib not available")
+        _LOGGER.debug("bias_chart: matplotlib not available")
         return b""
 
     data = _bucket_data(calibration_result)

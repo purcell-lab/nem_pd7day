@@ -53,7 +53,7 @@ The integration uses a two-stage forecasting pipeline:
 - **5-minute dispatch prices** — boundary-aligned `DispatchCoordinator` polls NEMWEB TradingIS at `:01:15`, `:06:15`, ..., `:56:15` (75 s after each dispatch boundary, after NEMWEB publishes). Used as the live `native_value` for tariff and spot sensors between 30-minute PD7DAY intervals.
 - **Live sensor state** — all forecast sensor states advance automatically every 30 minutes to reflect the current interval, with no fetch required
 - **No third-party accounts required** — actual prices sourced directly from AEMO TradingIS
-- **Dependencies** — `matplotlib`, `numpy` for chart rendering (installed automatically by HACS/HA); `astral` for solar elevation, which ships with Home Assistant itself and so is not listed in the manifest
+- **Dependencies** — `numpy` (installed by HA from the manifest); `matplotlib` for the chart cameras, an optional requirement the cameras ask HA's installer for at run time, so an install where it cannot be built still loads every sensor; `astral` for solar elevation, which ships with Home Assistant itself and so is not listed in the manifest
 
 ---
 
@@ -726,7 +726,7 @@ The `nemtime` field in forecast periods is the **interval end** timestamp (AEMO 
 - **DUID local prices: two horizons** — `forecast` is the P5MIN run, twelve five-minute intervals; `predispatch_forecast` is the 30-minute pre-dispatch, to the end of the next trading day. Both are AEMO's published adjustments, nothing is modelled. A DUID's region comes from the bundled catalogue; a DUID registered after it was built has no region, name or coordinates until the next release.
 - **Node prices: published DUIDs only** — a node's adjustment is that of its DUIDs, so a connection point without a dispatchable unit has none. Pre-dispatch publishes RRP, not ROP, so `predispatch_forecast` on a node is RRP × MLF + adjustment.
 - **Python 3.12+ required** — the integration uses `asyncio.run()` and other Python 3.12 patterns.
-- **matplotlib build dependency** — on some HA OS versions (notably Python 3.14 environments), matplotlib may fail to build from source. If this occurs, the chart camera entities will be unavailable but all price forecast and tariff sensors continue to function normally.
+- **matplotlib build dependency** — on some installs (notably Python 3.14 environments without a matplotlib wheel), matplotlib fails to build from source. Since v3.36.1 it is not a manifest requirement, so the integration still loads: the cameras try to install it once per run, log one warning if that fails, and show a placeholder image, while every price forecast, tariff and grid sensor works normally. Before v3.36.1 the failed install stopped the whole integration loading.
 
 ---
 

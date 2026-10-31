@@ -20,6 +20,7 @@ from .const import (
     ATTR_CAL_SOURCE,
     DOMAIN,
 )
+from .chart_requirements import async_chart_requirements
 from .calibration_inputs import (
     calibrate_interval,
     horizon_hours as _horizon_hours,
@@ -66,6 +67,8 @@ class _InitialRenderMixin:
 
         def async_on_remove(self, func: Callable[[], None]) -> None: ...
 
+        async def _async_refresh_image(self) -> None: ...
+
     def _schedule_render(self, name: str) -> None:
         """Run one render as a background task tied to this entity's life.
 
@@ -77,7 +80,7 @@ class _InitialRenderMixin:
         rather than one per task.
         """
         task = self.hass.async_create_background_task(
-            self._async_refresh_image(), name=name
+            self._async_render_when_ready(), name=name
         )
         if self._pending_renders is None:
             self._pending_renders = set()
@@ -85,6 +88,16 @@ class _InitialRenderMixin:
         pending = self._pending_renders
         pending.add(task)
         task.add_done_callback(pending.discard)
+
+    async def _async_render_when_ready(self) -> None:
+        """Render once the one shared matplotlib install attempt has finished.
+
+        matplotlib is an optional requirement (chart_requirements): where it
+        cannot be installed, the render still runs and the chart module
+        returns its placeholder image.
+        """
+        await async_chart_requirements(self.hass)
+        await self._async_refresh_image()
 
     def _cancel_pending_renders(self) -> None:
         """Cancel in-flight renders. Cancelling a finished task is a no-op."""
