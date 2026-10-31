@@ -41,6 +41,8 @@ _P5_FILE_RE = re.compile(r"(PUBLIC_P5MIN_(\d{12})_(\d{14})\.zip)", re.IGNORECASE
 # A DUID is up to ten characters in the MMS data model: upper-case letters,
 # digits, and in registered DUIDs also _, -, # and / (BARRON-1, W/HOE#1).
 DUID_RE = re.compile(r"^[A-Z0-9_#/-]{1,10}$")
+# A connection point (TNI) is up to ten letters and digits (QWIV1, NBAY1).
+TNI_RE = re.compile(r"^[A-Z0-9_]{2,10}$")
 
 STATUS_PUBLISHED = "published"
 # File read, LOCAL_PRICE table present, no row for the DUID: AEMO publishes a
@@ -85,7 +87,7 @@ class P5LocalPriceRun:
     retrieved_at: Optional[datetime] = None
 
 
-def parse_duids(text: Any) -> tuple[list[str], list[str]]:
+def parse_duids(text: Any, pattern: re.Pattern[str] = DUID_RE) -> tuple[list[str], list[str]]:
     """(valid, invalid) DUIDs from a comma, space or newline separated string or a list."""
     items = text if isinstance(text, (list, tuple)) else re.split(r"[\s,;]+", str(text or ""))
     valid: list[str] = []
@@ -94,10 +96,15 @@ def parse_duids(text: Any) -> tuple[list[str], list[str]]:
         duid = str(item).strip().upper()
         if not duid:
             continue
-        target = valid if DUID_RE.match(duid) else invalid
+        target = valid if pattern.match(duid) else invalid
         if duid not in target:
             target.append(duid)
     return valid, invalid
+
+
+def parse_tnis(text: Any) -> tuple[list[str], list[str]]:
+    """(valid, invalid) transmission node identifiers, as parse_duids."""
+    return parse_duids(text, TNI_RE)
 
 
 def _nem(value: str) -> Optional[datetime]:

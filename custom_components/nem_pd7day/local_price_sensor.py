@@ -61,6 +61,17 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.astimezone(NEM_TZ).isoformat() if value is not None else None
 
 
+def device_info(entry: Any, region: str) -> DeviceInfo:
+    """The region's device, which the region's price sensors share."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"{entry.entry_id}_{region}")},
+        name=f"NEM PD7DAY {region}",
+        manufacturer=DEVICE_MANUFACTURER,
+        model=DEVICE_MODEL,
+        configuration_url=DEVICE_CONFIGURATION_URL,
+    )
+
+
 class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
     """State: the DUID's dispatch LOCAL_PRICE_ADJUSTMENT in $/kWh; unknown without a row.
 
@@ -94,13 +105,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         self._attr_entity_registry_enabled_default = not preset
         self._attr_name = f"{duid} Local Price Adjustment"
         self._attr_unique_id = f"{entry.entry_id}_{region}_{duid}_{SUFFIX}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_{region}")},
-            name=f"NEM PD7DAY {region}",
-            manufacturer=DEVICE_MANUFACTURER,
-            model=DEVICE_MODEL,
-            configuration_url=DEVICE_CONFIGURATION_URL,
-        )
+        self._attr_device_info = device_info(entry, region)
 
     async def async_added_to_hass(self) -> None:
         """Listen to P5MIN too; it is fetched only while one of these listens, so ask for a run now."""
@@ -146,6 +151,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         if info is not None:
             base.update({
                 "station": info.station, "fuel": info.fuel, "duid_region": info.region,
+                "tni": info.tni, "mlf": info.mlf,
                 "latitude": info.latitude, "longitude": info.longitude,
             })
         return base

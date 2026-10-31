@@ -168,9 +168,16 @@ A DUID is a generating or load unit, not your connection point. Its local price 
 - **Open Electricity's public facility files:** fuel and coordinates. Its live API needs a key, so those files are used instead; a DUID they do not list has no coordinates rather than guessed ones.
 - **AEMO DispatchIS LOCAL_PRICE rows:** the ranking.
 
-A catalogued DUID's sensor publishes `station`, `fuel`, `duid_region`, `latitude` and `longitude`, so it shows on a map card. The local price uses the ROP of the DUID's own region, and of the entry's region for a DUID the catalogue lacks.
+A catalogued DUID's sensor publishes `station`, `fuel`, `duid_region`, `tni`, `mlf`, `latitude` and `longitude`, so it shows on a map card. The local price uses the ROP of the DUID's own region, and of the entry's region for a DUID the catalogue lacks.
 
-### Monitoring multiple regions
+### Transmission node prices (optional)
+
+| Field | Default | Description |
+|---|---|---|
+| Transmission node prices | empty | A dropdown of the region's connection points (TNIs), labelled with their stations and DUIDs (`QWIV1 · Wivenhoe (W/HOE#1)`). A TNI not in the list can be typed: two to ten letters or digits. Each chosen node gets one sensor, enabled |
+
+A TNI is a transmission connection point. Its **static node price** is the region's original price (ROP) times the node's marginal loss factor (MLF): what a generator connected there is paid per MWh sent out, before any local price adjustment. Nodes upstream of losses have an MLF below 1, so their node price is below the regional price. The catalogue takes each DUID's TNI and MLF from AEMO's DUDETAILSUMMARY, and groups the DUIDs by TNI. There are no presets. A diagnostic, not a retail or settlement price, and not the price at your own meter: a household is settled at the regional price times its distribution and transmission losses (see the loss factor above).
+
 
 Each integration instance monitors one NEM region with full independent calibration. To monitor multiple regions, add a separate integration instance for each via **Settings → Integrations → Add Integration → NEM PD7DAY**. Each instance maintains its own calibration store, observation log, and forecast sensors.
 
@@ -239,7 +246,7 @@ The network constraints binding in each dispatch interval come from AEMO's Dispa
 ### DUID local prices (every 5 minutes, after the dispatch poll, only while a DUID sensor is enabled)
 
 - **Dispatch**: the `DISPATCH,LOCAL_PRICE` and `DISPATCH,PRICE` rows of the same DispatchIS file the binding constraints read. No extra request.
-- **Forecast**: the newest P5MIN run, `https://www.nemweb.com.au/Reports/Current/P5_Reports/`, its `LOCAL_PRICE` and `REGIONSOLUTION` tables: twelve five-minute intervals. One shared coordinator serves every entry and DUID. After each dispatch poll it reads the listing (about 16 KB compressed) once the run it holds has reached its first interval's end, and the zip (about 210 KB, about 60 MB a day) only when a newer run is listed. The CSV (about 3 MB) is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
+- **Forecast**: the newest P5MIN run, `https://www.nemweb.com.au/Reports/Current/P5_Reports/`, its `LOCAL_PRICE` and `REGIONSOLUTION` tables: twelve five-minute intervals. One shared coordinator serves every entry, DUID and transmission node; the node price sensors use the same data. After each dispatch poll it reads the listing (about 16 KB compressed) once the run it holds has reached its first interval's end, and the zip (about 210 KB, about 60 MB a day) only when a newer run is listed. The CSV (about 3 MB) is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
 
 ### Pre-dispatch interconnectors and constraints (every 30 minutes, after the dispatch poll)
 
@@ -497,6 +504,20 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `forecast_end`, `horizon_end` | Where `forecast` stops, and the end of the run's last interval |
 | `intervals_published`, `intervals_ahead` | Intervals still to end with a row, and intervals still to end |
 | `interval_minutes`, `interpolation_mode` | `5` and `previous`: each value holds from its `time` to the next |
+
+### Node Price
+
+`sensor.nem_pd7day_{region}_{tni}_node_price`, one per chosen transmission node, in the device's Diagnostic section: ROP × MLF in $/kWh for the latest dispatch interval, from the same DispatchIS file, with the P5MIN forecast as attributes. Not clipped: the floor and cap apply to the regional price. Unknown when the file is stale or not yet read, when it has no ROP for the node's region, or when the catalogue does not list the TNI (no MLF).
+
+| Attribute | Description |
+|---|---|
+| `row_status` | `published`; `unknown_node` (the TNI is not in the catalogue); `no_rop` (no price for the node's region in the file); `stale` (the newest interval ended more than 15 minutes ago); `no_data` (no file read yet) |
+| `rop_mwh`, `node_price_mwh` | The ROP of the node's region and the node price, in $/MWh |
+| `tni`, `mlf`, `node_region`, `duids`, `stations`, `latitude`, `longitude` | The node and its MLF; the rest from the catalogue. Coordinates are the mean of its located units |
+| `interval_start`, `interval_end`, `source`, `source_file`, `retrieved_at`, `age_seconds` | As for the DUID sensor; `source` is `DISPATCH_PRICE_ROP` |
+| `forecast` | `{time, interval_end, value}` per P5MIN interval still to end, the ROP of the node's region × MLF in $/kWh (not recorded) |
+| `forecast_status` | `published`, `stale`, `expired`, `no_rop`, `unknown_node` or `no_data` |
+| `forecast_source`, `forecast_run_at`, `forecast_source_file` | `P5MIN_REGIONSOLUTION_ROP`, the run and the P5MIN file |
 
 ### PD7DAY Data / STPASA Data (diagnostic)
 

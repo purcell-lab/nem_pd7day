@@ -428,11 +428,46 @@ def test_the_duid_field_is_a_dropdown_of_the_region_with_typed_values_kept(flow_
 
     (marker,) = [m for m in result["data_schema"].spec if m.key == const_mod.CONF_LOCAL_PRICE_DUIDS]
     assert marker.description == {"suggested_value": ["GSTONE1", "NEWDUID1"]}
-    (select,) = [c["select"] for c in configs if "select" in c and c["select"].get("custom_value")]
+    select, _nodes = [c["select"] for c in configs if "select" in c and c["select"].get("custom_value")]
     values = [o["value"] for o in select["options"]]
     assert select["multiple"] is True
     assert values[-1] == "NEWDUID1" and "GSTONE1" in values and "CATHROCK" not in values
     assert {catalogue.info(v).region for v in values[:-1]} == {"QLD1"}
+
+
+def test_the_node_field_lists_the_regions_tnis_with_typed_values_kept(flow_env, monkeypatch):
+    """Transmission nodes (#286): the region's TNIs, labelled by station; a typed TNI stays selectable."""
+    config_flow_mod, const_mod = flow_env
+    configs: list = []
+    monkeypatch.setattr(config_flow_mod.selector, "selector", lambda cfg: configs.append(cfg) or (lambda v: v))
+    entry = make_entry(const_mod, "QLD1", options={
+        const_mod.CONF_REGION: "QLD1", const_mod.CONF_NODES: "QWIV1, QNEW9",
+    })
+
+    result = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init())
+
+    (marker,) = [m for m in result["data_schema"].spec if m.key == const_mod.CONF_NODES]
+    assert marker.description == {"suggested_value": ["QWIV1", "QNEW9"]}
+    _duids, nodes = [c["select"] for c in configs if "select" in c and c["select"].get("custom_value")]
+    labels = {o["value"]: o["label"] for o in nodes["options"]}
+    assert labels["QWIV1"].startswith("QWIV1 · Wivenhoe") and labels["QNEW9"] == "QNEW9"
+    assert "NBAY1" not in labels and nodes["multiple"] is True
+
+
+def test_nodes_are_saved_comma_separated_and_a_bad_one_is_refused(flow_env):
+    config_flow_mod, const_mod = flow_env
+    entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1"})
+    base = {const_mod.CONF_REGION: "QLD1", const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7}
+
+    saved = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(
+        {**base, const_mod.CONF_NODES: ["qwiv1", "QGLD1", "QWIV1"]}))
+    refused = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(
+        {**base, const_mod.CONF_NODES: ["QWIV1", "BAD-1"]}))
+    omitted = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(dict(base)))
+
+    assert saved["data"][const_mod.CONF_NODES] == "QWIV1, QGLD1"
+    assert refused["errors"] == {const_mod.CONF_NODES: "invalid_tni"}
+    assert omitted["data"][const_mod.CONF_NODES] == ""
 
 
 def test_a_dropdown_choice_is_saved_as_the_comma_separated_string(flow_env):
