@@ -4,8 +4,9 @@ The 30-minute pre-dispatch rows are read in predispatch_local_price (#287).
 
 Where a constraint separates a unit from its region, NEMDE publishes a local
 price adjustment for its DUID: the unit's local price is the region's original
-price (ROP) plus the adjustment, between the market floor and the cap (AEMO,
-Guide to mis-pricing information). Two public feeds carry it:
+price (ROP) plus the adjustment (AEMO, Guide to mis-pricing information),
+published raw: the market floor and cap apply to the regional price, so they
+are not applied here. Two public feeds carry it:
 
 - D,DISPATCH,LOCAL_PRICE in each DispatchIS file, the dispatch interval just
   run: SETTLEMENTDATE, DUID, LOCAL_PRICE_ADJUSTMENT, LOCALLY_CONSTRAINED.
@@ -232,10 +233,10 @@ def market_price_limits(interval_end: datetime) -> tuple[float, float]:
     return MARKET_PRICE_FLOOR_MWH, MARKET_PRICE_CAP_MWH_BY_FY[nearest]
 
 
-def local_price_mwh(rop: float, adjustment: float, interval_end: datetime) -> float:
-    """clip(ROP + adjustment, floor, cap): the adjustment itself is never clipped."""
-    floor, cap = market_price_limits(interval_end)
-    return min(max(rop + adjustment, floor), cap)
+def local_price_mwh(rop: float, adjustment: float) -> float:
+    """ROP + adjustment, raw: never clipped to the market floor or cap, which
+    apply to the regional price, so a deep constraint shows its full depth."""
+    return round(rop + adjustment, 4)
 
 
 def dispatch_status(prices: Optional[DispatchLocalPrices], duid: str, now: datetime, max_age: timedelta) -> str:

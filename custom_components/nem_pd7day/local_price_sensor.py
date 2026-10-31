@@ -7,8 +7,8 @@
   publishes only non-zero rows, so no row in a fresh file with the
   LOCAL_PRICE table is 0 (``row_status: zero_by_omission``); a stale file, or
   one without the table, leaves it unknown.
-- **Local price**: clip(ROP + adjustment, floor, cap) for the DUID's region,
-  as attributes; a diagnostic of the dispatch run, not a regional, retail or
+- **Local price**: ROP + adjustment for the DUID's region, raw (never clipped
+  to the market floor or cap), as attributes; a diagnostic of the dispatch run, not a regional, retail or
   settlement price.
 - **Forecast**: the newest P5MIN run's adjustments as ``forecast``, for the
   intervals still to end, an interval without a row being 0 (listed in
@@ -151,7 +151,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         rop = prices.rop.get(self._duid_region) if prices is not None else None
         if adjustment is None or rop is None:
             return None
-        return local_price_mwh(rop, adjustment, prices.interval_end)  # type: ignore[union-attr]
+        return local_price_mwh(rop, adjustment)
 
     @property
     def native_value(self) -> Optional[float]:
@@ -195,6 +195,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
             "rop_mwh": prices.rop.get(self._duid_region),
             "local_price": round(value / 1000.0, 6) if value is not None else None,
             "local_price_mwh": value,
+            # The interval's market limits, for reference: not applied.
             "price_floor_mwh": floor,
             "price_cap_mwh": cap,
         }

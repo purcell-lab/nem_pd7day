@@ -1,24 +1,23 @@
-"""One static node price sensor per chosen transmission node (#286).
+"""One node price sensor per chosen transmission node (#286, #287).
 
 ``<stations> (<TNI>) Node Price``, for each connection point (TNI) chosen in the options:
 
-- **State**: ROP x MLF in $/kWh for the latest dispatch interval: the node's
-  region original price, from the DispatchIS file the binding constraints
-  already read, scaled by the node's marginal loss factor from the bundled
-  catalogue. Not clipped: the floor and cap apply to the region's price.
-- **Forecast**: the newest P5MIN run's ROP x MLF for the intervals still to
-  end, with its own ``forecast_status``.
+- **State**: the node price in $/kWh for the latest dispatch interval,
+  ROP x MLF + adjustment: the node's region original price, from the
+  DispatchIS file the binding constraints already read, scaled by the node's
+  marginal loss factor from the bundled catalogue, plus the node's local
+  price adjustment, the published DISPATCH_LOCAL_PRICE of its DUIDs (0 when a
+  fresh file has no row for them). Raw, never clipped: the floor and cap apply
+  to the region's price. ``static_price_mwh`` (ROP x MLF) and
+  ``adjustment_mwh`` are its two parts.
+- **Forecast**: the newest P5MIN run's ROP x MLF + adjustment for the
+  intervals still to end, with its own ``forecast_status``.
+- **Pre-dispatch forecast**: RRP x MLF + adjustment from the 30-minute
+  pre-dispatch, to the end of the next trading day; pre-dispatch publishes
+  RRP, not ROP.
 
-It is the static node price, the price a generator at the node is settled at
-before any local price adjustment; a diagnostic, not a retail or settlement
-price. A TNI not in the catalogue has no MLF, so it stays unknown
-(``row_status: unknown_node``).
-
-Since #287 it also publishes the node's local price adjustment: the published
-DISPATCH_LOCAL_PRICE of the node's DUIDs (0 when a fresh file has no row for
-them), and the local node price, ROP x MLF + adjustment. ``predispatch_forecast``
-carries RRP x MLF + adjustment from the 30-minute pre-dispatch, to the end of
-the next trading day; pre-dispatch publishes RRP, not ROP.
+A diagnostic, not a retail or settlement price. A TNI not in the catalogue
+has no MLF or DUIDs, so it stays unknown (``row_status: unknown_node``).
 """
 from __future__ import annotations
 
@@ -37,6 +36,7 @@ from .local_price import (
     STATUS_NO_DATA,
     STATUS_PUBLISHED,
     STATUS_STALE,
+    STATUS_TABLE_MISSING,
     STATUS_ZERO,
     DispatchLocalPrices,
     P5LocalPriceRun,
@@ -78,6 +78,7 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         self._region = region
         self._tni = tni
         self._node = node
+        self._duids: tuple[str, ...] = node.duids if node is not None else ()
         self._attr_name = entity_name(tni, node.stations if node is not None else (), "Node Price")
         self._attr_unique_id = f"{entry.entry_id}_{region}_{tni}_{SUFFIX}"
         self.entity_id = entity_id_for(region, tni, SUFFIX)
@@ -107,14 +108,16 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
             return STATUS_STALE
         return STATUS_PUBLISHED if self._node_region in prices.rop else STATUS_NO_ROP
 
-    def _price_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
+    def _static_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
+        """ROP x MLF: the static node price, before any local price adjustment."""
         if self._status(prices, now) != STATUS_PUBLISHED:
             return None
         return round(prices.rop[self._node_region] * self._mlf, 4)  # type: ignore[union-attr,operator]
 
-    @property
-    def _duids(self) -> tuple[str, ...]:
-        return self._node.duids if self._node is not None else ()
+    def _node_price_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
+        """ROP x MLF + adjustment, raw: the state, in $/MWh; unknown when either part is."""
+        static, (_status, adjustment) = self._static_mwh(prices, now), self._adjustment(prices, now)
+        return round(static + adjustment, 4) if static is not None and adjustment is not None else None
 
     def _adjustment(self, prices: Optional[DispatchLocalPrices], now: datetime) -> tuple[str, Optional[float]]:
         """(status, $/MWh): the node's DUIDs' published adjustment, 0 for no row in a fresh file."""
@@ -130,7 +133,7 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> Optional[float]:
-        value = self._price_mwh(self._prices(), now_nem())
+        value = self._node_price_mwh(self._prices(), now_nem())
         return round(value / 1000.0, 6) if value is not None else None
 
     def _identity(self) -> dict[str, Any]:
@@ -146,13 +149,11 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
     def _dispatch_attrs(self, prices: Optional[DispatchLocalPrices], now: datetime) -> dict[str, Any]:
         attrs: dict[str, Any] = {"source": "DISPATCH_PRICE_ROP", "row_status": self._status(prices, now)}
         adjustment_status, adjustment = self._adjustment(prices, now)
-        static = self._price_mwh(prices, now)
-        local = round(static + adjustment, 4) if static is not None and adjustment is not None else None
         attrs.update({
+            "node_price_mwh": self._node_price_mwh(prices, now),
+            "static_price_mwh": self._static_mwh(prices, now),
             "adjustment_status": adjustment_status,
             "adjustment_mwh": adjustment,
-            "local_price": round(local / 1000.0, 6) if local is not None else None,
-            "local_price_mwh": local,
         })
         if prices is None:
             return attrs
@@ -164,14 +165,13 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
             "retrieved_at": _iso(prices.retrieved_at),
             "age_seconds": round((now - prices.interval_end + INTERVAL).total_seconds()),
             "rop_mwh": prices.rop.get(self._node_region),
-            "node_price_mwh": self._price_mwh(prices, now),
         }
 
     def _forecast_attrs(self, now: datetime) -> dict[str, Any]:
         run = self._p5min.latest if self._p5min is not None else None
-        status, points = node_forecast(run, self._node_region, self._mlf, now)
+        status, points = node_forecast(run, self._node_region, self._mlf, self._duids, now)
         return {
-            "forecast_source": "P5MIN_REGIONSOLUTION_ROP",
+            "forecast_source": "P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE",
             "forecast_status": status,
             "forecast_run_at": _iso(run.run_at) if run else None,
             "forecast_source_file": run.source if run else None,
@@ -204,27 +204,42 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         }
 
 
+def _p5_adjustment(run: P5LocalPriceRun, duids: tuple[str, ...], end: datetime) -> Optional[float]:
+    """The DUIDs' common adjustment for one P5MIN interval, 0 without a row; None where they conflict."""
+    if any((duid, end) in run.conflicts for duid in duids):
+        return None
+    values = {run.rows[d][end].adjustment_mwh for d in duids if end in run.rows.get(d, {})}
+    if len(values) > 1:
+        return None
+    return values.pop() if values else 0.0
+
+
 def node_forecast(
-    run: Optional[P5LocalPriceRun], region: str, mlf: Optional[float], now: datetime,
+    run: Optional[P5LocalPriceRun], region: str, mlf: Optional[float], duids: tuple[str, ...], now: datetime,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """(status, points): the run's ROP x MLF for the intervals still to end, in $/kWh."""
-    if mlf is None:
+    """(status, points): the run's ROP x MLF + the DUIDs' adjustment for the intervals still to end,
+    in $/kWh, raw, up to the first interval where the DUIDs conflict."""
+    if mlf is None or not duids:
         return STATUS_UNKNOWN_NODE, []
     if run is None:
         return STATUS_NO_DATA, []
     if now - run.run_at > MAX_AGE:
         return STATUS_STALE, []
+    if not run.table_present:
+        return STATUS_TABLE_MISSING, []
     series = run.rop.get(region)
     if not series:
         return STATUS_NO_ROP, []
     ahead = sorted(end for end in series if end > now)
     if not ahead:
         return STATUS_EXPIRED, []
-    points = [
-        {"time": (end - INTERVAL).isoformat(), "interval_end": end.isoformat(),
-         "value": round(series[end] * mlf / 1000.0, 6)}
-        for end in ahead
-    ]
+    points: list[dict[str, Any]] = []
+    for end in ahead:
+        adjustment = _p5_adjustment(run, duids, end)
+        if adjustment is None:
+            return STATUS_CONFLICT, points
+        points.append({"time": (end - INTERVAL).isoformat(), "interval_end": end.isoformat(),
+                       "value": round((series[end] * mlf + adjustment) / 1000.0, 6)})
     return STATUS_PUBLISHED, points
 
 

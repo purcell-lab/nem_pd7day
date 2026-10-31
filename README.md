@@ -483,13 +483,13 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `source`, `source_file`, `retrieved_at`, `age_seconds` | `DISPATCH_LOCAL_PRICE`, the DispatchIS file, when it was read, and seconds since the interval started. AEMO publishes the file while its interval runs, so it is about 0 to 300 while current |
 | `region`, `duid`, `station`, `fuel`, `duid_region`, `latitude`, `longitude` | The entry's region and the DUID; the rest from the catalogue, when it lists the DUID |
 
-**Local price**: clip(ROP + adjustment, floor, cap) for the same interval. ROP is the original price of the DUID's region (`rop_region`: from the catalogue, the entry's region for a DUID it lacks) from the same file, not RRP, so the two are always of one interval and run. Only the sum is clipped, never the adjustment: the floor is -$1,000/MWh and the cap is that of the interval's financial year ($23,200/MWh in 2026-27). With no row it is the ROP itself; unknown when the state is unknown or the region has no ROP. A diagnostic of the dispatch run: not the regional price, a retail price or a settlement price.
+**Local price**: ROP + adjustment for the same interval, raw. ROP is the original price of the DUID's region (`rop_region`: from the catalogue, the entry's region for a DUID it lacks) from the same file, not RRP, so the two are always of one interval and run. Nothing is clipped: the market floor (-$1,000/MWh) and cap (that of the interval's financial year, $23,200/MWh in 2026-27) apply to the regional price, so a deep constraint shows its full depth (-1,040 $/MWh at GSTONE1 at 16:05 on 31 Oct 2026, ROP 70.08 less 1,110.09). With no row it is the ROP itself; unknown when the state is unknown or the region has no ROP. A diagnostic of the dispatch run: not the regional price, a retail price or a settlement price.
 
 | Attribute | Description |
 |---|---|
 | `local_price`, `local_price_mwh` | The local price in $/kWh and $/MWh |
 | `rop_region`, `rop_mwh` | The region whose ROP is used, and that ROP |
-| `price_floor_mwh`, `price_cap_mwh` | The limits applied |
+| `price_floor_mwh`, `price_cap_mwh` | The interval's market floor and cap, for reference: not applied |
 
 **Forecast**: the newest P5MIN run. `forecast` lists `{time, value}`, `time` being the interval start in AEST `+10:00`, for each interval of the run still to end. An interval without a row is 0 and listed in `inferred_zero_times`. The list stops at an interval with conflicting rows, and rows after it are kept apart in `later_observations`; nothing is carried past the run's last interval, and a stale run or one without the LOCAL_PRICE table gives no points.
 
@@ -516,19 +516,19 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 ### Node Price
 
-`sensor.nem_pd7day_{region}_{tni}_node_price`, one per chosen transmission node, in the device's Diagnostic section, named with its stations (`Wivenhoe (QWIV1) Node Price`); the entity id is the TNI's alone. The state is ROP × MLF in $/kWh for the latest dispatch interval, from the same DispatchIS file, with the P5MIN forecast, the node's local price adjustment and the pre-dispatch forecast to the end of the next trading day as attributes. Not clipped: the floor and cap apply to the regional price. Unknown when the file is stale or not yet read, when it has no ROP for the node's region, or when the catalogue does not list the TNI (no MLF).
+`sensor.nem_pd7day_{region}_{tni}_node_price`, one per chosen transmission node, in the device's Diagnostic section, named with its stations (`Wivenhoe (QWIV1) Node Price`); the entity id is the TNI's alone. The state is the node price in $/kWh for the latest dispatch interval: ROP × MLF + the node's local price adjustment, from the same DispatchIS file. So a constrained node shows its constraint in the state, as its DUID's sensor does: at 16:05 on 31 Oct 2026 QGLD1 read 70.0806 × 0.9299 − 1110.09 = −1044.92 $/MWh. Raw, never clipped: the floor and cap apply to the regional price. Unknown when the file is stale or not yet read, when it has no ROP for the node's region, when the catalogue does not list the TNI (no MLF or DUIDs), or when the node's DUIDs disagree. Until v3.36.2 the state was the static price alone.
 
 | Attribute | Description |
 |---|---|
-| `row_status` | `published`; `unknown_node` (the TNI is not in the catalogue); `no_rop` (no price for the node's region in the file); `stale` (the newest interval ended more than 15 minutes ago); `no_data` (no file read yet) |
-| `rop_mwh`, `node_price_mwh` | The ROP of the node's region and the node price, in $/MWh |
+| `node_price_mwh` | The state in $/MWh |
+| `static_price_mwh`, `rop_mwh` | ROP × MLF, the static node price before any adjustment, and the ROP of the node's region |
+| `adjustment_mwh`, `adjustment_status` | The node's local price adjustment: its DUIDs' published `LOCAL_PRICE_ADJUSTMENT` (`published`), 0 when a fresh file has no row for them (`zero_by_omission`), or unknown (`stale`, `no_data`, `table_missing`, `conflicting_rows` when its DUIDs differ, `unknown_node`) |
+| `row_status` | The static part: `published`; `unknown_node` (the TNI is not in the catalogue); `no_rop` (no price for the node's region in the file); `stale` (the newest interval ended more than 15 minutes ago); `no_data` (no file read yet) |
 | `tni`, `mlf`, `node_region`, `duids`, `stations`, `latitude`, `longitude` | The node and its MLF; the rest from the catalogue. Coordinates are the mean of its located units |
 | `interval_start`, `interval_end`, `source`, `source_file`, `retrieved_at`, `age_seconds` | As for the DUID sensor; `source` is `DISPATCH_PRICE_ROP` |
-| `forecast` | `{time, interval_end, value}` per P5MIN interval still to end, the ROP of the node's region × MLF in $/kWh (not recorded) |
-| `forecast_status` | `published`, `stale`, `expired`, `no_rop`, `unknown_node` or `no_data` |
-| `forecast_source`, `forecast_run_at`, `forecast_source_file` | `P5MIN_REGIONSOLUTION_ROP`, the run and the P5MIN file |
-| `adjustment_mwh`, `adjustment_status` | The node's local price adjustment in the dispatch interval: its DUIDs' published `LOCAL_PRICE_ADJUSTMENT` (`published`), 0 when a fresh file has no row for them (`zero_by_omission`), or unknown (`stale`, `no_data`, `table_missing`, `conflicting_rows` when its DUIDs differ, `unknown_node`) |
-| `local_price`, `local_price_mwh` | The local node price, ROP × MLF + adjustment, in $/kWh and $/MWh; the state stays the static node price |
+| `forecast` | `{time, interval_end, value}` per P5MIN interval still to end: the run's ROP of the node's region × MLF + its DUIDs' P5MIN adjustment (0 without a row), in $/kWh, raw (not recorded). It stops at an interval where the DUIDs conflict |
+| `forecast_status` | `published`, `stale`, `expired`, `table_missing`, `conflicting_rows`, `no_rop`, `unknown_node` or `no_data` |
+| `forecast_source`, `forecast_run_at`, `forecast_source_file` | `P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE`, the run and the P5MIN file |
 | `predispatch_forecast` | `{time, value}` per 30-minute pre-dispatch period still to end, RRP × MLF + the DUIDs' adjustment, in $/kWh, to the end of the next trading day (not recorded). The other `predispatch_*` attributes are as for the DUID sensor |
 
 ### PD7DAY Data / STPASA Data (diagnostic)

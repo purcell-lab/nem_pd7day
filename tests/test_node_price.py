@@ -102,11 +102,26 @@ def test_the_forecast_is_the_p5min_rop_times_mlf_for_intervals_to_end(monkeypatc
 
 def test_a_stale_or_expired_forecast_gives_no_points():
     run = _p5()
-    assert _node.node_forecast(run, "QLD1", 0.99, _at(21, 45)) == ("stale", [])
-    assert _node.node_forecast(run, "QLD1", 0.99, _at(22, 30))[0] == "stale"
-    assert _node.node_forecast(None, "QLD1", 0.99, _at(21, 26)) == ("no_data", [])
-    assert _node.node_forecast(run, "XXX1", 0.99, _at(21, 26)) == ("no_rop", [])
-    assert _node.node_forecast(run, "QLD1", None, _at(21, 26)) == ("unknown_node", [])
+    duids = ("W/HOE#1",)
+    assert _node.node_forecast(run, "QLD1", 0.99, duids, _at(21, 45)) == ("stale", [])
+    assert _node.node_forecast(run, "QLD1", 0.99, duids, _at(22, 30))[0] == "stale"
+    assert _node.node_forecast(None, "QLD1", 0.99, duids, _at(21, 26)) == ("no_data", [])
+    assert _node.node_forecast(run, "XXX1", 0.99, duids, _at(21, 26)) == ("no_rop", [])
+    assert _node.node_forecast(run, "QLD1", None, duids, _at(21, 26)) == ("unknown_node", [])
+    assert _node.node_forecast(run, "QLD1", 0.99, (), _at(21, 26)) == ("unknown_node", [])
+    assert _node.node_forecast(replace(run, table_present=False), "QLD1", 0.99, duids, _at(21, 26)) == ("table_missing", [])
+
+
+def test_the_forecast_adds_each_intervals_adjustment():
+    """CATHROCK in the P5MIN fixture: SA1 ROP x MLF + its adjustment per interval, raw."""
+    run = _p5()
+    status, points = _node.node_forecast(run, "SA1", 0.9417, ("CATHROCK",), _at(21, 27))
+    first_end = min(e for e in run.rop["SA1"] if e > _at(21, 27))
+    row = run.rows["CATHROCK"][first_end]
+    assert status == "published"
+    assert points[0]["value"] == round((run.rop["SA1"][first_end] * 0.9417 + row.adjustment_mwh) / 1000, 6)
+    clashing = replace(run, conflicts=frozenset({("CATHROCK", first_end)}))
+    assert _node.node_forecast(clashing, "SA1", 0.9417, ("CATHROCK",), _at(21, 27)) == ("conflicting_rows", [])
 
 
 def test_entities_are_built_for_the_chosen_nodes_only():

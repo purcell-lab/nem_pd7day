@@ -155,15 +155,16 @@ def test_the_nodes_dispatch_adjustment_is_its_duids_published_one(monkeypatch):
     )
     attrs = constrained.extra_state_attributes
     assert (attrs["adjustment_status"], attrs["adjustment_mwh"]) == ("published", 88.27)
-    assert attrs["local_price_mwh"] == pytest.approx(97.62 * 0.9 + 88.27)
-    assert attrs["local_price"] == pytest.approx((97.62 * 0.9 + 88.27) / 1000, abs=1e-6)
-    assert constrained.native_value == pytest.approx(97.62 * 0.9 / 1000, abs=1e-6)  # the state stays static
+    assert attrs["node_price_mwh"] == pytest.approx(97.62 * 0.9 + 88.27)
+    assert attrs["static_price_mwh"] == pytest.approx(97.62 * 0.9, abs=1e-4)
+    # The state is the node price, constraint included: ROP x MLF + adjustment.
+    assert constrained.native_value == pytest.approx((97.62 * 0.9 + 88.27) / 1000, abs=1e-6)
 
     free = _node.NemPd7dayNodePriceSensor(
         _constraints(_dispatch()), None, ENTRY, "NSW1", "NTEST1", _info(("NOROWS1",), mlf=0.9),
     ).extra_state_attributes
     assert (free["adjustment_status"], free["adjustment_mwh"]) == ("zero_by_omission", 0.0)
-    assert free["local_price_mwh"] == pytest.approx(97.62 * 0.9, abs=1e-4)
+    assert free["node_price_mwh"] == pytest.approx(97.62 * 0.9, abs=1e-4) == free["static_price_mwh"]
 
 
 def test_a_stale_dispatch_or_disagreeing_duids_leave_the_adjustment_unknown(monkeypatch):
@@ -173,9 +174,26 @@ def test_a_stale_dispatch_or_disagreeing_duids_leave_the_adjustment_unknown(monk
     split = _node.NemPd7dayNodePriceSensor(
         _constraints(prices), None, ENTRY, "NSW1", "NTEST1", _info(("GUTHEGA", two)),
     ).extra_state_attributes
-    assert (split["adjustment_status"], split["adjustment_mwh"], split["local_price"]) == ("conflicting_rows", None, None)
+    assert (split["adjustment_status"], split["adjustment_mwh"], split["node_price_mwh"]) == ("conflicting_rows", None, None)
     monkeypatch.setattr(_node, "now_nem", lambda: datetime(2026, 10, 30, 21, 50, tzinfo=NEM_TZ))
     stale = _node.NemPd7dayNodePriceSensor(
         _constraints(prices), None, ENTRY, "NSW1", "NTEST1", _info(("GUTHEGA",)),
     ).extra_state_attributes
     assert (stale["adjustment_status"], stale["adjustment_mwh"]) == ("stale", None)
+
+
+def test_a_node_below_the_floor_is_reported_raw(monkeypatch):
+    """GSTONE1 at 16:05 on 31 Oct 2026: 70.0806 x 0.9299 - 1110.09, under the
+    -1000 floor, published as it is."""
+    end = datetime(2026, 10, 31, 16, 5, tzinfo=NEM_TZ)
+    prices = _lp.DispatchLocalPrices(
+        end, "d.zip", True, {"GSTONE1": _lp.LocalPriceRow(-1110.09, 1)}, {"QLD1": 70.0806}, end,
+    )
+    monkeypatch.setattr(_node, "now_nem", lambda: end)
+    sensor = _node.NemPd7dayNodePriceSensor(
+        _constraints(prices), None, ENTRY, "QLD1", "QGLD1", _info(("GSTONE1",), region="QLD1", mlf=0.9299),
+    )
+    assert sensor.native_value == pytest.approx(-1.044922, abs=1e-6)
+    attrs = sensor.extra_state_attributes
+    assert attrs["node_price_mwh"] == pytest.approx(-1044.9221, abs=1e-4)
+    assert attrs["static_price_mwh"] == pytest.approx(65.1679, abs=1e-4) and attrs["adjustment_mwh"] == -1110.09
