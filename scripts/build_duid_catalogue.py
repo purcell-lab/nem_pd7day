@@ -132,11 +132,36 @@ def constrained_counts(days: int) -> tuple[Counter, Counter, list[str]]:
     return counts, magnitude, names
 
 
-def _station_name(aemo: str, oe: str | None) -> str:
-    """Open Electricity's name when it has one; AEMO's registered names are mostly capitals."""
+# Kept in capitals when AEMO's capitalised names are title-cased.
+_ACRONYMS = {
+    "AGL", "BES", "BESS", "CCGT", "CS", "CSP", "GT", "HPR", "II", "III", "IV", "LFG", "LNG", "MW",
+    "NSW", "OCGT", "PS", "PV", "QLD", "SA", "SF", "TAS", "VIC", "WF", "WTE",
+}
+
+
+def _title(name: str) -> str:
+    """Title case for AEMO's capitalised names, keeping acronyms and codes in capitals."""
+    words = []
+    for word in name.split():
+        core = re.sub(r"[^A-Za-z0-9]", "", word)
+        code = core.upper() in _ACRONYMS or any(c.isdigit() for c in core) or (
+            len(core) >= 3 and not re.search(r"[AEIOUY]", core.upper())
+        )
+        words.append(word.upper() if code else word.capitalize())
+    return " ".join(words)
+
+
+def _station_name(aemo: str, oe: str | None, duid: str) -> str:
+    """Open Electricity's name when it has one, else AEMO's registered one.
+
+    An AEMO name that is only an internal label, the DUID itself or one word
+    with digits (ASGENE01), says no more than the DUID, so the DUID stands.
+    """
     if oe:
         return oe.strip()
-    return aemo.title() if aemo.isupper() else aemo
+    if _norm(aemo) == _norm(duid) or (" " not in aemo.strip() and any(c.isdigit() for c in aemo)):
+        return duid
+    return _title(aemo) if aemo.isupper() else aemo
 
 
 def _coords(value: float | None) -> float | None:
@@ -153,7 +178,7 @@ def build(month: str, days: int) -> dict:
         oe = units.get(duid, {})
         station = stations.get(reg["STATIONID"], {})
         lat, lon = oe.get("lat"), oe.get("lon")
-        name = _station_name((station.get("STATIONNAME") or reg["STATIONID"]).strip(), oe.get("name"))
+        name = _station_name((station.get("STATIONNAME") or reg["STATIONID"]).strip(), oe.get("name"), duid)
         if lat is None or lon is None:
             lat, lon = geo.get(reg["STATIONID"]) or geo.get(duid.rstrip("0123456789")) or geo.get("name:" + _norm(name), (None, None))
         duids[duid] = {

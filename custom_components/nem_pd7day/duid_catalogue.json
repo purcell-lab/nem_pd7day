@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-30",
+ "generated": "2026-10-31",
  "registration_month": "2026_09",
  "constrained_window": [
   "2026-10-16",
@@ -171,7 +171,7 @@
   },
   "ASACLE01": {
    "region": "VIC1",
-   "station": "As Aclesga V Vl1",
+   "station": "As Aclesga V VL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -181,7 +181,7 @@
   },
   "ASDEVI01": {
    "region": "VIC1",
-   "station": "As Diamd01 V Sl1",
+   "station": "As DIAMD01 V SL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -201,7 +201,7 @@
   },
   "ASENGV01": {
    "region": "VIC1",
-   "station": "As Engie V Vl1",
+   "station": "As Engie V VL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -211,7 +211,7 @@
   },
   "ASENGY01": {
    "region": "NSW1",
-   "station": "As Engie N Vl1",
+   "station": "As Engie N VL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -221,7 +221,7 @@
   },
   "ASGENE01": {
    "region": "NSW1",
-   "station": "Asgene01",
+   "station": "ASGENE01",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -291,7 +291,7 @@
   },
   "ASQEEV1": {
    "region": "QLD1",
-   "station": "As Bohle Bess Q Vl1",
+   "station": "As Bohle BESS Q VL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -311,7 +311,7 @@
   },
   "ASRMGE01": {
    "region": "SA1",
-   "station": "Asrmge01",
+   "station": "ASRMGE01",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -321,7 +321,7 @@
   },
   "ASRMGE02": {
    "region": "SA1",
-   "station": "Asrmge02",
+   "station": "ASRMGE02",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -331,7 +331,7 @@
   },
   "ASRMGE03": {
    "region": "SA1",
-   "station": "Asrmge03",
+   "station": "ASRMGE03",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -341,7 +341,7 @@
   },
   "ASRMGE04": {
    "region": "SA1",
-   "station": "Asrmge04",
+   "station": "ASRMGE04",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -351,7 +351,7 @@
   },
   "ASRMGE05": {
    "region": "NSW1",
-   "station": "Asrmge05",
+   "station": "ASRMGE05",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1711,7 +1711,7 @@
   },
   "DRACAN1": {
    "region": "NSW1",
-   "station": "Dr Acacia N Sl1",
+   "station": "Dr Acacia N SL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1731,7 +1731,7 @@
   },
   "DRAESN3": {
    "region": "NSW1",
-   "station": "Draesn3",
+   "station": "DRAESN3",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1741,7 +1741,7 @@
   },
   "DRAESS1": {
    "region": "SA1",
-   "station": "Draess1",
+   "station": "DRAESS1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1751,7 +1751,7 @@
   },
   "DRBRLV01": {
    "region": "VIC1",
-   "station": "Dr Boral V Sl1",
+   "station": "Dr Boral V SL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1781,7 +1781,7 @@
   },
   "DRGBND01": {
    "region": "VIC1",
-   "station": "Drgbnd01",
+   "station": "DRGBND01",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1791,7 +1791,7 @@
   },
   "DRGBND02": {
    "region": "SA1",
-   "station": "Drgbnd02",
+   "station": "DRGBND02",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1801,7 +1801,7 @@
   },
   "DRGBND03": {
    "region": "VIC1",
-   "station": "Drgnd03",
+   "station": "DRGBND03",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1811,7 +1811,7 @@
   },
   "DRGBND04": {
    "region": "NSW1",
-   "station": "Drgbnd04",
+   "station": "DRGBND04",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1831,7 +1831,7 @@
   },
   "DRHTVP03": {
    "region": "SA1",
-   "station": "Drhtvp03",
+   "station": "DRHTVP03",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1841,7 +1841,7 @@
   },
   "DROZVP01": {
    "region": "VIC1",
-   "station": "Drozvp01",
+   "station": "DROZVP01",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1851,7 +1851,7 @@
   },
   "DROZVP02": {
    "region": "SA1",
-   "station": "Drozvp02",
+   "station": "DROZVP02",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1891,7 +1891,7 @@
   },
   "DRSHVN01": {
    "region": "NSW1",
-   "station": "Drshvn01",
+   "station": "DRSHVN01",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1901,7 +1901,7 @@
   },
   "DRSHVN02": {
    "region": "NSW1",
-   "station": "Drshvn02",
+   "station": "DRSHVN02",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1911,7 +1911,7 @@
   },
   "DRSHVQ01": {
    "region": "QLD1",
-   "station": "Drshvq01",
+   "station": "DRSHVQ01",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1921,7 +1921,7 @@
   },
   "DRSHVS01": {
    "region": "SA1",
-   "station": "Drshvs01",
+   "station": "DRSHVS01",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1941,7 +1941,7 @@
   },
   "DRVIOT01": {
    "region": "SA1",
-   "station": "Dr Viotas S Sl1",
+   "station": "Dr Viotas S SL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1951,7 +1951,7 @@
   },
   "DRVIOT02": {
    "region": "VIC1",
-   "station": "Dr Viotas V Sl1",
+   "station": "Dr Viotas V SL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1961,7 +1961,7 @@
   },
   "DRVIOT03": {
    "region": "NSW1",
-   "station": "Dr Viotas N Sl1",
+   "station": "Dr Viotas N SL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1971,7 +1971,7 @@
   },
   "DRVIOT04": {
    "region": "QLD1",
-   "station": "Dr Viotas Q Sl1",
+   "station": "Dr Viotas Q SL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -1981,7 +1981,7 @@
   },
   "DRVIOT05": {
    "region": "TAS1",
-   "station": "Dr Viotas T Sl1",
+   "station": "Dr Viotas T SL1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -2151,7 +2151,7 @@
   },
   "DRXNSS01": {
    "region": "NSW1",
-   "station": "Drxnss01",
+   "station": "DRXNSS01",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -4541,7 +4541,7 @@
   },
   "MURR1-1": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-1",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4551,7 +4551,7 @@
   },
   "MURR1-10": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-10",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4561,7 +4561,7 @@
   },
   "MURR1-2": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-2",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4571,7 +4571,7 @@
   },
   "MURR1-3": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-3",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4581,7 +4581,7 @@
   },
   "MURR1-4": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-4",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4591,7 +4591,7 @@
   },
   "MURR1-5": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-5",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4601,7 +4601,7 @@
   },
   "MURR1-6": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-6",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4611,7 +4611,7 @@
   },
   "MURR1-7": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-7",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4621,7 +4621,7 @@
   },
   "MURR1-8": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-8",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4631,7 +4631,7 @@
   },
   "MURR1-9": {
    "region": "VIC1",
-   "station": "Murray1",
+   "station": "MURR1-9",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4641,7 +4641,7 @@
   },
   "MURR2-1": {
    "region": "VIC1",
-   "station": "Murray2",
+   "station": "MURR2-1",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4651,7 +4651,7 @@
   },
   "MURR2-2": {
    "region": "VIC1",
-   "station": "Murray2",
+   "station": "MURR2-2",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4661,7 +4661,7 @@
   },
   "MURR2-3": {
    "region": "VIC1",
-   "station": "Murray2",
+   "station": "MURR2-3",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4671,7 +4671,7 @@
   },
   "MURR2-4": {
    "region": "VIC1",
-   "station": "Murray2",
+   "station": "MURR2-4",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -4931,7 +4931,7 @@
   },
   "ORABESS1": {
    "region": "NSW1",
-   "station": "Orana Bess",
+   "station": "Orana BESS",
    "type": "BIDIRECTIONAL",
    "fuel": null,
    "lat": null,
@@ -5341,7 +5341,7 @@
   },
   "RT_NSW1": {
    "region": "NSW1",
-   "station": "Reserve Trader Nsw1",
+   "station": "Reserve Trader NSW1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5351,7 +5351,7 @@
   },
   "RT_NSW2": {
    "region": "NSW1",
-   "station": "Reserve Trader Nsw1",
+   "station": "Reserve Trader NSW1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5361,7 +5361,7 @@
   },
   "RT_NSW3": {
    "region": "NSW1",
-   "station": "Reserve Trader Nsw1",
+   "station": "Reserve Trader NSW1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5371,7 +5371,7 @@
   },
   "RT_NSW4": {
    "region": "NSW1",
-   "station": "Reserve Trader Nsw1",
+   "station": "Reserve Trader NSW1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5381,7 +5381,7 @@
   },
   "RT_NSW5": {
    "region": "NSW1",
-   "station": "Reserve Trader Nsw1",
+   "station": "Reserve Trader NSW1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5391,7 +5391,7 @@
   },
   "RT_NSW6": {
    "region": "NSW1",
-   "station": "Reserve Trader Nsw1",
+   "station": "Reserve Trader NSW1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5401,7 +5401,7 @@
   },
   "RT_QLD1": {
    "region": "QLD1",
-   "station": "Reserve Trader Qld1",
+   "station": "Reserve Trader QLD1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5411,7 +5411,7 @@
   },
   "RT_SA1": {
    "region": "SA1",
-   "station": "Reserve Trader Sa1",
+   "station": "Reserve Trader SA1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5421,7 +5421,7 @@
   },
   "RT_SA2": {
    "region": "SA1",
-   "station": "Reserve Trader Sa1",
+   "station": "Reserve Trader SA1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5431,7 +5431,7 @@
   },
   "RT_SA3": {
    "region": "SA1",
-   "station": "Reserve Trader Sa1",
+   "station": "Reserve Trader SA1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5441,7 +5441,7 @@
   },
   "RT_SA4": {
    "region": "SA1",
-   "station": "Reserve Trader Sa1",
+   "station": "Reserve Trader SA1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5451,7 +5451,7 @@
   },
   "RT_SA5": {
    "region": "SA1",
-   "station": "Reserve Trader Sa1",
+   "station": "Reserve Trader SA1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5461,7 +5461,7 @@
   },
   "RT_SA6": {
    "region": "SA1",
-   "station": "Reserve Trader Sa1",
+   "station": "Reserve Trader SA1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5471,7 +5471,7 @@
   },
   "RT_TAS1": {
    "region": "TAS1",
-   "station": "Reserve Trader Tas1",
+   "station": "Reserve Trader TAS1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5481,7 +5481,7 @@
   },
   "RT_VIC1": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5491,7 +5491,7 @@
   },
   "RT_VIC10": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5501,7 +5501,7 @@
   },
   "RT_VIC11": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5511,7 +5511,7 @@
   },
   "RT_VIC12": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5521,7 +5521,7 @@
   },
   "RT_VIC2": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5531,7 +5531,7 @@
   },
   "RT_VIC3": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5541,7 +5541,7 @@
   },
   "RT_VIC4": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5551,7 +5551,7 @@
   },
   "RT_VIC5": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5561,7 +5561,7 @@
   },
   "RT_VIC6": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5571,7 +5571,7 @@
   },
   "RT_VIC7": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5581,7 +5581,7 @@
   },
   "RT_VIC8": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -5591,7 +5591,7 @@
   },
   "RT_VIC9": {
    "region": "VIC1",
-   "station": "Reserve Trader Vic1",
+   "station": "Reserve Trader VIC1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -6381,7 +6381,7 @@
   },
   "TRGBESS1": {
    "region": "VIC1",
-   "station": "Terang Bess",
+   "station": "Terang BESS",
    "type": "BIDIRECTIONAL",
    "fuel": null,
    "lat": null,
@@ -6451,7 +6451,7 @@
   },
   "TUMUT1-1": {
    "region": "NSW1",
-   "station": "Tumut1",
+   "station": "TUMUT1-1",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -6461,7 +6461,7 @@
   },
   "TUMUT1-2": {
    "region": "NSW1",
-   "station": "Tumut1",
+   "station": "TUMUT1-2",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -6471,7 +6471,7 @@
   },
   "TUMUT1-3": {
    "region": "NSW1",
-   "station": "Tumut1",
+   "station": "TUMUT1-3",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -6481,7 +6481,7 @@
   },
   "TUMUT1-4": {
    "region": "NSW1",
-   "station": "Tumut1",
+   "station": "TUMUT1-4",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -6491,7 +6491,7 @@
   },
   "TUMUT2-1": {
    "region": "NSW1",
-   "station": "Tumut2",
+   "station": "TUMUT2-1",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -6501,7 +6501,7 @@
   },
   "TUMUT2-2": {
    "region": "NSW1",
-   "station": "Tumut2",
+   "station": "TUMUT2-2",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -6511,7 +6511,7 @@
   },
   "TUMUT2-3": {
    "region": "NSW1",
-   "station": "Tumut2",
+   "station": "TUMUT2-3",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -6521,7 +6521,7 @@
   },
   "TUMUT2-4": {
    "region": "NSW1",
-   "station": "Tumut2",
+   "station": "TUMUT2-4",
    "type": "GENERATOR",
    "fuel": null,
    "lat": null,
@@ -6841,7 +6841,7 @@
   },
   "VSQHT1V1": {
    "region": "QLD1",
-   "station": "Vpp Ht Qld 1",
+   "station": "VPP Ht QLD 1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -6851,7 +6851,7 @@
   },
   "VSSAE1V1": {
    "region": "SA1",
-   "station": "Vpp Agle Sa 1",
+   "station": "VPP Agle SA 1",
    "type": "LOAD",
    "fuel": null,
    "lat": null,
@@ -7541,7 +7541,7 @@
   },
   "YWNL1": {
    "region": "VIC1",
-   "station": "Yallourn 'W' Power Station",
+   "station": "Yallourn 'w' Power Station",
    "type": "GENERATOR",
    "fuel": null,
    "lat": -38.1776,

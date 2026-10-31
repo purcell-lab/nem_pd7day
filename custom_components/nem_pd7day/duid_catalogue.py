@@ -36,9 +36,10 @@ class DuidInfo:
 
     @property
     def label(self) -> str:
-        """``GSTONE1 · Gladstone (coal black)`` for the options list."""
+        """``GSTONE1 · Gladstone (coal black)`` for the options list; the DUID alone when it is the only name."""
         fuel = f" ({self.fuel.replace('_', ' ')})" if self.fuel else ""
-        return f"{self.duid} · {self.station}{fuel}"
+        station = "" if self.station == self.duid else f" · {self.station}"
+        return f"{self.duid}{station}{fuel}"
 
 
 @dataclass(frozen=True)
