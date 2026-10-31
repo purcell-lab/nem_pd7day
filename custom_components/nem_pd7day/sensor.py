@@ -319,9 +319,9 @@ async def _local_price_entities(
     from .load_points import load_load_points
 
     loads = await run_in_executor(None, load_load_points)  # a file read, as the catalogue
+    # Every region has preset cities, each a zone sensor enabled by default, so there is always
+    # something to set up.
     zones = _zones(hass, entry, region, catalogue, loads)
-    if not duids and not tnis and not zones and not catalogue.top_for(region):
-        return []
     enable_chosen(hass, entry, region, duids)
     p5min = shared_p5min(hass, entry.runtime_data.dispatch)
     return [
