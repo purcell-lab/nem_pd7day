@@ -244,12 +244,13 @@ def test_price_limits_follow_the_financial_year_of_the_interval_start():
     assert _lp.market_price_limits(_at(12, year=2020))[1] == 16600.0
 
 
-def test_local_price_clips_the_sum_not_the_adjustment():
-    end = _at(21, 25)
-    assert _lp.local_price_mwh(0.01, -1000.01, end) == -1000.0
-    assert _lp.local_price_mwh(-900.0, -400.0, end) == -1000.0
-    assert _lp.local_price_mwh(23000.0, 500.0, end) == 23200.0
-    assert _lp.local_price_mwh(97.62, 88.27, end) == pytest.approx(185.89)
+def test_local_price_is_the_raw_sum_never_clipped():
+    """Beyond the floor or cap the sum stands: a deep constraint shows its depth."""
+    assert _lp.local_price_mwh(0.01, -1000.01) == -1000.0
+    assert _lp.local_price_mwh(-900.0, -400.0) == -1300.0
+    assert _lp.local_price_mwh(23000.0, 500.0) == 23500.0
+    assert _lp.local_price_mwh(70.0806, -1110.09) == -1040.0094  # GSTONE1, 31 Oct 2026 16:05
+    assert _lp.local_price_mwh(97.62, 88.27) == pytest.approx(185.89)
 
 
 # ── Client and coordinator ───────────────────────────────────────────────────
@@ -417,7 +418,7 @@ def test_stale_no_data_and_a_missing_table_stay_unknown(monkeypatch):
     assert no_table.native_value is None and no_table.extra_state_attributes["local_price"] is None
 
 
-def test_the_local_price_attributes_use_rop_and_clip_the_sum(monkeypatch):
+def test_the_local_price_attributes_use_rop_and_keep_the_raw_sum(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 26))
     prices = _dispatch()
     attrs = _duid(_constraints(prices), "GUTHEGA", "NSW1").extra_state_attributes
@@ -425,7 +426,7 @@ def test_the_local_price_attributes_use_rop_and_clip_the_sum(monkeypatch):
     assert attrs["rop_mwh"] == 97.62 and attrs["local_price_mwh"] == pytest.approx(185.89)
     assert (attrs["price_floor_mwh"], attrs["price_cap_mwh"]) == (-1000.0, 23200.0)
     vic = _duid(_constraints(prices), "DUNDWF1", "VIC1").extra_state_attributes
-    assert vic["local_price"] == -1.0  # 0.01 - 1000.01 clipped to the floor
+    assert vic["local_price_mwh"] == -1000.0  # 0.01 - 1000.01, at the floor by itself, not clipped to it
     no_rop = _duid(_constraints(replace(prices, rop={})), "GUTHEGA", "NSW1")
     assert no_rop.extra_state_attributes["local_price"] is None  # never RRP in its place
     assert no_rop.native_value == pytest.approx(0.08827)  # the adjustment itself still stands
