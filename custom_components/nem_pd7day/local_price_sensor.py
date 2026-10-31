@@ -40,13 +40,13 @@ from .const import DEVICE_CONFIGURATION_URL, DEVICE_MANUFACTURER, DEVICE_MODEL, 
 from .duid_catalogue import Catalogue, DuidInfo
 from .local_price import (
     INTERVAL,
-    STATUS_PUBLISHED,
-    STATUS_ZERO,
     DispatchLocalPrices,
+    dispatch_adjustment,
     dispatch_status,
     forecast_series,
     local_price_mwh,
     market_price_limits,
+    with_p5_fallback,
 )
 from .nem_time import NEM_TZ, now_nem
 from .predispatch_local_price import predispatch_adjustments, predispatch_attrs
@@ -135,15 +135,11 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         return self._info.region if self._info is not None else self._region
 
     def _prices(self) -> Optional[DispatchLocalPrices]:
-        snapshot = self.coordinator.tracker.latest
-        return snapshot.local_prices if snapshot is not None else None
+        return dispatch_prices(self)
 
     def _adjustment_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
         """The published adjustment; 0 for no row in a fresh file with the table; else unknown."""
-        status = dispatch_status(prices, self._duid, now, MAX_AGE)
-        if status == STATUS_PUBLISHED:
-            return prices.rows[self._duid].adjustment_mwh  # type: ignore[union-attr]
-        return 0.0 if status == STATUS_ZERO else None
+        return dispatch_adjustment(prices, self._duid, now, MAX_AGE)[1]
 
     def _local_price_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
         """ROP, not RRP, of the same file, so of one interval and run; a missing ROP is unknown, never RRP."""
@@ -172,7 +168,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
     def _dispatch_attrs(self, prices: Optional[DispatchLocalPrices], now: datetime) -> dict[str, Any]:
         row = prices.rows.get(self._duid) if prices is not None else None
         attrs: dict[str, Any] = {
-            "source": "DISPATCH_LOCAL_PRICE",
+            "source": "P5MIN_LOCAL_PRICE" if prices is not None and prices.fallback_source else "DISPATCH_LOCAL_PRICE",
             "row_status": dispatch_status(prices, self._duid, now, MAX_AGE),
             "adjustment_mwh": self._adjustment_mwh(prices, now),
             "locally_constrained": row.locally_constrained if row is not None else None,
@@ -187,6 +183,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
             "interval_start": _iso(prices.interval_end - INTERVAL),
             "interval_end": _iso(prices.interval_end),
             "source_file": prices.source,
+            "fallback_source_file": prices.fallback_source,
             "retrieved_at": _iso(prices.retrieved_at),
             # From the interval's start: AEMO publishes the file while the
             # interval runs, so its end is still ahead.
@@ -236,6 +233,13 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
             **self._identity(), **self._dispatch_attrs(self._prices(), now),
             **self._forecast_attrs(now), **self._predispatch_attrs(now),
         }
+
+
+def dispatch_prices(sensor: Any) -> Optional[DispatchLocalPrices]:
+    """The sensor's dispatch interval, from the P5MIN run covering it where the file has no table."""
+    snapshot = sensor.coordinator.tracker.latest
+    prices = snapshot.local_prices if snapshot is not None else None
+    return with_p5_fallback(prices, getattr(sensor._p5min, "latest", None))
 
 
 async def listen_to_forecasts(sensor: Any, added: Any) -> None:

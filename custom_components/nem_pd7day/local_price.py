@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import csv
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -56,6 +56,9 @@ STATUS_CONFLICT = "conflicting_rows"     # two different rows for one DUID and i
 STATUS_NO_DATA = "no_data"               # no file read yet
 STATUS_STALE = "stale"                   # the newest file is too old to stand for now
 STATUS_EXPIRED = "expired"               # every interval of the run has ended
+# The DispatchIS file had no LOCAL_PRICE table, a gap in AEMO's publishing (about
+# 2% of files, early evening), so the P5MIN run covering the interval stands in.
+STATUS_P5_FALLBACK = "p5min_fallback"
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,10 @@ class DispatchLocalPrices:
     rows: dict[str, LocalPriceRow]
     rop: dict[str, float]
     retrieved_at: Optional[datetime] = None
+    # Set when the rows are a P5MIN run's for this interval (with_p5_fallback):
+    # its file, and the DUIDs whose rows conflicted there.
+    fallback_source: Optional[str] = None
+    fallback_conflicts: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -239,6 +246,29 @@ def local_price_mwh(rop: float, adjustment: float) -> float:
     return round(rop + adjustment, 4)
 
 
+def with_p5_fallback(
+    prices: Optional[DispatchLocalPrices], run: Optional[P5LocalPriceRun],
+) -> Optional[DispatchLocalPrices]:
+    """The dispatch interval's rows, from the P5MIN run covering it when the file has no LOCAL_PRICE table.
+
+    AEMO now and then publishes a DispatchIS file without the table at all,
+    never with an empty one (11 of 576 files over 30 and 31 Oct 2026, all
+    early evening), so its absence says nothing about the adjustments. The
+    P5MIN run solved for the same interval keeps its table; its adjustments
+    stand in, flagged ``p5min_fallback``, while the ROP stays the dispatch
+    file's own. Where the file has the table, or no run covers the interval,
+    the file is returned as it is.
+    """
+    if prices is None or prices.table_present or run is None or not run.table_present:
+        return prices
+    end = prices.interval_end
+    if end not in run.interval_ends:
+        return prices
+    conflicts = frozenset(duid for duid, at in run.conflicts if at == end)
+    rows = {duid: series[end] for duid, series in run.rows.items() if end in series and duid not in conflicts}
+    return replace(prices, table_present=True, rows=rows, fallback_source=run.source, fallback_conflicts=conflicts)
+
+
 def dispatch_status(prices: Optional[DispatchLocalPrices], duid: str, now: datetime, max_age: timedelta) -> str:
     if prices is None:
         return STATUS_NO_DATA
@@ -246,7 +276,20 @@ def dispatch_status(prices: Optional[DispatchLocalPrices], duid: str, now: datet
         return STATUS_STALE
     if not prices.table_present:
         return STATUS_TABLE_MISSING
+    if prices.fallback_source is not None:
+        return STATUS_CONFLICT if duid in prices.fallback_conflicts else STATUS_P5_FALLBACK
     return STATUS_PUBLISHED if duid in prices.rows else STATUS_ZERO
+
+
+def dispatch_adjustment(
+    prices: Optional[DispatchLocalPrices], duid: str, now: datetime, max_age: timedelta,
+) -> tuple[str, Optional[float]]:
+    """(status, $/MWh): the row's adjustment, 0 without one where that means 0, else unknown."""
+    status = dispatch_status(prices, duid, now, max_age)
+    if status in (STATUS_PUBLISHED, STATUS_ZERO, STATUS_P5_FALLBACK):
+        row = prices.rows.get(duid)  # type: ignore[union-attr]
+        return status, row.adjustment_mwh if row is not None else 0.0
+    return status, None
 
 
 @dataclass
