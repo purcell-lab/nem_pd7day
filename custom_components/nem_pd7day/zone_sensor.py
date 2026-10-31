@@ -44,7 +44,6 @@ from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustm
 from .zones import Zone, zone_adjustment
 
 SUFFIX = "zone_price_proxy"
-_UNKNOWN = (STATUS_STALE, STATUS_NO_DATA)
 
 
 @dataclass
@@ -77,8 +76,6 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
     members = []
     for member in zone.members:
         status, adjustment = node_adjustment(prices, member.node.duids, now)
-        if status in _UNKNOWN:
-            return ZoneDispatch(status, rop)
         members.append({
             "tni": member.node.tni, "stations": list(member.node.stations), "distance_km": member.distance_km,
             "mlf": member.node.mlf, "adjustment_mwh": adjustment, "adjustment_status": status,
