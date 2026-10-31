@@ -12,6 +12,7 @@ Run with:  python -m pytest tests/test_duid_catalogue.py -v
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -158,6 +159,22 @@ def test_the_local_price_uses_the_duid_regions_rop():
     assert sa["rop_region"] == "SA1"
     assert unknown["rop_region"] == "QLD1"  # not in the catalogue: the entry's
     assert unknown["local_price"] == pytest.approx((85.25 - 33.92) / 1000)
+
+
+def test_local_price_and_node_price_side_by_side():
+    """#313: AEMO's local price is at the regional reference node, ROP +
+    adjustment; the node price is the same at the DUID's connection point,
+    x its MLF (#312). CATHROCK at SCRK, MLF 0.9417."""
+    info = replace(CATALOGUE.info("CATHROCK"), tni="SCRK", mlf=0.9417)
+    with patch.object(_sensor, "now_nem", lambda: datetime(2026, 10, 30, 21, 26, tzinfo=NEM_TZ)):
+        attrs = _duid("CATHROCK", info=info).extra_state_attributes
+        unknown = _duid("CATHROCK").extra_state_attributes
+    mlf = 0.9417
+    assert attrs["local_price_formula"] == "ROP + LOCAL_PRICE_ADJUSTMENT"
+    assert attrs["node_price_formula"] == "(ROP + LOCAL_PRICE_ADJUSTMENT) x MLF"
+    assert attrs["node_price_mwh"] == pytest.approx(attrs["local_price_mwh"] * mlf, abs=1e-4)
+    assert attrs["node_price"] == pytest.approx(attrs["node_price_mwh"] / 1000, abs=1e-6)
+    assert unknown["node_price_mwh"] is None and unknown["node_price"] is None  # no MLF without the catalogue
 
 
 # ── Enabling a chosen preset ─────────────────────────────────────────────────

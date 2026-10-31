@@ -42,6 +42,8 @@ from .const import DEVICE_CONFIGURATION_URL, DEVICE_MANUFACTURER, DEVICE_MODEL, 
 from .duid_catalogue import Catalogue, DuidInfo
 from .local_price import (
     INTERVAL,
+    LOCAL_PRICE_FORMULA,
+    NODE_PRICE_FORMULA,
     STATUS_P5_FALLBACK,
     STATUS_PD_FALLBACK,
     DispatchLocalPrices,
@@ -50,6 +52,7 @@ from .local_price import (
     forecast_series,
     local_price_mwh,
     market_price_limits,
+    node_price_mwh,
     with_fallbacks,
 )
 from .nem_time import NEM_TZ, now_nem
@@ -200,11 +203,27 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
             "age_seconds": round((now - prices.interval_end + INTERVAL).total_seconds()),
             "rop_region": self._duid_region,
             "rop_mwh": prices.rop.get(self._duid_region),
+            # AEMO's local price, at the regional reference node; the node
+            # price is the same at the DUID's connection point (#313).
             "local_price": round(value / 1000.0, 6) if value is not None else None,
             "local_price_mwh": value,
+            "local_price_formula": LOCAL_PRICE_FORMULA,
+            **self._node_price_attrs(prices, now),
             # The interval's market limits, for reference: not applied.
             "price_floor_mwh": floor,
             "price_cap_mwh": cap,
+        }
+
+    def _node_price_attrs(self, prices: DispatchLocalPrices, now: datetime) -> dict[str, Any]:
+        """(ROP + adjustment) x the DUID's MLF: its local price at its connection point."""
+        adjustment = self._adjustment_mwh(prices, now)
+        rop = prices.rop.get(self._duid_region)
+        mlf = self._info.mlf if self._info is not None else None
+        value = node_price_mwh(rop, adjustment, mlf) if None not in (rop, adjustment, mlf) else None  # type: ignore[arg-type]
+        return {
+            "node_price": round(value / 1000.0, 6) if value is not None else None,
+            "node_price_mwh": value,
+            "node_price_formula": NODE_PRICE_FORMULA,
         }
 
     def _forecast_attrs(self, now: datetime) -> dict[str, Any]:

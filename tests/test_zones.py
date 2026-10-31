@@ -221,7 +221,7 @@ def test_most_members_constrained_moves_it():
     two = replace(zone, members=(zone.members[0], _zones.Member(OUT, 60.0)))
     result = _zs.dispatch_zone(two, "NSW1", _dispatch(), NOW)
     assert result.adjustment_mwh == pytest.approx((88.27 - 385.47) / 2)
-    assert result.price_mwh == pytest.approx(97.62 * two.mlf + (88.27 - 385.47) / 2, abs=1e-3)
+    assert result.price_mwh == pytest.approx((97.62 + (88.27 - 385.47) / 2) * two.mlf, abs=1e-3)
 
 
 def test_stale_no_data_no_rop_and_no_mlf_leave_it_unknown():
@@ -255,7 +255,7 @@ def test_the_p5min_forecast_takes_the_median_per_interval():
     now = datetime(2026, 10, 30, 21, 27, tzinfo=NEM_TZ)
     status, points = _zs.zone_p5_forecast(zone, "SA1", run, now)
     first = min(e for e in run.rop["SA1"] if e > now)
-    expected = (run.rop["SA1"][first] * zone.mlf + run.rows["CATHROCK"][first].adjustment_mwh) / 1000
+    expected = (run.rop["SA1"][first] + run.rows["CATHROCK"][first].adjustment_mwh) * zone.mlf / 1000
     assert status == "published" and points[0]["value"] == round(expected, 6)
     assert _zs.zone_p5_forecast(zone, "SA1", None, now) == ("no_data", [])
     status, points = _zs.zone_p5_forecast(zone, "SA1", replace(run, table_present=False, rows={}), now)

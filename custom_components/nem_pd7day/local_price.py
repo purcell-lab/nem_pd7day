@@ -257,10 +257,30 @@ def market_price_limits(interval_end: datetime) -> tuple[float, float]:
     return MARKET_PRICE_FLOOR_MWH, MARKET_PRICE_CAP_MWH_BY_FY[nearest]
 
 
+LOCAL_PRICE_FORMULA = "ROP + LOCAL_PRICE_ADJUSTMENT"
+NODE_PRICE_FORMULA = "(ROP + LOCAL_PRICE_ADJUSTMENT) x MLF"
+
+
 def local_price_mwh(rop: float, adjustment: float) -> float:
-    """ROP + adjustment, raw: never clipped to the market floor or cap, which
-    apply to the regional price, so a deep constraint shows its full depth."""
+    """ROP + adjustment, raw: AEMO's local price, at the regional reference node.
+
+    Never clipped to the market floor or cap, which apply to the regional
+    price, so a deep constraint shows its full depth.
+    """
     return round(rop + adjustment, 4)
+
+
+def node_price_mwh(price: float, adjustment: float, mlf: float) -> float:
+    """(price + adjustment) x MLF, raw: the local price at the connection point (#312).
+
+    NEMDE refers every offer to the regional reference node by dividing it by
+    the unit's MLF, so the adjustment, like the ROP, is on that basis and the
+    MLF scales both. Of 34 dispatched, locally constrained unit intervals on
+    31 Oct 2026, 17 priced to the cent at one of the unit's offer bands this
+    way, and none with ROP x MLF + adjustment (METZSF1: its -114.72 band,
+    against -141.4).
+    """
+    return round((price + adjustment) * mlf, 4)
 
 
 def _interval_end(now: datetime) -> datetime:
