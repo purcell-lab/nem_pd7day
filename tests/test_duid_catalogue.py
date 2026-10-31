@@ -104,6 +104,39 @@ def test_region_order_is_most_constrained_first_and_labels_name_the_station():
     assert catalogue.info("A1").label == "A1 · Alpha"
 
 
+def test_non_physical_units_are_left_out_unless_asked():
+    """#311: a dummy generator, a reserve trader and a VPP, none located, against
+    a located plant and an unlocated new solar farm, both real."""
+    catalogue = _cat.parse_catalogue({"duids": {
+        "DG_QLD1": {"region": "QLD1", "station": "QLD1 Dummy Generator", "tni": "QDNSG"},
+        "RT_QLD1": {"region": "QLD1", "station": "Reserve Trader QLD1", "type": "LOAD", "tni": "QRT1"},
+        "VSQHT1V1": {"region": "QLD1", "station": "VPP Ht QLD 1", "type": "LOAD", "tni": "QVPHYDR1"},
+        "DRVIOT04": {"region": "QLD1", "station": "Dr Viotas Q SL1", "type": "LOAD"},
+        "ASQENC1": {"region": "QLD1", "station": "Enoc Masp", "fuel": "aggregator_vpp"},
+        "GSTONE1": {"region": "QLD1", "station": "Gladstone", "lat": -23.85, "lon": 151.22, "tni": "QGLD"},
+        "ALDGASF1": {"region": "QLD1", "station": "Aldoga Solar Farm", "tni": "QLCS1A"},
+    }, "nodes": {
+        "QDNSG": {"region": "QLD1", "duids": ["DG_QLD1"], "stations": ["QLD1 Dummy Generator"]},
+        "QGLD": {"region": "QLD1", "duids": ["GSTONE1"], "stations": ["Gladstone"]},
+        "QLCS1A": {"region": "QLD1", "duids": ["ALDGASF1"], "stations": ["Aldoga Solar Farm"]},
+    }})
+    flagged = {d for d, i in catalogue.duids.items() if i.non_physical}
+    assert flagged == {"DG_QLD1", "RT_QLD1", "VSQHT1V1", "DRVIOT04", "ASQENC1"}
+    assert {i.duid for i in catalogue.region_duids("QLD1")} == {"GSTONE1", "ALDGASF1"}
+    assert len(catalogue.region_duids("QLD1", include_non_physical=True)) == 7
+    assert [n.tni for n in catalogue.region_nodes("QLD1")] == ["QLCS1A", "QGLD"]
+    assert len(catalogue.region_nodes("QLD1", include_non_physical=True)) == 3
+
+
+def test_the_bundled_catalogue_flags_dummies_and_aggregations_only():
+    catalogue = _cat.load_catalogue()
+    flagged = {d for d, i in catalogue.duids.items() if i.non_physical}
+    assert {"DG_QLD1", "RT_QLD1", "VSQHT1V1", "AS_NSW1"} <= flagged
+    assert not flagged & {"ALDGASF1", "BRDDBES1", "GSTONE1", "CATHROCK"}  # real, located or not
+    assert all(catalogue.info(d).latitude is None for d in flagged)
+    assert not flagged & {d for top in catalogue.top.values() for d in top}
+
+
 # ── Sensors ──────────────────────────────────────────────────────────────────
 
 CATALOGUE = _cat.parse_catalogue({
@@ -126,6 +159,21 @@ def _duid(duid, region="QLD1", info=None, p5=None):
     return _sensor.NemPd7dayDuidLocalPriceSensor(
         _constraints(), p5 if p5 is not None else SimpleNamespace(latest=None), ENTRY, region, duid, info,
     )
+
+
+def test_a_chosen_non_physical_unit_keeps_working_flagged_with_a_notice(caplog):
+    """#311: DG_QLD1, already configured, still gets its sensor, marked non_physical."""
+    catalogue = _cat.parse_catalogue({"duids": {
+        "DG_QLD1": {"region": "QLD1", "station": "QLD1 Dummy Generator", "tni": "QDNSG", "mlf": 1.0},
+        "GSTONE1": {"region": "QLD1", "station": "Gladstone", "lat": -23.85, "lon": 151.22},
+    }})
+    with caplog.at_level("INFO"):
+        entities = _sensor.local_price_entities(
+            _constraints(), SimpleNamespace(latest=None), ENTRY, "QLD1", ["DG_QLD1", "GSTONE1"], catalogue,
+        )
+    attrs = {e._duid: e.extra_state_attributes for e in entities}
+    assert attrs["DG_QLD1"]["non_physical"] is True and "non_physical" not in attrs["GSTONE1"]
+    assert sum("DG_QLD1" in r.getMessage() and "#311" in r.getMessage() for r in caplog.records) == 1
 
 
 def test_presets_are_disabled_and_a_chosen_preset_is_not_repeated():

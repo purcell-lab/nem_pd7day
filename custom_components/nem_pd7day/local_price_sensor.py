@@ -28,6 +28,7 @@ ones are removed from the registry (``remove_retired``).
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -54,6 +55,8 @@ from .local_price import (
 )
 from .nem_time import NEM_TZ, now_nem
 from .predispatch_local_price import predispatch_adjustments, predispatch_attrs
+
+_LOGGER = logging.getLogger(__name__)
 
 # Three missed intervals: older than this, a file no longer describes now.
 MAX_AGE = timedelta(minutes=15)
@@ -173,6 +176,8 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
                 "tni": info.tni, "mlf": info.mlf,
                 "latitude": info.latitude, "longitude": info.longitude,
             })
+            if info.non_physical:
+                base["non_physical"] = True
         return base
 
     def _dispatch_attrs(self, prices: Optional[DispatchLocalPrices], now: datetime) -> dict[str, Any]:
@@ -309,6 +314,13 @@ def local_price_entities(
 ) -> list[SensorEntity]:
     """The chosen DUIDs' sensors, enabled, then the region's most constrained others, disabled."""
     presets = [d for d in (catalogue.top_for(region) if catalogue else ()) if d not in duids]
+    non_physical = [d for d in duids if catalogue and (i := catalogue.info(d)) is not None and i.non_physical]
+    if non_physical:
+        _LOGGER.info(
+            "%s: %s registered without plant (dummy, reserve trader or aggregation): kept, flagged "
+            "non_physical, and no longer offered in the options, as no local price adjustment applies (#311)",
+            region, ", ".join(non_physical),
+        )
     return [
         NemPd7dayDuidLocalPriceSensor(
             constraints, p5min, entry, region, duid, catalogue.info(duid) if catalogue else None, preset,
