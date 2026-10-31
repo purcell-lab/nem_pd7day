@@ -30,6 +30,7 @@ from .local_price import (
     STATUS_CONFLICT,
     STATUS_EXPIRED,
     STATUS_NO_DATA,
+    STATUS_P5_FALLBACK,
     STATUS_PUBLISHED,
     STATUS_STALE,
     STATUS_TABLE_MISSING,
@@ -37,7 +38,7 @@ from .local_price import (
     DispatchLocalPrices,
     P5LocalPriceRun,
 )
-from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, entity_id_for, listen_to_forecasts
+from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, dispatch_prices, entity_id_for, listen_to_forecasts
 from .nem_time import now_nem
 from .node_price_sensor import STATUS_NO_ROP, STATUS_UNKNOWN_NODE, node_adjustment, p5_adjustment
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
@@ -84,7 +85,10 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
             "mlf": member.node.mlf, "adjustment_mwh": adjustment, "adjustment_status": status,
         })
     adjustment = zone_adjustment([m["adjustment_mwh"] for m in members])  # type: ignore[misc]
-    status = STATUS_CONFLICT if adjustment is None else STATUS_PUBLISHED
+    if adjustment is None:
+        status = STATUS_CONFLICT
+    else:
+        status = STATUS_P5_FALLBACK if prices.fallback_source else STATUS_PUBLISHED
     return ZoneDispatch(status, rop, round(rop * mlf, 4), adjustment, members)
 
 
@@ -162,8 +166,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
         await listen_to_forecasts(self, super().async_added_to_hass)
 
     def _dispatch(self, now: datetime) -> tuple[Optional[DispatchLocalPrices], ZoneDispatch]:
-        snapshot = self.coordinator.tracker.latest
-        prices = snapshot.local_prices if snapshot is not None else None
+        prices = dispatch_prices(self)
         return prices, dispatch_zone(self._zone, self._region, prices, now)
 
     @property
@@ -194,6 +197,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             ],
             "interval_end": _iso(prices.interval_end) if prices is not None else None,
             "source_file": prices.source if prices is not None else None,
+            "fallback_source_file": prices.fallback_source if prices is not None else None,
         }
 
     def _forecast_attrs(self, now: datetime) -> dict[str, Any]:

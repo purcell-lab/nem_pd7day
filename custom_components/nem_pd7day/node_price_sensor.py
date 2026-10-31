@@ -34,6 +34,7 @@ from .local_price import (
     STATUS_CONFLICT,
     STATUS_EXPIRED,
     STATUS_NO_DATA,
+    STATUS_P5_FALLBACK,
     STATUS_PUBLISHED,
     STATUS_STALE,
     STATUS_TABLE_MISSING,
@@ -42,7 +43,16 @@ from .local_price import (
     P5LocalPriceRun,
     dispatch_status,
 )
-from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, entity_id_for, entity_name, listen_to_forecasts
+from .local_price_sensor import (
+    MAX_AGE,
+    UNIT,
+    _iso,
+    device_info,
+    dispatch_prices,
+    entity_id_for,
+    entity_name,
+    listen_to_forecasts,
+)
 from .nem_time import now_nem
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 
@@ -96,8 +106,7 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         return self._node.mlf if self._node is not None else None
 
     def _prices(self) -> Optional[DispatchLocalPrices]:
-        snapshot = self.coordinator.tracker.latest
-        return snapshot.local_prices if snapshot is not None else None
+        return dispatch_prices(self)
 
     def _status(self, prices: Optional[DispatchLocalPrices], now: datetime) -> str:
         if self._mlf is None:
@@ -153,6 +162,7 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
             "interval_start": _iso(prices.interval_end - INTERVAL),
             "interval_end": _iso(prices.interval_end),
             "source_file": prices.source,
+            "fallback_source_file": prices.fallback_source,
             "retrieved_at": _iso(prices.retrieved_at),
             "age_seconds": round((now - prices.interval_end + INTERVAL).total_seconds()),
             "rop_mwh": prices.rop.get(self._node_region),
@@ -202,11 +212,14 @@ def node_adjustment(
     if not duids:
         return STATUS_UNKNOWN_NODE, None
     statuses = {dispatch_status(prices, duid, now, MAX_AGE) for duid in duids}
-    if statuses - {STATUS_PUBLISHED, STATUS_ZERO}:
-        return sorted(statuses - {STATUS_PUBLISHED, STATUS_ZERO})[0], None
+    known = {STATUS_PUBLISHED, STATUS_ZERO, STATUS_P5_FALLBACK}
+    if statuses - known:
+        return sorted(statuses - known)[0], None
     values = {prices.rows[d].adjustment_mwh for d in duids if d in prices.rows}  # type: ignore[union-attr]
     if len(values) > 1:
         return STATUS_CONFLICT, None
+    if STATUS_P5_FALLBACK in statuses:
+        return STATUS_P5_FALLBACK, values.pop() if values else 0.0
     return (STATUS_PUBLISHED, values.pop()) if values else (STATUS_ZERO, 0.0)
 
 
