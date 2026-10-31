@@ -109,7 +109,9 @@ def test_a_stale_or_expired_forecast_gives_no_points():
     assert _node.node_forecast(run, "XXX1", 0.99, duids, _at(21, 26)) == ("no_rop", [])
     assert _node.node_forecast(run, "QLD1", None, duids, _at(21, 26)) == ("unknown_node", [])
     assert _node.node_forecast(run, "QLD1", 0.99, (), _at(21, 26)) == ("unknown_node", [])
-    assert _node.node_forecast(replace(run, table_present=False), "QLD1", 0.99, duids, _at(21, 26)) == ("table_missing", [])
+    # A run without the table is AEMO's zero (#309): the static price throughout.
+    status, points = _node.node_forecast(replace(run, table_present=False, rows={}), "QLD1", 0.99, duids, _at(21, 26))
+    assert status == "published" and points[0]["value"] == round(run.rop["QLD1"][_at(21, 30)] * 0.99 / 1000, 6)
 
 
 def test_the_forecast_adds_each_intervals_adjustment():

@@ -4,9 +4,11 @@
 
 - **State**: the latest dispatch interval's LOCAL_PRICE_ADJUSTMENT in $/kWh,
   from the DispatchIS file the binding constraints already read. AEMO
-  publishes only non-zero rows, so no row in a fresh file with the
-  LOCAL_PRICE table is 0 (``row_status: zero_by_omission``); a stale file, or
-  one without the table, leaves it unknown.
+  publishes only non-zero rows, so no row in a fresh file is 0
+  (``row_status: zero_by_omission``), and a fresh file without the
+  LOCAL_PRICE table, AEMO's zero for every DUID, is 0 too (``dispatch_zero``,
+  #309). A missing or stale file gives way to P5MIN, then pre-dispatch; with
+  neither it is unknown.
 - **Local price**: ROP + adjustment for the DUID's region, raw (never clipped
   to the market floor or cap), as attributes; a diagnostic of the dispatch run, not a regional, retail or
   settlement price.
@@ -42,7 +44,6 @@ from .local_price import (
     INTERVAL,
     STATUS_P5_FALLBACK,
     STATUS_PD_FALLBACK,
-    STATUS_RRP_FALLBACK,
     DispatchLocalPrices,
     dispatch_adjustment,
     dispatch_status,
@@ -62,7 +63,6 @@ SUFFIX = "local_price_adjustment"
 _SOURCES = {
     STATUS_P5_FALLBACK: "P5MIN_LOCAL_PRICE",
     STATUS_PD_FALLBACK: "PREDISPATCH_LOCAL_PRICE",
-    STATUS_RRP_FALLBACK: "RRP",
 }
 # The two sensors per DUID that 3.32 published beside this one.
 RETIRED_SUFFIXES = ("_local_price_adjustment_forecast", "_local_price")
@@ -143,11 +143,11 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         """The DUID's own region from the catalogue, else the entry's."""
         return self._info.region if self._info is not None else self._region
 
-    def _prices(self) -> Optional[DispatchLocalPrices]:
-        return dispatch_prices(self)
+    def _prices(self, now: datetime) -> Optional[DispatchLocalPrices]:
+        return dispatch_prices(self, now)
 
     def _adjustment_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
-        """The published adjustment; 0 for no row in a fresh file with the table; else unknown."""
+        """The published adjustment; 0 for no row, or no table, in a fresh file; else unknown."""
         return dispatch_adjustment(prices, self._duid, now, MAX_AGE)[1]
 
     def _local_price_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
@@ -160,7 +160,8 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> Optional[float]:
-        adjustment = self._adjustment_mwh(self._prices(), now_nem())
+        now = now_nem()
+        adjustment = self._adjustment_mwh(self._prices(now), now)
         return round(adjustment / 1000.0, 6) if adjustment is not None else None
 
     def _identity(self) -> dict[str, Any]:
@@ -239,18 +240,19 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         now = now_nem()
         return {
-            **self._identity(), **self._dispatch_attrs(self._prices(), now),
+            **self._identity(), **self._dispatch_attrs(self._prices(now), now),
             **self._forecast_attrs(now), **self._predispatch_attrs(now),
         }
 
 
-def dispatch_prices(sensor: Any) -> Optional[DispatchLocalPrices]:
-    """The sensor's dispatch interval; where the file has no LOCAL_PRICE table, from the P5MIN run
-    covering it, else the pre-dispatch period, else the regional price (local_price.with_fallbacks)."""
+def dispatch_prices(sensor: Any, now: datetime) -> Optional[DispatchLocalPrices]:
+    """The sensor's dispatch interval: the file while it is fresh; when it is missing or stale, the P5MIN
+    run covering the current interval, else the pre-dispatch period (local_price.with_fallbacks)."""
     snapshot = sensor.coordinator.tracker.latest
     prices = snapshot.local_prices if snapshot is not None else None
     return with_fallbacks(
         prices, getattr(sensor._p5min, "latest", None), getattr(sensor._predispatch, "latest", None),
+        now, MAX_AGE,
     )
 
 
