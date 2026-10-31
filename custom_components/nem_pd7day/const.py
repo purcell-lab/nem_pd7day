@@ -187,6 +187,9 @@ CONF_AMBER_FORECAST_ENTITY = "amber_forecast_entity"
 # string. 3.32's local_price_diagnostic option is gone: the local price is an
 # attribute of the one sensor per DUID; a stored value is ignored.
 CONF_LOCAL_PRICE_DUIDS = "local_price_duids"
+# Transmission nodes (TNIs) whose static node price, ROP x MLF, is published
+# (#286), a comma separated string.
+CONF_NODES = "transmission_nodes"
 # One combined factor spot is scaled by in every tariff price, import and
 # export, in place of the library's Energex defaults. Unset keeps them.
 CONF_LOSS_FACTOR = "loss_factor"

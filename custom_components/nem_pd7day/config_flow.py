@@ -21,6 +21,7 @@ from .const import (
     CONF_FORECAST_MODE,
     CONF_LOCAL_PRICE_DUIDS,
     CONF_LOSS_FACTOR,
+    CONF_NODES,
     CONF_ONLY_ACTIVE_TARIFF,
     CONF_REGION,
     CONF_REGIONS,
@@ -35,7 +36,7 @@ from .const import (
     REGIONS,
 )
 from .duid_catalogue import Catalogue, load_catalogue
-from .local_price import parse_duids
+from .local_price import parse_duids, parse_tnis
 from .pd7day_client import PD7DayClient
 from .tariff_pricing import COMBINED_LOSS_MULTIPLIER, LOSS_FACTOR_MAX, LOSS_FACTOR_MIN
 from .tariff_catalogue import import_tariff_codes, tariff_name as catalogue_tariff_name
@@ -337,6 +338,20 @@ def _local_price_fields(options: dict[str, Any], catalogue: Catalogue, region: s
                 "mode": "dropdown",
             }
         }),
+        **_node_field(options, catalogue, region),
+    }
+
+
+def _node_field(options: dict[str, Any], catalogue: Catalogue, region: str) -> dict[Any, Any]:
+    """Transmission nodes whose static node price is published (#286): the region's TNIs, or typed."""
+    current, _invalid = parse_tnis(options.get(CONF_NODES, ""))
+    choices = [{"value": n.tni, "label": n.label} for n in catalogue.region_nodes(region)]
+    listed = {c["value"] for c in choices}
+    choices += [{"value": t, "label": t} for t in current if t not in listed]
+    return {
+        vol.Optional(CONF_NODES, description={"suggested_value": current or None}): selector.selector({
+            "select": {"options": choices, "multiple": True, "custom_value": True, "mode": "dropdown"}
+        }),
     }
 
 
@@ -345,6 +360,9 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
     duids, invalid = parse_duids(user_input.get(CONF_LOCAL_PRICE_DUIDS, ""))
     if invalid:
         return {}, {CONF_LOCAL_PRICE_DUIDS: "invalid_duid"}
+    nodes, bad_nodes = parse_tnis(user_input.get(CONF_NODES, ""))
+    if bad_nodes:
+        return {}, {CONF_NODES: "invalid_tni"}
     return {
         CONF_REGION: user_input[CONF_REGION],
         CONF_FORECAST_MODE: user_input.get(CONF_FORECAST_MODE, FORECAST_MODE_DAYS_2_7),
@@ -352,6 +370,7 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
         CONF_ONLY_ACTIVE_TARIFF: user_input.get(CONF_ONLY_ACTIVE_TARIFF, True),
         CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
         CONF_LOCAL_PRICE_DUIDS: ", ".join(duids),
+        CONF_NODES: ", ".join(nodes),
         # Cleared, the library's defaults are used again.
         CONF_LOSS_FACTOR: user_input.get(CONF_LOSS_FACTOR),
     }, {}

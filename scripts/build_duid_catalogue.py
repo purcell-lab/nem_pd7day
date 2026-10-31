@@ -10,8 +10,9 @@ it before a release to refresh the bundled table:
 
 Sources, all public:
 
-- AEMO MMSDM ``DUDETAILSUMMARY``: DUID, region, station and dispatch type,
-  the registration in force at the end of the month. The authority for a
+- AEMO MMSDM ``DUDETAILSUMMARY``: DUID, region, station, dispatch type,
+  connection point (TNI) and marginal loss factor (MLF), the registration in
+  force at the end of the month. The authority for a
   DUID's region, which the dispatch and P5MIN local price rows do not carry.
 - AEMO MMSDM ``STATION``: the station's registered name and state.
 - Open Electricity's facility data (``opennem/opennem`` stations.json, and
@@ -168,6 +169,38 @@ def _coords(value: float | None) -> float | None:
     return round(float(value), 5) if isinstance(value, (int, float)) else None
 
 
+def _mlf(value: str | None) -> float | None:
+    try:
+        return round(float(value), 4) if value not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def _nodes(duids: dict[str, dict]) -> dict[str, dict]:
+    """Each connection point (TNI) with its region, MLF, DUIDs and the mean of their coordinates.
+
+    The units at one TNI share its MLF; where registrations disagree the most
+    common value is kept.
+    """
+    by_tni: dict[str, list[tuple[str, dict]]] = {}
+    for duid, info in duids.items():
+        if info["tni"]:
+            by_tni.setdefault(info["tni"], []).append((duid, info))
+    nodes = {}
+    for tni, units in sorted(by_tni.items()):
+        mlfs = Counter(i["mlf"] for _, i in units if i["mlf"] is not None)
+        located = [i for _, i in units if i["lat"] is not None]
+        nodes[tni] = {
+            "region": units[0][1]["region"],
+            "mlf": mlfs.most_common(1)[0][0] if mlfs else None,
+            "duids": [d for d, _ in units],
+            "stations": sorted({i["station"] for _, i in units}),
+            "lat": _coords(sum(i["lat"] for i in located) / len(located)) if located else None,
+            "lon": _coords(sum(i["lon"] for i in located) / len(located)) if located else None,
+        }
+    return nodes
+
+
 def build(month: str, days: int) -> dict:
     regs = registrations(month)
     stations = {r["STATIONID"]: r for r in mmsdm_table(month, "STATION")}
@@ -189,6 +222,8 @@ def build(month: str, days: int) -> dict:
             "lat": _coords(lat), "lon": _coords(lon),
             "constrained_intervals": counts.get(duid, 0),
             "adjustment_mwh_sum": round(magnitude.get(duid, 0.0)),
+            "tni": (reg.get("CONNECTIONPOINTID") or "").strip() or None,
+            "mlf": _mlf(reg.get("TRANSMISSIONLOSSFACTOR")),
         }
     top = {
         region: [d for d, _ in sorted(
@@ -204,6 +239,7 @@ def build(month: str, days: int) -> dict:
         "sources": ["AEMO MMSDM DUDETAILSUMMARY", "AEMO MMSDM STATION", "Open Electricity facilities", "AEMO DispatchIS LOCAL_PRICE"],
         "top": top,
         "duids": duids,
+        "nodes": _nodes(duids),
     }
 
 
