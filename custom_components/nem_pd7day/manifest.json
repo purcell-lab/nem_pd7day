@@ -16,5 +16,5 @@
     "numpy>=1.24.0",
     "aemo-to-tariff==0.7.28"
   ],
-  "version": "3.36.0"
+  "version": "3.36.1"
 }
