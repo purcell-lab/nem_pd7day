@@ -1,6 +1,6 @@
 """One static node price sensor per chosen transmission node (#286).
 
-``<TNI> Node Price``, for each connection point (TNI) chosen in the options:
+``<stations> (<TNI>) Node Price``, for each connection point (TNI) chosen in the options:
 
 - **State**: ROP x MLF in $/kWh for the latest dispatch interval: the node's
   region original price, from the DispatchIS file the binding constraints
@@ -42,7 +42,7 @@ from .local_price import (
     P5LocalPriceRun,
     dispatch_status,
 )
-from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, listen_to_forecasts
+from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, entity_id_for, entity_name, listen_to_forecasts
 from .nem_time import now_nem
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 
@@ -78,8 +78,9 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         self._region = region
         self._tni = tni
         self._node = node
-        self._attr_name = f"{tni} Node Price"
+        self._attr_name = entity_name(tni, node.stations if node is not None else (), "Node Price")
         self._attr_unique_id = f"{entry.entry_id}_{region}_{tni}_{SUFFIX}"
+        self.entity_id = entity_id_for(region, tni, SUFFIX)
         self._attr_device_info = device_info(entry, region)
 
     async def async_added_to_hass(self) -> None:
