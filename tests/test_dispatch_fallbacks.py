@@ -177,3 +177,30 @@ def test_the_sensors_report_which_fallback(monkeypatch):
     sensor = _node.NemPd7dayNodePriceSensor(_constraints(_without_table()), None, ENTRY, "SA1", "SCRK", node)
     assert sensor.extra_state_attributes["adjustment_status"] == "rrp_fallback"
     assert sensor.native_value == pytest.approx(28.67941 * 0.9417 / 1000, abs=1e-6)  # the static price
+
+
+# ── A period with no row for anyone is not a stand-in ────────────────────────
+
+PD_EVENING = (_DIR / "PUBLIC_PREDISPATCHIS_202610312100_20261031203220.CSV").read_text()
+
+
+def test_an_empty_predispatch_period_drops_through_to_the_regional_price():
+    """The 20:32 run of 31 Oct 2026 (cut to QLD1 and its midnight rows): LOCAL_PRICE
+    rows only from 00:00 on 1 Nov, none for any DUID from 21:00 to 23:30."""
+    run = _pdc.parse_predispatch(PD_EVENING, "PUBLIC_PREDISPATCHIS_202610312100_20261031203220.zip")
+    assert run.local_price_table is True
+    assert min(end for series in run.local_prices.values() for end in series) == datetime(2026, 11, 1, 0, 0, tzinfo=NEM_TZ)
+    at_21 = replace(_without_table(), interval_end=datetime(2026, 10, 31, 21, 0, tzinfo=NEM_TZ))
+    filled = _lp.with_fallbacks(at_21, None, run)
+    assert filled.fallback_status == "rrp_fallback" and filled.fallback_source == "RRP"
+    at_midnight = replace(_without_table(), interval_end=datetime(2026, 10, 31, 23, 55, tzinfo=NEM_TZ))
+    late = replace(run, run_at=datetime(2026, 10, 31, 23, 2, tzinfo=NEM_TZ))
+    covered = _lp.with_fallbacks(at_midnight, None, late)
+    assert covered.fallback_status == "predispatch_fallback" and covered.rows["ALDGASF1"].adjustment_mwh == -25.6
+
+
+def test_an_empty_p5min_interval_drops_through_too():
+    empty = replace(_run(), rows={})
+    assert _lp.with_p5_fallback(_without_table(), empty).table_present is False
+    assert _lp.with_fallbacks(_without_table(), empty, None).fallback_status == "rrp_fallback"
+    assert _lp.with_fallbacks(_without_table(), empty, _pd()).fallback_status == "predispatch_fallback"

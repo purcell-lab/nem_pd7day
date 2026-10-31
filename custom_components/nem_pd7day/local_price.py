@@ -277,6 +277,8 @@ def with_p5_fallback(
         return prices
     conflicts = frozenset(duid for duid, at in run.conflicts if at == end)
     rows = {duid: series[end] for duid, series in run.rows.items() if end in series and duid not in conflicts}
+    if not rows and not conflicts:
+        return prices  # the run has nothing for this interval, for anyone: not a stand-in
     return replace(prices, table_present=True, rows=rows, fallback_source=run.source,
                    fallback_conflicts=conflicts, fallback_status=STATUS_P5_FALLBACK)
 
@@ -286,7 +288,11 @@ def with_predispatch_fallback(prices: Optional[DispatchLocalPrices], snapshot: A
 
     The period whose end is the first at or after the interval's end, from a
     run solved no more than 75 minutes before it with its LOCAL_PRICE table;
-    a DUID without a row there is 0, as everywhere else.
+    a DUID without a row there is 0, as everywhere else. A period with no row
+    for any DUID is not a stand-in: when AEMO's local prices fail, they fail
+    for the near term in every feed (on 31 Oct 2026 the 20:32 run had rows
+    only from midnight on), and a whole NEM without one adjustment for hours
+    says the rows are missing, not zero. The same holds for a P5MIN interval.
     """
     if prices is None or prices.table_present or snapshot is None or not getattr(snapshot, "local_price_table", False):
         return prices
@@ -298,6 +304,8 @@ def with_predispatch_fallback(prices: Optional[DispatchLocalPrices], snapshot: A
         return prices
     rows = {duid: LocalPriceRow(series[period], None)
             for duid, series in snapshot.local_prices.items() if period in series}
+    if not rows:
+        return prices  # the run has nothing for this period, for anyone: not a stand-in
     return replace(prices, table_present=True, rows=rows, fallback_source=snapshot.source,
                    fallback_status=STATUS_PD_FALLBACK)
 
