@@ -95,10 +95,10 @@ def test_dispatch_explicit_zero_is_published_not_absent():
     assert _lp.dispatch_status(prices, "GSTONE1", _at(21, 26), timedelta(minutes=15)) == _lp.STATUS_PUBLISHED
 
 
-def test_dispatch_statuses_absent_missing_stale_and_no_data():
+def test_dispatch_statuses_zero_by_omission_missing_stale_and_no_data():
     age = timedelta(minutes=15)
     prices = _dispatch()
-    assert _lp.dispatch_status(prices, "GSTONE1", _at(21, 26), age) == _lp.STATUS_ABSENT
+    assert _lp.dispatch_status(prices, "GSTONE1", _at(21, 26), age) == _lp.STATUS_ZERO
     assert _lp.dispatch_status(prices, "GUTHEGA", _at(21, 41), age) == _lp.STATUS_STALE
     assert _lp.dispatch_status(None, "GUTHEGA", _at(21, 26), age) == _lp.STATUS_NO_DATA
     no_table = _dispatch(_without(DISPATCH, "LOCAL_PRICE"))
@@ -204,30 +204,33 @@ def test_forecast_drops_ended_intervals_and_expires_with_the_horizon():
     assert expired.status == _lp.STATUS_EXPIRED and expired.points == []
 
 
-def test_forecast_stops_at_a_gap_and_keeps_later_rows_apart():
-    """No carrying across a gap: the rows after it are diagnostics, not forecast (#275)."""
+def test_an_interval_without_a_row_is_an_inferred_zero_not_a_gap():
+    """AEMO publishes only non-zero rows: a missing interval in a run with the
+    table is 0, flagged, and the forecast runs on to the run's last interval."""
     text = _without(P5, "GUTHEGA", '"2026/10/30 21:45:00"')
     series = _lp.forecast_series(_p5(text), "GUTHEGA", _at(21, 22), AGE)
-    assert [p["value"] for p in series.points] == [0.08828, 0.08543, 0.08766, 0.09265]
-    assert series.forecast_end == "2026-10-30T21:40:00+10:00"
-    assert series.horizon_end == "2026-10-30T22:20:00+10:00"
-    assert len(series.later) == 7 and series.later[0]["time"] == "2026-10-30T21:45:00+10:00"
+    values = [p["value"] for p in series.points]
+    assert values[:4] == [0.08828, 0.08543, 0.08766, 0.09265] and values[4] == 0.0 and len(values) == 12
+    assert series.inferred == ["2026-10-30T21:40:00+10:00"]
+    assert series.forecast_end == series.horizon_end == "2026-10-30T22:20:00+10:00"
+    assert series.later == [] and series.status == _lp.STATUS_PUBLISHED
     assert series.published == 11 and series.intervals == 12
 
 
-def test_forecast_first_interval_missing_is_absent_with_no_points():
-    text = _without(P5, "GUTHEGA", '"2026/10/30 21:25:00",GUTHEGA,"2026/10/30 21:25:00"')
-    series = _lp.forecast_series(_p5(text), "GUTHEGA", _at(21, 22), AGE)
-    assert series.status == _lp.STATUS_ABSENT and series.points == [] and len(series.later) == 11
+def test_a_duid_with_no_rows_in_the_run_is_zero_throughout():
+    series = _lp.forecast_series(_p5(), "GSTONE1", _at(21, 22), AGE)
+    assert series.status == _lp.STATUS_ZERO and series.published == 0
+    assert [p["value"] for p in series.points] == [0.0] * 12 and len(series.inferred) == 12
 
 
-def test_forecast_statuses_unknown_duid_stale_table_missing_and_no_data():
+def test_stale_missing_table_and_no_run_are_never_filled():
     run = _p5()
-    assert _lp.forecast_series(run, "GSTONE1", _at(21, 22), AGE).status == _lp.STATUS_ABSENT
-    assert _lp.forecast_series(run, "CATHROCK", _at(21, 41), AGE).status == _lp.STATUS_STALE
-    assert _lp.forecast_series(None, "CATHROCK", _at(21, 22), AGE).status == _lp.STATUS_NO_DATA
-    no_table = _p5(_without(P5, "P5MIN,LOCAL_PRICE"))
-    assert _lp.forecast_series(no_table, "CATHROCK", _at(21, 22), AGE).status == _lp.STATUS_TABLE_MISSING
+    for series, status in [
+        (_lp.forecast_series(run, "CATHROCK", _at(21, 41), AGE), _lp.STATUS_STALE),
+        (_lp.forecast_series(None, "CATHROCK", _at(21, 22), AGE), _lp.STATUS_NO_DATA),
+        (_lp.forecast_series(_p5(_without(P5, "P5MIN,LOCAL_PRICE")), "CATHROCK", _at(21, 22), AGE), _lp.STATUS_TABLE_MISSING),
+    ]:
+        assert series.status == status and series.points == [] and series.inferred == []
 
 
 # ── Price limits ─────────────────────────────────────────────────────────────
@@ -394,16 +397,24 @@ def test_adjustment_sensor_publishes_dollars_per_kwh_and_keeps_mwh(monkeypatch):
     assert attrs["retrieved_at"] == "2026-10-30T21:25:40+10:00"
 
 
-def test_adjustment_sensor_is_unknown_not_zero_without_a_row(monkeypatch):
+def test_no_row_in_a_fresh_file_is_zero_and_flagged(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 26))
     absent = _duid(_constraints(_dispatch()), "GSTONE1", "QLD1")
-    assert absent.native_value is None and absent.extra_state_attributes["row_status"] == "absent"
-    assert absent.extra_state_attributes["local_price"] is None
+    attrs = absent.extra_state_attributes
+    assert absent.native_value == 0.0 and attrs["row_status"] == "zero_by_omission"
+    assert attrs["adjustment_mwh"] == 0.0 and attrs["locally_constrained"] is None
+    assert attrs["local_price"] == pytest.approx(0.08525)  # the QLD1 ROP, 85.25 $/MWh
+
+
+def test_stale_no_data_and_a_missing_table_stay_unknown(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 45))
-    stale = _duid(_constraints(_dispatch()), "GUTHEGA", "NSW1")
+    stale = _duid(_constraints(_dispatch()), "GSTONE1", "QLD1")
     assert stale.native_value is None and stale.extra_state_attributes["row_status"] == "stale"
-    empty = _duid(SimpleNamespace(tracker=SimpleNamespace(latest=None)), "GUTHEGA", "NSW1")
+    monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 26))
+    empty = _duid(SimpleNamespace(tracker=SimpleNamespace(latest=None)), "GSTONE1", "QLD1")
     assert empty.native_value is None and empty.extra_state_attributes["row_status"] == "no_data"
+    no_table = _duid(_constraints(_dispatch(_without(DISPATCH, "LOCAL_PRICE"))), "GSTONE1", "QLD1")
+    assert no_table.native_value is None and no_table.extra_state_attributes["local_price"] is None
 
 
 def test_the_local_price_attributes_use_rop_and_clip_the_sum(monkeypatch):
@@ -432,18 +443,22 @@ def test_the_forecast_rides_as_attributes_with_its_own_status(monkeypatch):
     assert attrs["forecast_end"] == "2026-10-30T22:20:00+10:00" and attrs["intervals_ahead"] == 11
     assert attrs["forecast_age_seconds"] == 420  # from 21:20, the start of the run's first interval
     assert len(attrs["forecast_interval_ends"]) == len(attrs["forecast"])
-    assert sensor._unrecorded_attributes == frozenset({"forecast", "forecast_interval_ends", "later_observations"})
+    assert attrs["intervals_inferred_zero"] == 0 and attrs["inferred_zero_times"] == []
+    assert sensor._unrecorded_attributes == frozenset(
+        {"forecast", "forecast_interval_ends", "later_observations", "inferred_zero_times"}
+    )
 
 
-def test_a_gap_or_no_run_empties_the_forecast_but_not_the_state(monkeypatch):
+def test_a_missing_interval_is_zero_and_no_run_leaves_the_state(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(21, 27))
     gap = _without(P5, "CATHROCK", '"2026/10/30 21:30:00",-30.36')
-    sensor = _duid(_constraints(_dispatch()), "CATHROCK", "SA1", p5=SimpleNamespace(latest=_p5(gap)))
-    assert sensor.extra_state_attributes["forecast"] == []
-    assert sensor.native_value == pytest.approx(-0.03392)
+    attrs = _duid(_constraints(_dispatch()), "CATHROCK", "SA1", p5=SimpleNamespace(latest=_p5(gap))).extra_state_attributes
+    assert attrs["forecast"][0] == {"time": "2026-10-30T21:25:00+10:00", "value": 0.0}
+    assert attrs["inferred_zero_times"] == ["2026-10-30T21:25:00+10:00"] and attrs["intervals_inferred_zero"] == 1
     empty = _duid(_constraints(_dispatch()), "CATHROCK", "SA1")
     assert empty.extra_state_attributes["forecast_status"] == "no_data"
     assert empty.extra_state_attributes["row_status"] == "published"
+    assert empty.native_value == pytest.approx(-0.03392)
 
 
 def test_one_sensor_per_duid():

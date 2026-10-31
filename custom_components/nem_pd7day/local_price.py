@@ -14,11 +14,12 @@ Guide to mis-pricing information). Two public feeds carry it:
   values. The region's ROP for the same run and interval is in
   D,P5MIN,REGIONSOLUTION.
 
-AEMO publishes a row only where the adjustment is non-zero, so an absent row
-usually is a zero. That is not established for every row of every feed, so an
-absent row is kept as absent, never filled with 0. A file whose LOCAL_PRICE
-table is missing altogether says nothing about any DUID. Nothing is carried
-across a gap or past the run's last interval.
+AEMO publishes a row only where the adjustment is non-zero, so a DUID without
+a row in a fresh file that has the LOCAL_PRICE table is taken as 0, with the
+status ``zero_by_omission`` so an inferred 0 stays apart from a published one.
+A file whose LOCAL_PRICE table is missing altogether, a stale file and a
+conflicting interval say nothing, and are never filled. Nothing is carried
+past the run's last interval.
 
 All times are NEM time, UTC+10 without daylight saving; INTERVAL_DATETIME and
 SETTLEMENTDATE are interval ends, and a forecast point's ``time`` is the
@@ -42,7 +43,9 @@ _P5_FILE_RE = re.compile(r"(PUBLIC_P5MIN_(\d{12})_(\d{14})\.zip)", re.IGNORECASE
 DUID_RE = re.compile(r"^[A-Z0-9_#/-]{1,10}$")
 
 STATUS_PUBLISHED = "published"
-STATUS_ABSENT = "absent"                 # file read, LOCAL_PRICE table present, no row for the DUID
+# File read, LOCAL_PRICE table present, no row for the DUID: AEMO publishes a
+# row only where the adjustment is not zero, so the value is taken as 0.
+STATUS_ZERO = "zero_by_omission"
 STATUS_TABLE_MISSING = "table_missing"   # the file has no LOCAL_PRICE table at all
 STATUS_CONFLICT = "conflicting_rows"     # two different rows for one DUID and interval
 STATUS_NO_DATA = "no_data"               # no file read yet
@@ -233,28 +236,35 @@ def dispatch_status(prices: Optional[DispatchLocalPrices], duid: str, now: datet
         return STATUS_STALE
     if not prices.table_present:
         return STATUS_TABLE_MISSING
-    return STATUS_PUBLISHED if duid in prices.rows else STATUS_ABSENT
+    return STATUS_PUBLISHED if duid in prices.rows else STATUS_ZERO
 
 
 @dataclass
 class ForecastSeries:
-    """A DUID's P5MIN forecast: only the published intervals from the run's first, no gap crossed."""
+    """A DUID's P5MIN forecast: the run's intervals still to end, up to a conflict.
+
+    An interval without a row, in a run whose LOCAL_PRICE table is present,
+    is 0 and listed in ``inferred``: AEMO publishes only non-zero rows.
+    """
 
     status: str
     points: list[dict[str, Any]]          # {time: interval start ISO, value: $/kWh}
     interval_ends: list[str]               # the source interval ends, parallel to points
-    later: list[dict[str, Any]]            # published rows after the first gap, diagnostics only
-    published: int                         # intervals ahead with a row, gap or not
+    later: list[dict[str, Any]]            # published rows after a conflicting interval, diagnostics only
+    published: int                         # intervals ahead with a row
     intervals: int                         # intervals of the run still to end
     forecast_end: Optional[str]            # the end of the last point: the forecast stops here
     horizon_end: Optional[str] = None      # the end of the run's last interval
+    inferred: list[str] = field(default_factory=list)  # point times taken as 0 for want of a row
 
 
 def forecast_series(run: Optional[P5LocalPriceRun], duid: str, now: datetime, max_age: timedelta) -> ForecastSeries:
-    """The run's intervals still to end, in order, up to the first without a row.
+    """The run's intervals still to end, in order, up to the first conflicting interval.
 
-    An interval that has ended is dropped, not a gap; once every interval has
-    ended the run says nothing more (STATUS_EXPIRED).
+    An interval that has ended is dropped; once every interval has ended the
+    run says nothing more (STATUS_EXPIRED). An interval without a row is 0; a
+    stale run, or one without the LOCAL_PRICE table, gives no points at all,
+    and nothing is carried past the run's last interval.
     """
     if run is None:
         return ForecastSeries(STATUS_NO_DATA, [], [], [], 0, 0, None)
@@ -269,24 +279,31 @@ def forecast_series(run: Optional[P5LocalPriceRun], duid: str, now: datetime, ma
     points: list[dict[str, Any]] = []
     ends: list[str] = []
     later: list[dict[str, Any]] = []
+    inferred: list[str] = []
     gap = False
     for end in ahead:
-        row = rows.get(end)
-        if row is None:
+        if (duid, end) in run.conflicts:
             gap = True
             continue
-        point = {"time": (end - INTERVAL).isoformat(), "value": round(row.adjustment_mwh / 1000.0, 6)}
+        row = rows.get(end)
+        point: dict[str, Any] = {
+            "time": (end - INTERVAL).isoformat(), "value": round(row.adjustment_mwh / 1000.0, 6) if row else 0.0,
+        }
         if gap:
-            later.append(point)
-        else:
-            points.append(point)
-            ends.append(end.isoformat())
-    if any(d == duid for d, _ in run.conflicts):
+            if row is not None:
+                later.append(point)
+            continue
+        points.append(point)
+        ends.append(end.isoformat())
+        if row is None:
+            inferred.append(point["time"])
+    published = sum(1 for end in ahead if end in rows)
+    if gap:
         status = STATUS_CONFLICT
     else:
-        status = STATUS_PUBLISHED if points else STATUS_ABSENT
-    return ForecastSeries(status, points, ends, later, len(points) + len(later), len(ahead),
-                          ends[-1] if ends else None, ahead[-1].isoformat())
+        status = STATUS_PUBLISHED if published else STATUS_ZERO
+    return ForecastSeries(status, points, ends, later, published, len(ahead),
+                          ends[-1] if ends else None, ahead[-1].isoformat(), inferred)
 
 
 def latest_p5_file(html: str) -> Optional[str]:

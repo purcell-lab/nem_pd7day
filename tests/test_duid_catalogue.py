@@ -246,3 +246,24 @@ def test_the_json_and_the_builder_agree_on_shape():
     assert {"generated", "constrained_window", "top", "duids"} <= set(data)
     row = next(iter(data["duids"].values()))
     assert {"region", "station", "type", "fuel", "lat", "lon", "constrained_intervals"} <= set(row)
+
+
+def test_a_duid_that_is_its_only_name_is_labelled_alone():
+    catalogue = _cat.parse_catalogue({"duids": {
+        "ASGENE01": {"region": "QLD1", "station": "ASGENE01"},
+        "ORABESS1": {"region": "NSW1", "station": "Orana BESS", "fuel": "battery_charging"},
+    }})
+    assert catalogue.info("ASGENE01").label == "ASGENE01"
+    assert catalogue.info("ORABESS1").label == "ORABESS1 · Orana BESS (battery charging)"
+
+
+def test_the_builder_keeps_acronyms_and_drops_internal_labels():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("build_duid_catalogue", Path(__file__).parents[1] / "scripts" / "build_duid_catalogue.py")
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    assert builder._station_name("TERANG BESS", None, "TRGBESS1") == "Terang BESS"
+    assert builder._station_name("MT PIPER", None, "MP1") == "Mt Piper"
+    assert builder._station_name("ASGENE01", None, "ASGENE01") == "ASGENE01"
+    assert builder._station_name("GLADSTONE POWER STATION", "Gladstone", "GSTONE1") == "Gladstone"
