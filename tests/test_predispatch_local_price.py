@@ -123,15 +123,15 @@ def _info(duids=("URANQ14",), region="NSW1", mlf=0.95):
     return _cat.NodeInfo("NTEST1", region, mlf, tuple(duids), ("Test",), None, None)
 
 
-def test_a_node_forecasts_rrp_times_mlf_plus_its_adjustment(monkeypatch, run):
+def test_a_node_forecasts_rrp_plus_its_adjustment_times_mlf(monkeypatch, run):
     monkeypatch.setattr(_node, "now_nem", lambda: _at(13, 10))
     sensor = _node.NemPd7dayNodePriceSensor(
         _constraints(None), None, ENTRY, "NSW1", "NTEST1", node := _info(), SimpleNamespace(latest=run),
     )
     attrs = sensor.extra_state_attributes
     points = attrs["predispatch_forecast"]
-    assert points[0] == {"time": "2026-10-31T13:00:00+10:00", "value": round((55.85 * 0.95 - 1017.04) / 1000, 6)}
-    assert points[1]["value"] == round((55.85 * 0.95 - 98.34) / 1000, 6)
+    assert points[0] == {"time": "2026-10-31T13:00:00+10:00", "value": round((55.85 - 1017.04) * 0.95 / 1000, 6)}
+    assert points[1]["value"] == round((55.85 - 98.34) * 0.95 / 1000, 6)
     assert attrs["predispatch_status"] == "published" and len(points) == 78
     assert "predispatch_forecast" in sensor._unrecorded_attributes and node.mlf == 0.95
 
@@ -156,10 +156,12 @@ def test_the_nodes_dispatch_adjustment_is_its_duids_published_one(monkeypatch):
     )
     attrs = constrained.extra_state_attributes
     assert (attrs["adjustment_status"], attrs["adjustment_mwh"]) == ("published", 88.27)
-    assert attrs["node_price_mwh"] == pytest.approx(97.62 * 0.9 + 88.27)
+    assert attrs["node_price_mwh"] == pytest.approx((97.62 + 88.27) * 0.9)
     assert attrs["static_price_mwh"] == pytest.approx(97.62 * 0.9, abs=1e-4)
-    # The state is the node price, constraint included: ROP x MLF + adjustment.
-    assert constrained.native_value == pytest.approx((97.62 * 0.9 + 88.27) / 1000, abs=1e-6)
+    assert attrs["adjustment_at_node_mwh"] == pytest.approx(88.27 * 0.9, abs=1e-4)
+    assert attrs["formula"] == "(ROP + LOCAL_PRICE_ADJUSTMENT) x MLF"
+    # The state is the node price, constraint included: (ROP + adjustment) x MLF.
+    assert constrained.native_value == pytest.approx((97.62 + 88.27) * 0.9 / 1000, abs=1e-6)
 
     free = _node.NemPd7dayNodePriceSensor(
         _constraints(_dispatch()), None, ENTRY, "NSW1", "NTEST1", _info(("NOROWS1",), mlf=0.9),
@@ -184,8 +186,9 @@ def test_a_stale_dispatch_or_disagreeing_duids_leave_the_adjustment_unknown(monk
 
 
 def test_a_node_below_the_floor_is_reported_raw(monkeypatch):
-    """GSTONE1 at 16:05 on 31 Oct 2026: 70.0806 x 0.9299 - 1110.09, under the
-    -1000 floor, published as it is."""
+    """GSTONE1 at 16:05 on 31 Oct 2026: (70.0806 - 1110.09) x 0.9299, under the
+    -1000 floor, published as it is. A deep adjustment pins the convention
+    (#312): ROP x MLF + adjustment would give -1044.92, 78 $/MWh lower."""
     end = datetime(2026, 10, 31, 16, 5, tzinfo=NEM_TZ)
     prices = _lp.DispatchLocalPrices(
         end, "d.zip", True, {"GSTONE1": _lp.LocalPriceRow(-1110.09, 1)}, {"QLD1": 70.0806}, end,
@@ -194,7 +197,8 @@ def test_a_node_below_the_floor_is_reported_raw(monkeypatch):
     sensor = _node.NemPd7dayNodePriceSensor(
         _constraints(prices), None, ENTRY, "QLD1", "QGLD1", _info(("GSTONE1",), region="QLD1", mlf=0.9299),
     )
-    assert sensor.native_value == pytest.approx(-1.044922, abs=1e-6)
+    assert sensor.native_value == pytest.approx(-0.967105, abs=1e-6)
     attrs = sensor.extra_state_attributes
-    assert attrs["node_price_mwh"] == pytest.approx(-1044.9221, abs=1e-4)
+    assert attrs["node_price_mwh"] == pytest.approx(-967.1047, abs=1e-4)
     assert attrs["static_price_mwh"] == pytest.approx(65.1679, abs=1e-4) and attrs["adjustment_mwh"] == -1110.09
+    assert attrs["static_price_mwh"] + attrs["adjustment_at_node_mwh"] == pytest.approx(attrs["node_price_mwh"], abs=2e-4)

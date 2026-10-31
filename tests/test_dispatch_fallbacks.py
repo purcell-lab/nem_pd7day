@@ -197,7 +197,7 @@ def test_a_node_and_a_zone_read_it_too(monkeypatch):
     sensor = _node.NemPd7dayNodePriceSensor(_constraints(_stale()), p5, ENTRY, "NSW1", "NGTH1", node)
     attrs = sensor.extra_state_attributes
     assert (attrs["adjustment_status"], attrs["adjustment_mwh"]) == ("p5min_fallback", 88.28)
-    assert sensor.native_value == pytest.approx((97.62 * 0.9 + 88.28) / 1000, abs=1e-6)
+    assert sensor.native_value == pytest.approx((97.62 + 88.28) * 0.9 / 1000, abs=1e-6)
     assert attrs["fallback_source_file"] == P5_NAME
     zone = _zones.Zone("sydney", "Sydney", -33.87, 151.21, 100, (_zones.Member(node, 5.0),), False)
     zone_attrs = _zs.NemPd7dayZonePriceSensor(_constraints(_stale()), p5, ENTRY, "NSW1", zone).extra_state_attributes

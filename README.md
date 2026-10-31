@@ -176,7 +176,16 @@ A catalogued DUID's sensor publishes `station`, `fuel`, `duid_region`, `tni`, `m
 |---|---|---|
 | Transmission node prices | empty | A dropdown of the region's connection points (TNIs), labelled with their stations and DUIDs (`QWIV1 · Wivenhoe (W/HOE#1)`). A TNI not in the list can be typed: two to ten letters or digits. Each chosen node gets one sensor, enabled |
 
-A TNI is a transmission connection point. Its **node price** is the region's original price (ROP) times the node's marginal loss factor (MLF), plus the node's local price adjustment: the **static price**, ROP × MLF, is what a generator connected there is paid per MWh sent out; the adjustment is what binding network constraints near it are worth at the margin, 0 most of the time. Nodes upstream of losses have an MLF below 1, so their static price is below the regional price. The catalogue takes each DUID's TNI and MLF from AEMO's DUDETAILSUMMARY, and groups the DUIDs by TNI. There are no presets. A diagnostic, not a retail or settlement price, and not the price at your own meter: a household is settled at the regional price times its distribution and transmission losses (see the loss factor above).
+A TNI is a transmission connection point. Its **node price** is the region's original price (ROP) plus the node's local price adjustment, times the node's marginal loss factor (MLF): (ROP + adjustment) × MLF. The **static price**, ROP × MLF, is what a generator connected there is paid per MWh sent out; the adjustment is what binding network constraints near it are worth at the margin, 0 most of the time. Nodes upstream of losses have an MLF below 1, so their static price is below the regional price. The catalogue takes each DUID's TNI and MLF from AEMO's DUDETAILSUMMARY, and groups the DUIDs by TNI. There are no presets. A diagnostic, not a retail or settlement price, and not the price at your own meter: a household is settled at the regional price times its distribution and transmission losses (see the loss factor above).
+
+**Local price and node price** (#312, #313):
+
+| | Formula | Where | Sensor |
+|---|---|---|---|
+| Local price | ROP + adjustment | At the regional reference node, AEMO's own definition | DUID sensor: `local_price`, `local_price_formula` |
+| Node price | (ROP + adjustment) × MLF | At the connection point | Node sensor state, and the DUID sensor's `node_price`; `formula` / `node_price_formula` |
+
+The MLF scales the adjustment too: NEMDE refers every offer to the regional reference node by dividing it by the unit's MLF, so AEMO's adjustment is on that basis, as the ROP is. Of 34 dispatched, locally constrained unit intervals on 31 Oct 2026 (to 19:10, against the bids in force), 17 priced to the cent at one of the unit's own offer bands with (ROP + adjustment) × MLF, and none with ROP × MLF + adjustment (METZSF1, MLF 0.8657: its −114.72 band, against −141.4). Until v3.38.0 the node price was ROP × MLF + adjustment.
 
 
 ### City and zone price proxies (optional)
@@ -187,7 +196,7 @@ A TNI is a transmission connection point. Its **node price** is the region's ori
 | Zone radius | 100 km | How far from the centre a catalogue node counts as nearby |
 | Home load connection point | empty | The bulk supply point serving your area, from a dropdown of the region's load connection points as AEMO's MLF report names them (`Belmont 110 kV (QBMH) · MLF 1.0128`). Its MLF is the Home zone's |
 
-A zone's price is a **proxy**: ROP × zone MLF + the median local price adjustment of the region's catalogue nodes within the radius (the nearest node alone where none is that close).
+A zone's price is a **proxy**: (ROP + the median local price adjustment of the region's catalogue nodes within the radius) × zone MLF, the nearest node alone standing in where none is that close.
 
 - **Zone MLF**: the mean MLF of the place's own load connection points. Each preset city lists the bulk supply points that serve it (Brisbane 15, from Algester to Tennyson: 1.0120; Sydney 48: 1.0035; Melbourne 43: 1.0004; Adelaide 13: 1.0012; Hobart 11: 1.0373; Townsville 5: 0.9998), and Home the one chosen above. They come from `load_points.json`, the load tables of AEMO's *Marginal Loss Factors: Financial Year 2026-27* report (513 load points), built by `scripts/build_load_points.py` from the report's PDF, which aemo.com.au does not serve to scripts; every MLF matches MMSDM's TRANSMISSIONLOSSFACTOR. Where no load point is known, the inverse-distance-weighted mean of the nearby nodes' MLFs stands in (`zone_mlf_source: nearby_generation_idw`).
 - **Adjustment**: city load is not a variable in NEMDE's constraint equations, so it has no local price adjustment of its own; the nearby generation and storage nodes' adjustments stand in. The median means one constrained unit does not move the zone, while most of them do.
@@ -508,7 +517,8 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 | Attribute | Description |
 |---|---|
-| `local_price`, `local_price_mwh` | The local price in $/kWh and $/MWh |
+| `local_price`, `local_price_mwh`, `local_price_formula` | The local price in $/kWh and $/MWh, ROP + adjustment, at the regional reference node |
+| `node_price`, `node_price_mwh`, `node_price_formula` | The same at the DUID's connection point, (ROP + adjustment) × its catalogue MLF; unknown for a DUID the catalogue lacks |
 | `rop_region`, `rop_mwh` | The region whose ROP is used, and that ROP |
 | `price_floor_mwh`, `price_cap_mwh` | The interval's market floor and cap, for reference: not applied |
 
@@ -537,36 +547,36 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 ### Node Price
 
-`sensor.nem_pd7day_{region}_{tni}_node_price`, one per chosen transmission node, in the device's Diagnostic section, named with its stations (`Wivenhoe (QWIV1) Node Price`); the entity id is the TNI's alone. The state is the node price in $/kWh for the latest dispatch interval: ROP × MLF + the node's local price adjustment, from the same DispatchIS file. So a constrained node shows its constraint in the state, as its DUID's sensor does: at 16:05 on 31 Oct 2026 QGLD1 read 70.0806 × 0.9299 − 1110.09 = −1044.92 $/MWh. Raw, never clipped: the floor and cap apply to the regional price. Unknown when the file is stale or not yet read, when it has no ROP for the node's region, when the catalogue does not list the TNI (no MLF or DUIDs), or when the node's DUIDs disagree. Until v3.36.2 the state was the static price alone.
+`sensor.nem_pd7day_{region}_{tni}_node_price`, one per chosen transmission node, in the device's Diagnostic section, named with its stations (`Wivenhoe (QWIV1) Node Price`); the entity id is the TNI's alone. The state is the node price in $/kWh for the latest dispatch interval: (ROP + the node's local price adjustment) × MLF, from the same DispatchIS file. So a constrained node shows its constraint in the state, as its DUID's sensor does: at 16:05 on 31 Oct 2026 QGLD1 read (70.0806 − 1110.09) × 0.9299 = −967.10 $/MWh. Raw, never clipped: the floor and cap apply to the regional price. Unknown when the file is stale or not yet read, when it has no ROP for the node's region, when the catalogue does not list the TNI (no MLF or DUIDs), or when the node's DUIDs disagree. Until v3.36.2 the state was the static price alone.
 
 | Attribute | Description |
 |---|---|
-| `node_price_mwh` | The state in $/MWh |
-| `static_price_mwh`, `rop_mwh` | ROP × MLF, the static node price before any adjustment, and the ROP of the node's region |
+| `node_price_mwh`, `formula` | The state in $/MWh, and `(ROP + LOCAL_PRICE_ADJUSTMENT) x MLF` |
+| `static_price_mwh`, `adjustment_at_node_mwh`, `rop_mwh` | ROP × MLF, the static node price before any adjustment; adjustment × MLF, its part at the node (the two add up to the state); and the ROP of the node's region |
 | `adjustment_mwh`, `adjustment_status` | The node's local price adjustment: its DUIDs' published `LOCAL_PRICE_ADJUSTMENT` (`published`), 0 when a fresh file has no row for them (`zero_by_omission`) or no LOCAL_PRICE table at all (`dispatch_zero`), what stands in for a missing or stale file (`p5min_fallback` or `predispatch_fallback`, with `fallback_source_file`), or unknown (`stale`, `no_data`, `conflicting_rows` when its DUIDs differ, `unknown_node`) |
 | `row_status` | The static part: `published`; `unknown_node` (the TNI is not in the catalogue); `no_rop` (no price for the node's region in the file); `stale` (the newest interval ended more than 15 minutes ago); `no_data` (no file read yet) |
 | `tni`, `mlf`, `node_region`, `duids`, `stations`, `latitude`, `longitude` | The node and its MLF; the rest from the catalogue. Coordinates are the mean of its located units |
 | `interval_start`, `interval_end`, `source`, `source_file`, `retrieved_at`, `age_seconds` | As for the DUID sensor; `source` is `DISPATCH_PRICE_ROP` |
-| `forecast` | `{time, interval_end, value}` per P5MIN interval still to end: the run's ROP of the node's region × MLF + its DUIDs' P5MIN adjustment (0 without a row), in $/kWh, raw (not recorded). It stops at an interval where the DUIDs conflict |
+| `forecast` | `{time, interval_end, value}` per P5MIN interval still to end: (the run's ROP of the node's region + its DUIDs' P5MIN adjustment, 0 without a row) × MLF, in $/kWh, raw (not recorded). It stops at an interval where the DUIDs conflict |
 | `forecast_status` | `published`, `stale`, `expired`, `conflicting_rows`, `no_rop`, `unknown_node` or `no_data` |
 | `forecast_source`, `forecast_run_at`, `forecast_source_file` | `P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE`, the run and the P5MIN file |
-| `predispatch_forecast` | `{time, value}` per 30-minute pre-dispatch period still to end, RRP × MLF + the DUIDs' adjustment, in $/kWh, to the end of the next trading day (not recorded). The other `predispatch_*` attributes are as for the DUID sensor |
+| `predispatch_forecast` | `{time, value}` per 30-minute pre-dispatch period still to end, (RRP + the DUIDs' adjustment) × MLF, in $/kWh, to the end of the next trading day (not recorded). The other `predispatch_*` attributes are as for the DUID sensor |
 
 ### Zone Price Proxy
 
-`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per chosen zone (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: ROP × zone MLF + the members' median local price adjustment, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out of the median; a fresh file without the LOCAL_PRICE table is 0 for every member (`dispatch_zero`), and a stale file or none, with nothing to stand in, leaves the state unknown. With a 100 km radius Brisbane has 8 member nodes, Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
+`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per chosen zone (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: (ROP + the members' median local price adjustment) × zone MLF, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out of the median; a fresh file without the LOCAL_PRICE table is 0 for every member (`dispatch_zero`), and a stale file or none, with nothing to stand in, leaves the state unknown. With a 100 km radius Brisbane has 8 member nodes, Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
 
 | Attribute | Description |
 |---|---|
 | `proxy` | Always `true` |
 | `zone`, `latitude`, `longitude`, `radius_km`, `nearest_only`, `member_count` | The centre and radius, and whether the nearest node stood in for none in reach |
 | `zone_mlf`, `zone_mlf_source`, `load_points` | The zone MLF; `load_tni` (the mean of `load_points`, each with `tni`, `name`, `kv` and `mlf`, not recorded) or `nearby_generation_idw` |
-| `price_mwh`, `static_price_mwh`, `rop_mwh`, `adjustment_mwh`, `adjustment_aggregate` | The state in $/MWh, its parts (ROP × zone MLF, the median adjustment), and `median` |
+| `price_mwh`, `static_price_mwh`, `rop_mwh`, `adjustment_mwh`, `adjustment_aggregate`, `formula` | The state in $/MWh, ROP × zone MLF, the ROP, the median adjustment, `median`, and `(ROP + median LOCAL_PRICE_ADJUSTMENT) x zone MLF` |
 | `members_constrained`, `adjustment_min_mwh`, `adjustment_max_mwh` | How many members have a non-zero adjustment, and the spread |
 | `members` | Each member's `tni`, `stations`, `distance_km`, `mlf`, `adjustment_mwh` and `adjustment_status`, nearest first (not recorded) |
 | `row_status`, `interval_end`, `source_file`, `fallback_source_file` | `published`, `dispatch_zero` (a fresh file without the LOCAL_PRICE table: every member 0), `p5min_fallback` or `predispatch_fallback` (what stood in for a missing or stale file), `conflicting_rows` (every member left out), `stale`, `no_rop`, `unknown_node` or `no_data`; the dispatch interval and file |
-| `forecast`, `forecast_status`, `forecast_run_at` | `{time, interval_end, value}` per P5MIN interval still to end: ROP × zone MLF + the members' median P5MIN adjustment (not recorded) |
-| `predispatch_forecast` and the other `predispatch_*` | Per 30-minute pre-dispatch period to the end of the next trading day: RRP × zone MLF + the members' median adjustment (not recorded). `predispatch_intervals_published` counts the periods where at least one member has an adjustment |
+| `forecast`, `forecast_status`, `forecast_run_at` | `{time, interval_end, value}` per P5MIN interval still to end: (ROP + the members' median P5MIN adjustment) × zone MLF (not recorded) |
+| `predispatch_forecast` and the other `predispatch_*` | Per 30-minute pre-dispatch period to the end of the next trading day: (RRP + the members' median adjustment) × zone MLF (not recorded). `predispatch_intervals_published` counts the periods where at least one member has an adjustment |
 
 ### PD7DAY Data / STPASA Data (diagnostic)
 
@@ -761,7 +771,7 @@ The `nemtime` field in forecast periods is the **interval end** timestamp (AEMO 
 - **STPASA OLS limited to h22–h120** — beyond h120, STPASA supply/demand signals degrade and the model falls back to isotonic calibration only.
 - **Spike forecasts are capped** — raw PD7DAY values ≥ $3/kWh are treated as bid-based pre-dispatch placeholders and are capped at the isotonic model maximum. Genuine scarcity spikes are flagged via `spike_credible` but are not passed through at face value.
 - **DUID local prices: two horizons** — `forecast` is the P5MIN run, twelve five-minute intervals; `predispatch_forecast` is the 30-minute pre-dispatch, to the end of the next trading day. Both are AEMO's published adjustments, nothing is modelled. A DUID's region comes from the bundled catalogue; a DUID registered after it was built has no region, name or coordinates until the next release.
-- **Node prices: published DUIDs only** — a node's adjustment is that of its DUIDs, so a connection point without a dispatchable unit has none. Pre-dispatch publishes RRP, not ROP, so `predispatch_forecast` on a node is RRP × MLF + adjustment.
+- **Node prices: published DUIDs only** — a node's adjustment is that of its DUIDs, so a connection point without a dispatchable unit has none. Pre-dispatch publishes RRP, not ROP, so `predispatch_forecast` on a node is (RRP + adjustment) × MLF.
 - **Python 3.12+ required** — the integration uses `asyncio.run()` and other Python 3.12 patterns.
 - **matplotlib build dependency** — on some installs (notably Python 3.14 environments without a matplotlib wheel), matplotlib fails to build from source. Since v3.36.1 it is not a manifest requirement, so the integration still loads: the cameras try to install it once per run, log one warning if that fails, and show a placeholder image, while every price forecast, tariff and grid sensor works normally. Before v3.36.1 the failed install stopped the whole integration loading.
 

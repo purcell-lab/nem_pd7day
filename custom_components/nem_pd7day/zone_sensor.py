@@ -2,9 +2,10 @@
 
 ``<City> Zone Price Proxy``, for each zone chosen in the options (zones.py):
 
-- **State**: ROP x zone MLF + the median of the members' local price
-  adjustments, in $/kWh, for the latest dispatch interval, raw. A member
-  whose DUIDs disagree is left out of the median.
+- **State**: (ROP + the median of the members' local price adjustments) x
+  zone MLF, in $/kWh, for the latest dispatch interval, raw
+  (local_price.node_price_mwh, #312). A member whose DUIDs disagree is left
+  out of the median.
 - **Forecast**: the same per P5MIN interval still to end, and per 30-minute
   pre-dispatch period to the end of the next trading day (RRP there, as
   pre-dispatch publishes no ROP).
@@ -36,6 +37,7 @@ from .local_price import (
     STATUS_ZERO,
     DispatchLocalPrices,
     P5LocalPriceRun,
+    node_price_mwh,
 )
 from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, dispatch_prices, entity_id_for, listen_to_forecasts
 from .nem_time import now_nem
@@ -53,12 +55,13 @@ class ZoneDispatch:
     static_mwh: Optional[float] = None
     adjustment_mwh: Optional[float] = None
     members: list[dict[str, Any]] = field(default_factory=list)
+    mlf: Optional[float] = None
 
     @property
     def price_mwh(self) -> Optional[float]:
-        if self.static_mwh is None or self.adjustment_mwh is None:
+        if self.rop_mwh is None or self.mlf is None or self.static_mwh is None or self.adjustment_mwh is None:
             return None
-        return round(self.static_mwh + self.adjustment_mwh, 4)
+        return node_price_mwh(self.rop_mwh, self.adjustment_mwh, self.mlf)
 
 
 def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices], now: datetime) -> ZoneDispatch:
@@ -85,11 +88,11 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
         status = STATUS_CONFLICT
     else:
         status = prices.fallback_status or (STATUS_PUBLISHED if prices.table_present else STATUS_DISPATCH_ZERO)
-    return ZoneDispatch(status, rop, round(rop * mlf, 4), adjustment, members)
+    return ZoneDispatch(status, rop, round(rop * mlf, 4), adjustment, members, mlf)
 
 
 def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5LocalPriceRun], now: datetime) -> tuple[str, list]:
-    """(status, points): ROP x zone MLF + the members' median P5MIN adjustment per interval still to end."""
+    """(status, points): (ROP + the members' median P5MIN adjustment) x zone MLF per interval still to end."""
     mlf = zone.mlf
     if mlf is None:
         return STATUS_UNKNOWN_NODE, []
@@ -109,7 +112,7 @@ def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5LocalPriceRun], no
         if adjustment is None:
             return STATUS_CONFLICT, points
         points.append({"time": (end - INTERVAL).isoformat(), "interval_end": end.isoformat(),
-                       "value": round((series[end] * mlf + adjustment) / 1000.0, 6)})
+                       "value": round(node_price_mwh(series[end], adjustment, mlf) / 1000.0, 6)})
     return STATUS_PUBLISHED, points
 
 
@@ -131,7 +134,7 @@ def zone_predispatch(zone: Zone, snapshot: Any, now: datetime) -> PredispatchAdj
 
 
 class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
-    """State: ROP x zone MLF + the members' median adjustment, in $/kWh; a proxy."""
+    """State: (ROP + the members' median adjustment) x zone MLF, in $/kWh; a proxy."""
 
     _attr_has_entity_name = True
     _attr_icon = "mdi:city-variant-outline"
@@ -179,6 +182,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             "zone_mlf": zone.mlf, "zone_mlf_source": zone.mlf_source,
             "load_points": [{"tni": p.tni, "name": p.name, "kv": p.kv, "mlf": p.mlf} for p in zone.load_points],
             "adjustment_aggregate": "median",
+            "formula": "(ROP + median LOCAL_PRICE_ADJUSTMENT) x zone MLF",
             "row_status": zone_now.status,
             "price_mwh": zone_now.price_mwh, "static_price_mwh": zone_now.static_mwh,
             "rop_mwh": zone_now.rop_mwh, "adjustment_mwh": zone_now.adjustment_mwh,
@@ -203,7 +207,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
 
         def value(end: datetime, adjustment: float) -> Optional[float]:
             price = rrp.get(end)
-            return (price * mlf + adjustment) / 1000.0 if price is not None and mlf is not None else None
+            return node_price_mwh(price, adjustment, mlf) / 1000.0 if price is not None and mlf is not None else None
 
         return {
             "forecast_source": "P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE",

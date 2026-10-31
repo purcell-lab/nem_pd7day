@@ -3,16 +3,17 @@
 ``<stations> (<TNI>) Node Price``, for each connection point (TNI) chosen in the options:
 
 - **State**: the node price in $/kWh for the latest dispatch interval,
-  ROP x MLF + adjustment: the node's region original price, from the
-  DispatchIS file the binding constraints already read, scaled by the node's
-  marginal loss factor from the bundled catalogue, plus the node's local
-  price adjustment, the published DISPATCH_LOCAL_PRICE of its DUIDs (0 when a
-  fresh file has no row for them). Raw, never clipped: the floor and cap apply
-  to the region's price. ``static_price_mwh`` (ROP x MLF) and
-  ``adjustment_mwh`` are its two parts.
-- **Forecast**: the newest P5MIN run's ROP x MLF + adjustment for the
+  (ROP + adjustment) x MLF: the node's region original price, from the
+  DispatchIS file the binding constraints already read, plus the node's
+  local price adjustment, the published DISPATCH_LOCAL_PRICE of its DUIDs (0
+  when a fresh file has no row for them), scaled by the node's marginal loss
+  factor from the bundled catalogue. Both are at the regional reference node
+  (local_price.node_price_mwh, #312). Raw, never clipped: the floor and cap
+  apply to the region's price. ``static_price_mwh`` (ROP x MLF) and
+  ``adjustment_at_node_mwh`` (adjustment x MLF) add up to it.
+- **Forecast**: the newest P5MIN run's (ROP + adjustment) x MLF for the
   intervals still to end, with its own ``forecast_status``.
-- **Pre-dispatch forecast**: RRP x MLF + adjustment from the 30-minute
+- **Pre-dispatch forecast**: (RRP + adjustment) x MLF from the 30-minute
   pre-dispatch, to the end of the next trading day; pre-dispatch publishes
   RRP, not ROP.
 
@@ -41,8 +42,10 @@ from .local_price import (
     STATUS_STALE,
     STATUS_ZERO,
     DispatchLocalPrices,
+    NODE_PRICE_FORMULA,
     P5LocalPriceRun,
     dispatch_status,
+    node_price_mwh,
 )
 from .local_price_sensor import (
     MAX_AGE,
@@ -125,9 +128,11 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
         return round(prices.rop[self._node_region] * self._mlf, 4)  # type: ignore[union-attr,operator]
 
     def _node_price_mwh(self, prices: Optional[DispatchLocalPrices], now: datetime) -> Optional[float]:
-        """ROP x MLF + adjustment, raw: the state, in $/MWh; unknown when either part is."""
+        """(ROP + adjustment) x MLF, raw: the state, in $/MWh; unknown when either part is."""
         static, (_status, adjustment) = self._static_mwh(prices, now), self._adjustment(prices, now)
-        return round(static + adjustment, 4) if static is not None and adjustment is not None else None
+        if static is None or adjustment is None:
+            return None
+        return node_price_mwh(prices.rop[self._node_region], adjustment, self._mlf)  # type: ignore[union-attr,arg-type]
 
     def _adjustment(self, prices: Optional[DispatchLocalPrices], now: datetime) -> tuple[str, Optional[float]]:
         return node_adjustment(prices, self._duids, now)
@@ -151,11 +156,14 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
     def _dispatch_attrs(self, prices: Optional[DispatchLocalPrices], now: datetime) -> dict[str, Any]:
         attrs: dict[str, Any] = {"source": "DISPATCH_PRICE_ROP", "row_status": self._status(prices, now)}
         adjustment_status, adjustment = self._adjustment(prices, now)
+        mlf = self._mlf
         attrs.update({
+            "formula": NODE_PRICE_FORMULA,
             "node_price_mwh": self._node_price_mwh(prices, now),
             "static_price_mwh": self._static_mwh(prices, now),
             "adjustment_status": adjustment_status,
             "adjustment_mwh": adjustment,
+            "adjustment_at_node_mwh": round(adjustment * mlf, 4) if adjustment is not None and mlf is not None else None,
         })
         if prices is None:
             return attrs
@@ -194,7 +202,7 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
 
         def value(end: datetime, adjustment: float) -> Optional[float]:
             price = rrp.get(end)
-            return (price * mlf + adjustment) / 1000.0 if price is not None else None
+            return node_price_mwh(price, adjustment, mlf) / 1000.0 if price is not None else None
 
         return predispatch_attrs(predispatch_adjustments(snapshot, self._duids, now), snapshot, value)
 
@@ -238,7 +246,7 @@ def p5_adjustment(run: P5LocalPriceRun, duids: tuple[str, ...], end: datetime) -
 def node_forecast(
     run: Optional[P5LocalPriceRun], region: str, mlf: Optional[float], duids: tuple[str, ...], now: datetime,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """(status, points): the run's ROP x MLF + the DUIDs' adjustment for the intervals still to end,
+    """(status, points): the run's (ROP + the DUIDs' adjustment) x MLF for the intervals still to end,
     in $/kWh, raw, up to the first interval where the DUIDs conflict."""
     if mlf is None or not duids:
         return STATUS_UNKNOWN_NODE, []
@@ -258,7 +266,7 @@ def node_forecast(
         if adjustment is None:
             return STATUS_CONFLICT, points
         points.append({"time": (end - INTERVAL).isoformat(), "interval_end": end.isoformat(),
-                       "value": round((series[end] * mlf + adjustment) / 1000.0, 6)})
+                       "value": round(node_price_mwh(series[end], adjustment, mlf) / 1000.0, 6)})
     return STATUS_PUBLISHED, points
 
 

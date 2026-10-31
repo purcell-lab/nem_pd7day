@@ -111,17 +111,17 @@ def test_a_stale_or_expired_forecast_gives_no_points():
     assert _node.node_forecast(run, "QLD1", 0.99, (), _at(21, 26)) == ("unknown_node", [])
     # A run without the table is AEMO's zero (#309): the static price throughout.
     status, points = _node.node_forecast(replace(run, table_present=False, rows={}), "QLD1", 0.99, duids, _at(21, 26))
-    assert status == "published" and points[0]["value"] == round(run.rop["QLD1"][_at(21, 30)] * 0.99 / 1000, 6)
+    assert status == "published" and points[0]["value"] == pytest.approx(run.rop["QLD1"][_at(21, 30)] * 0.99 / 1000, abs=1e-6)
 
 
 def test_the_forecast_adds_each_intervals_adjustment():
-    """CATHROCK in the P5MIN fixture: SA1 ROP x MLF + its adjustment per interval, raw."""
+    """CATHROCK in the P5MIN fixture: (SA1 ROP + its adjustment) x MLF per interval, raw."""
     run = _p5()
     status, points = _node.node_forecast(run, "SA1", 0.9417, ("CATHROCK",), _at(21, 27))
     first_end = min(e for e in run.rop["SA1"] if e > _at(21, 27))
     row = run.rows["CATHROCK"][first_end]
     assert status == "published"
-    assert points[0]["value"] == round((run.rop["SA1"][first_end] * 0.9417 + row.adjustment_mwh) / 1000, 6)
+    assert points[0]["value"] == round((run.rop["SA1"][first_end] + row.adjustment_mwh) * 0.9417 / 1000, 6)
     clashing = replace(run, conflicts=frozenset({("CATHROCK", first_end)}))
     assert _node.node_forecast(clashing, "SA1", 0.9417, ("CATHROCK",), _at(21, 27)) == ("conflicting_rows", [])
 
