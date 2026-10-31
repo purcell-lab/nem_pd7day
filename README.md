@@ -199,6 +199,7 @@ The MLF scales the adjustment too: NEMDE refers every offer to the regional refe
 A zone's price is a **proxy**: (ROP + the median local price adjustment of the region's catalogue nodes within the radius) × zone MLF, the nearest node alone standing in where none is that close.
 
 - **Zone MLF**: the mean MLF of the place's own load connection points. Each preset city lists the bulk supply points that serve it (Brisbane 15, from Algester to Tennyson: 1.0120; Sydney 48: 1.0035; Melbourne 43: 1.0004; Adelaide 13: 1.0012; Hobart 11: 1.0373; Townsville 5: 0.9998), and Home the one chosen above. They come from `load_points.json`, the load tables of AEMO's *Marginal Loss Factors: Financial Year 2026-27* report (513 load points), built by `scripts/build_load_points.py` from the report's PDF, which aemo.com.au does not serve to scripts; every MLF matches MMSDM's TRANSMISSIONLOSSFACTOR. Where no load point is known, the inverse-distance-weighted mean of the nearby nodes' MLFs stands in (`zone_mlf_source: nearby_generation_idw`).
+- **Outside a city's electrical area** (#317): a radius crosses network boundaries, so three presets leave out plant within reach that sits behind other constraints than the city's load. Sydney leaves out the Central Coast and Lake Macquarie plant (Eraring, Vales Point, Colongra), Wagga Wagga leaves out Tumut hydro (Blowering, Jounama), and the Sunshine Coast leaves out Wivenhoe. They are matched by TNI and listed in `excluded_members`, with `exclusion_reason`. Home and the other presets take everything in reach. This is an interim fix: grouping members by the constraints they bind together would follow the network itself.
 - **Adjustment**: city load is not a variable in NEMDE's constraint equations, so it has no local price adjustment of its own; the nearby generation and storage nodes' adjustments stand in. The median means one constrained unit does not move the zone, while most of them do.
 
 Not a settlement or retail price, and not the price at your meter.
@@ -570,6 +571,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 |---|---|
 | `proxy` | Always `true` |
 | `zone`, `latitude`, `longitude`, `radius_km`, `nearest_only`, `member_count` | The centre and radius, and whether the nearest node stood in for none in reach |
+| `excluded_members`, `exclusion_reason` | Nodes in reach left out as outside the city's electrical area, with their `tni`, `stations` and `distance_km` (not recorded), and why; empty and `null` elsewhere |
 | `zone_mlf`, `zone_mlf_source`, `load_points` | The zone MLF; `load_tni` (the mean of `load_points`, each with `tni`, `name`, `kv` and `mlf`, not recorded) or `nearby_generation_idw` |
 | `price_mwh`, `static_price_mwh`, `rop_mwh`, `adjustment_mwh`, `adjustment_aggregate`, `formula` | The state in $/MWh, ROP × zone MLF, the ROP, the median adjustment, `median`, and `(ROP + median LOCAL_PRICE_ADJUSTMENT) x zone MLF` |
 | `members_constrained`, `adjustment_min_mwh`, `adjustment_max_mwh` | How many members have a non-zero adjustment, and the spread |

@@ -115,6 +115,39 @@ def test_the_bundled_catalogue_has_members_near_every_capital():
         assert all(m.node.region == region for m in zone.members)
 
 
+def test_a_preset_leaves_out_plant_outside_its_electrical_area():
+    """#317, interim: Sydney without the Central Coast's Eraring, Vales Point and
+    Colongra; Wagga Wagga without Tumut; the Sunshine Coast without Wivenhoe."""
+    catalogue = _cat.load_catalogue()
+    sydney = _zones.build_zone(catalogue, "NSW1", "sydney", 100)
+    assert {m.node.tni[:3] for m in sydney.excluded} == {"NCL", "NVP", "NEP"}
+    assert not any(m.node.tni.startswith(("NEP", "NVPP", "NCLG")) for m in sydney.members)
+    assert "Tallawarra" in {s for m in sydney.members for s in m.node.stations}  # Illawarra stays
+    wagga = _zones.build_zone(catalogue, "NSW1", "wagga_wagga", 100)
+    assert [m.node.tni for m in wagga.excluded] == ["NBLW8", "NTU21J"]
+    coast = _zones.build_zone(catalogue, "QLD1", "sunshine_coast", 100)
+    assert [m.node.tni for m in coast.members] == ["QPWD1S", "QWLS1W"] and len(coast.excluded) == 4
+    narrow = _zones.build_zone(catalogue, "NSW1", "sydney", 50)
+    assert narrow.excluded == ()  # nothing to leave out within 50 km
+    home = _zones.build_zone(catalogue, "QLD1", "home", 100, home=(coast.latitude, coast.longitude))
+    assert home.excluded == () and any(m.node.tni.startswith("QWIV") for m in home.members)  # presets only
+
+
+def test_the_sensor_lists_who_was_left_out_and_why(monkeypatch):
+    monkeypatch.setattr(_zs, "now_nem", lambda: NOW)
+    coast = _zones.build_zone(_cat.load_catalogue(), "QLD1", "sunshine_coast", 100)
+    attrs = _zs.NemPd7dayZonePriceSensor(
+        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "QLD1", coast,
+    ).extra_state_attributes
+    assert [m["tni"] for m in attrs["excluded_members"]] == ["QWIP1", "QWIP2", "QWIV1", "QWIV2"]
+    assert attrs["exclusion_reason"].startswith("Wivenhoe") and attrs["member_count"] == 2
+    brisbane = _zones.build_zone(_cat.load_catalogue(), "QLD1", "brisbane", 100)
+    plain = _zs.NemPd7dayZonePriceSensor(
+        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "QLD1", brisbane,
+    ).extra_state_attributes
+    assert plain["excluded_members"] == [] and plain["exclusion_reason"] is None
+
+
 # ── Load connection points ───────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")

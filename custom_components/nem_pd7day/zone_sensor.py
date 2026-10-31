@@ -43,7 +43,7 @@ from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, dispatch_price
 from .nem_time import now_nem
 from .node_price_sensor import STATUS_NO_ROP, STATUS_UNKNOWN_NODE, node_adjustment, p5_adjustment
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
-from .zones import Zone, zone_adjustment
+from .zones import OUTSIDE, Zone, zone_adjustment
 
 SUFFIX = "zone_price_proxy"
 
@@ -143,7 +143,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
     _attr_suggested_display_precision = 4
     _attr_state_class = SensorStateClass.MEASUREMENT
     _unrecorded_attributes = frozenset(
-        {"members", "load_points", "forecast", "forecast_interval_ends", "predispatch_forecast"}
+        {"members", "excluded_members", "load_points", "forecast", "forecast_interval_ends", "predispatch_forecast"}
     )
 
     def __init__(
@@ -179,6 +179,9 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             "zone": zone.key, "region": self._region,
             "latitude": zone.latitude, "longitude": zone.longitude, "radius_km": zone.radius_km,
             "nearest_only": zone.nearest_only, "member_count": len(zone.members),
+            "excluded_members": [{"tni": m.node.tni, "stations": list(m.node.stations), "distance_km": m.distance_km}
+                                 for m in zone.excluded],
+            "exclusion_reason": OUTSIDE[zone.key][1] if zone.excluded else None,
             "zone_mlf": zone.mlf, "zone_mlf_source": zone.mlf_source,
             "load_points": [{"tni": p.tni, "name": p.name, "kv": p.kv, "mlf": p.mlf} for p in zone.load_points],
             "adjustment_aggregate": "median",
