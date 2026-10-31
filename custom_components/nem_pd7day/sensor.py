@@ -69,7 +69,6 @@ from .const import (
     CONF_NODES,
     CONF_HOME_LOAD_POINT,
     CONF_ZONE_RADIUS,
-    CONF_ZONES,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -333,9 +332,10 @@ async def _local_price_entities(
 
 
 def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any, loads: Any = None) -> list:
-    """The chosen city or zone proxies (#288); Home is HA's own location, skipped when unset,
-    with the load connection point chosen for it."""
-    from .zones import DEFAULT_RADIUS_KM, build_zone, parse_zones
+    """Every preset city of the region and Home, each a zone proxy (#288), enabled by default: one
+    not wanted is disabled from its entity page. Home is HA's own location, skipped when unset, with
+    the load connection point chosen for it."""
+    from .zones import DEFAULT_RADIUS_KM, build_zone, zone_choices
 
     try:
         radius = float(entry.options.get(CONF_ZONE_RADIUS) or DEFAULT_RADIUS_KM)
@@ -346,7 +346,7 @@ def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any,
     home = (float(lat), float(lon)) if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) else None
     home_load = str(entry.options.get(CONF_HOME_LOAD_POINT) or "").strip() or None
     built = (build_zone(catalogue, region, key, radius, home, loads, home_load)
-             for key in parse_zones(entry.options.get(CONF_ZONES, ""), region))
+             for key, _name in zone_choices(region))
     return [zone for zone in built if zone is not None]
 
 

@@ -228,5 +228,5 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
 def zone_price_entities(
     constraints: Any, p5min: Any, entry: Any, region: str, zones: list[Zone], predispatch: Any = None,
 ) -> list[SensorEntity]:
-    """The chosen zones' sensors, enabled; there are no presets."""
+    """Every zone's sensor, enabled by default: the region's preset cities and Home."""
     return [NemPd7dayZonePriceSensor(constraints, p5min, entry, region, zone, predispatch) for zone in zones]
