@@ -48,6 +48,7 @@ from .local_price import (
     market_price_limits,
 )
 from .nem_time import NEM_TZ, now_nem
+from .predispatch_local_price import predispatch_adjustments, predispatch_attrs
 
 # Three missed intervals: older than this, a file no longer describes now.
 MAX_AGE = timedelta(minutes=15)
@@ -89,15 +90,16 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     # The lists grow with the horizon; the scalar state is recorded.
     _unrecorded_attributes = frozenset(
-        {"forecast", "forecast_interval_ends", "later_observations", "inferred_zero_times"}
+        {"forecast", "forecast_interval_ends", "later_observations", "inferred_zero_times", "predispatch_forecast"}
     )
 
     def __init__(
         self, constraints: Any, p5min: Any, entry: Any, region: str, duid: str,
-        info: Optional[DuidInfo] = None, preset: bool = False,
+        info: Optional[DuidInfo] = None, preset: bool = False, predispatch: Any = None,
     ) -> None:
         super().__init__(constraints)
         self._p5min = p5min
+        self._predispatch = predispatch
         self._region = region
         self._duid = duid
         self._info = info
@@ -108,13 +110,7 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_info = device_info(entry, region)
 
     async def async_added_to_hass(self) -> None:
-        """Listen to P5MIN too; it is fetched only while one of these listens, so ask for a run now."""
-        await super().async_added_to_hass()
-        if self._p5min is None:
-            return
-        self.async_on_remove(self._p5min.async_add_listener(lambda: self.async_write_ha_state()))
-        if self._p5min.latest is None:
-            self._p5min.request_refresh()
+        await listen_to_forecasts(self, super().async_added_to_hass)
 
     @property
     def _duid_region(self) -> str:
@@ -210,10 +206,32 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
             "inferred_zero_times": series.inferred,
         }
 
+    def _predispatch_attrs(self, now: datetime) -> dict[str, Any]:
+        snapshot = getattr(self._predispatch, "latest", None)
+        series = predispatch_adjustments(snapshot, [self._duid], now)
+        return predispatch_attrs(series, snapshot, lambda _end, adjustment: adjustment / 1000.0)
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         now = now_nem()
-        return {**self._identity(), **self._dispatch_attrs(self._prices(), now), **self._forecast_attrs(now)}
+        return {
+            **self._identity(), **self._dispatch_attrs(self._prices(), now),
+            **self._forecast_attrs(now), **self._predispatch_attrs(now),
+        }
+
+
+async def listen_to_forecasts(sensor: Any, added: Any) -> None:
+    """Listen to P5MIN and pre-dispatch too, after the coordinator's own ``added``.
+
+    P5MIN is fetched only while one of these listens, so ask for a run now;
+    pre-dispatch is fetched every half hour regardless.
+    """
+    await added()
+    for source in (sensor._p5min, sensor._predispatch):
+        if source is not None:
+            sensor.async_on_remove(source.async_add_listener(lambda: sensor.async_write_ha_state()))
+    if sensor._p5min is not None and sensor._p5min.latest is None:
+        sensor._p5min.request_refresh()
 
 
 def enable_chosen(hass: Any, entry: Any, region: str, duids: list[str]) -> int:
@@ -251,13 +269,14 @@ def remove_retired(hass: Any, entry: Any) -> int:
 
 def local_price_entities(
     constraints: Any, p5min: Any, entry: Any, region: str, duids: list[str],
-    catalogue: Optional[Catalogue] = None,
+    catalogue: Optional[Catalogue] = None, predispatch: Any = None,
 ) -> list[SensorEntity]:
     """The chosen DUIDs' sensors, enabled, then the region's most constrained others, disabled."""
     presets = [d for d in (catalogue.top_for(region) if catalogue else ()) if d not in duids]
     return [
         NemPd7dayDuidLocalPriceSensor(
             constraints, p5min, entry, region, duid, catalogue.info(duid) if catalogue else None, preset,
+            predispatch,
         )
         for duid, preset in [(d, False) for d in duids] + [(d, True) for d in presets]
     ]

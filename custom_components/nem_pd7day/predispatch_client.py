@@ -26,7 +26,7 @@ import csv
 import io
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -39,7 +39,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _FILENAME_RE = re.compile(r"(PUBLIC_PREDISPATCHIS_(\d{12})_(\d{14})\.zip)", re.IGNORECASE)
 PERIOD = timedelta(minutes=30)
-_TABLES = ("INTERCONNECTOR_SOLN", "REGION_PRICES", "CONSTRAINT_SOLUTION", "CASE_SOLUTION")
+_TABLES = ("INTERCONNECTOR_SOLN", "REGION_PRICES", "CONSTRAINT_SOLUTION", "CASE_SOLUTION", "LOCAL_PRICE")
 # A flow within this much of a limit is at the limit: max(1 MW, 0.5 % of it).
 # Pre-dispatch often reports a zero marginal value for an interconnector held
 # at a frequency-control limit, so the flow is compared with the limit instead.
@@ -107,6 +107,10 @@ class PredispatchSnapshot:
     prices: dict[str, dict[datetime, float]]            # region -> period end -> RRP $/MWh
     constraints: dict[datetime, tuple[BindingConstraint, ...]]   # period end -> binding
     evaluated: int                                      # constraint rows in the pricing run
+    # DUID -> period end -> LOCAL_PRICE_ADJUSTMENT $/MWh (#287). AEMO publishes
+    # only non-zero rows, so a period without one is 0 while the table is there.
+    local_prices: dict[str, dict[datetime, float]] = field(default_factory=dict)
+    local_price_table: bool = False
 
     @property
     def period_ends(self) -> list[datetime]:
@@ -130,8 +134,12 @@ def _nem_datetime(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _pricing_rows(content: str) -> dict[str, list[dict[str, str]]]:
-    """The pricing-run (INTERVENTION 0) rows of each wanted table, by header."""
+def _pricing_rows(content: str) -> tuple[dict[str, list[dict[str, str]]], set[str]]:
+    """The pricing-run (INTERVENTION 0) rows of each wanted table, by header.
+
+    A table without an INTERVENTION column (LOCAL_PRICE) is the pricing run's.
+    The second value is the tables the file has a header for.
+    """
     headers: dict[str, list[str]] = {}
     rows: dict[str, list[dict[str, str]]] = {table: [] for table in _TABLES}
     for parts in csv.reader(io.StringIO(content)):
@@ -143,7 +151,7 @@ def _pricing_rows(content: str) -> dict[str, list[dict[str, str]]]:
             row = dict(zip(headers[parts[2]], parts[4:]))
             if row.get("INTERVENTION", "0").strip() == "0":
                 rows[parts[2]].append(row)
-    return rows
+    return rows, set(headers)
 
 
 def _interconnectors(rows: list[dict[str, str]]) -> dict[str, tuple[InterconnectorPeriod, ...]]:
@@ -174,6 +182,16 @@ def _prices(rows: list[dict[str, str]]) -> dict[str, dict[datetime, float]]:
         if end is not None and rrp is not None:
             prices.setdefault(row.get("REGIONID", "").strip(), {})[end] = rrp
     return prices
+
+
+def _local_prices(rows: list[dict[str, str]]) -> dict[str, dict[datetime, float]]:
+    found: dict[str, dict[datetime, float]] = {}
+    for row in rows:
+        end, value = _nem_datetime(row.get("DATETIME")), _number(row.get("LOCAL_PRICE_ADJUSTMENT"))
+        duid = row.get("DUID", "").strip()
+        if end is not None and value is not None and duid:
+            found.setdefault(duid, {})[end] = value
+    return found
 
 
 def _constraints(rows: list[dict[str, str]]) -> dict[datetime, tuple[BindingConstraint, ...]]:
@@ -219,7 +237,7 @@ def parse_predispatch(content: str, source: str = "") -> Optional[PredispatchSna
     Columns are read from each table's own I header, and only the pricing run
     (INTERVENTION 0) is kept, as for the dispatch price and constraints.
     """
-    rows = _pricing_rows(content)
+    rows, headers = _pricing_rows(content)
     interconnectors = _interconnectors(rows["INTERCONNECTOR_SOLN"])
     run_at = _run_at(rows["CASE_SOLUTION"], source)
     if not interconnectors or run_at is None:
@@ -231,6 +249,8 @@ def parse_predispatch(content: str, source: str = "") -> Optional[PredispatchSna
         prices=_prices(rows["REGION_PRICES"]),
         constraints=_constraints(rows["CONSTRAINT_SOLUTION"]),
         evaluated=len(rows["CONSTRAINT_SOLUTION"]),
+        local_prices=_local_prices(rows["LOCAL_PRICE"]),
+        local_price_table="LOCAL_PRICE" in headers,
     )
 
 

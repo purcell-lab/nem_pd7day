@@ -445,7 +445,7 @@ def test_the_forecast_rides_as_attributes_with_its_own_status(monkeypatch):
     assert len(attrs["forecast_interval_ends"]) == len(attrs["forecast"])
     assert attrs["intervals_inferred_zero"] == 0 and attrs["inferred_zero_times"] == []
     assert sensor._unrecorded_attributes == frozenset(
-        {"forecast", "forecast_interval_ends", "later_observations", "inferred_zero_times"}
+        {"forecast", "forecast_interval_ends", "later_observations", "inferred_zero_times", "predispatch_forecast"}
     )
 
 
