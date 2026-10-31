@@ -112,6 +112,17 @@ class Member:
 
 
 @dataclass(frozen=True)
+class CityReference:
+    """The preset city nearest Home, and its own load points' MLF, to set Home's choice against (#316)."""
+
+    key: str
+    name: str
+    distance_km: float
+    mlf: Optional[float]
+    tnis: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Zone:
     key: str
     name: str
@@ -121,6 +132,7 @@ class Zone:
     members: tuple[Member, ...]
     nearest_only: bool
     load_points: tuple[LoadPoint, ...] = ()
+    nearest_city: Optional[CityReference] = None
 
     @property
     def mlf_source(self) -> Optional[str]:
@@ -165,6 +177,24 @@ def parse_zones(text: Any, region: str) -> list[str]:
     return keys
 
 
+def nearest_city(
+    region: str, lat: float, lon: float, loads: Optional[LoadPoints] = None,
+) -> Optional[CityReference]:
+    """The region's preset city nearest a point, with the mean MLF of its load points, where known.
+
+    AEMO publishes no coordinates for load connection points, so the Home
+    load point cannot be found by distance; the nearest preset city's own
+    choice is the closest thing to a check on it.
+    """
+    cities = CITIES.get(region, ())
+    if not cities:
+        return None
+    key, name, clat, clon, tnis = min(cities, key=lambda c: distance_km(lat, lon, c[2], c[3]))
+    points = [p for p in (loads.get(t) for t in tnis) if p is not None and p.region == region] if loads else []
+    mlf = round(sum(p.mlf for p in points) / len(points), 4) if points else None
+    return CityReference(key, name, round(distance_km(lat, lon, clat, clon), 1), mlf, tuple(p.tni for p in points))
+
+
 def _members(catalogue: Catalogue, region: str, lat: float, lon: float, radius_km: float) -> tuple[tuple, bool]:
     located = sorted(
         (Member(node, round(distance_km(lat, lon, node.latitude, node.longitude), 1))
@@ -194,7 +224,8 @@ def build_zone(
         _key, name, lat, lon, tnis = found[0]
     points = tuple(p for p in (loads.get(t) for t in tnis) if p is not None and p.region == region) if loads else ()
     members, nearest_only = _members(catalogue, region, lat, lon, radius_km)
-    return Zone(key, name, lat, lon, radius_km, members, nearest_only, points)
+    reference = nearest_city(region, lat, lon, loads) if key == ZONE_HOME else None
+    return Zone(key, name, lat, lon, radius_km, members, nearest_only, points, reference)
 
 
 def zone_adjustment(values: Sequence[Optional[float]]) -> Optional[float]:

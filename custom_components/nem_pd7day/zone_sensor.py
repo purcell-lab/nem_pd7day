@@ -133,6 +133,18 @@ def zone_predispatch(zone: Zone, snapshot: Any, now: datetime) -> PredispatchAdj
     return PredispatchAdjustments(status, periods, published, len(periods) - published)
 
 
+def _nearest_city_attrs(zone: Zone) -> dict[str, Any]:
+    """Home only: the nearest preset city and its load points' MLF, beside Home's own (#316)."""
+    city = zone.nearest_city
+    if city is None:
+        return {}
+    return {
+        "nearest_city": city.name, "nearest_city_distance_km": city.distance_km,
+        "nearest_city_mlf": city.mlf, "nearest_city_load_points": list(city.tnis),
+        "zone_mlf_vs_nearest_city": round(zone.mlf / city.mlf - 1, 4) if zone.mlf and city.mlf else None,
+    }
+
+
 class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
     """State: (ROP + the members' median adjustment) x zone MLF, in $/kWh; a proxy."""
 
@@ -181,6 +193,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             "nearest_only": zone.nearest_only, "member_count": len(zone.members),
             "zone_mlf": zone.mlf, "zone_mlf_source": zone.mlf_source,
             "load_points": [{"tni": p.tni, "name": p.name, "kv": p.kv, "mlf": p.mlf} for p in zone.load_points],
+            **_nearest_city_attrs(zone),
             "adjustment_aggregate": "median",
             "formula": "(ROP + median LOCAL_PRICE_ADJUSTMENT) x zone MLF",
             "row_status": zone_now.status,
