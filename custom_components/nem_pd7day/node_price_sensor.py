@@ -59,6 +59,7 @@ from .local_price_sensor import (
 )
 from .nem_time import now_nem
 from .forecast_hub import ForecastHub
+from .predispatch_calibration import calibrated_rrp_mwh
 from .predispatch_local_price import MAX_AGE as PD_MAX_AGE
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 
@@ -210,8 +211,12 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
             price = rrp.get(end)
             return node_price_mwh(price, adjustment, mlf) / 1000.0 if price is not None else None
 
+        def calibrated(end: datetime) -> Optional[float]:
+            return calibrated_rrp_mwh(self._node_region, end, rrp.get(end))
+
+        # calibrated_rrp_mwh is passthrough until stage 3b; its calibration joins this key then.
         return self._hub.pd("node", snapshot, (self._node_region, mlf, self._duids), now, PD_MAX_AGE, lambda: (
-            predispatch_attrs(predispatch_adjustments(snapshot, self._duids, now), snapshot, value)))
+            predispatch_attrs(predispatch_adjustments(snapshot, self._duids, now), snapshot, value, calibrated)))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

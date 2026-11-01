@@ -73,13 +73,23 @@ def _iso(value: datetime) -> str:
 def predispatch_attrs(
     series: PredispatchAdjustments, snapshot: Any,
     value: Callable[[datetime, float], Optional[float]],
+    calibrated_rrp: Optional[Callable[[datetime], Optional[float]]] = None,
 ) -> dict[str, Any]:
-    """The pre-dispatch forecast attributes; ``value`` turns (period end, adjustment $/MWh) into a $/kWh point."""
+    """The pre-dispatch forecast attributes; ``value`` turns (period end, adjustment $/MWh) into a $/kWh point.
+
+    ``calibrated_rrp(end)``, for the node and zone sensors, adds each entry's
+    ``calibrated_rrp_mwh``: the region's RRP as the price timeline serves it
+    (#333 decision 3, #339), beside the raw-RRP price in ``value``.
+    """
     points = []
     for end, adjustment in series.periods:
         point = value(end, adjustment)
         if point is not None:
-            points.append({"time": _iso(end - PERIOD), "value": round(point, 6)})
+            entry: dict[str, Any] = {"time": _iso(end - PERIOD), "value": round(point, 6)}
+            if calibrated_rrp is not None:
+                served = calibrated_rrp(end)
+                entry["calibrated_rrp_mwh"] = round(served, 5) if served is not None else None
+            points.append(entry)
     return {
         "predispatch_source": "PREDISPATCH_LOCAL_PRICE",
         "predispatch_status": series.status,
