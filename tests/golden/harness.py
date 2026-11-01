@@ -698,7 +698,9 @@ async def _setup(built: Built) -> None:
 
     dispatch_prices = dict(sc.dispatch or {})
     mods.coordinator.fetch_dispatch_prices = lambda expected, *a, **k: dict(dispatch_prices)
-    dispatch = await mods.shared_dispatch.async_shared_dispatch(hass, setup_lock, trace)
+    dispatch = await mods.shared_dispatch.async_shared_dispatch(
+        hass, setup_lock, trace, mods.coordinator.DispatchCoordinator,
+    )
 
     # The shared constraint coordinator, as the sensor platform would create
     # it, fed the scenario's intervals in order.

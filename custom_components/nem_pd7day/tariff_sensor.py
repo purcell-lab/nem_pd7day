@@ -418,51 +418,18 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], CalibratedTariffMix
             return None
         return self._price_period(period)
 
-class NemPd7dayTariffSensor(TariffEntityBase):
-    """One sensor per (distributor, tariff_code) for the regional device."""
+class _TouPeriodsMixin:
+    """An import tariff's time-of-use structure: its periods, windows and daily charge (#340).
 
-    def __init__(
-        self,
-        coordinator: PD7DayCoordinator,
-        entry: ConfigEntry,
-        region: str,
-        distributor: str,
-        tariff_code: str,
-        store=None,
-    ) -> None:
-        super().__init__(coordinator, entry, region, distributor, store)
-        self._tariff_code = tariff_code
-        self._attr_unique_id = (
-            f"{entry.entry_id}_{region}_{distributor}_{tariff_code}_tariff"
-        )
-        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
-        tariff_name = get_tariff_name(distributor, tariff_code)
-        self._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
-        # Per-instance single-entry caches: (cache_key_tuple, result_float)
-        self._tariff_cache: tuple[tuple, float] | None = None
-        self._period_tariff_cache: tuple[tuple, float] | None = None
-        # Computed once at construction; a seasonal tariff's periods are recomputed on read.
-        self._seasonal_periods = seasonal_tariff(distributor, tariff_code)
-        self._cached_tariff_periods: list[dict[str, Any]] = self._get_tariff_periods()
-        self._cached_daily_supply_charge: float | None = self._get_daily_supply_charge()
+    Split from NemPd7dayTariffSensor, which held them with its pricing past the
+    class size limit. The periods come from aemo_to_tariff, cached at
+    construction; the windows are parsed from them once.
+    """
 
-    @property
-    def entity_registry_enabled_default(self) -> bool:
-        """Base tariff sensors always use DEFAULT_ENABLED_TARIFFS for visibility."""
-        return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
-
-    def _pricing_bound(self) -> bool:
-        return tariff_pricing.spot_to_tariff is not None
-
-    @property
-    def _priced_code(self) -> str:
-        return self._tariff_code
-
-    def _price_now(self, rrp_kwh: float, now: datetime.datetime) -> float | None:
-        return self._apply_tariff_to_spot(rrp_kwh, now)
-
-    def _price_period(self, period: Any, calibrated: float | None = None) -> float | None:
-        return self._compute_tariff(period, calibrated=calibrated)
+    if TYPE_CHECKING:
+        _distributor: str
+        _tariff_code: str
+        _cached_tariff_periods: list[dict[str, Any]]
 
     def _tariff_windows(self, tariff_periods) -> tariff_pricing.TouWindows:
         """Parse the period start/end strings into ``time`` objects, once.
@@ -520,6 +487,98 @@ class NemPd7dayTariffSensor(TariffEntityBase):
                 exc_info=True,
             )
             return None, None
+
+    def _tariff_periods_for_attrs(self) -> list[dict[str, Any]]:
+        """Tariff period structure for state attributes.
+
+        Uses the construction-time cache; computes lazily only if the cache
+        attribute is absent (e.g. when bypassing __init__ in tests).
+        """
+        cached = getattr(self, "_cached_tariff_periods", _MISSING)
+        if cached is _MISSING or getattr(self, "_seasonal_periods", False):
+            # A seasonal tariff's windows change with the date, so the
+            # construction-time cache is not served for one.
+            return self._get_tariff_periods()
+        return cast("list[dict[str, Any]]", cached) or []
+
+    def _get_tariff_periods(self) -> list[dict[str, Any]]:
+        """Return tariff period structure with rates converted to $/kWh.
+
+        The pricer is given the time, which picks the price year and any season.
+        """
+        if not tariff_pricing.library_available():
+            return []
+        try:
+            rows = tariff_pricing.pricer_for(self._distributor, self._tariff_code).period_rows(now_nem())
+            return tariff_pricing.period_attributes(rows)
+        except ValueError:
+            # "Unknown tariff code" — the aemo_to_tariff library simply does not
+            # support this code (e.g. Ergon 3600/3800/7200, SAPN SBELEX/RESELEX,
+            # Essential BLNBEX1, Endeavour N61). This will never succeed, so we
+            # cache the empty result at construction and stay silent.
+            return []
+        except Exception:
+            _LOGGER.debug(
+                "get_periods failed for %s/%s", self._distributor, self._tariff_code,
+                exc_info=True,
+            )
+            return []
+
+    def _get_daily_supply_charge(self) -> float | None:
+        """Return daily supply charge in $/day, or None."""
+        if not tariff_pricing.library_available():
+            return None
+        try:
+            return tariff_pricing.dollars_per_day(tariff_pricing.pricer_for(self._distributor, self._tariff_code).daily_fee())
+        except Exception:
+            return None
+
+
+class NemPd7dayTariffSensor(_TouPeriodsMixin, TariffEntityBase):
+    """One sensor per (distributor, tariff_code) for the regional device."""
+
+    def __init__(
+        self,
+        coordinator: PD7DayCoordinator,
+        entry: ConfigEntry,
+        region: str,
+        distributor: str,
+        tariff_code: str,
+        store=None,
+    ) -> None:
+        super().__init__(coordinator, entry, region, distributor, store)
+        self._tariff_code = tariff_code
+        self._attr_unique_id = (
+            f"{entry.entry_id}_{region}_{distributor}_{tariff_code}_tariff"
+        )
+        distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(distributor, distributor.title())
+        tariff_name = get_tariff_name(distributor, tariff_code)
+        self._attr_name = f"{distributor_display} {tariff_name} Tariff ({tariff_code})"
+        # Per-instance single-entry caches: (cache_key_tuple, result_float)
+        self._tariff_cache: tuple[tuple, float] | None = None
+        self._period_tariff_cache: tuple[tuple, float] | None = None
+        # Computed once at construction; a seasonal tariff's periods are recomputed on read.
+        self._seasonal_periods = seasonal_tariff(distributor, tariff_code)
+        self._cached_tariff_periods: list[dict[str, Any]] = self._get_tariff_periods()
+        self._cached_daily_supply_charge: float | None = self._get_daily_supply_charge()
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        """Base tariff sensors always use DEFAULT_ENABLED_TARIFFS for visibility."""
+        return (self._distributor, self._tariff_code) in DEFAULT_ENABLED_TARIFFS
+
+    def _pricing_bound(self) -> bool:
+        return tariff_pricing.spot_to_tariff is not None
+
+    @property
+    def _priced_code(self) -> str:
+        return self._tariff_code
+
+    def _price_now(self, rrp_kwh: float, now: datetime.datetime) -> float | None:
+        return self._apply_tariff_to_spot(rrp_kwh, now)
+
+    def _price_period(self, period: Any, calibrated: float | None = None) -> float | None:
+        return self._compute_tariff(period, calibrated=calibrated)
 
     def _retail_price(self, result_c_kwh: float, rrp_mwh: float, fee: float) -> float:
         """Combine a library result with the usage fee and GST, in $/kWh (#158).
@@ -614,51 +673,6 @@ class NemPd7dayTariffSensor(TariffEntityBase):
                 self._distributor, self._tariff_code,
                 exc_info=True,
             )
-            return None
-
-    def _tariff_periods_for_attrs(self) -> list[dict[str, Any]]:
-        """Tariff period structure for state attributes.
-
-        Uses the construction-time cache; computes lazily only if the cache
-        attribute is absent (e.g. when bypassing __init__ in tests).
-        """
-        cached = getattr(self, "_cached_tariff_periods", _MISSING)
-        if cached is _MISSING or getattr(self, "_seasonal_periods", False):
-            # A seasonal tariff's windows change with the date, so the
-            # construction-time cache is not served for one.
-            return self._get_tariff_periods()
-        return cast("list[dict[str, Any]]", cached) or []
-
-    def _get_tariff_periods(self) -> list[dict[str, Any]]:
-        """Return tariff period structure with rates converted to $/kWh.
-
-        The pricer is given the time, which picks the price year and any season.
-        """
-        if not tariff_pricing.library_available():
-            return []
-        try:
-            rows = tariff_pricing.pricer_for(self._distributor, self._tariff_code).period_rows(now_nem())
-            return tariff_pricing.period_attributes(rows)
-        except ValueError:
-            # "Unknown tariff code" — the aemo_to_tariff library simply does not
-            # support this code (e.g. Ergon 3600/3800/7200, SAPN SBELEX/RESELEX,
-            # Essential BLNBEX1, Endeavour N61). This will never succeed, so we
-            # cache the empty result at construction and stay silent.
-            return []
-        except Exception:
-            _LOGGER.debug(
-                "get_periods failed for %s/%s", self._distributor, self._tariff_code,
-                exc_info=True,
-            )
-            return []
-
-    def _get_daily_supply_charge(self) -> float | None:
-        """Return daily supply charge in $/day, or None."""
-        if not tariff_pricing.library_available():
-            return None
-        try:
-            return tariff_pricing.dollars_per_day(tariff_pricing.pricer_for(self._distributor, self._tariff_code).daily_fee())
-        except Exception:
             return None
 
     @staticmethod

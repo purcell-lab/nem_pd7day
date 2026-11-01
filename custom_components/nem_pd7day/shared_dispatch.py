@@ -32,7 +32,7 @@ async def async_shared_dispatch(
     hass: Any,
     setup_lock: asyncio.Lock,
     trace: Any,
-    factory: Callable[[Any], Any] | None = None,
+    factory: Callable[[Any], Any],
 ) -> DispatchCoordinator:
     """Return the one DispatchCoordinator shared by every config entry.
 
@@ -40,15 +40,11 @@ async def async_shared_dispatch(
     reason: the first refresh awaits, so the check and the assignment have to be
     made atomic or concurrent entry setups each build their own instance.
 
-    ``factory`` defaults to the real DispatchCoordinator, imported lazily so
-    this module stays free of Home Assistant imports. Tests pass a counting stub
-    so the single-instance property is asserted against this function rather
-    than against a reimplementation of it.
+    ``factory`` builds the coordinator: the composition root passes the real
+    DispatchCoordinator, so this module imports neither it nor Home Assistant
+    (#340). Tests pass a counting stub so the single-instance property is
+    asserted against this function rather than against a reimplementation of it.
     """
-    if factory is None:
-        from .coordinator import DispatchCoordinator as _DispatchCoordinator
-
-        factory = _DispatchCoordinator
 
     async with setup_lock:
         if SHARED_DISPATCH_KEY not in hass.data[DOMAIN]:

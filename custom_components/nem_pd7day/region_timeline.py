@@ -9,7 +9,7 @@ timeline. The spot forecast, day 2-7, Price Timeline and tariff sensors read it.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from homeassistant.config_entries import ConfigEntry
 
@@ -47,9 +47,10 @@ def listen_for_runs(entity: Any, *keys: str) -> None:
             entity.async_on_remove(source.async_add_listener(entity._schedule_warm_state_write))
 
 
-def _domain_data(sensor: Any) -> dict:
+def _domain_data(sensor: Any) -> Optional[dict]:
+    """``hass.data[DOMAIN]``, or None without Home Assistant's data (a bare entity, in tests)."""
     data = getattr(getattr(sensor, "hass", None), "data", None)
-    return data.setdefault(DOMAIN, {}) if isinstance(data, dict) else {}
+    return data.setdefault(DOMAIN, {}) if isinstance(data, dict) else None
 
 
 def _kept(sensor: Any, kind: str, identity: Any, compute: Any, pin: Any) -> Any:
@@ -57,7 +58,7 @@ def _kept(sensor: Any, kind: str, identity: Any, compute: Any, pin: Any) -> Any:
     from .forecast_hub import shared_forecast_hub
 
     domain_data = _domain_data(sensor)
-    if not domain_data:
+    if domain_data is None:
         return compute()
     return shared_forecast_hub(domain_data).keep(kind, identity, None, compute, pin=pin)
 
@@ -81,7 +82,7 @@ def region_timeline(sensor: Any, d: Any, calibrated: list[dict]) -> Any:
 
     def run_of(key: str) -> Any:
         """The shared coordinator's run, if it holds one (a run has a real run time)."""
-        run = getattr(domain_data.get(key), "latest", None)
+        run = getattr((domain_data or {}).get(key), "latest", None)
         return run if isinstance(getattr(run, "run_at", None), datetime) else None
 
     p5, pd = run_of(SHARED_P5MIN_KEY), run_of(SHARED_PREDISPATCH_KEY)
@@ -94,7 +95,7 @@ def region_timeline(sensor: Any, d: Any, calibrated: list[dict]) -> Any:
             pd7day_run_at=d.forecast_generated_at, pd7day_source_file=getattr(d, "source_file", None),
         )
 
-    if not domain_data:
+    if domain_data is None:
         return build()
     hub = shared_forecast_hub(domain_data)
     identity = (dispatch, id(p5), getattr(p5, "run_at", None), id(pd), getattr(pd, "run_at", None), id(calibrated))

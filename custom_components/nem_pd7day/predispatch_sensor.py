@@ -35,6 +35,7 @@ from .nem_time import NEM_TZ, now_nem
 from .predispatch_calibration import calibrated_rrp_mwh
 from .predispatch_client import PERIOD, InterconnectorPeriod, PredispatchSnapshot
 from .predispatch_coordinator import PredispatchCoordinator
+from .region_timeline import _kept
 
 MAX_AGE = timedelta(minutes=75)
 # A marginal value this large is a constraint violation penalty, not a price:
@@ -319,7 +320,15 @@ class NemPd7dayPredispatchConstraintsSensor(_PredispatchSensor):
             return attrs
         now = now_nem()
         dispatch_rhs = self._dispatch_rhs(now)
-        rows = [self._period_row(snapshot, e, dispatch_rhs) for e in self._ends(snapshot, now)]
+        # The rows depend on the run, the dispatch interval whose RHS they compare
+        # against, and which periods are still ahead: kept in the shared hub on
+        # exactly those, so a write between them rebuilds nothing (#336).
+        latest = getattr(getattr(self._dispatch_constraints, "tracker", None), "latest", None) if dispatch_rhs else None
+        rows = _kept(
+            self, "pd_constraints:" + self._region, (id(snapshot), snapshot.run_at, id(latest), end),
+            lambda: [self._period_row(snapshot, e, dispatch_rhs) for e in self._ends(snapshot, now)],
+            pin=(snapshot, latest),
+        )
         constraints = snapshot.constraints.get(end, ())
         return {
             **attrs,
