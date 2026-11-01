@@ -445,12 +445,14 @@ def test_regions_do_not_share_cache_entries():
     assert nsw_result is not qld_result
 
 
-def test_every_builder_that_publishes_a_band_publishes_band_source():
+def test_every_builder_that_publishes_a_band_publishes_band_source(monkeypatch):
     """Issue #100: PD7DayDataSensor builds its per-interval dict from its own
     literal rather than the shared ATTR_CAL_* update, so band_source, added
     to the other two builders in PR #96, never reached it. Any builder
     exposing p10 and p90 must also expose band_source."""
     run_at = datetime(2026, 9, 3, 7, 30, tzinfo=NEM_TZ)
+    # The spot sensors' forecast is the timeline from now (#339): now is the run.
+    monkeypatch.setattr(sensor_module, "now_nem", lambda: run_at + timedelta(minutes=1))
     price_data = _make_price_data(run_at, intervals=8)
     coordinator = _fresh_coordinator()
     coordinator.data = MagicMock()
