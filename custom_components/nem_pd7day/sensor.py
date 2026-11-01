@@ -12,9 +12,11 @@ NemPd7dayGridNoticesSensor    -- active MSL/LOR market notice count + structured
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, TYPE_CHECKING
 
 from .nem_time import NEM_TZ, now_nem, offset_seam_point, parse_iso, to_nem_iso
+from .timeline_forecast import cheapest_window, forecast_entries, min_max_24h
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -861,56 +863,30 @@ class PD7DayForecastSensor(
 
         run_at = d.forecast_generated_at
         calibrated_forecast = self._calibrated_forecast(d)
-
-        # Base sensor always provides full day 1-7 forecast
-        trimmed_forecast = calibrated_forecast
-
-        # Min/max over the first 24 hours of the window (calibrated 'value').
-        min_value, max_value = _min_max_first_24h(trimmed_forecast, d.interval_minutes)
-
-        # Cheapest 2h window over trimmed forecast
-        # Find the 4 consecutive intervals (30-min each = 2h) with lowest average 'value'
-        n = 4
-        cheapest_window = None
-        if len(trimmed_forecast) >= n:
-            for i in range(len(trimmed_forecast) - n + 1):
-                window = trimmed_forecast[i : i + n]
-                vals = [p.get("value") for p in window if p.get("value") is not None]
-                if len(vals) == n:
-                    avg = round(sum(vals) / n, 6)
-                    if cheapest_window is None or avg < cheapest_window["avg_value"]:
-                        cheapest_window = {
-                            "nemtime_start": window[0].get("nemtime"),
-                            "nemtime_end": window[-1].get("nemtime"),
-                            "start": window[0].get("time"),
-                            "end": window[-1].get("time"),
-                            "avg_value": avg,
-                            "points": n,
-                        }
+        # The price timeline from the current interval: dispatch, P5MIN, pre-dispatch,
+        # then this calibrated forecast (#338, #339). Same keys per entry as before.
+        timeline = region_timeline(self, d, calibrated_forecast)
+        forecast = forecast_entries(timeline, calibrated_forecast)
+        min_value, max_value = min_max_24h(forecast)
 
         return {
             ATTR_REGION: d.region,
             ATTR_FORECAST_GENERATED_AT: run_at,
             **staleness_attributes(self.coordinator),
             ATTR_INTERVAL_MINUTES: d.interval_minutes,
-            ATTR_NEXT_VALUE: (
-                trimmed_forecast[0].get(ATTR_CAL_CALIBRATED, trimmed_forecast[0].get("value"))
-                if trimmed_forecast
-                else None
-            ),
+            ATTR_NEXT_VALUE: forecast[0].get(ATTR_CAL_CALIBRATED, forecast[0].get("value")) if forecast else None,
             ATTR_MIN_24H: min_value,
             ATTR_MAX_24H: max_value,
-            ATTR_CHEAPEST_2H: cheapest_window,
-            ATTR_FORECAST: trimmed_forecast,
+            ATTR_CHEAPEST_2H: cheapest_window(forecast),
+            ATTR_FORECAST: forecast,
             ATTR_SOURCE_FILE: d.source_file,
             "calibration_active": (
                 self._store is not None
                 and self._store.calibration is not None
                 and self._store.active_bucket_count > 0
             ),
-            # Dispatch, then P5MIN, pre-dispatch and this forecast, each where the one before ends (#338).
-            # ``forecast`` stays PD7DAY's alone.
-            "timeline": region_timeline(self, d, calibrated_forecast).points,
+            # The timeline's own points (#338); ``forecast`` is the same span in its long-standing keys.
+            "timeline": timeline.points,
         }
 
 
@@ -929,7 +905,9 @@ def _dispatch_point(entry: ConfigEntry, region: str) -> Any:
         end = parse_settlement(price.interval_datetime).replace(tzinfo=NEM_TZ)
     except (ValueError, TypeError, AttributeError):
         return None
-    return DispatchPoint(end, price.rrp, getattr(dispatch, "source_file", "") or "")
+    if not isinstance(price.rrp, (int, float)):
+        return None
+    return DispatchPoint(end, price.rrp, "")
 
 
 def region_timeline(sensor: Any, d: Any, calibrated: list[dict]) -> Any:
@@ -942,9 +920,15 @@ def region_timeline(sensor: Any, d: Any, calibrated: list[dict]) -> Any:
     from .forecast_hub import shared_forecast_hub
     from .price_timeline import P5_MAX_AGE, PD_MAX_AGE, build_timeline
 
-    domain_data = sensor.hass.data.setdefault(DOMAIN, {}) if getattr(sensor, "hass", None) else {}
-    p5 = getattr(domain_data.get(SHARED_P5MIN_KEY), "latest", None)
-    pd = getattr(domain_data.get(SHARED_PREDISPATCH_KEY), "latest", None)
+    data = getattr(getattr(sensor, "hass", None), "data", None)
+    domain_data = data.setdefault(DOMAIN, {}) if isinstance(data, dict) else {}
+
+    def run_of(key: str) -> Any:
+        """The shared coordinator's run, if it holds one (a run has a real run time)."""
+        run = getattr(domain_data.get(key), "latest", None)
+        return run if isinstance(getattr(run, "run_at", None), datetime) else None
+
+    p5, pd = run_of(SHARED_P5MIN_KEY), run_of(SHARED_PREDISPATCH_KEY)
     dispatch = _dispatch_point(sensor._entry, sensor._region)
     now = now_nem()
 
@@ -1043,31 +1027,6 @@ class PriceTimelineSensor(CalibratedWriteMixin, CoordinatorEntity[PD7DayCoordina
             "timeline_sources": timeline.sources,
             "timeline": timeline.points,
         }
-
-
-def _min_max_first_24h(
-    forecast: list[dict], interval_minutes: int | None
-) -> tuple[float | None, float | None]:
-    """Min and max calibrated ``value`` over the first 24 hours of ``forecast``.
-
-    ``forecast`` is the sensor's own window, so on the day 1 to 7 sensor this
-    is the first 24 hours of the run and on the day 2 to 7 sensor the first
-    24 hours after the Amber Express cutoff. Sized in intervals, the same way
-    pd7day_client._min_max_24h sizes the raw attribute, so the two agree.
-
-    Before issue #148 both sensors published min/max of the whole window
-    under ``min_24h_value``/``max_24h_value``: on the day 2 to 7 sensor that
-    was up to six days, and a single Saturday row four days out set
-    ``min_24h_value`` for the whole week.
-    """
-    minutes = interval_minutes if interval_minutes and interval_minutes > 0 else 30
-    n = max(1, (24 * 60) // minutes)
-    values = [
-        p.get("value") for p in forecast[:n] if p.get("value") is not None
-    ]
-    if not values:
-        return None, None
-    return round(min(values), 6), round(max(values), 6)
 
 
 class SpotPriceForecastDays27Sensor(
@@ -1180,33 +1139,18 @@ class SpotPriceForecastDays27Sensor(
             return {}
         run_at = d.forecast_generated_at
         calibrated_forecast = self._calibrated_forecast(d)
-        # Day 2-7: from where the Amber forecast ends, or by the clock (#235)
+        # Day 2-7: from where the Amber forecast ends, or by the clock (#235), on the
+        # price timeline, so pre-dispatch fills any part of it before PD7DAY (#339).
         start = day27_start_for(self.hass, self._amber_ids)
+        timeline = region_timeline(self, d, calibrated_forecast)
         trimmed_forecast = [
-            p for p in calibrated_forecast
+            p for p in forecast_entries(timeline, calibrated_forecast)
             if start.includes(parse_iso(p["time"]))
         ]
         # Min/max over the first 24 hours after the cutoff, as the attribute
-        # name says. The cheapest 2 h window below searches the whole trimmed
-        # window by design; see issue #148.
-        min_value, max_value = _min_max_first_24h(trimmed_forecast, d.interval_minutes)
-        n = 4
-        cheapest_window = None
-        if len(trimmed_forecast) >= n:
-            for i in range(len(trimmed_forecast) - n + 1):
-                window = trimmed_forecast[i : i + n]
-                vals = [p.get("value") for p in window if p.get("value") is not None]
-                if len(vals) == n:
-                    avg = round(sum(vals) / n, 6)
-                    if cheapest_window is None or avg < cheapest_window["avg_value"]:
-                        cheapest_window = {
-                            "nemtime_start": window[0].get("nemtime"),
-                            "nemtime_end": window[-1].get("nemtime"),
-                            "start": window[0].get("time"),
-                            "end": window[-1].get("time"),
-                            "avg_value": avg,
-                            "points": n,
-                        }
+        # name says; the cheapest 2 h window searches the whole trimmed window
+        # by design (#148).
+        min_value, max_value = min_max_24h(trimmed_forecast)
         return {
             ATTR_REGION: d.region,
             ATTR_FORECAST_GENERATED_AT: run_at,
@@ -1219,7 +1163,7 @@ class SpotPriceForecastDays27Sensor(
             ),
             ATTR_MIN_24H: min_value,
             ATTR_MAX_24H: max_value,
-            ATTR_CHEAPEST_2H: cheapest_window,
+            ATTR_CHEAPEST_2H: cheapest_window(trimmed_forecast),
             ATTR_FORECAST_START: trimmed_forecast[0]["time"] if trimmed_forecast else None,
             ATTR_FORECAST_START_SOURCE: start.source,
             # The first point moved past Amber's end (#270)
