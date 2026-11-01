@@ -145,6 +145,21 @@ def run_async(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
+def freeze_timeline_clock(monkeypatch, t: datetime) -> None:
+    """The price timeline's clock at ``t`` in every loaded copy of ``region_timeline`` (#339).
+
+    The spot and tariff sensors' ``forecast`` is the timeline from now, and
+    tests built on fixed dates would otherwise find every interval ended. A
+    ``t`` before the data keeps the whole PD7DAY run, as before v3.45.0.
+    """
+    for name, module in list(sys.modules.items()):
+        if name.endswith(".region_timeline") and hasattr(module, "now_nem"):
+            monkeypatch.setattr(module, "now_nem", lambda: t)
+
+
+BEFORE_ANY_DATA = datetime(2000, 1, 1, tzinfo=NEM_TZ)
+
+
 def nem_iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S+10:00")
 

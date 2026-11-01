@@ -20,9 +20,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import support
+
 from support import NEM_TZ, install_ha_stubs, load_chain, make_price_period, run_async
 
 install_ha_stubs()
+
+
+@pytest.fixture(autouse=True)
+def _whole_run_on_the_timeline(monkeypatch):
+    """These tests price whole PD7DAY runs: the timeline's clock before them, so none has ended (#339)."""
+    support.freeze_timeline_clock(monkeypatch, support.BEFORE_ANY_DATA)
 
 _const_mod, _nem_time, _client_mod, _store_mod, _coord_mod, _tariff_mod, _sensor_mod = load_chain(
     "const", "nem_time", "pd7day_client", "calibration_store", "coordinator",
@@ -100,7 +108,8 @@ EXPORT_KEYS = [
 EXPORT_DAYS27_KEYS = [k for k in EXPORT_KEYS if k != "forecast"] + [
     "forecast_start", "forecast_start_source", "forecast", "interpolation_mode",
 ]
-FORECAST_ENTRY_KEYS = ["time", "nemtime", "spot_raw", "spot", "value", "period", "network_rate"]
+# v3.46.0 (#339): each entry also says which source priced it and its length.
+FORECAST_ENTRY_KEYS = ["time", "nemtime", "spot_raw", "spot", "value", "period", "network_rate", "source", "resolution_minutes"]
 
 
 # ── Builders ──────────────────────────────────────────────────────────────────

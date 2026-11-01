@@ -21,6 +21,7 @@ stale price rather than fail.
 """
 from __future__ import annotations
 
+import asyncio
 import enum
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -34,6 +35,11 @@ from .calibration_inputs import (
     calibrated_spot_map,
     interval_key_for_period,
 )
+
+# The coordinator attribute holding, per region, the event a publish sets (#339).
+PUBLISHED_EVENTS_ATTR = "_calibrated_forecast_published"
+# How often a wait re-checks the memo regardless, for a slot written without a publish.
+RECHECK_SECONDS = 1.0
 
 Build = Callable[[Any], list[dict]]  # the entity's _calibrated_forecast_values
 RunInExecutor = Callable[..., Awaitable[Any]]  # hass.async_add_executor_job
@@ -90,6 +96,40 @@ class CalibratedForecast:
         cache = _memo_dict(self._coordinator, CALIBRATED_FORECAST_MEMO_ATTR)
         if cache is not None:
             cache[self._region] = (key, value)
+            self._notify()
+
+    def _notify(self) -> None:
+        """Wake whatever waits on this region's memo (``wait_current``)."""
+        events = _memo_dict(self._coordinator, PUBLISHED_EVENTS_ATTR)
+        event = events.pop(self._region, None) if events else None
+        if isinstance(event, asyncio.Event):
+            event.set()
+
+    async def wait_current(self, price_data_now: Callable[[], Any], timeout: float) -> bool:
+        """Wait, up to ``timeout`` seconds, until the memo holds the value a write for the current data asks for.
+
+        For an entity that reads the memo but does not build it, the tariff
+        sensors (#339): rather than calibrate the run on the event loop on a
+        miss, it waits for the warm a forecast sensor of the region runs, and
+        is woken by its publish. True once current; False on the timeout, when
+        the caller falls back to calibrating itself.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not self.is_current(price_data_now()):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return False
+            events = _memo_dict(self._coordinator, PUBLISHED_EVENTS_ATTR, create=True)
+            event = None if events is None else events.setdefault(self._region, asyncio.Event())
+            try:
+                if event is None:
+                    await asyncio.sleep(min(RECHECK_SECONDS, remaining))
+                else:
+                    await asyncio.wait_for(event.wait(), min(RECHECK_SECONDS, remaining))
+            except asyncio.TimeoutError:
+                pass
+        return True
 
     def is_current(self, d: Any | None) -> bool:
         """Whether the memo holds the value a write for ``d`` will ask for.
@@ -121,6 +161,7 @@ class CalibratedForecast:
         value = build(d)
         if cache is not None:
             cache[self._region] = (key, value)
+            self._notify()
         return value
 
     async def warm(
