@@ -271,6 +271,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # shared_dispatch.py and issue #34 for what went wrong without the lock.
     dispatch = await async_shared_dispatch(hass, setup_lock, trace)
 
+    # Before the platforms: the sensor setup subscribes it to pre-dispatch runs (#337).
+    pd_record = PredispatchRecord(hass, region)
+    await pd_record.async_load()
     entry.runtime_data = NemPd7dayEntryData(
         coordinator=coordinator,
         store=store,
@@ -279,6 +282,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         dispatch=dispatch,
         notice_store=notice_store,
         region=region,
+        pd_record=pd_record,
     )
 
     # ── Central STPASA fetch + distribution ──────────────────────────────────
@@ -450,9 +454,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     actual_service = shared_actual_price_service(
         hass, async_get_clientsession(hass), hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY),
     )
-    entry.runtime_data.pd_record = pd_record = PredispatchRecord(hass, region)
-    await pd_record.async_load()
-    entry.async_on_unload(actual_service.register(entry.entry_id, region, store, pd_record))
+    entry.async_on_unload(actual_service.register(entry.entry_id, region, store, entry.runtime_data.pd_record))
 
     # ── Periodic calibration refit (daily) ───────────────────────────────────
     @callback

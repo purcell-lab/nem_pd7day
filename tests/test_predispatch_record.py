@@ -219,3 +219,12 @@ def test_the_tradingis_service_records_into_each_store_of_an_entry():
         store.async_record_actual.assert_awaited_once_with(
             "2026-10-31T14:00:00+10:00", 0.0975, calibration_region="QLD1", source="tradingis",
         )
+
+
+def test_setup_builds_the_record_before_the_platforms_subscribe_it():
+    """v3.42.0 built it after _forward_platforms, so the sensor setup saw None:
+    no run was ingested and the constraints sensor showed no pd_ attributes."""
+    src = (Path(__file__).parents[1] / "custom_components" / "nem_pd7day" / "__init__.py").read_text()
+    built = src.index("pd_record = PredispatchRecord(hass, region)")
+    assert built < src.index("entry.runtime_data = NemPd7dayEntryData(") < src.index("await _forward_platforms(hass, entry, region)")
+    assert "pd_record=pd_record," in src
