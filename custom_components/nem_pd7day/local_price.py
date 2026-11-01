@@ -101,8 +101,13 @@ class DispatchLocalPrices:
 
 
 @dataclass(frozen=True)
-class P5LocalPriceRun:
-    """One P5MIN run: its interval ends, the published rows and each region's ROP."""
+class P5MinRun:
+    """One P5MIN run: its interval ends, the published rows, and each region's ROP and RRP.
+
+    ``rop`` and ``rrp`` are per region and interval end, in $/MWh, from the
+    pricing run (INTERVENTION 0). The RRP is what the price timeline will
+    publish raw for the next hour (#333, #335).
+    """
 
     run_at: datetime
     source: str
@@ -112,6 +117,7 @@ class P5LocalPriceRun:
     rop: dict[str, dict[datetime, float]]
     conflicts: frozenset[tuple[str, datetime]] = field(default_factory=frozenset)
     retrieved_at: Optional[datetime] = None
+    rrp: dict[str, dict[datetime, float]] = field(default_factory=dict)
 
 
 def parse_duids(text: Any, pattern: re.Pattern[str] = DUID_RE) -> tuple[list[str], list[str]]:
@@ -206,8 +212,8 @@ def parse_dispatch_local_prices(
 
 def parse_p5min_local_prices(
     content: str, source: str = "", retrieved_at: Optional[datetime] = None
-) -> Optional[P5LocalPriceRun]:
-    """One P5MIN run's LOCAL_PRICE rows and pricing-run ROPs, or None without a REGIONSOLUTION table.
+) -> Optional[P5MinRun]:
+    """One P5MIN run's LOCAL_PRICE rows and pricing-run ROPs and RRPs, or None without a REGIONSOLUTION table.
 
     Two rows for one DUID and interval that disagree are a conflict: neither
     is used, and the pair is reported.
@@ -215,13 +221,17 @@ def parse_p5min_local_prices(
     tables = _records(content, "P5MIN", ("LOCAL_PRICE", "REGIONSOLUTION"))
     run_at: Optional[datetime] = None
     rop: dict[str, dict[datetime, float]] = {}
+    rrp: dict[str, dict[datetime, float]] = {}
     for record in tables.get("REGIONSOLUTION", []):
         if record.get("INTERVENTION", "0").strip() != "0":
             continue
         run_at = run_at or _nem(record.get("RUN_DATETIME", ""))
-        end, value = _nem(record.get("INTERVAL_DATETIME", "")), _float(record.get("ROP"))
-        if end is not None and value is not None:
-            rop.setdefault(record.get("REGIONID", "").strip(), {})[end] = value
+        end, region = _nem(record.get("INTERVAL_DATETIME", "")), record.get("REGIONID", "").strip()
+        if end is None:
+            continue
+        for series, value in ((rop, _float(record.get("ROP"))), (rrp, _float(record.get("RRP")))):
+            if value is not None:
+                series.setdefault(region, {})[end] = value
     if run_at is None:
         return None
     ends = tuple(sorted({end for series in rop.values() for end in series}))
@@ -238,8 +248,8 @@ def parse_p5min_local_prices(
         rows[duid][end] = row
     for duid, end in conflicts:
         rows[duid].pop(end, None)
-    return P5LocalPriceRun(
-        run_at, source, "LOCAL_PRICE" in tables, ends, rows, rop, frozenset(conflicts), retrieved_at
+    return P5MinRun(
+        run_at, source, "LOCAL_PRICE" in tables, ends, rows, rop, frozenset(conflicts), retrieved_at, rrp
     )
 
 
@@ -290,7 +300,7 @@ def _interval_end(now: datetime) -> datetime:
     return floor if floor == local else floor + INTERVAL
 
 
-def p5_fallback(run: Optional[P5LocalPriceRun], end: datetime, max_age: timedelta) -> Optional[DispatchLocalPrices]:
+def p5_fallback(run: Optional[P5MinRun], end: datetime, max_age: timedelta) -> Optional[DispatchLocalPrices]:
     """The interval ending ``end`` from a fresh P5MIN run covering it: its ROPs and its rows.
 
     A run without the LOCAL_PRICE table, or without a row for a DUID, is 0
@@ -324,7 +334,7 @@ def predispatch_fallback(snapshot: Any, end: datetime) -> Optional[DispatchLocal
 
 
 def with_fallbacks(
-    prices: Optional[DispatchLocalPrices], run: Optional[P5LocalPriceRun], snapshot: Any,
+    prices: Optional[DispatchLocalPrices], run: Optional[P5MinRun], snapshot: Any,
     now: datetime, max_age: timedelta,
 ) -> Optional[DispatchLocalPrices]:
     """The dispatch file while it is fresh, with or without its LOCAL_PRICE table; when it is missing
@@ -380,7 +390,7 @@ class ForecastSeries:
     inferred: list[str] = field(default_factory=list)  # point times taken as 0 for want of a row
 
 
-def forecast_series(run: Optional[P5LocalPriceRun], duid: str, now: datetime, max_age: timedelta) -> ForecastSeries:
+def forecast_series(run: Optional[P5MinRun], duid: str, now: datetime, max_age: timedelta) -> ForecastSeries:
     """The run's intervals still to end, in order, up to the first conflicting interval.
 
     An interval that has ended is dropped; once every interval has ended the

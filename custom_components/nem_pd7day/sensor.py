@@ -306,8 +306,7 @@ async def _local_price_entities(
 ) -> list[SensorEntity]:
     """One DUID local price sensor per DUID (#275): the chosen DUIDs', enabled,
     and the region's most constrained DUIDs', disabled; and one node price
-    sensor per chosen transmission node (#286). P5MIN is fetched only while
-    one is enabled."""
+    sensor per chosen transmission node (#286), and the zones (#288)."""
     from .duid_catalogue import load_catalogue
     from .executor import run_in_executor
     from .local_price import parse_duids, parse_tnis

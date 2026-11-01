@@ -43,7 +43,7 @@ from .local_price import (
     STATUS_ZERO,
     DispatchLocalPrices,
     NODE_PRICE_FORMULA,
-    P5LocalPriceRun,
+    P5MinRun,
     dispatch_status,
     node_price_mwh,
 )
@@ -233,7 +233,7 @@ def node_adjustment(
     return (STATUS_PUBLISHED, values.pop()) if values else (STATUS_ZERO, 0.0)
 
 
-def p5_adjustment(run: P5LocalPriceRun, duids: tuple[str, ...], end: datetime) -> Optional[float]:
+def p5_adjustment(run: P5MinRun, duids: tuple[str, ...], end: datetime) -> Optional[float]:
     """The DUIDs' common adjustment for one P5MIN interval, 0 without a row; None where they conflict."""
     if any((duid, end) in run.conflicts for duid in duids):
         return None
@@ -244,7 +244,7 @@ def p5_adjustment(run: P5LocalPriceRun, duids: tuple[str, ...], end: datetime) -
 
 
 def node_forecast(
-    run: Optional[P5LocalPriceRun], region: str, mlf: Optional[float], duids: tuple[str, ...], now: datetime,
+    run: Optional[P5MinRun], region: str, mlf: Optional[float], duids: tuple[str, ...], now: datetime,
 ) -> tuple[str, list[dict[str, Any]]]:
     """(status, points): the run's (ROP + the DUIDs' adjustment) x MLF for the intervals still to end,
     in $/kWh, raw, up to the first interval where the DUIDs conflict."""

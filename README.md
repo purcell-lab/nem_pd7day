@@ -160,7 +160,7 @@ The options form shows the factor in Amber Express's current settled feed-in int
 
 A DUID is a generating or load unit, not your connection point. Its local price adjustment is a geographic signal of network congestion near that unit, nothing more: it is not added to any existing price, tariff or forecast.
 
-**The region's five most constrained DUIDs are always added, disabled**: enable one from the device page and it starts updating. They are the region's DUIDs with the largest sum of |adjustment| over the catalogue's two-week window. P5MIN is fetched only while at least one DUID, node or zone sensor is enabled, so the disabled presets cost nothing by themselves; the zone sensors are enabled by default (below). Choosing a preset in the options enables the sensor the integration disabled; a sensor you disabled stays disabled.
+**The region's five most constrained DUIDs are always added, disabled**: enable one from the device page and it starts updating. They are the region's DUIDs with the largest sum of |adjustment| over the catalogue's two-week window. A disabled preset is not updated, so it costs nothing by itself; P5MIN itself is fetched for every region after each dispatch poll (#335). Choosing a preset in the options enables the sensor the integration disabled; a sensor you disabled stays disabled.
 
 **The DUID catalogue** (`duid_catalogue.json`) is bundled with the integration and rebuilt before each release by `scripts/build_duid_catalogue.py`. Nothing is fetched at run time. Its sources:
 
@@ -289,10 +289,10 @@ The network constraints binding in each dispatch interval come from AEMO's Dispa
 - **Schedule**: no timer of its own. One shared fetch runs each time the live dispatch poll completes, and a failure here never delays or affects the price.
 - **Load**: two NEMWEB requests per interval through the shared NEMWEB request gate, the directory listing (about 17 KB compressed) and the zip (about 22 KB). That is about 576 requests and 11 MB a day. NEMWEB answers rapid callers with 403, so the requests share the gate and its spacing with every other NEMWEB fetch.
 
-### DUID local prices (every 5 minutes, after the dispatch poll, only while a DUID sensor is enabled)
+### DUID local prices (every 5 minutes, after the dispatch poll)
 
 - **Dispatch**: the `DISPATCH,LOCAL_PRICE` and `DISPATCH,PRICE` rows of the same DispatchIS file the binding constraints read. No extra request.
-- **Forecast**: the newest P5MIN run, `https://www.nemweb.com.au/Reports/Current/P5_Reports/`, its `LOCAL_PRICE` and `REGIONSOLUTION` tables: twelve five-minute intervals. One shared coordinator serves every entry, DUID and transmission node; the node price sensors use the same data. After each dispatch poll it reads the listing (about 16 KB compressed) once the run it holds has reached its first interval's end, and the zip (about 210 KB, about 60 MB a day) only when a newer run is listed. The CSV (about 3 MB) is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
+- **Forecast**: the newest P5MIN run, `https://www.nemweb.com.au/Reports/Current/P5_Reports/`, its `LOCAL_PRICE` and `REGIONSOLUTION` tables (each region's ROP and RRP): twelve five-minute intervals. One shared coordinator serves every entry, DUID and transmission node; the node price sensors use the same data. After each dispatch poll it reads the listing (about 16 KB compressed) once the run it holds has reached its first interval's end, and the zip (about 210 KB, about 60 MB a day) only when a newer run is listed. The CSV (about 3 MB) is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
 
 ### Pre-dispatch interconnectors and constraints (every 30 minutes, after the dispatch poll)
 

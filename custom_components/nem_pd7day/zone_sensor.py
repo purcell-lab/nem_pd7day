@@ -38,7 +38,7 @@ from .local_price import (
     STATUS_STALE,
     STATUS_ZERO,
     DispatchLocalPrices,
-    P5LocalPriceRun,
+    P5MinRun,
     node_price_mwh,
 )
 from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, dispatch_prices, entity_id_for, listen_to_forecasts
@@ -98,7 +98,7 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
     return ZoneDispatch(status, rop, round(rop * mlf, 4), adjustment, members, mlf)
 
 
-def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5LocalPriceRun], now: datetime) -> tuple[str, list]:
+def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5MinRun], now: datetime) -> tuple[str, list]:
     """(status, points): (ROP + the zone's P5MIN adjustment) x zone MLF per interval still to end."""
     mlf = zone.mlf
     if mlf is None or not zone.members:

@@ -20,7 +20,7 @@
 
 The region's DUIDs most often locally constrained, from the bundled catalogue,
 are added as well, disabled; enabling one is all it takes. P5MIN is fetched
-only while at least one of these sensors is enabled. A DUID in the catalogue
+after every dispatch poll, for every region (#335). A DUID in the catalogue
 publishes its station, fuel, region and coordinates, so it shows on a map.
 
 Until 3.33 there were three sensors per DUID; the forecast and local price
@@ -283,15 +283,13 @@ def dispatch_prices(sensor: Any, now: datetime) -> Optional[DispatchLocalPrices]
 async def listen_to_forecasts(sensor: Any, added: Any) -> None:
     """Listen to P5MIN and pre-dispatch too, after the coordinator's own ``added``.
 
-    P5MIN is fetched only while one of these listens, so ask for a run now;
-    pre-dispatch is fetched every half hour regardless.
+    Both fetch on their own (P5MIN after each dispatch poll, pre-dispatch every
+    half hour), so a sensor only listens for new runs.
     """
     await added()
     for source in (sensor._p5min, sensor._predispatch):
         if source is not None:
             sensor.async_on_remove(source.async_add_listener(lambda: sensor.async_write_ha_state()))
-    if sensor._p5min is not None and sensor._p5min.latest is None:
-        sensor._p5min.request_refresh()
 
 
 def enable_chosen(hass: Any, entry: Any, region: str, duids: list[str]) -> int:
