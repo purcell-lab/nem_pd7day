@@ -917,7 +917,10 @@ def test_tariff_visibility_uses_default_enabled_tariffs_regardless_of_mode(tarif
 @pytest.mark.parametrize("mode", [FORECAST_MODE_FULL, FORECAST_MODE_DAYS_2_7])
 def test_tariff_forecast_is_untrimmed_in_every_mode(mode):
     """The base tariff sensor publishes every interval; only the Day 2-7 tariff sensor trims."""
-    base = datetime.now(tz=NEM_TZ).replace(minute=0, second=0, microsecond=0)
+    # From the half hour running now: the forecast is the timeline from now (#339),
+    # so a run starting on the hour lost its first half hour after :30.
+    now = datetime.now(tz=NEM_TZ)
+    base = now.replace(minute=now.minute - now.minute % 30, second=0, microsecond=0)
     periods = [make_price_period(base + timedelta(minutes=30 * (i + 1)), value=0.05) for i in range(100)]
     sensor = make_tariff_sensor(price_periods=periods, mode=mode)
 

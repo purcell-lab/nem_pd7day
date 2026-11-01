@@ -859,3 +859,67 @@ def test_spike_first_run_now_distinguishes_a_repeat_from_a_new_spike():
         "a spike seen in the previous run is still being reported as first run"
     )
     assert flags[first[0]["time"]] is True
+
+
+# ── The chart on the timeline and the calibrated forecast memo (#339) ────────
+
+def _warm_pair(values, monkeypatch, **kw):
+    """A sensor and camera pair whose memo the sensor has warmed, timeline clock before the run."""
+    import support
+    support.freeze_timeline_clock(monkeypatch, support.BEFORE_ANY_DATA)
+    periods = [make_period(RUN_DT + timedelta(minutes=30 * (i + 1)), v) for i, v in enumerate(values)]
+    sensor, camera, coordinator, store = make_pair(periods, **kw)
+    sensor._calibrated_forecast(sensor._price_data)  # the warm the forecast sensors run
+    return sensor, camera
+
+
+def test_the_chart_draws_the_memo_and_calibrates_nothing(monkeypatch):
+    sensor, camera = _warm_pair([0.10, 0.12, 0.30, 0.08], monkeypatch)
+    published = {e["nemtime"]: e for e in sensor._calibrated_forecast(sensor._price_data)}
+
+    def no_calibration(*_a, **_k):
+        raise AssertionError("the camera calibrated an interval the memo holds")
+
+    monkeypatch.setattr(_camera_mod, "calibrate_interval", no_calibration)
+    entries = camera._memo_forecast_data()
+    assert [e["source"] for e in entries] == ["pd7day"] * 4
+    for e in entries:
+        assert e["calibrated"] == published[e["nemtime"]]["calibrated"]
+        assert e["p10"] == published[e["nemtime"]]["p10"] and e["p90"] == published[e["nemtime"]]["p90"]
+        assert e["forecast_run_at"] == camera._price_data().forecast_generated_at
+        assert "_spike_gate" not in e
+
+    async def executor(func, *args):
+        return func(*args)
+
+    camera.hass.async_add_executor_job = executor
+    run_async(camera._async_refresh_image())
+    assert camera._image_bytes, "nothing was rendered"
+
+
+def test_the_memo_keeps_the_raw_spike_gate_for_the_callouts(monkeypatch):
+    """The sensors publish no gate at short lead; the chart still reads it raw, as it always has."""
+    sensor, camera = _warm_pair([0.10, 12.0, 0.08], monkeypatch, gas_tj=200.0, tight=True)
+    published = [e for e in sensor._calibrated_forecast(sensor._price_data) if e["raw_value"] >= SPIKE_THRESHOLD]
+    assert published[0]["spike_credible"] is None, "short lead: the sensor publishes no opinion"
+    drawn = [e for e in camera._memo_forecast_data() if e["raw_value"] >= SPIKE_THRESHOLD]
+    assert drawn[0]["spike_credible"] is True, "the chart lost its raw gate"
+    below = [e for e in camera._memo_forecast_data() if e["raw_value"] < SPIKE_THRESHOLD]
+    assert all("spike_credible" not in e for e in below), "absent below spike territory, as before"
+    assert camera._memo_forecast_data() is not None and camera._prior_spike_intervals() == {drawn[0]["time"]}
+
+
+def test_the_chart_matches_its_own_calibration_on_every_interval(monkeypatch):
+    sensor, camera = _warm_pair([0.10, 12.0, 0.08, 0.20, -0.02], monkeypatch, gas_tj=200.0, tight=True)
+    fields = ("calibrated", "p10", "p90", "raw_value", "calibrated_source", "spike_credible", "horizon_hours")
+    memo = camera._memo_forecast_data()
+    own = camera._build_forecast_data()
+    assert [{f: e.get(f) for f in fields} for e in memo] == [{f: e.get(f) for f in fields} for e in own]
+
+
+def test_a_cold_memo_falls_back_to_the_camera_calibration(monkeypatch):
+    import support
+    support.freeze_timeline_clock(monkeypatch, support.BEFORE_ANY_DATA)
+    camera = make_camera([0.10, 0.12])
+    assert camera._memo_forecast_data() is None
+    assert len(camera._build_forecast_data()) == 2

@@ -41,7 +41,8 @@ def forecast_entries(timeline: Any, calibrated: Sequence[dict[str, Any]]) -> lis
     entries: list[dict[str, Any]] = []
     for point in timeline.points:
         if point["source"] == "pd7day" and point["nemtime"] in by_end:
-            entry = dict(by_end[point["nemtime"]])
+            # Keys starting "_" are the memo's own (the chart's raw spike gate), never published.
+            entry = {k: v for k, v in by_end[point["nemtime"]].items() if not k.startswith("_")}
             entry["time"] = point["time"]
         else:
             entry = {

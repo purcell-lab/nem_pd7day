@@ -17,6 +17,7 @@ The chart shows:
 from __future__ import annotations
 
 import io
+from typing import Any
 import logging
 import struct
 import zlib
@@ -194,6 +195,36 @@ _DIVIDER_Y_STEPS_PT = (0, 10, 20, 31, 43)
 _ZONE_LABEL_Y_STEPS_PT = (0, -10, -20, -31, -43, -56, -72, -90, -110, -132,
                           -156, -182)
 _ZONE_LABEL_X_OFFSETS_PT = (0, 8, 16, 26, 38, 52)
+
+
+# The price timeline's near-term sources and how the chart draws them (#339).
+# PD7DAY keeps the calibrated line's own styling; a dispatch point is the
+# first instant of the chart and needs no line of its own.
+_NEAR_TERM_SPANS = {
+    "p5min": ("#E65100", "P5MIN 5-min (raw)"),
+    "predispatch": ("#6A1B9A", "Pre-dispatch (raw)"),
+}
+
+
+def _draw_timeline_spans(ax: Any, np: Any, plt: Any, times: Any, cals: Any, spans: list, clip_y: float) -> list:
+    """Draw the timeline's near-term spans over the calibrated line; return their legend handles (#339).
+
+    ``spans`` is each point's timeline ``source``, None for PD7DAY-only data,
+    which draws nothing here. Each span joins the point before it, as the
+    confidence zones do, so the line does not break at a source boundary.
+    """
+    handles = []
+    for span_source, (color, label) in _NEAR_TERM_SPANS.items():
+        mask = np.array([src == span_source for src in spans])
+        if not mask.any():
+            continue
+        first = int(np.argmax(mask))
+        if first > 0:
+            mask[first - 1] = True
+        ax.plot(times[mask], np.clip(cals[mask], None, clip_y),
+                color=color, linewidth=2.2, zorder=6, solid_capstyle='butt')
+        handles.append(plt.Line2D([0], [0], color=color, linewidth=2.2, label=label))
+    return handles
 
 
 def _tod_label(hour: int) -> str:
@@ -1072,7 +1103,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     if not forecast_data:
         return b""
 
-    times, raws, cals, p10s, p90s, sources = [], [], [], [], [], []
+    times, raws, cals, p10s, p90s, sources, spans = [], [], [], [], [], [], []
     horizons = []
     spike_first_runs = []
     spike_credibles = []
@@ -1087,6 +1118,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
             p10s.append(float(p.get('p10') if p.get('p10') is not None else cal_val))
             p90s.append(float(p.get('p90') if p.get('p90') is not None else cal_val))
             sources.append(p.get('calibrated_source', 'ols'))
+            spans.append(p.get('source'))
             horizons.append(float(p.get('horizon_hours', 0)))
             spike_first_runs.append(p.get('spike_first_run', True))
             spike_credibles.append(p.get('spike_credible'))
@@ -1433,9 +1465,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     # Title
     ax.set_title(f'NEM PD7DAY {region}: 7-Day Pre-Dispatch Spot Price Forecast',
                  fontsize=13, fontweight='bold', pad=11, color='#1A1A1A')
-
-    # Legend
-    line_legend = [
+    line_legend = [  # Legend
         plt.Line2D([0], [0], color='#888888', linewidth=1.0, linestyle='--', alpha=0.7, label='PD7day Raw'),
         plt.Line2D([0], [0], color='#1565C0', linewidth=2.5, label='Calibrated (0-24h)'),
         plt.Line2D([0], [0], color='#1565C0', linewidth=1.6, alpha=0.65, label='Calibrated (24-72h)'),
@@ -1458,6 +1488,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         line_legend.append(plt.Line2D([0], [0], color='#666688', linewidth=0.8,
                                       linestyle='--', alpha=0.3,
                                       label='24h confidence boundary'))
+    line_legend.extend(_draw_timeline_spans(ax, np, plt, times, cals, spans, CLIP_Y))
     # Add legend entries for any notice types actually present in this chart
     NOTICE_LEGEND = {
         ("LOR", 1): ("#F39C12", "LOR1: Reserve notice"),

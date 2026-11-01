@@ -40,6 +40,8 @@ from .calibration_inputs import (
 PUBLISHED_EVENTS_ATTR = "_calibrated_forecast_published"
 # How often a wait re-checks the memo regardless, for a slot written without a publish.
 RECHECK_SECONDS = 1.0
+# How long a reader that does not build the memo (tariffs, the chart) waits for a warm.
+MEMO_WAIT_SECONDS = 60.0
 
 Build = Callable[[Any], list[dict]]  # the entity's _calibrated_forecast_values
 RunInExecutor = Callable[..., Awaitable[Any]]  # hass.async_add_executor_job

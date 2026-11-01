@@ -202,9 +202,15 @@ def entity_record(entity: Any, domain: str) -> dict[str, Any]:
         for name, default in _CAMERA_FIELDS:
             record[name] = _read(entity, name, default)
         build = getattr(entity, "_build_forecast_data", None)
-        if build is not None:
-            # First build of the entity's life: the prior-run spike set is empty.
-            record["forecast_data"] = _read_call(build)
+        memo = getattr(entity, "_memo_forecast_data", None)
+        # What the chart draws since v3.47.0 (#339): the timeline over the
+        # calibrated forecast memo; the fallback calibration only without it.
+        # First build of the entity's life: the prior-run spike set is empty.
+        data = _read_call(memo) if memo is not None else None
+        if data is None and build is not None:
+            data = _read_call(build)
+        if memo is not None or build is not None:
+            record["forecast_data"] = data
             # The render builds the forecast again, now against the spike set
             # the first build saved, which is what a second render of the same
             # run sees live.

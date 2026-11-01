@@ -1404,3 +1404,33 @@ def test_render_capture_would_notice_a_dash():
         matplotlib.text.Text.set_text = original
 
     assert any("—" in s for s in seen), "capture hook missed a planted em dash"
+
+
+# ── Timeline spans (#339) ─────────────────────────────────────────────────────
+
+def _legend_labels(data, monkeypatch):
+    import matplotlib.axes
+    seen = []
+    original = matplotlib.axes.Axes.legend
+
+    def capture(self, *args, **kwargs):
+        seen.extend(h.get_label() for h in kwargs.get("handles", []))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "legend", capture)
+    png = render_forecast_chart(data, "QLD1")
+    assert png.startswith(b"\x89PNG")
+    return seen
+
+
+def test_near_term_spans_get_their_own_lines_only_when_present(monkeypatch):
+    pytest.importorskip("matplotlib")
+    run_at = "2026-05-01T06:00:00+10:00"
+    plain = _make_forecast(10, forecast_run_at=run_at)
+    labels = _legend_labels(plain, monkeypatch)
+    assert "P5MIN 5-min (raw)" not in labels and "Pre-dispatch (raw)" not in labels
+
+    timeline = [dict(e, source=src) for e, src in zip(
+        _make_forecast(10, forecast_run_at=run_at), ["p5min"] * 3 + ["predispatch"] * 4 + ["pd7day"] * 3)]
+    labels = _legend_labels(timeline, monkeypatch)
+    assert labels[-2:] == ["P5MIN 5-min (raw)", "Pre-dispatch (raw)"]
