@@ -130,7 +130,9 @@ def test_a_node_forecasts_rrp_plus_its_adjustment_times_mlf(monkeypatch, run):
     )
     attrs = sensor.extra_state_attributes
     points = attrs["predispatch_forecast"]
-    assert points[0] == {"time": "2026-10-31T13:00:00+10:00", "value": round((55.85 - 1017.04) * 0.95 / 1000, 6)}
+    # calibrated_rrp_mwh: the RRP as the price timeline serves it, passthrough until stage 3b (#339).
+    assert points[0] == {"time": "2026-10-31T13:00:00+10:00", "value": round((55.85 - 1017.04) * 0.95 / 1000, 6),
+                         "calibrated_rrp_mwh": 55.85}
     assert points[1]["value"] == round((55.85 - 98.34) * 0.95 / 1000, 6)
     assert attrs["predispatch_status"] == "published" and len(points) == 78
     assert "predispatch_forecast" in sensor._unrecorded_attributes and node.mlf == 0.95

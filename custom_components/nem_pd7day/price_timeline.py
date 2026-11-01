@@ -36,6 +36,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional, Sequence
 
 from .nem_time import to_nem_iso
+from .predispatch_calibration import calibrated_rrp_mwh, calibrated_source
 
 SOURCE_DISPATCH = "dispatch"
 SOURCE_P5MIN = "p5min"
@@ -192,8 +193,11 @@ def _add_dispatch(b: _Builder, dispatch: Optional[DispatchPoint]) -> None:
 
 
 def _add_run(b: _Builder, name: str, run: Any, series: dict[datetime, float], length: timedelta,
-             max_age: timedelta, calibrated_source: str) -> None:
-    """2 and 3. A P5MIN or pre-dispatch run's RRP per interval end, from where the coverage so far ends."""
+             max_age: timedelta, serve: Any) -> None:
+    """2 and 3. A P5MIN or pre-dispatch run's RRP per interval end, from where the coverage so far ends.
+
+    ``serve(end, rrp_mwh)`` is the ($/MWh, calibrated_source) the point publishes.
+    """
     if run is None:
         b.source(name, STATUS_NO_DATA)
         return
@@ -205,7 +209,8 @@ def _add_run(b: _Builder, name: str, run: Any, series: dict[datetime, float], le
     for end, rrp in sorted(series.items()):
         start = b.span_start(end - length, end)
         if start is not None:
-            b.add(start, end, _point(start, end, rrp / 1000.0, name, calibrated_source))
+            value_mwh, source = serve(end, rrp)
+            b.add(start, end, _point(start, end, value_mwh / 1000.0 if value_mwh is not None else None, name, source))
     b.used(name, first, **info)
 
 
@@ -243,9 +248,10 @@ def build_timeline(
     b = _Builder(region, now)
     _add_dispatch(b, dispatch)
     p5_series = getattr(p5, "rrp", {}).get(region, {}) if p5 is not None else {}
-    _add_run(b, SOURCE_P5MIN, p5, p5_series, DISPATCH_INTERVAL, P5_MAX_AGE, "raw")
-    # Passthrough until stage 3b calibrates pre-dispatch (#337).
+    _add_run(b, SOURCE_P5MIN, p5, p5_series, DISPATCH_INTERVAL, P5_MAX_AGE, lambda end, rrp: (rrp, "raw"))
+    # Served through predispatch_calibration: passthrough until stage 3b (#337).
     pd_series = pd.prices.get(region, {}) if pd is not None else {}
-    _add_run(b, SOURCE_PREDISPATCH, pd, pd_series, PD_PERIOD, PD_MAX_AGE, "passthrough")
+    _add_run(b, SOURCE_PREDISPATCH, pd, pd_series, PD_PERIOD, PD_MAX_AGE,
+             lambda end, rrp: (calibrated_rrp_mwh(region, end, rrp), calibrated_source(region, end)))
     _add_pd7day(b, pd7day, {"run_at": pd7day_run_at, "source_file": pd7day_source_file})
     return b.timeline

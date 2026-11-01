@@ -48,12 +48,22 @@ def adapter(monkeypatch):
             return fixed.astimezone(tz or timezone.utc)
 
     monkeypatch.setattr(mod, "datetime", Clock)
+    # The base is the region's price timeline from now (#339): its clock too.
+    import support
+    support.freeze_timeline_clock(monkeypatch, fixed)
     monkeypatch.setattr(mod, "staleness_attributes", lambda _: {"is_stale": False})
     return mod
 
 
-def make_sensor(adapter):
+def _memo_rows():
+    """The scarcity premium test's base as the calibrated forecast memo holds it: with each ``nemtime``."""
+    from datetime import timedelta
     from test_scarcity_premium import base
+    return [dict(row, nemtime=(datetime.fromisoformat(row["time"]) + timedelta(minutes=30)).isoformat())
+            for row in base()]
+
+
+def make_sensor(adapter):
     dispatch = SimpleNamespace(prices={})
     entry = MagicMock()
     entry.entry_id = "test"
@@ -61,10 +71,13 @@ def make_sensor(adapter):
     base_sensor = SimpleNamespace(
         _attr_device_info={"identifiers": {("nem_pd7day", "test_QLD1")}},
         entity_id="sensor.qld1_price",
-        _price_data=object(),
+        _price_data=SimpleNamespace(forecast_generated_at=None, source_file=None),
         _async_warm_calibrated_forecast=AsyncMock(),
         _calibrated_forecast_key=lambda _: ("key",),
-        _cached_calibrated_forecast=lambda _: base(),
+        _cached_calibrated_forecast=lambda _: _memo_rows(),
+        _entry=SimpleNamespace(runtime_data=None),
+        _region="QLD1",
+        hass=None,
     )
     sensor = adapter.ScarcityPremiumSensor(
         SimpleNamespace(last_update_success=True), entry, base_sensor

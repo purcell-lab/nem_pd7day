@@ -532,6 +532,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 | Attribute | Description |
 |---|---|
 | `time`, `nemtime`, `count`, `rrp` | The current period, its count and the region's pre-dispatch price ($/MWh) |
+| `calibrated_rrp` | The region's pre-dispatch price as the [price timeline](#price-timeline-diagnostic-338) serves it, $/MWh: the RRP itself (passthrough) until stage 3b fits a pre-dispatch calibration (#337); `rrp` stays raw. Also on each `forecast` row (v3.48.0, #339) |
 | `max_marginal_value_mwh` | The largest marginal value among the region's binding constraints, as a magnitude. Values of $1,000,000/MWh or more are constraint violation penalties, not prices (`SN_ZERO` and `NS_ZERO` show $8.35M), and are left out here though still listed and counted |
 | `constraints` | The region's binding constraints in the current period, largest cost first, with `constraint_id`, `regions`, `category`, `cause`, `rhs`, `lhs`, `marginal_value_mwh`, `violation_degree` and `rhs_vs_dispatch` (not recorded) |
 | `unassigned_constraints` | Binding constraints in the current period whose ID names no region, with the same fields (not recorded) |
@@ -609,7 +610,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `forecast` | `{time, interval_end, value}` per P5MIN interval still to end: (the run's ROP of the node's region + its DUIDs' P5MIN adjustment, 0 without a row) × MLF, in $/kWh, raw (not recorded). It stops at an interval where the DUIDs conflict |
 | `forecast_status` | `published`, `stale`, `expired`, `conflicting_rows`, `no_rop`, `unknown_node` or `no_data` |
 | `forecast_source`, `forecast_run_at`, `forecast_source_file` | `P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE`, the run and the P5MIN file |
-| `predispatch_forecast` | `{time, value}` per 30-minute pre-dispatch period still to end, (RRP + the DUIDs' adjustment) × MLF, in $/kWh, to the end of the next trading day (not recorded). The other `predispatch_*` attributes are as for the DUID sensor |
+| `predispatch_forecast` | `{time, value, calibrated_rrp_mwh}` per 30-minute pre-dispatch period still to end, `value` (RRP + the DUIDs' adjustment) × MLF, in $/kWh, to the end of the next trading day (not recorded). `value` stays on raw RRP, because the adjustment comes from the same NEMDE run; `calibrated_rrp_mwh` is the region's RRP as the price timeline serves it, the RRP itself until stage 3b (v3.48.0, #339). The other `predispatch_*` attributes are as for the DUID sensor |
 
 ### Zone Price Proxy
 
@@ -628,7 +629,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `members` | Each member's `tni`, `stations`, `station` (the one it votes for), `distance_km`, `mlf`, `adjustment_mwh` and `adjustment_status`, nearest first (not recorded) |
 | `row_status`, `interval_end`, `source_file`, `fallback_source_file` | `published`, `dispatch_zero` (a fresh file without the LOCAL_PRICE table: every member 0), `p5min_fallback` or `predispatch_fallback` (what stood in for a missing or stale file), `conflicting_rows` (every member left out), `stale`, `no_rop`, `unknown_node` or `no_data`; the dispatch interval and file |
 | `forecast`, `forecast_status`, `forecast_run_at` | `{time, interval_end, value}` per P5MIN interval still to end: (ROP + the zone's P5MIN adjustment, voted as above) × zone MLF (not recorded) |
-| `predispatch_forecast` and the other `predispatch_*` | Per 30-minute pre-dispatch period to the end of the next trading day: (RRP + the zone's adjustment, voted as above) × zone MLF (not recorded). `predispatch_intervals_published` counts the periods where at least one member has an adjustment |
+| `predispatch_forecast` and the other `predispatch_*` | Per 30-minute pre-dispatch period to the end of the next trading day: (RRP + the zone's adjustment, voted as above) × zone MLF (not recorded), each entry with `calibrated_rrp_mwh` as on the node sensors (v3.48.0, #339). `predispatch_intervals_published` counts the periods where at least one member has an adjustment |
 
 ### PD7DAY Data / STPASA Data (diagnostic)
 
@@ -890,6 +891,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 3.48.0 | Stage 5d of the forecast timeline plan (#339): pre-dispatch is served through one function, `predispatch_calibration.calibrated_rrp_mwh` (passthrough until stage 3b), which the price timeline, the node and zone sensors' new per-entry `calibrated_rrp_mwh` and the pre-dispatch constraints sensor's new `calibrated_rrp` all read, beside the raw RRP they keep (#333 decision 3). The QLD1 scarcity premium prices against the region's price timeline by half hour (dispatch, P5MIN, pre-dispatch, then calibrated PD7DAY) instead of the PD7DAY run alone. Suite goes from 2085 to 2087 tests. |
 | 3.47.0 | Stage 5c of the forecast timeline plan (#339): the forecast chart camera draws the region's price timeline from now, the P5MIN and pre-dispatch spans as their own lines with legend entries, then the calibrated PD7DAY forecast read from the forecast sensors' memo; the camera no longer calibrates while a warm publishes the memo (it waits for one, as the tariffs do, and calibrates for itself only past the wait). Every PD7DAY interval the chart draws, band and raw spike gate included, is unchanged; the chart PNG digests in the golden snapshots are re-pinned. Suite goes from 2080 to 2085 tests. |
 | 3.46.0 | Stage 5b of the forecast timeline plan (#339): every tariff sensor's `forecast` (import, export, and their day 2-7 forms) is the price timeline from the current interval, priced, each entry adding `source` and `resolution_minutes`; every PD7DAY interval prices exactly as before. Prices are kept per interval while the run, calibration and fee hold, and a tariff write that finds the calibrated forecast stale waits for the forecast sensors' warm instead of calibrating on the event loop. Tariff attribute builds drop from 1.13 to 0.31 ms (export 0.81 to 0.29). Suite goes from 2067 to 2080 tests. |
 | 3.45.0 | Stage 5a of the forecast timeline plan (#339): the spot forecast and day 2-7 sensors' `forecast` is the price timeline from the current interval, dispatch, P5MIN 5-minute, pre-dispatch then calibrated PD7DAY, every entry with the keys it always had plus `source` and `resolution_minutes`; `min_24h_value`, `max_24h_value` and `cheapest_2h_window` go by time. Both now write on each new P5MIN (spot) and pre-dispatch run. Tariffs are unchanged. Suite goes from 2059 to 2067 tests. |
