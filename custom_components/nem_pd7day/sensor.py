@@ -313,6 +313,7 @@ async def _local_price_entities(
     from .duid_catalogue import load_catalogue
     from .executor import run_in_executor
     from .local_price import parse_duids, parse_tnis
+    from .forecast_hub import shared_forecast_hub
     from .local_price_coordinator import shared_p5min
     from .local_price_sensor import enable_chosen, local_price_entities, remove_retired
     from .node_price_sensor import node_price_entities
@@ -333,10 +334,11 @@ async def _local_price_entities(
         remove_home_zone(hass, entry, region)
     enable_chosen(hass, entry, region, duids)
     p5min = shared_p5min(hass, entry.runtime_data.dispatch)
+    hub = shared_forecast_hub(hass.data[DOMAIN])  # one series per run for every sensor (#336)
     return [
-        *local_price_entities(constraints, p5min, entry, region, duids, catalogue, predispatch),
-        *node_price_entities(constraints, p5min, entry, region, tnis, catalogue, predispatch),
-        *zone_price_entities(constraints, p5min, entry, region, zones, predispatch),
+        *local_price_entities(constraints, p5min, entry, region, duids, catalogue, predispatch, hub),
+        *node_price_entities(constraints, p5min, entry, region, tnis, catalogue, predispatch, hub),
+        *zone_price_entities(constraints, p5min, entry, region, zones, predispatch, hub),
     ]
 
 

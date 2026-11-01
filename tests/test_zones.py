@@ -18,9 +18,9 @@ from support import NEM_TZ, install_ha_stubs, load_chain
 
 install_ha_stubs()
 
-_const, _cat, _lp, _cc, _pdc, _pdl, _coord, _lps, _node, _ldp, _zones, _zs = load_chain(
+_const, _cat, _lp, _cc, _pdc, _pdl, _coord, _hub, _lps, _node, _ldp, _zones, _zs = load_chain(
     "const", "duid_catalogue", "local_price", "constraint_client", "predispatch_client",
-    "predispatch_local_price", "local_price_coordinator", "local_price_sensor", "node_price_sensor",
+    "predispatch_local_price", "local_price_coordinator", "forecast_hub", "local_price_sensor", "node_price_sensor",
     "load_points", "zones", "zone_sensor",
 )
 
@@ -406,24 +406,55 @@ def test_a_home_zone_left_in_another_region_is_removed():
 
 def test_the_predispatch_forecast_is_worked_out_once_per_run_and_period(monkeypatch):
     """A large zone rebuilt its pre-dispatch forecast on every update; now only for a new run,
-    once a period has ended, or once the run has gone stale."""
+    once a period has ended, or once the run has gone stale (#331), through the hub (#336)."""
     snapshot = _pdc.parse_predispatch(PD, "pd.zip")
     zone = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 100)
+    source = SimpleNamespace(latest=snapshot)
     sensor = _zs.NemPd7dayZonePriceSensor(
-        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1", zone, SimpleNamespace(latest=snapshot),
+        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1", zone, source,
     )
     calls = []
     real = _zs.zone_predispatch
     monkeypatch.setattr(_zs, "zone_predispatch", lambda *a: calls.append(a[2]) or real(*a))
     at = lambda h, m: datetime(2026, 10, 31, h, m, tzinfo=NEM_TZ)  # noqa: E731
-    first = sensor._zone_predispatch(snapshot, at(13, 5))
-    assert sensor._zone_predispatch(snapshot, at(13, 25)) is first and len(calls) == 1  # same period
-    assert sensor._zone_predispatch(snapshot, at(13, 35)).periods[0][0] == at(14, 0) and len(calls) == 2
-    newer = replace(snapshot, run_at=at(13, 32))
-    sensor._zone_predispatch(newer, at(13, 40))
+
+    def pd_attrs(now):
+        return {k: v for k, v in sensor._forecast_attrs(now).items() if k.startswith("predispatch")}
+
+    first = pd_attrs(at(13, 5))
+    assert pd_attrs(at(13, 25)) == first and len(calls) == 1  # same period
+    assert pd_attrs(at(13, 35))["predispatch_forecast"][0]["time"] == "2026-10-31T13:30:00+10:00" and len(calls) == 2
+    source.latest = newer = replace(snapshot, run_at=at(13, 32))
+    pd_attrs(at(13, 40))
     assert len(calls) == 3  # a new run
-    assert sensor._zone_predispatch(newer, at(14, 50)).status == "stale" and len(calls) == 4
-    assert sensor._zone_predispatch(None, at(14, 50)).status == "no_data"
+    assert newer is source.latest
+    assert pd_attrs(at(14, 50))["predispatch_status"] == "stale" and len(calls) == 4
+    source.latest = None
+    assert pd_attrs(at(14, 50))["predispatch_status"] == "no_data"
+
+
+def test_sensors_sharing_the_hub_work_a_zone_out_once(monkeypatch):
+    """#336: the same zone and run are worked out once for every sensor and write."""
+    snapshot = _pdc.parse_predispatch(PD, "pd.zip")
+    zone = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 100)
+    hub = _hub.ForecastHub()
+    sensors = [
+        _zs.NemPd7dayZonePriceSensor(SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1",
+                                     zone, SimpleNamespace(latest=snapshot), hub)
+        for _ in range(3)
+    ]
+    calls = []
+    real = _zs.zone_predispatch
+    monkeypatch.setattr(_zs, "zone_predispatch", lambda *a: calls.append(1) or real(*a))
+    now = datetime(2026, 10, 31, 13, 5, tzinfo=NEM_TZ)
+    results = [s._forecast_attrs(now)["predispatch_forecast"] for s in sensors]
+    assert len(calls) == 1 and all(r is results[0] for r in results)
+    # A zone rebuilt (an options reload) is a different key, not the old zone's result.
+    rebuilt = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 60)
+    other = _zs.NemPd7dayZonePriceSensor(SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1",
+                                         rebuilt, SimpleNamespace(latest=snapshot), hub)
+    other._forecast_attrs(now)
+    assert len(calls) == 2
 
 
 def test_a_zones_stations_are_worked_out_once():

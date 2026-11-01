@@ -57,6 +57,8 @@ from .local_price import (
     with_fallbacks,
 )
 from .nem_time import NEM_TZ, now_nem
+from .forecast_hub import ForecastHub
+from .predispatch_local_price import MAX_AGE as PD_MAX_AGE
 from .predispatch_local_price import predispatch_adjustments, predispatch_attrs
 
 _LOGGER = logging.getLogger(__name__)
@@ -126,11 +128,13 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
 
     def __init__(
         self, constraints: Any, p5min: Any, entry: Any, region: str, duid: str,
-        info: Optional[DuidInfo] = None, preset: bool = False, predispatch: Any = None,
+        info: Optional[DuidInfo] = None, preset: bool = False, predispatch: Any = None, hub: Any = None,
     ) -> None:
         super().__init__(constraints)
         self._p5min = p5min
         self._predispatch = predispatch
+        # The shared forecast hub (#336); a sensor built alone keeps its own.
+        self._hub = hub if hub is not None else ForecastHub()
         self._region = region
         self._duid = duid
         self._info = info
@@ -233,7 +237,8 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
 
     def _forecast_attrs(self, now: datetime) -> dict[str, Any]:
         run = self._p5min.latest if self._p5min is not None else None
-        series = forecast_series(run, self._duid, now, MAX_AGE)
+        series = self._hub.p5("duid", run, self._duid, now, MAX_AGE,
+                              lambda: forecast_series(run, self._duid, now, MAX_AGE))
         return {
             "forecast_source": "P5MIN_LOCAL_PRICE",
             "forecast_status": series.status,
@@ -257,8 +262,9 @@ class NemPd7dayDuidLocalPriceSensor(CoordinatorEntity, SensorEntity):
 
     def _predispatch_attrs(self, now: datetime) -> dict[str, Any]:
         snapshot = getattr(self._predispatch, "latest", None)
-        series = predispatch_adjustments(snapshot, [self._duid], now)
-        return predispatch_attrs(series, snapshot, lambda _end, adjustment: adjustment / 1000.0)
+        return self._hub.pd("duid", snapshot, self._duid, now, PD_MAX_AGE, lambda: predispatch_attrs(
+            predispatch_adjustments(snapshot, [self._duid], now), snapshot, lambda _end, adjustment: adjustment / 1000.0,
+        ))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -327,7 +333,7 @@ def remove_retired(hass: Any, entry: Any) -> int:
 
 def local_price_entities(
     constraints: Any, p5min: Any, entry: Any, region: str, duids: list[str],
-    catalogue: Optional[Catalogue] = None, predispatch: Any = None,
+    catalogue: Optional[Catalogue] = None, predispatch: Any = None, hub: Any = None,
 ) -> list[SensorEntity]:
     """The chosen DUIDs' sensors, enabled, then the region's most constrained others, disabled."""
     presets = [d for d in (catalogue.top_for(region) if catalogue else ()) if d not in duids]
@@ -341,7 +347,7 @@ def local_price_entities(
     return [
         NemPd7dayDuidLocalPriceSensor(
             constraints, p5min, entry, region, duid, catalogue.info(duid) if catalogue else None, preset,
-            predispatch,
+            predispatch, hub,
         )
         for duid, preset in [(d, False) for d in duids] + [(d, True) for d in presets]
     ]

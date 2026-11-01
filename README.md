@@ -294,6 +294,7 @@ The network constraints binding in each dispatch interval come from AEMO's Dispa
 
 - **Dispatch**: the `DISPATCH,LOCAL_PRICE` and `DISPATCH,PRICE` rows of the same DispatchIS file the binding constraints read. No extra request.
 - **Forecast**: the newest P5MIN run, `https://www.nemweb.com.au/Reports/Current/P5_Reports/`, its `LOCAL_PRICE` and `REGIONSOLUTION` tables (each region's ROP and RRP): twelve five-minute intervals. One shared coordinator serves every entry, DUID and transmission node; the node price sensors use the same data. After each dispatch poll it reads the listing (about 16 KB compressed) once the run it holds has reached its first interval's end, and the zip (about 210 KB, about 60 MB a day) only when a newer run is listed. The CSV (about 3 MB) is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
+- **Forecast hub**: the DUID, node and zone sensors read their P5MIN and pre-dispatch series from one shared hub, kept per run and per interval or period still ahead, so a series is worked out once for every sensor that shows it, not on every write of each (#336).
 
 ### Pre-dispatch interconnectors and constraints (every 30 minutes, after the dispatch poll)
 
@@ -854,6 +855,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 3.43.0 | Stage 2 of the forecast timeline plan (#336), no published value changed: the DUID, node and zone sensors read their P5MIN and pre-dispatch series from one shared forecast hub, worked out once per run and interval for every sensor (zone attributes 0.37 to 0.07 ms per write, DUID 0.30 to 0.03, node 0.35 to 0.04), replacing #331's per-sensor memo (PR #354). Suite goes from 2039 to 2048 tests. |
 | 3.42.1 | Pre-dispatch recording starts: v3.42.0 created the record after the sensor platforms, so no run was ingested and the `pd_` attributes were missing (PR #353). Suite goes from 2038 to 2039 tests. |
 | 3.42.0 | Pre-dispatch forecasts are recorded against TradingIS actuals for stage 3b's calibration (#337 stage 3a, PR #352): a per-region history and observation log under `pd_` keys, thinned by horizon to about 25 observations per interval and capped at 100,000 (about 83 days); `Predispatch Binding Constraints` shows `pd_observations` and `pd_history_days`. No published value changes. Suite goes from 2016 to 2038 tests. |
 | 3.41.0 | Stage 1 of the forecast timeline plan (#335), no published value changed: one TradingIS fetch serves every entry, 2 NEMWEB requests a half hour instead of 10 on a five-entry install (PR #350); P5MIN keeps each region's RRP and is fetched for every region after each dispatch poll (PR #349); every price source carries an identity for later stages to cache on, and four more modules join the import layers (PR #351). Suite goes from 1996 to 2016 tests. |

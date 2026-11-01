@@ -47,6 +47,7 @@ from .node_price_sensor import STATUS_NO_ROP, STATUS_UNKNOWN_NODE, node_adjustme
 from .predispatch_local_price import MAX_AGE as PD_MAX_AGE
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 from .const import DOMAIN
+from .forecast_hub import ForecastHub
 from .zones import AGGREGATE_NEAREST, MIN_MEDIAN_STATIONS, OUTSIDE, ZONE_HOME, Zone, station_key, zone_adjustment
 
 SUFFIX = "zone_price_proxy"
@@ -179,13 +180,15 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
 
     def __init__(
         self, constraints: Any, p5min: Any, entry: Any, region: str, zone: Zone, predispatch: Any = None,
+        hub: Any = None,
     ) -> None:
         super().__init__(constraints)
         self._p5min = p5min
         self._predispatch = predispatch
         self._region = region
         self._zone = zone
-        self._pd_memo: tuple[Any, PredispatchAdjustments] = (None, PredispatchAdjustments(STATUS_NO_DATA))
+        # The shared forecast hub (#336), which replaces #331's per-sensor memo; a sensor built alone keeps its own.
+        self._hub = hub if hub is not None else ForecastHub()
         self._attr_name = f"{zone.name} Zone Price Proxy"
         self._attr_unique_id = f"{entry.entry_id}_{region}_{zone.key}_{SUFFIX}"
         self.entity_id = entity_id_for(region, zone.key, SUFFIX)
@@ -238,8 +241,22 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
 
     def _forecast_attrs(self, now: datetime) -> dict[str, Any]:
         run = self._p5min.latest if self._p5min is not None else None
-        status, points = zone_p5_forecast(self._zone, self._region, run, now)
+        args = (self._zone, self._region)
+        status, points = self._hub.p5("zone", run, args, now, MAX_AGE,
+                                      lambda: zone_p5_forecast(self._zone, self._region, run, now))
         snapshot = getattr(self._predispatch, "latest", None)
+        return {
+            "forecast_source": "P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE",
+            "forecast_status": status,
+            "forecast_run_at": _iso(run.run_at) if run else None,
+            "forecast": points,
+            "forecast_interval_ends": [p["interval_end"] for p in points],
+            # The bulk of an update for a large zone (Adelaide: 46 members by 78 periods), now once
+            # per run and period for every sensor (#331, #336).
+            **self._hub.pd("zone", snapshot, args, now, PD_MAX_AGE, lambda: self._predispatch_attrs(snapshot, now)),
+        }
+
+    def _predispatch_attrs(self, snapshot: Any, now: datetime) -> dict[str, Any]:
         rrp = snapshot.prices.get(self._region, {}) if snapshot is not None else {}
         mlf = self._zone.mlf
 
@@ -247,27 +264,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             price = rrp.get(end)
             return node_price_mwh(price, adjustment, mlf) / 1000.0 if price is not None and mlf is not None else None
 
-        return {
-            "forecast_source": "P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE",
-            "forecast_status": status,
-            "forecast_run_at": _iso(run.run_at) if run else None,
-            "forecast": points,
-            "forecast_interval_ends": [p["interval_end"] for p in points],
-            **predispatch_attrs(self._zone_predispatch(snapshot, now), snapshot, value),
-        }
-
-    def _zone_predispatch(self, snapshot: Any, now: datetime) -> PredispatchAdjustments:
-        """zone_predispatch, worked out again only for a new run or once a period has ended.
-
-        It is the bulk of an update for a large zone (Adelaide: 46 members by
-        78 periods) and the same for every update within a period.
-        """
-        ahead = next((end for end in snapshot.period_ends if end > now), None) if snapshot is not None else None
-        stale = snapshot is not None and now - snapshot.run_at > PD_MAX_AGE
-        key = (id(snapshot), getattr(snapshot, "run_at", None), ahead, stale)
-        if self._pd_memo[0] != key:
-            self._pd_memo = (key, zone_predispatch(self._zone, snapshot, now))
-        return self._pd_memo[1]
+        return predispatch_attrs(zone_predispatch(self._zone, snapshot, now), snapshot, value)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -289,6 +286,7 @@ def remove_home_zone(hass: Any, entry: Any, region: str) -> bool:
 
 def zone_price_entities(
     constraints: Any, p5min: Any, entry: Any, region: str, zones: list[Zone], predispatch: Any = None,
+    hub: Any = None,
 ) -> list[SensorEntity]:
     """Every zone's sensor, enabled by default: the region's preset cities and Home."""
-    return [NemPd7dayZonePriceSensor(constraints, p5min, entry, region, zone, predispatch) for zone in zones]
+    return [NemPd7dayZonePriceSensor(constraints, p5min, entry, region, zone, predispatch, hub) for zone in zones]
