@@ -112,7 +112,7 @@ class ForecastStore:
 
     def __init__(self, hass: "HomeAssistant", region: str) -> None:
         self._region = region
-        self._store = Store(hass, FORECAST_STORE_VERSION, _forecast_store_key(region))
+        self._store: Store[dict] = Store(hass, FORECAST_STORE_VERSION, _forecast_store_key(region))
 
     async def load(self) -> PD7DayResult | None:
         """Return the cached PD7DayResult, or None if absent or stale (>35 min)."""

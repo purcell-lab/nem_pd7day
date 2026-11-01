@@ -175,10 +175,12 @@ def interval_key_for_period(period) -> str:
     write.
     """
     raw = getattr(period, "time", None)
+    if not isinstance(raw, str):
+        return ""
     try:
         return to_nem_iso(parse_iso(raw))
     except (ValueError, TypeError):
-        return raw if isinstance(raw, str) else ""
+        return raw
 
 
 def stpasa_features_for_interval(
@@ -435,10 +437,11 @@ def _network_context_cached(coordinator, interconnectors, region: str | None) ->
     rather than a clock, so a new run invalidates it and a repeated read of
     the same run does not.
     """
-    if not REGION_INTERCONNECTOR_SIGN.get(region or ""):
+    signs = REGION_INTERCONNECTOR_SIGN.get(region or "")
+    if not signs:
         return None
     parts = []
-    for ic_id in sorted(REGION_INTERCONNECTOR_SIGN[region]):
+    for ic_id in sorted(signs):
         series = interconnectors.get(ic_id) if interconnectors else None
         points = getattr(series, "forecast", None) or []
         parts.append((ic_id, len(points), points[0].time if points else ""))

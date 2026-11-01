@@ -17,7 +17,7 @@ The chart shows:
 from __future__ import annotations
 
 import io
-from typing import Any
+from typing import Any, cast
 import logging
 import struct
 import zlib
@@ -1103,7 +1103,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
     if not forecast_data:
         return b""
 
-    times, raws, cals, p10s, p90s, sources, spans = [], [], [], [], [], [], []
+    times, raws, cals, p10s, p90s, sources, spans = cast(Any, ([], [], [], [], [], [], []))  # lists, then arrays
     horizons = []
     spike_first_runs = []
     spike_credibles = []
@@ -1321,7 +1321,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
 
         # 24h and 72h boundary lines
         if times[0] < zone_24h < times[-1]:
-            ax.axvline(zone_24h, color='#666688', linewidth=0.8,
+            ax.axvline(cast(Any, zone_24h), color='#666688', linewidth=0.8,  # a datetime, via matplotlib's units
                        linestyle='--', alpha=0.3, zorder=3)
             # An annotation at a zero offset rather than a plain text, so the
             # placement pass below can slide it down its own line when the
@@ -1333,7 +1333,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
                 fontsize=6.5, color='#666688', alpha=0.6,
                 ha='center', va='top', zorder=8)))
         if times[0] < zone_72h < times[-1]:
-            ax.axvline(zone_72h, color='#666688', linewidth=0.8,
+            ax.axvline(cast(Any, zone_72h), color='#666688', linewidth=0.8,  # a datetime, via matplotlib's units
                        linestyle='--', alpha=0.3, zorder=3)
     else:
         # No forecast_run_at: render uniformly (legacy path)

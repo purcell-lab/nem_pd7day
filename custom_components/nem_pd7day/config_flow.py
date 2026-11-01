@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import aiohttp
 import voluptuous as vol
@@ -11,6 +11,10 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import selector
+
+if TYPE_CHECKING:
+    # Annotation only: ConfigFlowResult is HA 2024.4+, and hacs.json allows 2024.1.
+    from homeassistant.config_entries import ConfigFlowResult
 
 from .active_tariff import amber_loss_factor, default_tariff, detect_amber_tariff
 from .const import (
@@ -110,7 +114,7 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
+    ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -160,7 +164,7 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_forecast_mode(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
+    ) -> ConfigFlowResult:
         """Step 2: choose forecast mode (active tariff set via Options after setup)."""
         region = self._region or DEFAULT_REGION
 
@@ -206,7 +210,7 @@ class PD7DayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
+    ) -> ConfigFlowResult:
         """Allow changing the region for an existing entry (reconfigure flow)."""
         reconfigure_entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
@@ -483,7 +487,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
+    ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             data, errors = _options_data(user_input)
