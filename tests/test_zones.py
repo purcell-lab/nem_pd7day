@@ -403,6 +403,18 @@ def test_a_zones_stations_are_worked_out_once():
     assert replace(zone, members=zone.members[:1]).stations == zone.member_keys[:1]  # a new zone, worked out anew
 
 
+def test_a_zone_without_members_is_an_unknown_node_not_a_conflict():
+    """An empty catalogue leaves a city with its load points' MLF but no member to vote: that is
+    unknown_node, not conflicting_rows (seen once the golden harness read the dispatch file's local
+    prices, #334)."""
+    loads = _ldp.load_load_points()
+    empty = _zones.build_zone(_cat.EMPTY, "NSW1", "sydney", 100, loads=loads)
+    assert empty.members == () and empty.mlf is not None
+    assert _zs.dispatch_zone(empty, "NSW1", _dispatch(), NOW).status == "unknown_node"
+    run = _lp.parse_p5min_local_prices(P5, "p.zip", datetime(2026, 10, 30, 21, 25, 45, tzinfo=NEM_TZ))
+    assert _zs.zone_p5_forecast(empty, "NSW1", run, NOW) == ("unknown_node", [])
+
+
 # ── Sensor ───────────────────────────────────────────────────────────────────
 
 def _constraints(prices):
