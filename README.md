@@ -170,6 +170,8 @@ A DUID is a generating or load unit, not your connection point. Its local price 
 
 A catalogued DUID's sensor publishes `station`, `fuel`, `duid_region`, `tni`, `mlf`, `latitude` and `longitude`, so it shows on a map card. The local price uses the ROP of the DUID's own region, and of the entry's region for a DUID the catalogue lacks.
 
+**Non-physical units are not offered** (#311): registrations with no plant behind them, so no location and no meaningful local price adjustment. These are each region's dummy generator (`DG_*`) and reserve trader (`RT_*`), and the VPP, demand response and ancillary service aggregations (`VS*`, `DR*`, `AS*`), 95 in the catalogue. The rule is no coordinates plus a dummy, reserve trader or aggregation marker in the DUID, fuel or station name, so a real plant without coordinates yet (Aldoga Solar Farm) is still offered. A node whose units are all non-physical is not offered either. One already chosen keeps its sensor, is listed in the options marked `non-physical`, publishes `non_physical: true`, and a notice is logged once at setup. It can still be typed.
+
 ### Transmission node prices (optional)
 
 | Field | Default | Description |
@@ -508,6 +510,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `interval_start`, `interval_end` | The dispatch interval, AEST `+10:00`. `interval_end` is AEMO's SETTLEMENTDATE |
 | `source`, `source_file`, `fallback_source_file`, `retrieved_at`, `age_seconds` | `DISPATCH_LOCAL_PRICE` (`P5MIN_LOCAL_PRICE`, `PREDISPATCH_LOCAL_PRICE` or `RRP` under a fallback), the DispatchIS file, the file standing in (`RRP` for none, else null), when it was read, and seconds since the interval started. AEMO publishes the file while its interval runs, so it is about 0 to 300 while current |
 | `region`, `duid`, `station`, `fuel`, `duid_region`, `latitude`, `longitude` | The entry's region and the DUID; the rest from the catalogue, when it lists the DUID |
+| `non_physical` | `true` for a dummy generator, reserve trader or aggregation (#311); absent otherwise |
 
 **A DispatchIS file without its LOCAL_PRICE table** is AEMO's zero: the table is left out when no unit has an adjustment, never written empty. It was missing from 11 of 576 files over 30 and 31 Oct 2026, early evening; on the 31st exactly the intervals where the only network constraints binding were interconnector limits without unit terms (at 18:45, `L_PEC_X_6C_6G_6H_XST`). P5MIN and pre-dispatch leave it out the same way. Such a file reads `dispatch_zero`, 0 for every DUID, and nothing stands in for it.
 
