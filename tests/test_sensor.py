@@ -965,6 +965,8 @@ def test_every_city_and_home_is_built_with_the_options_radius():
     entry.options = {"price_zones": "brisbane, home, sydney", "zone_radius_km": 50}
     assert [z.key for z in _sensor_mod._zones(unset, entry, "QLD1", catalogue)] == cities
     entry.options = {}
-    assert len(_sensor_mod._zones(located, entry, "NSW1", catalogue)) == 8  # NSW1's seven cities and Home
+    # Home is in QLD1's grid (its nearest node is QLD1's), so NSW1's entry has its seven cities only.
+    assert [z.key for z in _sensor_mod._zones(located, entry, "NSW1", catalogue)][-1] == "orange"
+    assert len(_sensor_mod._zones(located, entry, "NSW1", catalogue)) == 7
     entry.options = {"price_zones": "brisbane", "zone_radius_km": "nonsense"}
     assert _sensor_mod._zones(located, entry, "QLD1", catalogue)[0].radius_km == 100.0

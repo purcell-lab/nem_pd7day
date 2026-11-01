@@ -290,7 +290,7 @@ async def _grid_entities(
         NemPd7dayBindingConstraintsSensor(constraints, entry, region),
         NemPd7dayPredispatchConstraintsSensor(predispatch, entry, region, constraints),
         *(
-            NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id)
+            NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id, constraints)
             for ic_id in sorted(interconnectors_for_regions([region]))
         ),
         *await _local_price_entities(hass, entry, region, constraints, predispatch),
@@ -310,7 +310,8 @@ async def _local_price_entities(
     from .local_price_coordinator import shared_p5min
     from .local_price_sensor import enable_chosen, local_price_entities, remove_retired
     from .node_price_sensor import node_price_entities
-    from .zone_sensor import zone_price_entities
+    from .zone_sensor import remove_home_zone, zone_price_entities
+    from .zones import ZONE_HOME
 
     duids, _invalid = parse_duids(entry.options.get(CONF_LOCAL_PRICE_DUIDS, ""))
     tnis, _invalid = parse_tnis(entry.options.get(CONF_NODES, ""))
@@ -322,6 +323,8 @@ async def _local_price_entities(
     # Every region has preset cities, each a zone sensor enabled by default, so there is always
     # something to set up.
     zones = _zones(hass, entry, region, catalogue, loads)
+    if not any(zone.key == ZONE_HOME for zone in zones):
+        remove_home_zone(hass, entry, region)
     enable_chosen(hass, entry, region, duids)
     p5min = shared_p5min(hass, entry.runtime_data.dispatch)
     return [
@@ -334,8 +337,8 @@ async def _local_price_entities(
 def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any, loads: Any = None) -> list:
     """Every preset city of the region and Home, each a zone proxy (#288), enabled by default: one
     not wanted is disabled from its entity page. Home is HA's own location, skipped when unset, with
-    the load connection point chosen for it."""
-    from .zones import DEFAULT_RADIUS_KM, build_zone, zone_choices
+    the load connection point chosen for it, and only in the entry of the region whose grid serves it."""
+    from .zones import DEFAULT_RADIUS_KM, build_zone, home_region, zone_choices
 
     try:
         radius = float(entry.options.get(CONF_ZONE_RADIUS) or DEFAULT_RADIUS_KM)
@@ -344,6 +347,8 @@ def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any,
     config = getattr(hass, "config", None)
     lat, lon = getattr(config, "latitude", None), getattr(config, "longitude", None)
     home = (float(lat), float(lon)) if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) else None
+    if home is not None and home_region(catalogue, *home) != region:
+        home = None  # Home's zone belongs to another region's entry
     home_load = str(entry.options.get(CONF_HOME_LOAD_POINT) or "").strip() or None
     built = (build_zone(catalogue, region, key, radius, home, loads, home_load)
              for key, _name in zone_choices(region))

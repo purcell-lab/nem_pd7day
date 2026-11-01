@@ -200,6 +200,21 @@ def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * 6371.0 * math.asin(math.sqrt(a))
 
 
+def home_region(catalogue: Catalogue, lat: float, lon: float) -> Optional[str]:
+    """The region whose grid serves a location: that of the nearest located catalogue node.
+
+    Home has one zone, in that region's entry, not one in every entry. Without
+    a located node, the region of the nearest preset city stands in.
+    """
+    located = [n for n in catalogue.nodes.values() if n.latitude is not None and n.longitude is not None]
+    if located:
+        return min(located, key=lambda n: distance_km(lat, lon, n.latitude, n.longitude)).region  # type: ignore[arg-type]
+    cities = [(region, c) for region, cs in CITIES.items() for c in cs]
+    if not cities:
+        return None
+    return min(cities, key=lambda rc: distance_km(lat, lon, rc[1][2], rc[1][3]))[0]
+
+
 def zone_choices(region: str) -> list[tuple[str, str]]:
     """(key, name) of the region's preset cities, then Home."""
     return [(city[0], city[1]) for city in CITIES.get(region, ())] + [(ZONE_HOME, "Home")]

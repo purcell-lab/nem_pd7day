@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .local_price import (
@@ -45,7 +46,8 @@ from .nem_time import now_nem
 from .node_price_sensor import STATUS_NO_ROP, STATUS_UNKNOWN_NODE, node_adjustment, p5_adjustment
 from .predispatch_local_price import MAX_AGE as PD_MAX_AGE
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
-from .zones import AGGREGATE_NEAREST, MIN_MEDIAN_STATIONS, OUTSIDE, Zone, station_key, zone_adjustment
+from .const import DOMAIN
+from .zones import AGGREGATE_NEAREST, MIN_MEDIAN_STATIONS, OUTSIDE, ZONE_HOME, Zone, station_key, zone_adjustment
 
 SUFFIX = "zone_price_proxy"
 
@@ -272,6 +274,17 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
         now = now_nem()
         prices, zone_now = self._dispatch(now)
         return {**self._zone_attrs(prices, zone_now), **self._forecast_attrs(now)}
+
+
+def remove_home_zone(hass: Any, entry: Any, region: str) -> bool:
+    """Remove the entry's Home zone sensor where Home has none in its region: up to v3.40.0 every
+    entry had one, now only the entry of the region whose grid serves Home does."""
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{region}_{ZONE_HOME}_{SUFFIX}")
+    if entity_id is None:
+        return False
+    registry.async_remove(entity_id)
+    return True
 
 
 def zone_price_entities(

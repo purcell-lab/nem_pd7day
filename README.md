@@ -200,7 +200,7 @@ The MLF scales the adjustment too: NEMDE refers every offer to the regional refe
   - VIC1: Melbourne, Geelong, Ballarat, Bendigo, Latrobe Valley.
   - SA1: Adelaide, Port Augusta, Mount Gambier.
   - TAS1: Hobart, Launceston, Burnie.
-- **Home** is Home Assistant's own location. Its sensor is left out while HA has no location set.
+- **Home** is Home Assistant's own location. It has one sensor, in the entry of the region whose grid serves it (the region of the nearest catalogue node: a Sunshine Coast home is QLD1's, Canberra NSW1's, Mildura VIC1's), and none while HA has no location set. Until v3.40.0 every entry had its own; those in the other regions' entries are removed at setup.
 - **There is nothing to choose.** Disable a city you don't want from its entity page, and it stays disabled. Until v3.39.0 the options listed the zones to create.
 - **The data cost:** the zone sensors read P5MIN, so it is fetched every 5 minutes while any of them is enabled. That is one small file, shared by every entry.
 
@@ -298,6 +298,7 @@ AEMO's 30-minute pre-dispatch runs every half hour and covers each trading perio
 
 - **URL**: `https://www.nemweb.com.au/Reports/Current/PredispatchIS_Reports/`
 - **Schedule**: no timer of its own. After each live dispatch poll the shared coordinator checks whether the run it holds is 30 minutes old; only then does it read the listing, so usually one or two listing requests per half hour, and one zip per new run.
+- **Updates**: the P5MIN and pre-dispatch coordinators tell their sensors only of a new run. The DUID, node, zone and pre-dispatch sensors still update after every dispatch poll, through the binding constraints coordinator, so they move to the next interval or period and age out on time. Before v3.40.1 every poll woke each of those sensors up to three times over (#334).
 - **Load**: the zip is about 800 KB (about 38 MB a day), the CSV inside about 8 MB; it is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
 
 ### Sensor state updates (every 30 minutes)
