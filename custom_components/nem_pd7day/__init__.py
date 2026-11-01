@@ -143,7 +143,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     await stpasa_store.load()
     trace.checkpoint(
         "stpasa store load",
-        "stale cache, refetch forced" if stpasa_store.loaded_stale else None,
+        stpasa_store.load_note,
     )
     # Register this region's store for central STPASA distribution. The STPASA
     # ZIP holds every NEM region, so one download (below) populates them all.
@@ -163,6 +163,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         stpasa_stores.pop(region, None)
 
     entry.async_on_unload(_forget_stpasa_store)
+    await stpasa_store.seed_from(stpasa_refresh)
 
     # ── Shared market notice store + client ──────────────────────────────────
     # All five region coordinators share ONE notice store + client so the
@@ -297,10 +298,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
             return
         try:
             all_results = await client.fetch_all_regions()
-            for r, result in all_results.items():
-                store_for_region = stores.get(r)
-                if store_for_region is not None:
-                    await store_for_region.save(result)
+            await stpasa_refresh.distribute(all_results, stores)
             if all_results:
                 stpasa_refresh.mark_fresh()
                 _LOGGER.debug(
@@ -343,10 +341,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # A stale cache used to produce a warning and nothing else, so the first
     # fresh STPASA of the session did not arrive until the next PD7DAY update,
     # which on the cached startup path is at least 30 s away and can be a full
-    # cycle away. Force the fetch now instead. The short delay lets the other
-    # entries register their stores first, so this one download still refreshes
-    # all five regions.
-    if stpasa_refresh.fetch_pending:
+    # cycle away. Force the fetch now instead, and when this region has nothing to
+    # serve at all (#346). The short delay lets the other entries register their
+    # stores first, so this one download still refreshes all five regions.
+    if stpasa_refresh.fetch_pending or stpasa_store.latest() is None:
 
         async def _forced_stale_fetch() -> None:
             await asyncio.sleep(STALE_FETCH_DELAY_S)

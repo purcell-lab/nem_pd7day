@@ -41,8 +41,9 @@ Deliberate differences from a live setup, each harmless to what is published:
     task after it, so entities are built over the fit a live install
     converges to once the refit's re-push has been handled. The time-of-day
     statistics are computed at the first refresh, before the refit, as live.
-  * ``update_before_add`` is not honoured: in HA it asks the coordinator for
-    a refresh, which here would be the same fetch again.
+  * ``update_before_add`` is not honoured, and no platform passes it now
+    (#347): in HA it asks the coordinator for a refresh, which here would be
+    the same fetch again.
   * Background tasks are not run (see above).
   * The stale scenario replays its day: set up at the morning fetch, STPASA
     saved when the central fetch would have saved it, then the failing fetch

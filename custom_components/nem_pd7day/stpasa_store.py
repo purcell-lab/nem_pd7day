@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -126,6 +127,8 @@ class StpasaStore:
     # instead of raising AttributeError.
     _refresh: StpasaRefreshCoordination | None = None
     loaded_stale: bool = False
+    # Called after each save (#346). A tuple, so the class default is safe to share.
+    _listeners: tuple[Callable[[], None], ...] = ()
 
     def __init__(
         self,
@@ -155,10 +158,12 @@ class StpasaStore:
             _LOGGER.warning("STPASA store load failed (non-fatal): %s", exc)
             return None
         if not data:
+            self._note_missing()
             return None
         status = _cache_status(data.get("fetched_at", ""))
         if status == "expired":
             _LOGGER.debug("STPASA store: cached result is expired — ignoring")
+            self._note_missing()
             return None
         result = _result_from_dict(data)
         if status == "stale":
@@ -180,10 +185,48 @@ class StpasaStore:
         self._latest = result
         return self._latest
 
+    @property
+    def load_note(self) -> str | None:
+        """What load() found, for the startup trace."""
+        if self.loaded_stale:
+            return "stale cache, refetch forced"
+        return "no usable cache" if self._latest is None else None
+
+    async def seed_from(self, refresh: StpasaRefreshCoordination) -> None:
+        """Serve a store with nothing from this run's last download (#346).
+
+        An entry added after that download missed its distribution, and the
+        download held every region, so it needs no fetch of its own.
+        """
+        last = refresh.result_for(self._region)
+        if self.latest() is None and last is not None and _cache_status(last.fetched_at) != "expired":
+            await self.save(last)
+
+    def _note_missing(self) -> None:
+        """No usable cache: ask for the immediate fetch a stale one gets (#346)."""
+        if self._refresh is not None:
+            self._refresh.note_missing_load(self._region)
+
+    def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call *listener* after each save; returns the function that removes it.
+
+        The STPASA sensor reads the store only when written, and the PD7DAY
+        coordinator that drives it updates three times a day, so without this a
+        fetch that lands between those updates is not shown until the next (#346).
+        """
+        self._listeners = (*self._listeners, listener)
+
+        def _remove() -> None:
+            self._listeners = tuple(cb for cb in self._listeners if cb is not listener)
+
+        return _remove
+
     async def save(self, result: StpasaResult) -> None:
-        """Persist *result* and update the in-memory latest."""
+        """Persist *result*, update the in-memory latest, and tell the listeners."""
         self._latest = result
         await self._store.async_save(asdict(result))
+        for listener in self._listeners:
+            listener()
 
     def latest(self) -> StpasaResult | None:
         """Return the in-memory latest result if available and not expired.

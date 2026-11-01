@@ -32,6 +32,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,6 +92,9 @@ class StpasaRefreshCoordination:
         self._outcome: str | None = None
         self._failure_reason: str | None = None
         self._done = asyncio.Event()
+        # The last download's per-region results, for a store that registers
+        # after it (an entry added later) and so missed the distribution (#346).
+        self._last_results: dict[str, Any] = {}
 
     # ── stale cache handling ────────────────────────────────────────────────
 
@@ -109,6 +113,17 @@ class StpasaRefreshCoordination:
         self._stale_warned = True
         return True
 
+    def note_missing_load(self, region: str) -> None:
+        """Record that *region* found no usable cache (none on disk, or past 4 h).
+
+        A fresh install or a long outage leaves nothing to serve, which is worse
+        than a stale cache, so it forces the same immediate fetch. Without it
+        STPASA stayed unavailable until the next PD7DAY slot, up to 5.5 h away
+        (#346). No warning: an empty cache on a first install is expected.
+        """
+        _LOGGER.debug("STPASA store: no usable cache for %s, forcing an immediate fetch", region)
+        self._immediate_fetch_requested = True
+
     @property
     def stale_regions(self) -> tuple[str, ...]:
         """Regions that loaded a stale cache, in load order."""
@@ -116,13 +131,26 @@ class StpasaRefreshCoordination:
 
     @property
     def immediate_fetch_requested(self) -> bool:
-        """True once any region has loaded a stale cache."""
+        """True once any region has loaded a stale cache, or found none."""
         return self._immediate_fetch_requested
 
     @property
     def fetch_pending(self) -> bool:
         """True when an immediate fetch is wanted and has not yet resolved."""
         return self._immediate_fetch_requested and self._outcome is None
+
+    async def distribute(self, results: dict[str, Any], stores: dict[str, Any]) -> None:
+        """Save each region's result to its registered store, and keep them all
+        for a store that registers later (#346)."""
+        self._last_results = dict(results)
+        for region, result in results.items():
+            store = stores.get(region)
+            if store is not None:
+                await store.save(result)
+
+    def result_for(self, region: str) -> Any | None:
+        """The last download's result for *region*, or None if there is none."""
+        return self._last_results.get(region)
 
     # ── single-flight fetch claim ───────────────────────────────────────────
 

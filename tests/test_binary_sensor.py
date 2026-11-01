@@ -63,3 +63,23 @@ def test_intervention_sensor_uses_slugified_ids_and_region_device():
     assert entity._attr_unique_id == "entry_1_nsw1_intervention"
     assert entity._attr_name == "Market Intervention"
     assert entity._attr_device_info["identifiers"] == {(DOMAIN, "entry_1_NSW1")}
+
+
+def test_setup_does_not_ask_for_an_update_before_add():
+    """#347: for a CoordinatorEntity, update_before_add awaits a coordinator
+    refresh inside platform setup, which downloaded PD7DAY on a cached restart."""
+    entry = MagicMock()
+    entry.entry_id = "entry_1"
+    entry.data = {CONF_REGION: "QLD1"}
+    entry.options = {}
+    entry.runtime_data = types.SimpleNamespace(coordinator=MagicMock(), store=MagicMock(), dispatch=None)
+    hass = MagicMock()
+    hass.data = {DOMAIN: {}}
+    calls: list = []
+
+    def _add_entities(entities, *args, **kwargs):
+        calls.append((args, kwargs))
+
+    run_async(_bs_mod.async_setup_entry(hass, entry, _add_entities))
+
+    assert calls == [((), {})]
