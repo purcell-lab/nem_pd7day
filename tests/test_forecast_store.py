@@ -62,7 +62,6 @@ _const_mod, _nem_time, _client_mod, _fs_mod = load_chain(
 ForecastStore = _fs_mod.ForecastStore
 _CACHE_MAX_AGE_S = _fs_mod._CACHE_MAX_AGE_S
 CaseSolutionData = _client_mod.CaseSolutionData
-CheapestWindow = _client_mod.CheapestWindow
 GasForecastPeriod = _client_mod.GasForecastPeriod
 InterconnectorData = _client_mod.InterconnectorData
 InterconnectorPeriod = _client_mod.InterconnectorPeriod
@@ -77,19 +76,7 @@ def _make_result(updated_at: str) -> PD7DayResult:
         make_real_price_period(_client_mod, base + timedelta(minutes=30 * i), round(0.10 + 0.01 * i, 6))
         for i in range(4)
     ]
-    price = make_pd7day_data(
-        _client_mod, base, periods,
-        min_24h_value=0.10,
-        max_24h_value=0.13,
-        cheapest_2h_window=CheapestWindow(
-            start=periods[0].time,
-            end=periods[3].time,
-            nemtime_start=periods[0].nemtime,
-            nemtime_end=periods[3].nemtime,
-            avg_value=0.115,
-            points=4,
-        ),
-    )
+    price = make_pd7day_data(_client_mod, base, periods)
     market = MarketSummaryData(
         run_datetime=nem_iso(base),
         forecast=[
@@ -163,16 +150,13 @@ def test_save_load_round_trip_preserves_tree():
     # CaseSolutionData
     assert restored.case.intervention is False
     assert restored.case.run_datetime == original.case.run_datetime
-    # PD7DayData + nested PricePeriod / CheapestWindow
+    # PD7DayData + nested PricePeriod
     rp = restored.prices["QLD1"]
     op = original.prices["QLD1"]
     assert rp.region == "QLD1"
-    assert rp.current_value == op.current_value
     assert len(rp.forecast) == len(op.forecast)
     assert rp.forecast[0].value == op.forecast[0].value
     assert rp.forecast[0].nemtime == op.forecast[0].nemtime
-    assert rp.cheapest_2h_window.avg_value == op.cheapest_2h_window.avg_value
-    assert rp.cheapest_2h_window.points == 4
     # MarketSummaryData + GasForecastPeriod
     assert len(restored.market_summary.forecast) == 2
     assert restored.market_summary.forecast[0].value_tj == 100.0
@@ -184,14 +168,14 @@ def test_save_load_round_trip_preserves_tree():
 
 
 def test_round_trip_handles_optional_none_fields():
-    """Optional fields (next_value, cheapest window, case, market_summary) = None."""
+    """Optional fields (case, market_summary) = None, and an empty forecast."""
     store = _new_store()
     minimal = PD7DayResult(
         source_file="PUBLIC_PD7DAY_X.ZIP",
         case=None,
         prices={
             "QLD1": make_pd7day_data(
-                _client_mod, None, [], source_file="PUBLIC_PD7DAY_X.ZIP", current_value=0.05
+                _client_mod, None, [], source_file="PUBLIC_PD7DAY_X.ZIP"
             )
         },
         market_summary=None,
@@ -205,8 +189,6 @@ def test_round_trip_handles_optional_none_fields():
     assert restored.case is None
     assert restored.market_summary is None
     assert restored.interconnectors == {}
-    assert restored.prices["QLD1"].next_value is None
-    assert restored.prices["QLD1"].cheapest_2h_window is None
     assert restored.prices["QLD1"].forecast == []
 
 
@@ -241,3 +223,16 @@ def test_per_region_keys_are_isolated():
     run_async(qld.save(_make_result(_fresh_iso())))
     assert run_async(nsw.load()) is None
     assert run_async(qld.load()) is not None
+
+
+def test_a_cache_written_before_v3_49_still_loads():
+    """Up to v3.48.0 each region also stored five summary fields nothing read (#340)."""
+    store = _new_store()
+    run_async(store.save(_make_result(_fresh_iso())))
+    saved = _FakeStore._backing[store._store._key]
+    for price in saved["prices"].values():
+        price.update(current_value=0.1, next_value=0.11, min_24h_value=0.1, max_24h_value=0.13,
+                     cheapest_2h_window={"start": "a", "end": "b", "nemtime_start": "c",
+                                         "nemtime_end": "d", "avg_value": 0.1, "points": 4})
+    restored = run_async(store.load())
+    assert restored is not None and len(restored.prices["QLD1"].forecast) == 4

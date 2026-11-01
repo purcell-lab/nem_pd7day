@@ -484,17 +484,11 @@ def pd7day_result(
         )
         for s in starts
     ]
-    min_24h, max_24h = client._min_max_24h(forecast)
     price = client.PD7DayData(
         region=market.region,
         source_file=source,
         forecast_generated_at=iso(run_at),
         interval_minutes=30,
-        current_value=forecast[0].value,
-        next_value=forecast[1].value if len(forecast) > 1 else None,
-        min_24h_value=min_24h,
-        max_24h_value=max_24h,
-        cheapest_2h_window=client._find_cheapest_window(forecast),
         forecast=forecast,
     )
     interconnectors = {}

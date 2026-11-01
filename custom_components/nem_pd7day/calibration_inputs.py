@@ -713,15 +713,12 @@ def calibrated_spot_map(
     on the event loop, once, and pass it down. Nothing here hops off the loop,
     and requiring the argument keeps it that way for callers too.
 
-    The map is preferably derived from the forecast memo that sensor.py already
-    populates for this region, so a tariff write costs nothing at all when the
-    price forecast sensor has already been warmed for the same run. Those
-    entries carry ``value``, which is ``cal["calibrated"]`` when the interval
-    calibrated and the raw price when it did not, which is what
-    ``calibrated_spot_for_period`` returns in each of those cases. When the
-    forecast memo is absent or stale the map is built here from
-    ``calibrated_spot_for_period`` directly, so the values are the same either
-    way and the tariff entities of one region share one build.
+    Since v3.46.0 (#339) a tariff reads the forecast memo itself and reaches
+    this map only when that memo does not hold the run past the wait for its
+    warm, so the map is built here from ``calibrated_spot_for_period``, once
+    for all the tariff entities of the region. (Up to v3.48.0 it was derived
+    from the forecast memo when that held the run, a branch the tariffs could
+    no longer reach; #340.)
 
     A missing interval is left out of the map rather than mapped to None, so a
     caller can tell "not memoised" from "calibrated to nothing" and fall back
@@ -732,17 +729,11 @@ def calibrated_spot_map(
         return cached
 
     spot_map: dict = {}
-    entries = _memo_entry(coordinator, CALIBRATED_FORECAST_MEMO_ATTR, region, key)
-    if isinstance(entries, list):
-        for entry in entries:
-            if isinstance(entry, dict) and "time" in entry:
-                spot_map[entry["time"]] = entry.get("value")
-    else:
-        run_at = price_data.forecast_generated_at
-        for period in price_data.forecast:
-            spot_map[interval_key_for_period(period)] = calibrated_spot_for_period(
-                store, coordinator, period, run_at
-            )
+    run_at = price_data.forecast_generated_at
+    for period in price_data.forecast:
+        spot_map[interval_key_for_period(period)] = calibrated_spot_for_period(
+            store, coordinator, period, run_at
+        )
 
     cache = _memo_dict(coordinator, CALIBRATED_SPOT_MEMO_ATTR, create=True)
     if cache is not None:

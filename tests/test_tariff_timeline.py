@@ -231,3 +231,16 @@ def test_past_the_wait_a_tariff_still_prices_from_the_spot_view(monkeypatch):
     sensor = _sensor()
     forecast = sensor.extra_state_attributes["forecast"]
     assert len(forecast) == 12 and forecast[0]["spot"] == 0.10 and forecast[0]["source"] == "pd7day"
+
+
+def test_a_current_memo_means_no_spot_map(monkeypatch):
+    """The spot view is only the fallback (#340): with the memo current, a tariff never builds it."""
+    support.freeze_timeline_clock(monkeypatch, support.BEFORE_ANY_DATA)
+    sensor = _sensor()
+    sensor.coordinator._calibrated_forecast_cache = {}  # the memo slot the forecast sensors fill
+    view = sensor._calibrated_view()
+    calibrated = [{"time": p.time, "nemtime": p.nemtime, "raw_value": p.value, "value": p.value}
+                  for p in sensor._price_data.forecast]
+    view.publish(view.key(sensor._price_data), calibrated)
+    monkeypatch.setattr(type(sensor), "_calibrated_spot_map", lambda self, d: pytest.fail("spot map built"))
+    assert len(sensor.extra_state_attributes["forecast"]) == 12
