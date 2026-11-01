@@ -147,7 +147,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     await stpasa_store.load()
     trace.checkpoint(
         "stpasa store load",
-        stpasa_store.load_note,
+        stpasa_store.load_note or "",
     )
     # Register this region's store for central STPASA distribution. The STPASA
     # ZIP holds every NEM region, so one download (below) populates them all.

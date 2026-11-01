@@ -186,13 +186,13 @@ def compute(
 
     for iso, rrp in actuals.items():
         dt  = datetime.fromisoformat(iso)
-        key = (dt.hour, dt.minute)
-        act_buckets[key].append(rrp)
+        slot = (dt.hour, dt.minute)
+        act_buckets[slot].append(rrp)
         dates.append(iso)
         if iso in mean_raw:
-            raw_buckets[key].append(mean_raw[iso])
+            raw_buckets[slot].append(mean_raw[iso])
         if iso in mean_cal:
-            cal_buckets[key].append(mean_cal[iso])
+            cal_buckets[slot].append(mean_cal[iso])
 
     dates_sorted = sorted(dates)
     date_from = datetime.fromisoformat(dates_sorted[0]).strftime("%d %b")

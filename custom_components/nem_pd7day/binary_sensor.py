@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import timedelta
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -58,10 +58,10 @@ async def async_setup_entry(
 ) -> None:
     coordinator: PD7DayCoordinator = entry.runtime_data.coordinator
     region: str = get_region(entry)
-    entities = [PD7DayInterventionSensor(coordinator, entry, region)]
-    entities.append(
-        NemPd7dayGridStressBinarySensor(coordinator, entry, region, coordinator.notice_store)
-    )
+    entities: list[BinarySensorEntity] = [PD7DayInterventionSensor(coordinator, entry, region)]
+    # Set on every coordinator __init__ builds; Optional only for coordinators built without one.
+    notice_store = cast("GridNoticeStore", coordinator.notice_store)
+    entities.append(NemPd7dayGridStressBinarySensor(coordinator, entry, region, notice_store))
     # No update_before_add: for a CoordinatorEntity it awaits a coordinator
     # refresh inside platform setup, which on a cached restart downloaded and
     # parsed PD7DAY there and then, defeating the two-phase startup (#347). The

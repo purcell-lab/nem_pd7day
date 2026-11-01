@@ -12,7 +12,7 @@ NemPd7dayGridNoticesSensor    -- active MSL/LOR market notice count + structured
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 from .nem_time import now_nem, offset_seam_point, parse_iso, to_nem_iso
 from .timeline_forecast import cheapest_window, min_max_24h
@@ -299,7 +299,8 @@ async def _grid_entities(
     if record is not None:
         entry.async_on_unload(record.listen(predispatch))
     return [
-        NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store),
+        # Set on every coordinator __init__ builds; Optional only for coordinators built without one.
+        NemPd7dayGridNoticesSensor(coordinator, entry, region, cast("GridNoticeStore", coordinator.notice_store)),
         NemPd7dayBindingConstraintsSensor(constraints, entry, region),
         NemPd7dayPredispatchConstraintsSensor(predispatch, entry, region, constraints, record),
         *(

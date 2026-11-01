@@ -831,7 +831,8 @@ class OlsModel:
         Stated as a known limitation on issue #72 rather than hidden.
         """
         r = self.resid
-        if r is None or not r.is_fitted:
+        # is_fitted already requires all three; the None checks say so to the type checker.
+        if r is None or not r.is_fitted or r.q10 is None or r.q50 is None or r.q90 is None:
             return None
         return (prediction + r.q10, prediction + r.q50, prediction + r.q90)
 

@@ -3,3 +3,8 @@
 # with exactly these pins on Python 3.13.
 mypy==2.3.1
 homeassistant-stubs==2026.2.3
+# The chart modules' types (#296): without these, matplotlib and numpy are Any
+# under ignore_missing_imports and the ratchet cannot see the chart code. Same
+# pins as requirements-test.txt.
+numpy==2.4.6
+matplotlib==3.11.1
