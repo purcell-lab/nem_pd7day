@@ -269,7 +269,8 @@ Source: [AEMO NEMWeb STPASA](https://www.nemweb.com.au/REPORTS/CURRENT/Short_Ter
 Actual NEM dispatch prices are fetched from AEMO's TradingIS reports and used to build calibration observations:
 
 - **URL**: `https://www.nemweb.com.au/REPORTS/CURRENT/TradingIS_Reports/`
-- **Schedule**: at HH:02 and HH:32 NEM time — 2 minutes after each 30-minute trading interval closes
+- **Schedule**: at HH:02 and HH:32 NEM time — 2 minutes after each 30-minute trading interval closes, whatever time zone Home Assistant uses
+- **Shared**: one fetch serves every entry: one directory listing and one zip per half hour, parsed once, each region recorded into its own entry's store (#335). Before this, each entry fetched the same file itself.
 - **Method**: downloads the 6 × 5-minute dispatch files for the closed interval, averages the RRP values ($/MWh → $/kWh)
 - **Observation tagging**: each calibration observation records `actual_source: "tradingis"`
 

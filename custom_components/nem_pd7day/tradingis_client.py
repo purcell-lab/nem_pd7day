@@ -65,9 +65,9 @@ _DIR_CACHE_TTL = 90
 class TradingISClient:
     """Fetches actual 30-minute NEM settlement prices from AEMO TradingIS reports.
 
-    Each call to fetch_interval_price() downloads a single zip for the requested
-    trading interval and extracts the D,TRADING,PRICE row for the given region.
-    The returned price is the 30-minute settlement RRP ($/kWh).
+    Each call to fetch_interval_prices() downloads the single zip for the
+    requested trading interval and extracts every region's D,TRADING,PRICE row:
+    the 30-minute settlement RRP ($/kWh).
     """
 
     BASE_URL = TRADINGIS_BASE_URL
@@ -92,28 +92,17 @@ class TradingISClient:
         # Injectable so retry tests do not spend real seconds asleep.
         self._sleep = sleep or asyncio.sleep
 
-    async def fetch_interval_price(
-        self,
-        region: str,
-        interval_start: datetime,
-    ) -> float | None:
-        """Return the 30-minute settlement RRP ($/kWh) for the given interval.
+    async def fetch_interval_prices(self, interval_start: datetime) -> dict[str, float]:
+        """Every region's 30-minute settlement RRP ($/kWh) for the given interval.
 
-        interval_start must be a NEM-aware datetime (UTC+10:00).
-        The TradingIS file is keyed by interval END = interval_start + 30 min.
-
-        Returns None if the file is not yet published or the region is absent.
+        One listing and one zip for all regions, so the shared service fetches
+        the file once per half hour however many entries record it (#335). An
+        interval not yet published, or a failed fetch, gives an empty mapping.
         """
         interval_end = interval_start + timedelta(minutes=30)
-
         directory = await self._fetch_directory()
         if directory is None:
-            # _fetch_directory has already logged the exception and the URL, at
-            # warning for a genuine failure and at debug otherwise. Returning
-            # None here means the interval is recorded as unavailable, never as
-            # a zero price.
-            return None
-
+            return {}
         url = directory.get(interval_end)
         if url is None:
             _LOGGER.debug(
@@ -121,17 +110,15 @@ class TradingISClient:
                 interval_end.strftime("%Y-%m-%dT%H:%M"),
                 len(directory),
             )
-            return None
-
-        price = await self._fetch_price_from_zip(url, region)
-        if price is not None:
+            return {}
+        content = await self._fetch_csv(url)
+        prices = self._parse_all_rrp(content) if content is not None else {}
+        for region, price in sorted(prices.items()):
             _LOGGER.debug(
                 "  TradingIS: %s interval_end=%s (NEMtime) — $%.4f/kWh",
-                region,
-                interval_end.strftime("%Y-%m-%dT%H:%M"),
-                price,
+                region, interval_end.strftime("%Y-%m-%dT%H:%M"), price,
             )
-        return price
+        return prices
 
     async def _fetch_directory(self) -> dict[datetime, str] | None:
         """Return {interval_end_datetime: full_url} for all TradingIS zip files.
@@ -197,15 +184,8 @@ class TradingISClient:
             )
             return await resp.read()
 
-    async def _fetch_price_from_zip(
-        self,
-        url: str,
-        region: str,
-    ) -> float | None:
-        """Download a TradingIS zip, parse the D,TRADING,PRICE row for region.
-
-        Returns the RRP in $/kWh, or None if region not found or on error.
-        """
+    async def _fetch_csv(self, url: str) -> str | None:
+        """Download a TradingIS zip and return its CSV, or None on any failure."""
         data = await fetch_with_retry(
             lambda: self._get_zip_bytes(url),
             url=url,
@@ -229,10 +209,7 @@ class TradingISClient:
         except (zipfile.BadZipFile, KeyError, IndexError) as exc:
             _LOGGER.warning("TradingIS: bad zip from %s: %s", url, exc)
             return None
-        if csv_content is None:
-            return None
-
-        return self._parse_rrp(csv_content, region)
+        return csv_content
 
     @staticmethod
     def _unzip_csv(data: bytes) -> str | None:
@@ -244,26 +221,19 @@ class TradingISClient:
             return zf.read(names[0]).decode("utf-8", errors="replace")
 
     @staticmethod
-    def _parse_rrp(content: str, region: str) -> float | None:
-        """Extract the RRP ($/kWh) for region from a TradingIS CSV.
-
-        Looks for D,TRADING,PRICE rows.
-        Column layout (0-indexed):
-          [0] D  [1] TRADING  [2] PRICE  [4] SETTLEMENTDATE
-          [6] REGIONID  [8] RRP
-        """
+    def _parse_all_rrp(content: str) -> dict[str, float]:
+        """Each region's RRP ($/kWh) from a TradingIS CSV's D,TRADING,PRICE rows:
+        the first valid row per region. Columns (0-indexed): [6] REGIONID, [8] RRP."""
+        prices: dict[str, float] = {}
         for line in content.splitlines():
             parts = line.split(",")
-            if len(parts) < 9:
-                continue
-            if parts[0] != "D" or parts[1] != "TRADING" or parts[2] != "PRICE":
+            if len(parts) < 9 or parts[0] != "D" or parts[1] != "TRADING" or parts[2] != "PRICE":
                 continue
             region_id = parts[6].strip().strip('"')
-            if region_id != region:
+            if region_id in prices:
                 continue
             try:
-                rrp_mwh = float(parts[8].strip().strip('"'))
-                return round(rrp_mwh / 1000.0, 6)
+                prices[region_id] = round(float(parts[8].strip().strip('"')) / 1000.0, 6)
             except (ValueError, IndexError):
                 continue
-        return None
+        return prices

@@ -125,6 +125,8 @@ DISPATCH_UNSUBS_KEY = "_dispatch_unsubs"
 SHARED_CONSTRAINTS_KEY = "_shared_constraints"
 SHARED_PREDISPATCH_KEY = "_shared_predispatch"
 SHARED_P5MIN_KEY = "_shared_p5min"
+# The one TradingIS fetch, recording actual prices for every entry (#335).
+SHARED_TRADINGIS_KEY = "_shared_tradingis"
 
 # Market notices are global, not per region, so one fetch serves all five region
 # coordinators. These keys hold the shared in-flight lock and the timestamp of
