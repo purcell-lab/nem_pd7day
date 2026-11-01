@@ -25,7 +25,6 @@ from homeassistant.helpers.event import async_track_utc_time_change
 
 import aiohttp
 
-from .calibration_store import CalibrationStore
 from .const import DOMAIN, SHARED_TRADINGIS_KEY, TRADINGIS_FETCH_MINUTES
 from .nem_time import NEM_TZ, to_nem_iso
 from .tradingis_client import TradingISClient
@@ -58,20 +57,25 @@ class ActualPriceService:
             executor_job=hass.async_add_executor_job,
             semaphore=semaphore,
         )
-        # entry_id -> (region, store). An entry records its own region only.
-        self._entries: dict[str, tuple[str, CalibrationStore]] = {}
+        # entry_id -> (region, stores). An entry records its own region only:
+        # into its PD7DAY calibration store and its pre-dispatch record (#337).
+        self._entries: dict[str, tuple[str, tuple[Any, ...]]] = {}
         self._cancel_timer: Callable[[], None] | None = None
 
     @property
     def regions(self) -> list[str]:
-        return sorted({region for region, _store in self._entries.values()})
+        return sorted({region for region, _stores in self._entries.values()})
 
-    def register(self, entry_id: str, region: str, store: CalibrationStore) -> Callable[[], None]:
-        """Record ``region`` into ``store`` from now on; returns the function that stops it.
+    def register(self, entry_id: str, region: str, *stores: Any) -> Callable[[], None]:
+        """Record ``region`` into each of ``stores`` from now on; returns the function that stops it.
+
+        A store is anything with ``async_record_actual(interval_iso, price,
+        calibration_region=, source=)``: the ``CalibrationStore``, and the
+        ``PredispatchRecord``.
 
         The timer starts with the first entry and stops with the last.
         """
-        self._entries[entry_id] = (region, store)
+        self._entries[entry_id] = (region, tuple(s for s in stores if s is not None))
         if self._cancel_timer is None:
             self._cancel_timer = async_track_utc_time_change(
                 self._hass, self._on_tradingis_tick, minute=TRADINGIS_FETCH_MINUTES, second=0,
@@ -92,14 +96,15 @@ class ActualPriceService:
         interval_start = closed_interval_start(now)
         interval_iso = to_nem_iso(interval_start)
         prices = await self._client.fetch_interval_prices(interval_start)
-        for region, store in list(self._entries.values()):
+        for region, stores in list(self._entries.values()):
             price = prices.get(region)
             if price is not None:
-                await store.async_record_actual(
-                    interval_iso, price,
-                    calibration_region=region,
-                    source="tradingis",
-                )
+                for store in stores:
+                    await store.async_record_actual(
+                        interval_iso, price,
+                        calibration_region=region,
+                        source="tradingis",
+                    )
             else:
                 _LOGGER.debug(
                     "  TradingIS: %s no data for interval_end=%s (NEMtime)",

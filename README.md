@@ -304,6 +304,15 @@ AEMO's 30-minute pre-dispatch runs every half hour and covers each trading perio
 - **Updates**: the P5MIN and pre-dispatch coordinators tell their sensors only of a new run. The DUID, node, zone and pre-dispatch sensors still update after every dispatch poll, through the binding constraints coordinator, so they move to the next interval or period and age out on time. Before v3.40.1 every poll woke each of those sensors up to three times over (#334).
 - **Load**: the zip is about 800 KB (about 38 MB a day), the CSV inside about 8 MB; it is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
 
+### Pre-dispatch forecasts recorded against actuals (stage 3a, #337)
+
+Each new pre-dispatch run's regional price forecast is kept, and each settled half hour's TradingIS price is paired with every kept forecast of it, as PD7DAY's are. This only records: nothing uses these observations until a pre-dispatch calibration is fitted (stage 3b, once there are at least 14 days).
+
+- **Storage**: per region, its own forecast history (`nem_pd7day.<region>.pd_forecast_history`, the next trading day plus a margin, 3 days) and daily observation segments (`…pd_observation_segments`, `…pd_observations.<date>`). The PD7DAY stores are untouched.
+- **Thinning**: pre-dispatch runs 48 times a day, so every run is kept within 6 hours of an interval, every 2nd run from 6 to 12 hours, every 4th from 12 to 24 hours and every 8th beyond: about 25 observations per interval, 1,200 a day. A run's place in the sequence is its run time floored to the half hour, so the same runs are kept everywhere.
+- **Cap**: 100,000 observations per region (`MAX_TOTAL_OBS_PD`), about 83 days, the oldest day dropped first: at the cap about 50 MB per region on disk, as PD7DAY's log.
+- **Diagnostics**: `Predispatch Binding Constraints` shows `pd_observations` and `pd_history_days`.
+
 ### Sensor state updates (every 30 minutes)
 
 Forecast sensor states — price forecast and interconnector flow — advance automatically at each 30-minute interval boundary (:00 and :30 past every hour). The state always reflects the current interval from the most recent fetch, without waiting for the next PD7DAY fetch. This means:

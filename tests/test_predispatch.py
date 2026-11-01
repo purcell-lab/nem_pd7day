@@ -456,3 +456,17 @@ def test_murraylink_held_at_a_flow_reads_pinned_not_closed_in_the_real_run():
 
 def test_period_is_thirty_minutes():
     assert _client.PERIOD == timedelta(minutes=30)
+
+
+def test_constraints_sensor_publishes_the_pre_dispatch_record_stats(monkeypatch):
+    """#337 stage 3a: how many pre-dispatch observations are recorded, and how far back."""
+    monkeypatch.setattr(_sensor, "now_nem", lambda: _at(7))
+    record = SimpleNamespace(stats=lambda: {"pd_observations": 1234, "pd_history_days": 2.5})
+    for snapshot in (_snapshot(), None):
+        sensor = _sensor.NemPd7dayPredispatchConstraintsSensor(
+            _coordinator(snapshot, run_at=_at(6, 32)), SimpleNamespace(entry_id="e1"), "QLD1", None, record,
+        )
+        attrs = sensor.extra_state_attributes
+        assert attrs["pd_observations"] == 1234 and attrs["pd_history_days"] == 2.5
+    plain = _sensor.NemPd7dayPredispatchConstraintsSensor(_coordinator(_snapshot()), SimpleNamespace(entry_id="e1"), "QLD1")
+    assert "pd_observations" not in plain.extra_state_attributes
