@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+from .price_sources import LocalPriceRow, P5MinRun
+
 from .const import MARKET_PRICE_CAP_MWH_BY_FY, MARKET_PRICE_FLOOR_MWH
 from .nem_time import NEM_TZ
 
@@ -77,12 +79,6 @@ PD_PERIOD = timedelta(minutes=30)
 
 
 @dataclass(frozen=True)
-class LocalPriceRow:
-    adjustment_mwh: float
-    locally_constrained: Optional[int]
-
-
-@dataclass(frozen=True)
 class DispatchLocalPrices:
     """One DispatchIS interval: the DUIDs with a published adjustment, and each region's ROP."""
 
@@ -98,26 +94,8 @@ class DispatchLocalPrices:
     fallback_source: Optional[str] = None
     fallback_conflicts: frozenset[str] = field(default_factory=frozenset)
     fallback_status: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class P5MinRun:
-    """One P5MIN run: its interval ends, the published rows, and each region's ROP and RRP.
-
-    ``rop`` and ``rrp`` are per region and interval end, in $/MWh, from the
-    pricing run (INTERVENTION 0). The RRP is what the price timeline will
-    publish raw for the next hour (#333, #335).
-    """
-
-    run_at: datetime
-    source: str
-    table_present: bool
-    interval_ends: tuple[datetime, ...]
-    rows: dict[str, dict[datetime, LocalPriceRow]]
-    rop: dict[str, dict[datetime, float]]
-    conflicts: frozenset[tuple[str, datetime]] = field(default_factory=frozenset)
-    retrieved_at: Optional[datetime] = None
-    rrp: dict[str, dict[datetime, float]] = field(default_factory=dict)
+    # Each region's pricing-run RRP, $/MWh, beside its ROP: the dispatch snapshot (#335).
+    rrp: dict[str, float] = field(default_factory=dict)
 
 
 def parse_duids(text: Any, pattern: re.Pattern[str] = DUID_RE) -> tuple[list[str], list[str]]:
@@ -187,17 +165,19 @@ def _records(content: str, report: str, tables: tuple[str, ...]) -> dict[str, li
 def parse_dispatch_local_prices(
     content: str, source: str = "", retrieved_at: Optional[datetime] = None
 ) -> Optional[DispatchLocalPrices]:
-    """The LOCAL_PRICE rows and pricing-run ROPs of one DispatchIS CSV, or None without a PRICE table."""
+    """The LOCAL_PRICE rows and pricing-run ROPs and RRPs of one DispatchIS CSV, or None without a PRICE table."""
     tables = _records(content, "DISPATCH", ("LOCAL_PRICE", "PRICE"))
     interval_end: Optional[datetime] = None
     rop: dict[str, float] = {}
+    rrp: dict[str, float] = {}
     for record in tables.get("PRICE", []):
         if record.get("INTERVENTION", "0").strip() != "0":
             continue
         interval_end = interval_end or _nem(record.get("SETTLEMENTDATE", ""))
-        value = _float(record.get("ROP"))
-        if value is not None:
-            rop[record.get("REGIONID", "").strip()] = value
+        region = record.get("REGIONID", "").strip()
+        for series, value in ((rop, _float(record.get("ROP"))), (rrp, _float(record.get("RRP")))):
+            if value is not None:
+                series[region] = value
     if interval_end is None:
         return None
     rows: dict[str, LocalPriceRow] = {}
@@ -207,7 +187,7 @@ def parse_dispatch_local_prices(
         row = _row(record)
         if row is not None:
             rows[record.get("DUID", "").strip().upper()] = row
-    return DispatchLocalPrices(interval_end, source, "LOCAL_PRICE" in tables, rows, rop, retrieved_at)
+    return DispatchLocalPrices(interval_end, source, "LOCAL_PRICE" in tables, rows, rop, retrieved_at, rrp=rrp)
 
 
 def parse_p5min_local_prices(
@@ -311,8 +291,9 @@ def p5_fallback(run: Optional[P5MinRun], end: datetime, max_age: timedelta) -> O
     conflicts = frozenset(duid for duid, at in run.conflicts if at == end)
     rows = {duid: series[end] for duid, series in run.rows.items() if end in series and duid not in conflicts}
     rop = {region: series[end] for region, series in run.rop.items() if end in series}
+    rrp = {region: series[end] for region, series in run.rrp.items() if end in series}
     return DispatchLocalPrices(end, run.source, True, rows, rop, run.retrieved_at, run.source, conflicts,
-                               STATUS_P5_FALLBACK)
+                               STATUS_P5_FALLBACK, rrp=rrp)
 
 
 def predispatch_fallback(snapshot: Any, end: datetime) -> Optional[DispatchLocalPrices]:
@@ -330,7 +311,7 @@ def predispatch_fallback(snapshot: Any, end: datetime) -> Optional[DispatchLocal
             for duid, series in getattr(snapshot, "local_prices", {}).items() if period in series}
     rop = {region: series[period] for region, series in snapshot.prices.items() if period in series}
     return DispatchLocalPrices(end, snapshot.source, True, rows, rop, None, snapshot.source,
-                               fallback_status=STATUS_PD_FALLBACK)
+                               fallback_status=STATUS_PD_FALLBACK, rrp=dict(rop))
 
 
 def with_fallbacks(
