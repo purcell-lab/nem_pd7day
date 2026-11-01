@@ -508,6 +508,11 @@ class CalibratedForecastMixin(_CalibratedEntityBase):
             }
             if cal.get("stpasa_run_at"):
                 cal_update["stpasa_run_at"] = cal["stpasa_run_at"]
+            # The raw covariate gate, for the chart's callouts, which read it
+            # unsuppressed at short lead (#339). Private: forecast_entries drops
+            # it, so no sensor publishes it. Absent below spike territory.
+            if "spike_credible" in cal:
+                cal_update["_spike_gate"] = cal["spike_credible"]
             base.update(cal_update)
         else:
             # No calibration store: raw passthrough, as before. Store present

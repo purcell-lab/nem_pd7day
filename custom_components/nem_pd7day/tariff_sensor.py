@@ -36,7 +36,7 @@ from .const import (
     additional_fee_unique_id,
 )
 from .amber_forecast import day27_start_for, track_day27_start
-from .calibrated_forecast import CalibratedForecast
+from .calibrated_forecast import MEMO_WAIT_SECONDS, CalibratedForecast
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from . import tariff_pricing
 from .tariff_catalogue import library_version, seasonal as seasonal_tariff, tariff_name as catalogue_tariff_name
@@ -112,11 +112,6 @@ def _losses_of(sensor: Any) -> tariff_pricing.LossFactors:
     options = getattr(getattr(sensor, "_entry", None), "options", None)
     value = options.get(CONF_LOSS_FACTOR) if isinstance(options, Mapping) else None
     return tariff_pricing.losses_for(value)
-
-
-# Seconds a tariff write waits for the region's calibrated forecast warm before
-# calibrating on the event loop itself (#339).
-MEMO_WAIT_SECONDS = 60.0
 
 
 class CalibratedTariffMixin:

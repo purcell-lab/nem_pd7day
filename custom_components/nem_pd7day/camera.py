@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
@@ -26,8 +26,10 @@ from .calibration_inputs import (
     horizon_hours as _horizon_hours,
     interval_key_for_period,
 )
+from .calibrated_forecast import MEMO_WAIT_SECONDS, CalibratedForecast
 from .coordinator import PD7DayCoordinator
 from .nem_time import parse_iso, to_nem_iso
+from .region_timeline import region_timeline, timeline_forecast
 
 if TYPE_CHECKING:
     pass
@@ -364,8 +366,98 @@ class NemPd7dayIsoChartCamera(
         return self._image_bytes if self._image_bytes else None
 
 
+class _TimelineChartMixin:
+    """The forecast chart's data from the price timeline over the calibrated forecast memo (#339).
+
+    The chart draws what the forecast sensors publish: the PD7DAY span is the
+    region's calibrated forecast memo, which they warm off the loop, and the
+    near-term spans are the timeline's dispatch, P5MIN and pre-dispatch
+    points. The entries are built on the loop, where the shared forecast hub
+    lives, and the executor only renders. The camera calibrates for itself
+    (``_build_forecast_data``, in the executor) only when no warm publishes the
+    memo within the wait.
+    """
+
+    if TYPE_CHECKING:
+        coordinator: Any
+        hass: HomeAssistant
+        _region: str
+        _image_bytes: bytes
+
+        def _prior_spike_intervals(self) -> set[str]: ...
+        def _save_spike_intervals(self, forecast_data: list[dict]) -> None: ...
+        def _build_forecast_data(self) -> list[dict]: ...
+        def _render(self, forecast_data: list[dict] | None = None) -> bytes: ...
+
+    def _price_data(self):
+        data = self.coordinator.data
+        return data.prices.get(self._region) if data else None
+
+    def _calibrated_view(self) -> CalibratedForecast:
+        return CalibratedForecast(self.coordinator, getattr(self.coordinator, "_store", None), self._region)
+
+    def _memo_forecast_data(self) -> list[dict] | None:
+        """The chart's entries from the region's price timeline over the calibrated forecast memo (#339).
+
+        No calibration: the PD7DAY span is the memo the forecast sensors warm,
+        so the chart draws what they publish, and the near-term spans are the
+        dispatch, P5MIN and pre-dispatch points, each with its ``source``.
+        None when there is no data or the memo does not hold this run.
+
+        The spike callouts read the raw covariate gate, which the memo keeps
+        privately as ``_spike_gate``, so they are unchanged.
+        """
+        price_data = self._price_data()
+        if price_data is None:
+            return None
+        view = self._calibrated_view()
+        calibrated = view.cached(view.key(price_data))
+        if calibrated is None:
+            return None
+        run_at = price_data.forecast_generated_at
+        prior_spike_intervals = self._prior_spike_intervals()
+        by_end = {entry.get("nemtime"): entry for entry in calibrated}
+        result = []
+        for row in timeline_forecast(self, region_timeline(self, price_data, calibrated), calibrated):
+            entry = dict(row)
+            entry.pop("spike_credible", None)
+            calibrated_entry = by_end.get(entry["nemtime"]) if entry["source"] == "pd7day" else None
+            if calibrated_entry is not None and "_spike_gate" in calibrated_entry:
+                entry["spike_credible"] = calibrated_entry["_spike_gate"]
+            if entry.get("horizon_hours") is None:
+                entry["horizon_hours"] = round(_horizon_hours(run_at, entry["time"]), 1)
+            entry["forecast_run_at"] = run_at
+            entry["spike_first_run"] = entry["time"] not in prior_spike_intervals
+            result.append(entry)
+        self._save_spike_intervals(result)
+        return result
+
+    async def _async_refresh_image(self) -> None:
+        """Render from the timeline and the calibrated forecast memo, waiting for its warm (#339).
+
+        The entries are built here, on the loop, where the shared forecast hub
+        lives; the executor only renders. Only when no warm publishes the memo
+        within the wait does the render calibrate for itself, in the executor.
+        """
+        try:
+            await self._calibrated_view().wait_current(self._price_data, MEMO_WAIT_SECONDS)
+            forecast_data = self._memo_forecast_data()
+            if forecast_data is None:
+                result = await self.hass.async_add_executor_job(
+                    lambda: self._render(self._build_forecast_data())
+                )
+            else:
+                result = await self.hass.async_add_executor_job(self._render, forecast_data)
+            if result:
+                self._image_bytes = result
+        except ModuleNotFoundError as exc:
+            _LOGGER.warning("Forecast chart render skipped: %s", exc)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Forecast chart render failed")
+
+
 class NemPd7dayForecastChartCamera(
-    _InitialRenderMixin, CoordinatorEntity[PD7DayCoordinator], Camera
+    _TimelineChartMixin, _InitialRenderMixin, CoordinatorEntity[PD7DayCoordinator], Camera
 ):
     """
     Camera entity that serves the 7-day price forecast chart.
@@ -543,9 +635,16 @@ class NemPd7dayForecastChartCamera(
             and entry.get("spike_credible") is True
         }
 
-    def _render(self) -> bytes:
-        """Blocking render — called in executor thread."""
-        forecast_data = self._build_forecast_data()
+    def _render(self, forecast_data: list[dict] | None = None) -> bytes:
+        """Blocking render — called in executor thread.
+
+        ``forecast_data`` is built on the event loop by ``_async_refresh_image``;
+        called without it (the tests, the golden master), the memo is read here.
+        """
+        if forecast_data is None:
+            forecast_data = self._memo_forecast_data()
+        if forecast_data is None:
+            forecast_data = self._build_forecast_data()
         if not forecast_data:
             return self._image_bytes
         from . import forecast_chart as _fc
@@ -568,16 +667,6 @@ class NemPd7dayForecastChartCamera(
         return _fc.render_forecast_chart(
             forecast_data, region=self._region, annotations=annotations,
         )
-
-    async def _async_refresh_image(self) -> None:
-        try:
-            result = await self.hass.async_add_executor_job(self._render)
-            if result:
-                self._image_bytes = result
-        except ModuleNotFoundError as exc:
-            _LOGGER.warning("Forecast chart render skipped: %s", exc)
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception("Forecast chart render failed")
 
     async def async_camera_image(
         self,
