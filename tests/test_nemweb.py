@@ -521,7 +521,7 @@ def test_directory_failure_warning_names_exception_and_url(caplog):
     client = TradingISClient(session)
 
     with caplog.at_level(logging.WARNING):
-        result = run_async(client.fetch_interval_price("QLD1", _interval()))
+        result = run_async(client.fetch_interval_prices(_interval())).get("QLD1")
 
     assert result is None
     warnings = _warnings(caplog)
@@ -539,7 +539,7 @@ def test_directory_403_warns_after_exhausting_the_budget(caplog):
     client = TradingISClient(session, sleep=sleeper)
 
     with caplog.at_level(logging.WARNING):
-        result = run_async(client.fetch_interval_price("QLD1", _interval()))
+        result = run_async(client.fetch_interval_prices(_interval())).get("QLD1")
 
     assert result is None
     assert session.count(TRADINGIS_BASE_URL) == _retry.DEFAULT_MAX_ATTEMPTS
@@ -572,7 +572,7 @@ def test_directory_retried_then_succeeds(caplog):
     client = TradingISClient(session, sleep=sleeper)
 
     with caplog.at_level(logging.WARNING):
-        result = run_async(client.fetch_interval_price("QLD1", interval_start))
+        result = run_async(client.fetch_interval_prices(interval_start)).get("QLD1")
 
     assert result == pytest.approx(0.09569)
     assert session.count(TRADINGIS_BASE_URL) == 2, "listing was not retried"
@@ -588,7 +588,7 @@ def test_directory_retry_exhausted_gives_up_quietly_once(caplog):
     client = TradingISClient(session, sleep=sleeper)
 
     with caplog.at_level(logging.WARNING):
-        result = run_async(client.fetch_interval_price("QLD1", _interval()))
+        result = run_async(client.fetch_interval_prices(_interval())).get("QLD1")
 
     assert result is None, "missing data must surface as None, never as 0"
     assert not isinstance(result, (int, float))
@@ -614,7 +614,7 @@ def test_tradingis_retry_after_header_is_honoured():
     })
     client = TradingISClient(session, sleep=sleeper)
 
-    result = run_async(client.fetch_interval_price("QLD1", interval_start))
+    result = run_async(client.fetch_interval_prices(interval_start)).get("QLD1")
 
     assert result == pytest.approx(0.09569)
     assert sleeper.delays == [2.0], f"Retry-After ignored, slept {sleeper.delays} instead of [2.0]"
@@ -631,7 +631,7 @@ def test_zip_retried_then_succeeds():
     })
     client = TradingISClient(session, sleep=sleeper)
 
-    result = run_async(client.fetch_interval_price("QLD1", interval_start))
+    result = run_async(client.fetch_interval_prices(interval_start)).get("QLD1")
 
     assert result == pytest.approx(0.09569)
     assert session.count(url) == 2
@@ -651,7 +651,7 @@ def test_zip_not_published_does_not_warn(caplog):
     client = TradingISClient(session)
 
     with caplog.at_level(logging.DEBUG):
-        result = run_async(client.fetch_interval_price("QLD1", interval_start))
+        result = run_async(client.fetch_interval_prices(interval_start)).get("QLD1")
 
     assert result is None
     assert _warnings(caplog) == [], "an unpublished file must not warn"
@@ -671,7 +671,7 @@ def test_missing_interval_in_listing_does_not_warn(caplog):
     client = TradingISClient(session)
 
     with caplog.at_level(logging.DEBUG):
-        result = run_async(client.fetch_interval_price("QLD1", interval_start))
+        result = run_async(client.fetch_interval_prices(interval_start)).get("QLD1")
 
     assert result is None
     assert _warnings(caplog) == []
@@ -691,7 +691,7 @@ def test_fetches_hold_the_shared_semaphore():
             _tradingis_zip_url(interval_start): [_tradingis_good_zip(interval_start)],
         })
         client = TradingISClient(session, semaphore=sem, sleep=RecordingSleep())
-        price = await client.fetch_interval_price("QLD1", interval_start)
+        price = (await client.fetch_interval_prices(interval_start)).get("QLD1")
         return price, sem
 
     price, sem = run_async(scenario())

@@ -10,9 +10,9 @@ actual_source so the store can tell TradingIS actuals from other sources.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -40,17 +40,24 @@ _HISTORY_ENTRY = {
 }
 
 
-def make_service(store=None, regions=None, fetch_price_return=None):
-    """An ActualPriceService with a mocked TradingIS client."""
-    hass = MagicMock()
-    if store is None:
-        store = make_store()
-    if regions is None:
-        regions = ["QLD1"]
-    service = _service_mod.ActualPriceService(hass, store, regions, MagicMock())
+REGIONS = ["QLD1", "NSW1", "VIC1", "SA1", "TAS1"]
+PRICES = {"QLD1": 0.09769, "NSW1": 0.0812, "VIC1": 0.0455, "SA1": -0.012, "TAS1": 0.0901}
+
+
+def make_service(prices=None):
+    """An ActualPriceService with a mocked TradingIS client returning ``prices``."""
+    service = _service_mod.ActualPriceService(MagicMock(), MagicMock())
     service._client = MagicMock()
-    service._client.fetch_interval_price = AsyncMock(return_value=fetch_price_return)
-    return service, store
+    service._client.fetch_interval_prices = AsyncMock(return_value=dict(PRICES if prices is None else prices))
+    return service
+
+
+def registered_store(service, region="QLD1", entry_id=None):
+    store = make_store()
+    store.async_record_actual = AsyncMock(return_value=1)
+    with patch.object(_service_mod, "async_track_utc_time_change", MagicMock(return_value=MagicMock())):
+        service.register(entry_id or f"entry_{region}", region, store)
+    return store
 
 
 # ── The tick ─────────────────────────────────────────────────────────────────
@@ -66,35 +73,119 @@ def make_service(store=None, regions=None, fetch_price_return=None):
 )
 def test_tick_records_the_just_closed_interval_from_tradingis(now_utc, interval_iso):
     """At HH:32 the interval is HH:00-HH:30; at HH:02 it is (HH-1):30-HH:00."""
-    service, store = make_service(fetch_price_return=0.09769)
-    store.async_record_actual = AsyncMock(return_value=1)
+    service = make_service()
+    store = registered_store(service)
 
     run_async(service._on_tradingis_tick(now_utc))
 
-    store.async_record_actual.assert_called_once()
-    args, kwargs = store.async_record_actual.call_args
-    assert args[0] == interval_iso
-    assert abs(args[1] - 0.09769) < 1e-9
-    source = kwargs.get("source", args[2] if len(args) > 2 else None)
-    assert source == "tradingis"
+    store.async_record_actual.assert_called_once_with(
+        interval_iso, PRICES["QLD1"], calibration_region="QLD1", source="tradingis",
+    )
+    (start,), _ = service._client.fetch_interval_prices.call_args
+    assert _nem_time.to_nem_iso(start) == interval_iso
 
 
 def test_tick_records_nothing_when_tradingis_has_no_price():
-    service, store = make_service(fetch_price_return=None)
-    store.async_record_actual = AsyncMock(return_value=0)
-
+    service = make_service(prices={})
+    store = registered_store(service)
     run_async(service._on_tradingis_tick(datetime(2026, 4, 18, 7, 32, tzinfo=timezone.utc)))
-
     store.async_record_actual.assert_not_called()
 
 
-def test_tick_fetches_every_configured_region():
-    service, store = make_service(regions=["QLD1", "NSW1"], fetch_price_return=0.09769)
-    store.async_record_actual = AsyncMock(return_value=1)
+def test_five_entries_share_one_fetch_and_record_their_own_region():
+    """#335: five entries used to make five listings and five downloads of one file."""
+    service = make_service()
+    stores = {region: registered_store(service, region) for region in REGIONS}
 
     run_async(service._on_tradingis_tick(datetime(2026, 4, 18, 7, 32, tzinfo=timezone.utc)))
 
-    assert store.async_record_actual.call_count == 2
+    service._client.fetch_interval_prices.assert_awaited_once()
+    for region, store in stores.items():
+        store.async_record_actual.assert_called_once_with(
+            "2026-04-18T17:00:00+10:00", PRICES[region], calibration_region=region, source="tradingis",
+        )
+
+
+def test_a_tick_with_no_entry_fetches_nothing():
+    service = make_service()
+    run_async(service._on_tradingis_tick(datetime(2026, 4, 18, 7, 32, tzinfo=timezone.utc)))
+    service._client.fetch_interval_prices.assert_not_called()
+
+
+def test_the_interval_is_worked_out_in_nem_time_whatever_the_tick_zone():
+    """The old timer ran on Home Assistant's local time; the interval itself was
+    always NEM. Any aware time gives the same NEM interval."""
+    adelaide = timezone(timedelta(hours=10, minutes=30))
+    at = datetime(2026, 4, 18, 18, 2, tzinfo=adelaide)  # 17:32 NEM
+    assert _service_mod.closed_interval_start(at) == datetime(2026, 4, 18, 17, 0, tzinfo=_nem_time.NEM_TZ)
+
+
+# ── One timer, on UTC minutes, for the life of the entries ───────────────────
+
+
+def test_one_utc_timer_starts_with_the_first_entry_and_stops_with_the_last():
+    service = make_service()
+    cancel = MagicMock()
+    track = MagicMock(return_value=cancel)
+    with patch.object(_service_mod, "async_track_utc_time_change", track):
+        stop_qld = service.register("e1", "QLD1", make_store())
+        stop_nsw = service.register("e2", "NSW1", make_store())
+    track.assert_called_once()
+    assert track.call_args.kwargs == {"minute": _const_mod.TRADINGIS_FETCH_MINUTES, "second": 0}
+    assert service.regions == ["NSW1", "QLD1"]
+    stop_qld()
+    cancel.assert_not_called()
+    stop_nsw()
+    cancel.assert_called_once()
+    assert service.regions == []
+
+
+def test_the_service_is_shared_across_entries():
+    hass = MagicMock()
+    hass.data = {_const_mod.DOMAIN: {}}
+    first = _service_mod.shared_actual_price_service(hass, MagicMock())
+    assert _service_mod.shared_actual_price_service(hass, MagicMock()) is first
+    assert hass.data[_const_mod.DOMAIN][_const_mod.SHARED_TRADINGIS_KEY] is first
+
+
+def test_five_entries_make_one_listing_and_one_download_end_to_end():
+    """Through the real client: two NEMWEB requests a half hour for five entries, not ten."""
+    end = datetime(2026, 4, 18, 17, 30, tzinfo=_nem_time.NEM_TZ)
+    name = f"PUBLIC_TRADINGIS_{end:%Y%m%d%H%M}_1.zip"
+    rows = "".join(
+        f'D,TRADING,PRICE,3,"2026/04/18 17:30:00",1,{r},35,{PRICES[r] * 1000:.2f},0,0,"x",FIRM\n' for r in REGIONS
+    )
+    payload = support.make_zip(("I,TRADING,PRICE,3,x\n" + rows).encode(), "t.csv")
+    log = []
+
+    class _Response:
+        def __init__(self, url):
+            self.status, self._url = 200, url
+
+        async def text(self):
+            return f'<a href="{name}">{name}</a>'
+
+        async def read(self):
+            return payload
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    session = MagicMock()
+    session.get = lambda url, **kw: (log.append(url), _Response(url))[1]
+    service = _service_mod.ActualPriceService(MagicMock(), session)
+    service._client._executor_job = None
+    stores = {region: registered_store(service, region) for region in REGIONS}
+
+    run_async(service._on_tradingis_tick(datetime(2026, 4, 18, 7, 32, tzinfo=timezone.utc)))
+
+    assert log == [_const_mod.TRADINGIS_BASE_URL, _const_mod.TRADINGIS_BASE_URL + name]
+    for region, store in stores.items():
+        (iso, price), _kw = store.async_record_actual.call_args
+        assert price == pytest.approx(PRICES[region])
 
 
 # ── The source field on the recorded observation ─────────────────────────────

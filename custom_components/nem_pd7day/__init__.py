@@ -30,6 +30,7 @@ from .const import (
     SETUP_LOCK_KEY,
     SHARED_DISPATCH_KEY,
     SHARED_FETCH_KEY,
+    SHARED_TRADINGIS_KEY,
 )
 from .coordinator import DispatchCoordinator, PD7DayCoordinator
 from .fetch_scheduler import DailyFetchScheduler
@@ -88,7 +89,7 @@ async def _delayed_refresh(coordinator: PD7DayCoordinator, delay_s: float) -> No
 
 async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> bool:
     """Set up NEM PD7DAY from a config entry."""
-    from .actual_price_service import ActualPriceService
+    from .actual_price_service import shared_actual_price_service
     from .nem_time import fetch_times_as_utc, now_nem
 
     hass.data.setdefault(DOMAIN, {})
@@ -442,14 +443,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         ", ".join(utc_times),
     )
 
-    # ── Actual price service (TradingIS) ────────────────────────────────────
-    session = async_get_clientsession(hass)
-    actual_service = ActualPriceService(
-        hass, store, [region], session,
-        calibration_region=region,
-        semaphore=hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY),
+    # ── Actual price service (TradingIS), one fetch for every entry (#335) ──
+    actual_service = shared_actual_price_service(
+        hass, async_get_clientsession(hass), hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY),
     )
-    await actual_service.async_setup(entry)
+    entry.async_on_unload(actual_service.register(entry.entry_id, region, store))
 
     # ── Periodic calibration refit (daily) ───────────────────────────────────
     @callback
@@ -583,6 +581,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -
             hass.data[DOMAIN].pop("stpasa_stores", None)
             hass.data[DOMAIN].pop(STPASA_REFRESH_KEY, None)
             hass.data[DOMAIN].pop(SHARED_FETCH_KEY, None)
+            hass.data[DOMAIN].pop(SHARED_TRADINGIS_KEY, None)
             if hass.services.has_service(DOMAIN, "force_refit"):
                 hass.services.async_remove(DOMAIN, "force_refit")
     return unload_ok

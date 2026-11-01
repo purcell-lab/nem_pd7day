@@ -99,26 +99,26 @@ def _client_serving(filenames: list[str], payload: bytes | None = None, filename
     return TradingISClient(session), session
 
 
-# ── _parse_rrp ────────────────────────────────────────────────────────────────
+# ── _parse_all_rrp ────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("region, rrp_mwh", [("QLD1", 89.5), ("NSW1", 75.2), ("SA1", -5.0)])
-def test_parse_rrp_returns_the_requested_region_in_kwh(region, rrp_mwh):
-    """Only the requested region's row is read, and $/MWh becomes $/kWh (negatives included)."""
+def test_parse_reads_each_region_in_kwh(region, rrp_mwh):
+    """Each region's row, and $/MWh becomes $/kWh (negatives included)."""
     csv = _trading_csv("2026/04/18 17:05:00", REGION_PRICES)
-    result = TradingISClient._parse_rrp(csv, region)
+    result = TradingISClient._parse_all_rrp(csv).get(region)
     assert result is not None
     assert abs(result - rrp_mwh / 1000) < 1e-9
 
 
-def test_parse_rrp_returns_none_when_region_or_rows_absent():
+def test_parse_omits_a_region_not_in_the_file_and_reads_nothing_without_rows():
     csv = _trading_csv("2026/04/18 17:05:00", [("QLD1", 95.69)])
-    assert TradingISClient._parse_rrp(csv, "SA1") is None, "region not in CSV"
-    assert TradingISClient._parse_rrp("C,NEMP.WORLD\nI,TRADING,PRICE,3,HEADER\nC,END\n", "QLD1") is None, (
+    assert "SA1" not in TradingISClient._parse_all_rrp(csv), "region not in CSV"
+    assert TradingISClient._parse_all_rrp("C,NEMP.WORLD\nI,TRADING,PRICE,3,HEADER\nC,END\n") == {}, (
         "no D,TRADING,PRICE rows"
     )
 
 
-# ── fetch_interval_price ──────────────────────────────────────────────────────
+# ── fetch_interval_prices: the interval end, and failures ────────────────────
 
 def test_fetch_interval_price_returns_rrp_for_the_interval_end():
     """Fetches the zip for interval_end = interval_start + 30 min and returns $/kWh."""
@@ -126,7 +126,7 @@ def test_fetch_interval_price_returns_rrp_for_the_interval_end():
     csv = _trading_csv(INTERVAL_END.strftime("%Y/%m/%d %H:%M:00"), [("QLD1", 95.69)])
     client, session = _client_serving([filename], _zip(csv), filename)
 
-    result = run_async(client.fetch_interval_price("QLD1", INTERVAL_START))
+    result = run_async(client.fetch_interval_prices(INTERVAL_START)).get("QLD1")
 
     assert result is not None
     assert abs(result - 95.69 / 1000) < 1e-9
@@ -136,20 +136,20 @@ def test_fetch_interval_price_returns_rrp_for_the_interval_end():
 def test_fetch_interval_price_file_not_in_directory():
     """If no file exists for the target interval end, returns None."""
     client, _ = _client_serving(["PUBLIC_TRADINGIS_202604181600_1.zip"])   # a different interval
-    assert run_async(client.fetch_interval_price("QLD1", INTERVAL_START)) is None
+    assert run_async(client.fetch_interval_prices(INTERVAL_START)).get("QLD1") is None
 
 
 def test_fetch_interval_price_bad_zip():
     """Malformed zip bytes: returns None, does not raise."""
     filename = _filename_for(INTERVAL_END)
     client, _ = _client_serving([filename], b"not a zip", filename)
-    assert run_async(client.fetch_interval_price("QLD1", INTERVAL_START)) is None
+    assert run_async(client.fetch_interval_prices(INTERVAL_START)).get("QLD1") is None
 
 
 def test_directory_http_failure_returns_none_from_fetch():
-    """If the directory fetch fails (404), fetch_interval_price returns None."""
+    """If the directory fetch fails (404), there is no price."""
     client = TradingISClient(MockSession({BASE_URL: MockResponse(status=404)}))
-    assert run_async(client.fetch_interval_price("QLD1", INTERVAL_START)) is None
+    assert run_async(client.fetch_interval_prices(INTERVAL_START)).get("QLD1") is None
 
 
 # ── Directory cache ───────────────────────────────────────────────────────────
@@ -175,3 +175,58 @@ def test_directory_cache_expiry():
 
     dir_requests = [u for u in session.request_log if u == BASE_URL]
     assert len(dir_requests) == 2, f"Expected 2 (expired), got {len(dir_requests)}"
+
+
+# ── fetch_interval_prices: every region from one zip (#335) ───────────────────
+
+def test_fetch_interval_prices_reads_every_region_from_one_listing_and_one_zip():
+    filename = _filename_for(INTERVAL_END)
+    csv = _trading_csv(INTERVAL_END.strftime("%Y/%m/%d %H:%M:00"), REGION_PRICES)
+    client, session = _client_serving([filename], _zip(csv), filename)
+
+    prices = run_async(client.fetch_interval_prices(INTERVAL_START))
+
+    assert prices == {region: round(rrp / 1000.0, 6) for region, rrp in REGION_PRICES}
+    assert session.request_log == [BASE_URL, BASE_URL + filename]
+
+
+def test_all_region_parse_agrees_with_the_per_region_parse():
+    """The shared fetch must record exactly what each entry recorded before: the
+    first valid row per region, an unparseable RRP skipped, other tables ignored."""
+    csv = _trading_csv("2026/04/18 17:30:00", [("QLD1", "bad"), ("QLD1", 91.25), ("NSW1", 75.2), ("QLD1", 99.0)])
+    csv += 'D,TRADING,INTERCONNECTORRES,3,"2026/04/18 17:30:00",1,QLD1,223,1234,0\n'
+    every = TradingISClient._parse_all_rrp(csv)
+    assert every == {"QLD1": 0.09125, "NSW1": 0.0752}
+    for region in ("QLD1", "NSW1", "VIC1"):
+        assert every.get(region) == _per_region_parse_before_335(csv, region)
+
+
+def _per_region_parse_before_335(content, region):
+    """TradingISClient._parse_rrp as it was on main before #335, kept as the reference."""
+    for line in content.splitlines():
+        parts = line.split(",")
+        if len(parts) < 9:
+            continue
+        if parts[0] != "D" or parts[1] != "TRADING" or parts[2] != "PRICE":
+            continue
+        region_id = parts[6].strip().strip('"')
+        if region_id != region:
+            continue
+        try:
+            rrp_mwh = float(parts[8].strip().strip('"'))
+            return round(rrp_mwh / 1000.0, 6)
+        except (ValueError, IndexError):
+            continue
+    return None
+
+
+@pytest.mark.parametrize("case", ["not_listed", "bad_zip", "listing_fails"])
+def test_fetch_interval_prices_is_empty_on_any_failure(case):
+    filename = _filename_for(INTERVAL_END)
+    if case == "not_listed":
+        client, _ = _client_serving(["PUBLIC_TRADINGIS_202604181600_1.zip"])
+    elif case == "bad_zip":
+        client, _ = _client_serving([filename], b"not a zip", filename)
+    else:
+        client = TradingISClient(MockSession({BASE_URL: MockResponse(status=404)}))
+    assert run_async(client.fetch_interval_prices(INTERVAL_START)) == {}
