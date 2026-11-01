@@ -2,10 +2,11 @@
 
 ``<City> Zone Price Proxy``, for each zone chosen in the options (zones.py):
 
-- **State**: (ROP + the median of the members' local price adjustments) x
-  zone MLF, in $/kWh, for the latest dispatch interval, raw
-  (local_price.node_price_mwh, #312). A member whose DUIDs disagree is left
-  out of the median.
+- **State**: (ROP + the zone's local price adjustment) x zone MLF, in
+  $/kWh, for the latest dispatch interval, raw (local_price.node_price_mwh,
+  #312). The zone's adjustment takes one vote per station, the median of
+  the stations', or the nearest station's below three (zones.py, #314,
+  #315). A member whose DUIDs disagree is left out.
 - **Forecast**: the same per P5MIN interval still to end, and per 30-minute
   pre-dispatch period to the end of the next trading day (RRP there, as
   pre-dispatch publishes no ROP).
@@ -43,7 +44,7 @@ from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, dispatch_price
 from .nem_time import now_nem
 from .node_price_sensor import STATUS_NO_ROP, STATUS_UNKNOWN_NODE, node_adjustment, p5_adjustment
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
-from .zones import Zone, zone_adjustment
+from .zones import AGGREGATE_NEAREST, MIN_MEDIAN_STATIONS, Zone, station_key, zone_adjustment
 
 SUFFIX = "zone_price_proxy"
 
@@ -76,14 +77,17 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
     rop = prices.rop.get(region)
     if rop is None:
         return ZoneDispatch(STATUS_NO_ROP)
-    members = []
+    members: list[dict[str, Any]] = []
+    values: list[Optional[float]] = []
     for member in zone.members:
         status, adjustment = node_adjustment(prices, member.node.duids, now)
+        values.append(adjustment)
         members.append({
             "tni": member.node.tni, "stations": list(member.node.stations), "distance_km": member.distance_km,
+            "station": station_key(member.node),
             "mlf": member.node.mlf, "adjustment_mwh": adjustment, "adjustment_status": status,
         })
-    adjustment = zone_adjustment([m["adjustment_mwh"] for m in members])  # type: ignore[misc]
+    adjustment = zone_adjustment(zone, values)
     if adjustment is None:
         status = STATUS_CONFLICT
     else:
@@ -92,7 +96,7 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
 
 
 def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5LocalPriceRun], now: datetime) -> tuple[str, list]:
-    """(status, points): (ROP + the members' median P5MIN adjustment) x zone MLF per interval still to end."""
+    """(status, points): (ROP + the zone's P5MIN adjustment) x zone MLF per interval still to end."""
     mlf = zone.mlf
     if mlf is None:
         return STATUS_UNKNOWN_NODE, []
@@ -108,7 +112,7 @@ def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5LocalPriceRun], no
         return STATUS_EXPIRED, []
     points: list[dict[str, Any]] = []
     for end in ahead:
-        adjustment = zone_adjustment([p5_adjustment(run, m.node.duids, end) for m in zone.members])
+        adjustment = zone_adjustment(zone, [p5_adjustment(run, m.node.duids, end) for m in zone.members])
         if adjustment is None:
             return STATUS_CONFLICT, points
         points.append({"time": (end - INTERVAL).isoformat(), "interval_end": end.isoformat(),
@@ -117,24 +121,36 @@ def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5LocalPriceRun], no
 
 
 def zone_predispatch(zone: Zone, snapshot: Any, now: datetime) -> PredispatchAdjustments:
-    """The members' median pre-dispatch adjustment per period; ``published`` counts the
-    periods where at least one member has one."""
+    """The zone's pre-dispatch adjustment per period, one vote per station; ``published``
+    counts the periods where at least one member has one."""
     series = [predispatch_adjustments(snapshot, m.node.duids, now) for m in zone.members]
-    usable = [s for s in series if s.status in (STATUS_PUBLISHED, STATUS_ZERO, STATUS_CONFLICT)]
-    if not usable:
+    usable = [s.status in (STATUS_PUBLISHED, STATUS_ZERO, STATUS_CONFLICT) for s in series]
+    if not any(usable):
         return PredispatchAdjustments(series[0].status if series else STATUS_UNKNOWN_NODE)
-    by_end: dict[datetime, list[float]] = {}
-    for s in usable:
-        for end, value in s.periods:
-            by_end.setdefault(end, []).append(value)
-    periods = [(end, zone_adjustment(values) or 0.0) for end, values in sorted(by_end.items())]
-    published = sum(1 for _end, values in sorted(by_end.items()) if any(values))
+    lookups = [dict(s.periods) if ok else {} for s, ok in zip(series, usable)]
+    ends = sorted({end for lookup in lookups for end in lookup})
+    periods, published = [], 0
+    for end in ends:
+        values = [lookup.get(end) for lookup in lookups]
+        periods.append((end, zone_adjustment(zone, values) or 0.0))
+        published += any(values)
     status = STATUS_PUBLISHED if published else STATUS_ZERO
     return PredispatchAdjustments(status, periods, published, len(periods) - published)
 
 
+def _aggregation_note(zone: Zone) -> dict[str, str]:
+    """Why a zone of fewer than three stations takes its nearest station's adjustment (#315)."""
+    if zone.aggregate != AGGREGATE_NEAREST:
+        return {}
+    count = len(zone.stations)
+    return {"aggregation_note": (
+        f"{count} station{'s' if count != 1 else ''} in reach, fewer than {MIN_MEDIAN_STATIONS}: the nearest "
+        "station's adjustment stands alone, as a median of so few would move with any one unit"
+    )}
+
+
 class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
-    """State: (ROP + the members' median adjustment) x zone MLF, in $/kWh; a proxy."""
+    """State: (ROP + the zone's adjustment, one vote per station) x zone MLF, in $/kWh; a proxy."""
 
     _attr_has_entity_name = True
     _attr_icon = "mdi:city-variant-outline"
@@ -179,10 +195,12 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             "zone": zone.key, "region": self._region,
             "latitude": zone.latitude, "longitude": zone.longitude, "radius_km": zone.radius_km,
             "nearest_only": zone.nearest_only, "member_count": len(zone.members),
+            "member_stations": list(zone.stations),
             "zone_mlf": zone.mlf, "zone_mlf_source": zone.mlf_source,
             "load_points": [{"tni": p.tni, "name": p.name, "kv": p.kv, "mlf": p.mlf} for p in zone.load_points],
-            "adjustment_aggregate": "median",
-            "formula": "(ROP + median LOCAL_PRICE_ADJUSTMENT) x zone MLF",
+            "adjustment_aggregate": zone.aggregate,
+            **_aggregation_note(zone),
+            "formula": "(ROP + zone LOCAL_PRICE_ADJUSTMENT) x zone MLF",
             "row_status": zone_now.status,
             "price_mwh": zone_now.price_mwh, "static_price_mwh": zone_now.static_mwh,
             "rop_mwh": zone_now.rop_mwh, "adjustment_mwh": zone_now.adjustment_mwh,
