@@ -262,6 +262,8 @@ The Stage 2 OLS correction is driven by AEMO's STPASA (Short-Term Projected Asse
 
 Source: [AEMO NEMWeb STPASA](https://www.nemweb.com.au/REPORTS/CURRENT/Short_Term_PASA_Reports/)
 
+- **When:** one download serves every region. It runs with each PD7DAY update, and at setup whenever a region has no fresh STPASA, so a fresh install, a restart after more than 4 hours down, or a stale cache is filled within seconds instead of at the next PD7DAY slot. An entry added later in the same run is served from the last download, with no request of its own (#346).
+
 ### TradingIS actual prices (every 30 minutes)
 
 Actual NEM dispatch prices are fetched from AEMO's TradingIS reports and used to build calibration observations:

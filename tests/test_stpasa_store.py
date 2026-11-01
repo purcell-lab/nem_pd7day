@@ -265,13 +265,104 @@ def test_fresh_load_requests_nothing():
 
 
 def test_expired_load_returns_none_not_zeros():
-    """Past 4 h the cache is dropped, so callers see None, never 0 values."""
+    """Past 4 h the cache is dropped, so callers see None, never 0 values,
+    and with nothing to serve the fetch is forced as for a stale cache (#346)."""
     refresh = StpasaRefreshCoordination()
     store = make_stpasa_store(refresh=refresh, payload=asdict(make_result(EXPIRED)))
 
     assert run_async(store.load()) is None
     assert store.latest() is None
-    assert refresh.fetch_pending is False
+    assert store.loaded_stale is False
+    assert refresh.fetch_pending is True
+
+
+def test_missing_cache_forces_the_fetch_without_warning(caplog):
+    """A fresh install has no cache: STPASA stayed unavailable until the next
+    PD7DAY slot, up to 5.5 h away (#346). Expected on a first install, so no warning."""
+    refresh = StpasaRefreshCoordination()
+    caplog.set_level(logging.WARNING, logger=_store_mod._LOGGER.name)
+    store = make_stpasa_store(refresh=refresh, payload=None)
+
+    assert run_async(store.load()) is None
+    assert refresh.fetch_pending is True
+    assert refresh.stale_regions == ()
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_missing_cache_without_coordination_degrades_quietly():
+    store = make_stpasa_store(refresh=None, payload=None)
+    assert run_async(store.load()) is None
+
+
+# ── Listeners and the last download (#346) ─────────────────────────────────────
+
+def test_save_notifies_listeners_until_removed():
+    """The STPASA sensor writes on each save, not only on PD7DAY updates."""
+    store = make_stpasa_store()
+    calls: list[str] = []
+    remove_a = store.async_add_listener(lambda: calls.append("a"))
+    store.async_add_listener(lambda: calls.append("b"))
+
+    run_async(store.save(make_result(FRESH)))
+    assert calls == ["a", "b"]
+    assert store.latest() is not None
+
+    remove_a()
+    remove_a()  # removing twice is harmless
+    run_async(store.save(make_result(FRESH)))
+    assert calls == ["a", "b", "b"]
+
+
+def test_listeners_are_per_store():
+    """The class default is shared; adding to one store must not reach another."""
+    first, second = make_stpasa_store("QLD1"), make_stpasa_store("NSW1")
+    first.async_add_listener(lambda: None)
+    assert second._listeners == ()
+    assert StpasaStore._listeners == ()
+
+
+def test_last_download_is_kept_per_region():
+    """An entry added after the run's download is served from it (#346)."""
+    refresh = StpasaRefreshCoordination()
+    assert refresh.result_for("NSW1") is None
+    results = {r: make_result(FRESH, r) for r in REGIONS}
+    qld = make_stpasa_store("QLD1")
+    run_async(refresh.distribute(results, {"QLD1": qld}))
+    results.clear()  # a copy is kept, not the caller's dict
+    assert qld.latest().region == "QLD1", "registered stores are saved to"
+    assert refresh.result_for("NSW1").region == "NSW1"
+    assert refresh.result_for("XX1") is None
+
+    # NSW1 registers after the download: served from it, no fetch needed.
+    nsw = make_stpasa_store("NSW1", refresh=refresh, payload=None)
+    run_async(nsw.load())
+    assert nsw.load_note == "no usable cache"
+    run_async(nsw.seed_from(refresh))
+    assert nsw.latest().region == "NSW1"
+    nsw._store.async_save.assert_awaited()
+
+
+def test_seed_skips_an_expired_download_and_a_store_that_has_data():
+    refresh = StpasaRefreshCoordination()
+    run_async(refresh.distribute({"QLD1": make_result(EXPIRED), "NSW1": make_result(FRESH, "NSW1")}, {}))
+    qld = make_stpasa_store("QLD1")
+    run_async(qld.seed_from(refresh))
+    assert qld.latest() is None, "an expired download is not served"
+
+    held = make_result(FRESH, "NSW1")
+    nsw = make_stpasa_store("NSW1", latest=held)
+    run_async(nsw.seed_from(refresh))
+    assert nsw.latest() is held
+    nsw._store.async_save.assert_not_awaited()
+
+
+def test_load_note_reports_the_stale_cache():
+    store = make_stpasa_store(refresh=StpasaRefreshCoordination(), payload=asdict(make_result(STALE)))
+    run_async(store.load())
+    assert store.load_note == "stale cache, refetch forced"
+    fresh = make_stpasa_store(payload=asdict(make_result(FRESH)))
+    run_async(fresh.load())
+    assert fresh.load_note is None
 
 
 def test_fetch_pending_clears_once_the_fetch_resolves():
@@ -499,6 +590,18 @@ def test_setup_records_the_fetch_outcome():
     assert "mark_fresh()" in src
     assert "mark_failed(" in src
     assert "run_refit_when_stpasa_ready(" in src
+
+
+def test_setup_serves_late_entries_and_forces_a_fetch_when_empty():
+    """#346: a store with nothing to serve is seeded from the last download, and
+    still empty, forces the fetch, which is then remembered for the next entry."""
+    src = _source("__init__.py")
+    assert "await stpasa_store.seed_from(stpasa_refresh)" in src
+    assert "await stpasa_refresh.distribute(all_results, stores)" in src
+    assert "if stpasa_refresh.fetch_pending or stpasa_store.latest() is None:" in src
+    assert src.index("await stpasa_store.seed_from(stpasa_refresh)") < src.index(
+        "if stpasa_refresh.fetch_pending or stpasa_store.latest() is None:"
+    ), "seed from the last download before deciding a fetch is needed"
 
 
 def test_store_acts_on_a_stale_load():

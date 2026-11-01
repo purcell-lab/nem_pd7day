@@ -242,7 +242,11 @@ async def async_setup_entry(
         if active is not None:
             entities.extend(_days27_tariff_entities(coordinator, entry, region, active.distributor, active.code, store))
 
-    async_add_entities(entities, update_before_add=True)
+    # No update_before_add: for a CoordinatorEntity it awaits a coordinator
+    # refresh inside platform setup, which on a cached restart downloaded and
+    # parsed PD7DAY there and then, defeating the two-phase startup (#347). The
+    # data is already in place, and add_to_platform_finish writes the first state.
+    async_add_entities(entities)
 
 
 def _days27_tariff_entities(
@@ -679,8 +683,8 @@ class CalibratedWriteMixin(CalibratedForecastMixin):
     async def async_added_to_hass(self) -> None:
         """Warm before the platform's own first state write.
 
-        ``async_add_entities(..., update_before_add=True)`` does not route the
-        first write through ``_handle_coordinator_update``. Home Assistant's
+        ``async_add_entities`` does not route the first write through
+        ``_handle_coordinator_update``. Home Assistant's
         ``Entity.add_to_platform_finish`` is:
 
             await self.async_internal_added_to_hass()
@@ -1700,11 +1704,22 @@ class StpasaDataSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
             configuration_url=DEVICE_CONFIGURATION_URL,
         )
 
+    def _store(self):
+        return self.hass.data.get(DOMAIN, {}).get("stpasa_stores", {}).get(self._region)
+
     def _latest(self):
-        store = self.hass.data.get(DOMAIN, {}).get("stpasa_stores", {}).get(self._region)
+        store = self._store()
         if store is None:
             return None
         return store.latest()
+
+    async def async_added_to_hass(self) -> None:
+        """Also write on each STPASA save: the PD7DAY coordinator alone updates
+        three times a day, so a fetch between its updates went unseen (#346)."""
+        await super().async_added_to_hass()
+        store = self._store()
+        if store is not None:
+            self.async_on_remove(store.async_add_listener(self.async_write_ha_state))
 
     @property
     def native_value(self):

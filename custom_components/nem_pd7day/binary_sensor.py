@@ -62,7 +62,11 @@ async def async_setup_entry(
     entities.append(
         NemPd7dayGridStressBinarySensor(coordinator, entry, region, coordinator.notice_store)
     )
-    async_add_entities(entities, update_before_add=True)
+    # No update_before_add: for a CoordinatorEntity it awaits a coordinator
+    # refresh inside platform setup, which on a cached restart downloaded and
+    # parsed PD7DAY there and then, defeating the two-phase startup (#347). The
+    # data is already in place, and add_to_platform_finish writes the first state.
+    async_add_entities(entities)
 
 
 class PD7DayInterventionSensor(CoordinatorEntity[PD7DayCoordinator], BinarySensorEntity):

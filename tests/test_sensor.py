@@ -27,16 +27,17 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
+import os
 import types
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import partial
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import support
-from support import NEM_TZ, install_ha_stubs, load_chain, make_price_period, nem_iso, run_async
+from support import NEM_TZ, PKG_DIR, install_ha_stubs, load_chain, make_price_period, nem_iso, run_async
 
 install_ha_stubs()
 
@@ -143,6 +144,17 @@ def run_setup(region="QLD1", options=None, live_ic_ids=None) -> list:
 
     run_async(sensor_async_setup_entry(hass, entry, _add_entities))
     return created
+
+
+def test_sensor_platforms_do_not_ask_for_an_update_before_add():
+    """#347: every entity here is a CoordinatorEntity, for which update_before_add
+    awaits a coordinator refresh inside setup: on a cached restart, a PD7DAY
+    download the two-phase startup exists to avoid."""
+    import re
+    for name in ("sensor.py", "binary_sensor.py"):
+        with open(os.path.join(PKG_DIR, name), encoding="utf-8") as handle:
+            src = handle.read()
+        assert not re.search(r"async_add_entities\([^)]*(update_before_add\s*=\s*True|,\s*True\s*\))", src), name
 
 
 def interconnector_ids(entities) -> list[str]:
@@ -737,6 +749,33 @@ def test_stpasa_data_sensor_state_and_unrecorded_intervals():
         "surpluscapacity", "ss_solar_uigf", "ss_wind_uigf",
     }
     assert "intervals" in StpasaDataSensor._unrecorded_attributes
+
+
+def test_stpasa_data_sensor_writes_on_each_save():
+    """#346: the PD7DAY coordinator updates three times a day, so the sensor also
+    listens to the store, and stops when removed."""
+    sensor = make_stpasa_data_sensor(stpasa_result=make_stpasa_result())
+    store = sensor.hass.data[DOMAIN]["stpasa_stores"][REGION]
+    remove = MagicMock()
+    store.async_add_listener.return_value = remove
+    removals = []
+    sensor.async_on_remove = removals.append
+    sensor.async_write_ha_state = MagicMock()
+
+    with patch.object(_sensor_mod.CoordinatorEntity, "async_added_to_hass", AsyncMock()):
+        run_async(sensor.async_added_to_hass())
+
+    store.async_add_listener.assert_called_once_with(sensor.async_write_ha_state)
+    assert removals == [remove]
+
+
+def test_stpasa_data_sensor_without_a_store_adds_no_listener():
+    sensor = make_stpasa_data_sensor()
+    sensor.hass.data = {DOMAIN: {}}
+    sensor.async_on_remove = MagicMock()
+    with patch.object(_sensor_mod.CoordinatorEntity, "async_added_to_hass", AsyncMock()):
+        run_async(sensor.async_added_to_hass())
+    sensor.async_on_remove.assert_not_called()
 
 
 def test_calibration_summary_is_not_recorded():
