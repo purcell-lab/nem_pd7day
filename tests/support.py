@@ -190,8 +190,9 @@ class UpdateFailed(Exception):
 class FakeCoordinator:
     """Stand-in for DataUpdateCoordinator; supports the ``[...]`` subscript."""
 
-    def __init__(self, hass, logger, name, update_interval):
+    def __init__(self, hass, logger, name, update_interval, **kwargs):
         self.hass = hass
+        self.always_update = kwargs.get("always_update", True)
         self.logger = logger
         self.name = name
         self.update_interval = update_interval

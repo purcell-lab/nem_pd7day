@@ -290,7 +290,7 @@ async def _grid_entities(
         NemPd7dayBindingConstraintsSensor(constraints, entry, region),
         NemPd7dayPredispatchConstraintsSensor(predispatch, entry, region, constraints),
         *(
-            NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id)
+            NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id, constraints)
             for ic_id in sorted(interconnectors_for_regions([region]))
         ),
         *await _local_price_entities(hass, entry, region, constraints, predispatch),

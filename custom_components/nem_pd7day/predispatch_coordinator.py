@@ -29,7 +29,9 @@ class PredispatchCoordinator(DataUpdateCoordinator[Optional[PredispatchSnapshot]
     """The newest pre-dispatch run, fetched when a new one can be expected."""
 
     def __init__(self, hass: Any, dispatch: Any, client: Any) -> None:
-        super().__init__(hass, _LOGGER, name="NEM Predispatch", update_interval=None)
+        # Listeners hear of a new run only, not of every dispatch poll that found none:
+        # the sensors take their per-poll heartbeat from the constraints coordinator (#334).
+        super().__init__(hass, _LOGGER, name="NEM Predispatch", update_interval=None, always_update=False)
         self.client = client
         self.latest: Optional[PredispatchSnapshot] = None
         self._guard = RefreshGuard(hass, "nem_pd7day_predispatch_refresh", self.async_refresh, _LOGGER)

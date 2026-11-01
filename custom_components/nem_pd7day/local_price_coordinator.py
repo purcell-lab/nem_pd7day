@@ -48,7 +48,9 @@ class P5MinCoordinator(DataUpdateCoordinator[Optional[P5LocalPriceRun]]):
     """The newest P5MIN run, fetched when a new one can be expected."""
 
     def __init__(self, hass: Any, dispatch: Any, client: Any) -> None:
-        super().__init__(hass, _LOGGER, name="NEM P5MIN local prices", update_interval=None)
+        # Listeners hear of a new run only: the local price sensors are entities of the
+        # constraints coordinator, which already wakes them every dispatch poll (#334).
+        super().__init__(hass, _LOGGER, name="NEM P5MIN local prices", update_interval=None, always_update=False)
         self.client = client
         self.latest: Optional[P5LocalPriceRun] = None
         self._guard = RefreshGuard(hass, "nem_pd7day_p5min_refresh", self.async_refresh, _LOGGER)

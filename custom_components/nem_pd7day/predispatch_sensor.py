@@ -144,9 +144,13 @@ class _PredispatchSensor(CoordinatorEntity[PredispatchCoordinator], SensorEntity
     _attr_has_entity_name = True
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, coordinator: PredispatchCoordinator, entry: Any, region: str) -> None:
+    def __init__(self, coordinator: PredispatchCoordinator, entry: Any, region: str, heartbeat: Any = None) -> None:
         super().__init__(coordinator)
         self._region = region
+        # The constraints coordinator, which notifies after every dispatch poll: the
+        # sensors step to the next period and age out on it, as the pre-dispatch
+        # coordinator now notifies of a new run only (#334).
+        self._heartbeat = heartbeat
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry.entry_id}_{region}")},
             name=f"NEM PD7DAY {region}",
@@ -154,6 +158,11 @@ class _PredispatchSensor(CoordinatorEntity[PredispatchCoordinator], SensorEntity
             model=DEVICE_MODEL,
             configuration_url=DEVICE_CONFIGURATION_URL,
         )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._heartbeat is not None:
+            self.async_on_remove(self._heartbeat.async_add_listener(self.async_write_ha_state))
 
     def _snapshot(self, now: Optional[datetime] = None) -> Optional[PredispatchSnapshot]:
         snapshot = self.coordinator.latest
@@ -178,8 +187,10 @@ class NemPd7dayPredispatchInterconnectorSensor(_PredispatchSensor):
     _attr_icon = "mdi:transmission-tower-export"
     _unrecorded_attributes = frozenset({"forecast"})
 
-    def __init__(self, coordinator: PredispatchCoordinator, entry: Any, region: str, ic_id: str) -> None:
-        super().__init__(coordinator, entry, region)
+    def __init__(
+        self, coordinator: PredispatchCoordinator, entry: Any, region: str, ic_id: str, heartbeat: Any = None,
+    ) -> None:
+        super().__init__(coordinator, entry, region, heartbeat)
         self._ic_id = ic_id
         self._ends = INTERCONNECTOR_ENDS[ic_id]
         slug = ic_id.lower().replace("-", "_")
@@ -241,7 +252,7 @@ class NemPd7dayPredispatchConstraintsSensor(_PredispatchSensor):
     def __init__(
         self, coordinator: PredispatchCoordinator, entry: Any, region: str, dispatch_constraints: Any = None,
     ) -> None:
-        super().__init__(coordinator, entry, region)
+        super().__init__(coordinator, entry, region, dispatch_constraints)
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_predispatch_binding_constraints"
         self._attr_name = "Predispatch Binding Constraints"
         # The shared dispatch ConstraintCoordinator, read for rhs_vs_dispatch only.
