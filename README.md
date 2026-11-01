@@ -653,7 +653,7 @@ One price timeline per region, each source covering what the one before it does 
 - **Splits**: a half hour the source before covers in part is split where that source ends (`resolution_minutes` 5, 10, ...), so no minute is repeated or skipped.
 - **Staleness**: a stale source drops out and the next one fills its span: P5MIN past 15 minutes, pre-dispatch past 75 minutes. `timeline_sources` says, per source, `used`, `stale`, `no_data` or `covered` (fresh, but already covered by the sources before it), with what it covered, its run and its age.
 - **Each point**: `time` (start), `nemtime` (end), `value` ($/kWh), `source`, `calibrated_source`, `p10`, `p50`, `p90`, `resolution_minutes`.
-- **Where**: `sensor.nem_pd7day_{region}_price_timeline` (diagnostic): state, the timeline's value now; attributes `timeline` and `timeline_sources`, not saved to the recorder. The spot forecast sensor carries the same list as `timeline` (not recorded), and since v3.45.0 its `forecast` and the day 2-7 sensor's are the timeline (see *`forecast` from the price timeline*). The tariff sensors stay PD7DAY's until stage 5b (#339).
+- **Where**: `sensor.nem_pd7day_{region}_price_timeline` (diagnostic): state, the timeline's value now; attributes `timeline` and `timeline_sources`, not saved to the recorder. The spot forecast sensor carries the same list as `timeline` (not recorded), and since v3.45.0 its `forecast` and the day 2-7 sensor's are the timeline (see *`forecast` from the price timeline*), and since v3.46.0 the tariff sensors' `forecast` too, priced (see *Tariff Sensors*).
 - **Cost**: built once per region per source change and 5-minute interval, from the calibrated forecast the spot sensor already holds, in the shared forecast hub.
 
 ---
@@ -699,13 +699,17 @@ Each entry in the `forecast` list contains:
 
 | Field | Description |
 |---|---|
-| `time` | Interval START timestamp (`nemtime − 30 minutes`) |
+| `time` | Interval START timestamp (`nemtime − resolution_minutes`) |
 | `nemtime` | Interval END timestamp (AEMO convention) |
-| `spot_raw` | Uncalibrated spot price $/kWh (before bias correction) |
-| `spot` | Calibrated spot price $/kWh |
+| `spot_raw` | Uncalibrated spot price $/kWh (before bias correction); the price itself for `dispatch`, `p5min` and `predispatch` |
+| `spot` | The spot price $/kWh the tariff was applied to: calibrated for `pd7day`, the price itself otherwise |
 | `value` | Final tariff $/kWh (import) or feed-in rate $/kWh (export) |
 | `period` | Tariff period name for that interval (e.g. `peak`, `shoulder`, `off-peak`) |
 | `network_rate` | Network component $/kWh for that interval |
+| `source` | `dispatch`, `p5min`, `predispatch` or `pd7day` (v3.46.0) |
+| `resolution_minutes` | The entry's length: 5, 30, or less where a half hour was split (v3.46.0) |
+
+Since v3.46.0 (#339) the tariff `forecast` is the region's [price timeline](#price-timeline-diagnostic-338) from the current interval, priced, the same intervals the spot forecast sensor lists: the dispatch price, P5MIN's 5-minute prices for the next hour, pre-dispatch to the end of the next trading day, then the calibrated PD7DAY spot. Intervals that have ended are no longer listed. Each PD7DAY interval prices exactly as before; each price is computed once per interval while the PD7DAY run, the calibration and the usage fee hold, so a new timeline every 5 minutes prices only its near-term entries. A write that finds the region's calibrated forecast stale (a new run, a refit) waits up to 60 seconds for the forecast sensors' warm to publish it, rather than calibrate the run on the event loop.
 
 ```json
 {
@@ -715,7 +719,9 @@ Each entry in the `forecast` list contains:
   "spot": 0.079812,
   "value": 0.142500,
   "period": "peak",
-  "network_rate": 0.08210
+  "network_rate": 0.08210,
+  "source": "pd7day",
+  "resolution_minutes": 30
 }
 ```
 
@@ -884,6 +890,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 3.46.0 | Stage 5b of the forecast timeline plan (#339): every tariff sensor's `forecast` (import, export, and their day 2-7 forms) is the price timeline from the current interval, priced, each entry adding `source` and `resolution_minutes`; every PD7DAY interval prices exactly as before. Prices are kept per interval while the run, calibration and fee hold, and a tariff write that finds the calibrated forecast stale waits for the forecast sensors' warm instead of calibrating on the event loop. Tariff attribute builds drop from 1.13 to 0.31 ms (export 0.81 to 0.29). Suite goes from 2067 to 2080 tests. |
 | 3.45.0 | Stage 5a of the forecast timeline plan (#339): the spot forecast and day 2-7 sensors' `forecast` is the price timeline from the current interval, dispatch, P5MIN 5-minute, pre-dispatch then calibrated PD7DAY, every entry with the keys it always had plus `source` and `resolution_minutes`; `min_24h_value`, `max_24h_value` and `cheapest_2h_window` go by time. Both now write on each new P5MIN (spot) and pre-dispatch run. Tariffs are unchanged. Suite goes from 2059 to 2067 tests. |
 | 3.44.0 | Stage 4 of the forecast timeline plan (#338): one price timeline per region, the current dispatch interval, then P5MIN's 5-minute RRP for the next hour, pre-dispatch to the end of the next trading day and calibrated PD7DAY to day 7, each point with its `source`, `calibrated_source`, band and resolution; a stale source falls through to the next. New `Price Timeline` diagnostic sensor per region, and a `timeline` attribute on the spot forecast sensor; no existing attribute changes (PR #355). Suite goes from 2048 to 2059 tests. |
 | 3.43.0 | Stage 2 of the forecast timeline plan (#336), no published value changed: the DUID, node and zone sensors read their P5MIN and pre-dispatch series from one shared forecast hub, worked out once per run and interval for every sensor (zone attributes 0.37 to 0.07 ms per write, DUID 0.30 to 0.03, node 0.35 to 0.04), replacing #331's per-sensor memo (PR #354). Suite goes from 2039 to 2048 tests. |

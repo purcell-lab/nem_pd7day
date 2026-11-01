@@ -27,6 +27,12 @@ from support import NEM_TZ, install_ha_stubs, load_chain, make_price_period, nem
 
 install_ha_stubs()
 
+
+@pytest.fixture(autouse=True)
+def _whole_run_on_the_timeline(monkeypatch):
+    """These tests price whole PD7DAY runs: the timeline's clock before them, so none has ended (#339)."""
+    support.freeze_timeline_clock(monkeypatch, support.BEFORE_ANY_DATA)
+
 _const_mod, _nem_time, _client_mod, _store_mod, _coord_mod, _tariff_mod, _sensor_mod = load_chain(
     "const", "nem_time", "pd7day_client", "calibration_store", "coordinator",
     "tariff_sensor", "sensor",

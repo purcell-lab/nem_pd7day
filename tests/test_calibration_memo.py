@@ -85,6 +85,8 @@ Per run feature cache (#135)
 """
 from __future__ import annotations
 
+import sys
+
 import asyncio
 import contextlib
 import inspect
@@ -452,7 +454,8 @@ def test_every_builder_that_publishes_a_band_publishes_band_source(monkeypatch):
     exposing p10 and p90 must also expose band_source."""
     run_at = datetime(2026, 9, 3, 7, 30, tzinfo=NEM_TZ)
     # The spot sensors' forecast is the timeline from now (#339): now is the run.
-    monkeypatch.setattr(sensor_module, "now_nem", lambda: run_at + timedelta(minutes=1))
+    for module in (sensor_module, sys.modules[sensor_module.__package__ + ".region_timeline"]):
+        monkeypatch.setattr(module, "now_nem", lambda: run_at + timedelta(minutes=1))
     price_data = _make_price_data(run_at, intervals=8)
     coordinator = _fresh_coordinator()
     coordinator.data = MagicMock()

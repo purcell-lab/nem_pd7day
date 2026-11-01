@@ -571,3 +571,57 @@ def test_the_provider_imports_no_home_assistant_and_no_entity_module():
             imported.add(("." * node.level) + (node.module or ""))
     assert not any(name.split(".")[0] == "homeassistant" for name in imported), imported
     assert not imported & {".sensor", ".tariff_sensor"}, imported
+
+
+# ── Waiting on a publish (#339) ──────────────────────────────────────────────
+
+
+def test_a_wait_ends_when_a_warm_publishes():
+    """A reader that does not build the memo (a tariff) waits for the warm instead of calibrating."""
+    cf, d = provider(), price_data()
+
+    async def scenario():
+        waiter = asyncio.ensure_future(cf.wait_current(lambda: d, timeout=30))
+        await asyncio.sleep(0)
+        assert not waiter.done()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        cf.publish(cf.key(d), [{"time": "t", "value": 1.0}])
+        assert await waiter is True
+        return loop.time() - started
+
+    assert run(scenario()) < 0.5, "the publish did not wake the wait"
+
+
+def test_a_wait_is_true_at_once_when_current_and_false_on_its_timeout():
+    cf, d = provider(), price_data()
+    assert run(cf.wait_current(lambda: d, timeout=0.05)) is False
+    cf.publish(cf.key(d), [])
+    assert run(cf.wait_current(lambda: d, timeout=0.05)) is True
+
+
+def test_a_wait_sees_a_slot_written_without_a_publish(monkeypatch):
+    """Tests and older paths write the slot directly; the wait re-checks regardless."""
+    monkeypatch.setattr(_provider_mod, "RECHECK_SECONDS", 0.01)
+    coordinator = Coordinator()
+    cf, d = provider(coordinator), price_data()
+
+    async def scenario():
+        waiter = asyncio.ensure_future(cf.wait_current(lambda: d, timeout=5))
+        await asyncio.sleep(0.02)
+        coordinator._calibrated_forecast_cache[REGION] = (cf.key(d), [])
+        return await waiter
+
+    assert run(scenario()) is True
+
+
+def test_the_lazy_build_wakes_a_wait_too():
+    cf, d = provider(), price_data()
+
+    async def scenario():
+        waiter = asyncio.ensure_future(cf.wait_current(lambda: d, timeout=30))
+        await asyncio.sleep(0)
+        cf.forecast(d, CountingBuild())
+        return await asyncio.wait_for(waiter, 0.5)
+
+    assert run(scenario()) is True

@@ -8,7 +8,7 @@ Attributes: full 7-day tariff forecast as a list of {interval_time, tariff_$/kwh
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
 import datetime
@@ -40,7 +40,10 @@ from .calibrated_forecast import CalibratedForecast
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from . import tariff_pricing
 from .tariff_catalogue import library_version, seasonal as seasonal_tariff, tariff_name as catalogue_tariff_name
-from .nem_time import now_nem, offset_seam_point, parse_iso
+from .calibration_inputs import interval_key_for_period
+from .nem_time import now_nem, offset_seam_point, parse_iso, to_nem_iso
+from .region_timeline import region_timeline, timeline_forecast
+from .tariff_forecast import Interval, PriceCache, tariff_entries
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,7 +114,136 @@ def _losses_of(sensor: Any) -> tariff_pricing.LossFactors:
     return tariff_pricing.losses_for(value)
 
 
-class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+# Seconds a tariff write waits for the region's calibrated forecast warm before
+# calibrating on the event loop itself (#339).
+MEMO_WAIT_SECONDS = 60.0
+
+
+class CalibratedTariffMixin:
+    """A tariff's ``forecast`` from the price timeline, priced on the region's calibrated forecast memo (#339).
+
+    The memo is built off the loop by the region's forecast sensors. A tariff
+    write that finds it stale waits for their publish, up to
+    ``MEMO_WAIT_SECONDS``, rather than calibrate the run on the loop; only past
+    that, with no warm coming, does it fall back to the calibrated spot view.
+    """
+
+    _awaiting_memo = False
+    _memo_task: Any = None
+
+    if TYPE_CHECKING:
+        coordinator: Any
+        hass: Any
+        entity_id: str
+        _region: str
+        _store: Any
+
+        @property
+        def _price_data(self) -> Any: ...
+        def async_write_ha_state(self) -> None: ...
+        def _calibrated_value(self, period: Any) -> float | None: ...
+        def _get_additional_fee(self) -> float: ...
+        def _price_period(self, period: Any, calibrated: float | None = None) -> float | None: ...
+        def _lookup_period_info(self, period: Any) -> tuple[str | None, float | None]: ...
+
+    def _calibrated_view(self) -> CalibratedForecast:
+        return CalibratedForecast(self.coordinator, self._store, self._region)
+
+    def _write_when_calibrated(self) -> None:
+        """Write now if the memo holds this run, else once a warm publishes it."""
+        if self._calibrated_view().is_current(self._price_data):
+            self.async_write_ha_state()
+            return
+        if not self._awaiting_memo:
+            self._awaiting_memo = True
+            # A background task: Home Assistant's startup does not wait on it.
+            self._memo_task = self.hass.async_create_background_task(
+                self._async_write_once_calibrated(), name=f"nem_pd7day tariff memo wait {self.entity_id}",
+            )
+
+    async def _async_write_once_calibrated(self) -> None:
+        try:
+            await self._calibrated_view().wait_current(lambda: self._price_data, MEMO_WAIT_SECONDS)
+        finally:
+            self._awaiting_memo = False
+            self._memo_task = None
+        self.async_write_ha_state()
+
+    def _calibrated_entries(self, d: Any) -> list[dict]:
+        """The region's calibrated forecast: the memo, else built from the calibrated spot view."""
+        view = self._calibrated_view()
+        cached = view.cached(view.key(d))
+        if cached is not None:
+            return cached
+        spot_map = self._calibrated_spot_map(d)
+        return [
+            {"time": interval_key_for_period(p), "nemtime": to_nem_iso(parse_iso(p.nemtime)),
+             "raw_value": p.value, "value": self._calibrated_value_memoised(p, spot_map)}
+            for p in d.forecast
+        ]
+
+    def _tariff_forecast(self, d: Any, start: Any = None) -> list[dict[str, Any]]:
+        """The tariff ``forecast``: the region's timeline from now, from ``start`` (day 2-7) when given."""
+        calibrated = self._calibrated_entries(d)
+        entries = timeline_forecast(self, region_timeline(self, d, calibrated), calibrated)
+        if start is not None:
+            entries = [e for e in entries if start.includes(parse_iso(e["time"]))]
+        cache = getattr(self, "_tariff_price_cache", None)
+        if cache is None:
+            cache = self._tariff_price_cache = PriceCache()
+        cache.renew((id(calibrated), self._get_additional_fee()), pin=calibrated)
+
+        def price(interval: Interval, spot: float) -> float | None:
+            return self._price_period(interval, calibrated=spot)
+
+        return tariff_entries(entries, price, self._lookup_period_info, cache)
+
+    def _calibrated_value_memoised(self, period, spot_map: dict | None) -> float | None:
+        """Calibrated spot for a period, from the per run memo when it holds it.
+
+        ``spot_map`` comes from ``_calibrated_spot_map`` and is None when there
+        is nothing to memoise. An interval the memo does not carry falls through
+        to ``_calibrated_value`` rather than being reported as None, because a
+        memo miss is not evidence that the interval calibrates to nothing.
+
+        The memo is filled from the same ``calibrated_spot_for_period`` that
+        ``_calibrated_value`` calls, so a hit and a miss cannot publish
+        different prices for the same interval of the same run. That is the
+        safety argument for issue #62: it rests on there being one body, not on
+        two bodies agreeing today.
+        """
+        hit, spot = CalibratedForecast(self.coordinator, self._store, self._region).spot_memoised(period, spot_map)
+        if hit:
+            return spot
+        return self._calibrated_value(period)
+
+    def _calibrated_spot_map(self, d) -> dict | None:
+        """The per run calibrated spot memo for this region, or None.
+
+        Called once per attribute build, on the event loop, and the key is taken
+        in this call, by ``CalibratedForecast.spot_map``, and passed down rather
+        than being derived inside the memo helper:
+        that is the rule PR #76 established after a key taken inside executor
+        work was used to publish a result computed under a key that had already
+        moved. This path does no executor work at all, so there is no window
+        between the key and the read, and the argument keeps it impossible to
+        reintroduce one without changing this call site.
+
+        None when there is no calibration store, because then every interval is
+        a raw passthrough and there is nothing to memoise.
+        """
+        try:
+            return CalibratedForecast(self.coordinator, self._store, self._region).spot_map(d)
+        except Exception:  # noqa: BLE001 - a memo must never break a state write
+            _LOGGER.debug(
+                "calibrated spot memo unavailable for %s, calibrating inline",
+                self._region,
+                exc_info=True,
+            )
+            return None
+
+
+class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], CalibratedTariffMixin, SensorEntity):
     """Lifecycle, device, price data, usage fee and calibrated spot for one region's tariff entity."""
 
     _attr_state_class = None
@@ -151,18 +283,25 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         # One removal callback for the whole life of the entity, cancelling whichever
         # boundary timer is pending then. Registering each timer's own unsubscribe on
         # every tick grew the removal list by 48 a day (#334).
-        self.async_on_remove(lambda: self._unsub_boundary() if self._unsub_boundary else None)
+        # The same callback cancels a write waiting on the calibrated forecast (#339).
+        def cancel_pending() -> None:
+            if self._unsub_boundary:
+                self._unsub_boundary()
+            if self._memo_task:
+                self._memo_task.cancel()
+
+        self.async_on_remove(cancel_pending)
         self._schedule_next_boundary()
 
         # Subscribe to DispatchCoordinator so state refreshes every 5 minutes
         runtime_data = getattr(self._entry, "runtime_data", None)
         dispatch_coordinator = runtime_data.dispatch if runtime_data else None
         if dispatch_coordinator is not None:
-            self.async_on_remove(
-                dispatch_coordinator.async_add_listener(
-                    lambda: self.async_write_ha_state()
-                )
-            )
+            self.async_on_remove(dispatch_coordinator.async_add_listener(self._write_when_calibrated))
+
+    def _handle_coordinator_update(self) -> None:
+        """A new PD7DAY run: write once the region's calibrated forecast holds it (#339)."""
+        self._write_when_calibrated()
 
     def _next_nem_boundary(self) -> datetime.datetime:
         """Return the next :00 or :30 boundary in NEM time (UTC+10), plus a small delay."""
@@ -185,7 +324,7 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
 
     async def _handle_interval_tick(self, _now: datetime.datetime) -> None:
         """Called at each NEM interval boundary to update state and reschedule."""
-        self.async_write_ha_state()
+        self._write_when_calibrated()
         self._schedule_next_boundary()
 
     @property
@@ -257,50 +396,6 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         run_at = d.forecast_generated_at if d else None
         return CalibratedForecast(self.coordinator, self._store, self._region).spot(period, run_at)
 
-    def _calibrated_value_memoised(self, period, spot_map: dict | None) -> float | None:
-        """Calibrated spot for a period, from the per run memo when it holds it.
-
-        ``spot_map`` comes from ``_calibrated_spot_map`` and is None when there
-        is nothing to memoise. An interval the memo does not carry falls through
-        to ``_calibrated_value`` rather than being reported as None, because a
-        memo miss is not evidence that the interval calibrates to nothing.
-
-        The memo is filled from the same ``calibrated_spot_for_period`` that
-        ``_calibrated_value`` calls, so a hit and a miss cannot publish
-        different prices for the same interval of the same run. That is the
-        safety argument for issue #62: it rests on there being one body, not on
-        two bodies agreeing today.
-        """
-        hit, spot = CalibratedForecast(self.coordinator, self._store, self._region).spot_memoised(period, spot_map)
-        if hit:
-            return spot
-        return self._calibrated_value(period)
-
-    def _calibrated_spot_map(self, d) -> dict | None:
-        """The per run calibrated spot memo for this region, or None.
-
-        Called once per attribute build, on the event loop, and the key is taken
-        in this call, by ``CalibratedForecast.spot_map``, and passed down rather
-        than being derived inside the memo helper:
-        that is the rule PR #76 established after a key taken inside executor
-        work was used to publish a result computed under a key that had already
-        moved. This path does no executor work at all, so there is no window
-        between the key and the read, and the argument keeps it impossible to
-        reintroduce one without changing this call site.
-
-        None when there is no calibration store, because then every interval is
-        a raw passthrough and there is nothing to memoise.
-        """
-        try:
-            return CalibratedForecast(self.coordinator, self._store, self._region).spot_map(d)
-        except Exception:  # noqa: BLE001 - a memo must never break a state write
-            _LOGGER.debug(
-                "calibrated spot memo unavailable for %s, calibrating inline",
-                self._region,
-                exc_info=True,
-            )
-            return None
-
     @property
     def native_value(self) -> float | None:
         """Current interval tariff price in $/kWh: dispatch first, then the PD7DAY forecast."""
@@ -327,34 +422,6 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         if period is None:
             return None
         return self._price_period(period)
-
-    def _forecast_entries(self, d: Any, periods: Iterable[Any]) -> list[dict[str, Any]]:
-        """One forecast attribute entry per interval of ``periods``, from run ``d``."""
-        # One memo read for the whole build, taken on the loop. Every
-        # tariff entity of this region, and the price forecast sensor,
-        # calibrate the same intervals of the same run, so the second and
-        # later builds of a run do no calibration at all. See issue #62.
-        spot_map = self._calibrated_spot_map(d)
-        entries: list[dict[str, Any]] = []
-        for period in periods:
-            # Calibrate once and reuse for both the price and the spot key.
-            # A None spot means the interval could not be calibrated, so
-            # both keys stay None rather than being filled with a raw or
-            # zero stand-in.
-            spot = self._calibrated_value_memoised(period, spot_map)
-            value = None if spot is None else self._price_period(period, calibrated=spot)
-            period_name, network_rate = self._lookup_period_info(period)
-            entries.append({
-                "time": period.time,           # interval START (nemtime - 30 min)
-                "nemtime": period.nemtime,     # interval END (AEMO convention)
-                "spot_raw": round(period.value, 6),  # uncalibrated spot price $/kWh
-                "spot": None if spot is None else round(spot, 6),  # calibrated spot $/kWh
-                "value": value,                # spot + network ToU component $/kWh
-                "period": period_name,         # tariff period name for this interval
-                "network_rate": network_rate,  # network component $/kWh for this interval
-            })
-        return entries
-
 
 class NemPd7dayTariffSensor(TariffEntityBase):
     """One sensor per (distributor, tariff_code) for the regional device."""
@@ -628,16 +695,16 @@ class NemPd7dayTariffSensor(TariffEntityBase):
             f"demand, or feed-in components not captured here."
         )
 
-    def _forecast_periods(self, d: Any) -> list[Any]:
-        """The intervals the forecast attribute lists: all of day 1 to 7."""
-        return d.forecast
+    def _forecast_start(self) -> Any:
+        """Where the forecast attribute starts: None, now (day 1 to 7)."""
+        return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Full 7-day tariff forecast with rich metadata."""
         d = self._price_data
         forecast_list: list[dict[str, Any]] = (
-            [] if d is None else self._forecast_entries(d, self._forecast_periods(d))
+            [] if d is None else self._tariff_forecast(d, self._forecast_start())
         )
 
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
@@ -713,14 +780,11 @@ class TariffForecastDays27Sensor(NemPd7dayTariffSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._amber_ids = track_day27_start(self, self._entry, self.async_write_ha_state)
+        self._amber_ids = track_day27_start(self, self._entry, self._write_when_calibrated)
 
-    def _forecast_periods(self, d: Any) -> list[Any]:
-        """The intervals the day 2-7 forecast lists: from where Amber's forecast ends (#235)."""
-        start = day27_start_for(self.hass, self._amber_ids)
-        # The memo covers the whole run, so the day 2 to 7 trim shares the
-        # slot the day 1 to 7 sensor of the same region filled.
-        return [p for p in d.forecast if start.includes(parse_iso(p.time))]
+    def _forecast_start(self) -> Any:
+        """Where the day 2-7 forecast starts: where Amber's forecast ends, or by the clock (#235)."""
+        return day27_start_for(self.hass, self._amber_ids)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -874,15 +938,15 @@ class NemPd7dayExportTariffSensor(TariffEntityBase):
             )
             return None
 
-    def _forecast_periods(self, d: Any) -> list[Any]:
-        """The intervals the forecast attribute lists: all of day 1 to 7."""
-        return d.forecast
+    def _forecast_start(self) -> Any:
+        """Where the forecast attribute starts: None, now (day 1 to 7)."""
+        return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         d = self._price_data
         # Same per region memo the import tariff sensors read. See #62.
-        forecast_list = [] if d is None else self._forecast_entries(d, self._forecast_periods(d))
+        forecast_list = [] if d is None else self._tariff_forecast(d, self._forecast_start())
 
         distributor_display = DISTRIBUTOR_DISPLAY_NAMES.get(
             self._distributor, self._distributor.title(),
@@ -952,12 +1016,11 @@ class ExportTariffForecastDays27Sensor(NemPd7dayExportTariffSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._amber_ids = track_day27_start(self, self._entry, self.async_write_ha_state)
+        self._amber_ids = track_day27_start(self, self._entry, self._write_when_calibrated)
 
-    def _forecast_periods(self, d: Any) -> list[Any]:
-        """The intervals the day 2-7 forecast lists: from where Amber's forecast ends (#235)."""
-        start = day27_start_for(self.hass, self._amber_ids)
-        return [p for p in d.forecast if start.includes(parse_iso(p.time))]
+    def _forecast_start(self) -> Any:
+        """Where the day 2-7 forecast starts: where Amber's forecast ends, or by the clock (#235)."""
+        return day27_start_for(self.hass, self._amber_ids)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

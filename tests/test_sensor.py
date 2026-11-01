@@ -201,6 +201,8 @@ def ascending_periods(run_at_dt: datetime, n: int, start=0.05, step=0.001) -> li
 def freeze_now(monkeypatch, t: datetime) -> None:
     """The sensor module's clock at ``t``: ``forecast`` is the timeline from now (#339)."""
     monkeypatch.setattr(_sensor_mod, "now_nem", lambda: t)
+    region_timeline = importlib.import_module(_sensor_mod.__package__ + ".region_timeline")
+    monkeypatch.setattr(region_timeline, "now_nem", lambda: t)
 
 
 def set_current_interval(sensor, value: float):
