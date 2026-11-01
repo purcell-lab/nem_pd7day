@@ -330,7 +330,36 @@ def test_tick_writes_once_and_reschedules_once(cls):
     tracker.assert_called_once()
     assert tracker.call_args.args[0] is sensor.hass
     assert tracker.call_args.args[1] == sensor._handle_interval_tick
-    sensor.async_on_remove.assert_called_once_with(unsub)
+    # The tick holds the new timer; it adds nothing to the removal list (#334).
+    sensor.async_on_remove.assert_not_called()
+    assert sensor._unsub_boundary is unsub
+
+
+@pytest.mark.parametrize("cls", TARIFF_CLASSES)
+def test_ten_ticks_leave_one_removal_callback_that_cancels_the_pending_timer(cls):
+    """Every tick registered its timer's unsubscribe: 48 a day per sensor, never released (#334)."""
+    sensor = make_sensor(cls)
+    removals = []
+    sensor.async_on_remove = removals.append
+    sensor.async_write_ha_state = MagicMock()
+    timers = [MagicMock(name=f"timer{i}") for i in range(12)]
+    it = iter(timers)
+    now = datetime(2026, 9, 2, 10, 30, 5, tzinfo=NEM_TZ)
+    sensor._entry.runtime_data = None  # no dispatch listener: only the boundary timer's callback
+
+    async def parent_added(self):
+        return None
+
+    with patch.object(_tariff_mod, "async_track_point_in_time", side_effect=lambda *a: next(it)), \
+            patch.object(_tariff_mod, "dt_util", types.SimpleNamespace(now=lambda: now)), \
+            patch.object(_tariff_mod.CoordinatorEntity, "async_added_to_hass", parent_added):
+        run_async(sensor.async_added_to_hass())
+        for _ in range(10):
+            run_async(sensor._handle_interval_tick(now))
+    assert len(removals) == 1  # one callback, however many ticks
+    removals[0]()
+    timers[10].assert_called_once()  # the pending timer is cancelled
+    assert all(not t.called for t in timers[:10])  # the fired ones are left alone
 
 
 @pytest.mark.parametrize(
@@ -374,12 +403,15 @@ def test_added_to_hass_calls_super_schedules_and_subscribes(cls, runtime):
     if runtime == "dispatch":
         assert events == ["super", boundary, "subscribe"]
         dispatch.async_add_listener.assert_called_once()
-        assert removals == [(timer_unsub,), (listener_unsub,)]
+        assert len(removals) == 2 and removals[1] == (listener_unsub,)
         # The listener writes state, once per dispatch update.
         dispatch.callback()
         assert events[-1] == "write"
         sensor.async_write_ha_state.assert_called_once()
     else:
         assert events == ["super", boundary]
-        assert removals == [(timer_unsub,)]
+        assert len(removals) == 1
         sensor.async_write_ha_state.assert_not_called()
+    # The first removal callback cancels the pending boundary timer (#334).
+    removals[0][0]()
+    timer_unsub.assert_called_once()
