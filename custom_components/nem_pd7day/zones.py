@@ -112,6 +112,20 @@ CITIES: dict[str, tuple[tuple[str, str, float, float, tuple[str, ...]], ...]] = 
 }
 
 
+# Connection points within a preset city's radius but outside its electrical
+# area, behind different constraints from the city's load (#317), by TNI
+# prefix, with why. An interim: grouping members by the constraints they bind
+# together is the real fix.
+OUTSIDE: dict[str, tuple[tuple[str, ...], str]] = {
+    "sydney": (("NEP", "NVPP", "NCLG"),
+               "Central Coast and Lake Macquarie plant (Eraring, Vales Point, Colongra), behind the Central "
+               "Coast's constraints rather than Sydney load's"),
+    "wagga_wagga": (("NBLW", "NTU"), "Tumut hydro (Blowering, Jounama), behind the Snowy constraints"),
+    "sunshine_coast": (("QWIP", "QWIV"), "Wivenhoe, Brisbane valley pumped hydro, behind South East "
+                                         "Queensland's constraints rather than the Sunshine Coast's"),
+}
+
+
 @dataclass(frozen=True)
 class Member:
     node: NodeInfo
@@ -140,6 +154,7 @@ class Zone:
     nearest_only: bool
     load_points: tuple[LoadPoint, ...] = ()
     nearest_city: Optional[CityReference] = None
+    excluded: tuple[Member, ...] = ()
 
     @property
     def stations(self) -> tuple[str, ...]:
@@ -212,15 +227,21 @@ def nearest_city(
     return CityReference(key, name, round(distance_km(lat, lon, clat, clon), 1), mlf, tuple(p.tni for p in points))
 
 
-def _members(catalogue: Catalogue, region: str, lat: float, lon: float, radius_km: float) -> tuple[tuple, bool]:
+def _members(
+    catalogue: Catalogue, region: str, lat: float, lon: float, radius_km: float, outside: tuple[str, ...] = (),
+) -> tuple[tuple, bool, tuple]:
+    """(members, nearest_only, excluded): the nodes within the radius, nearest first, less those
+    outside the city's electrical area; the nearest node where none is left."""
     located = sorted(
         (Member(node, round(distance_km(lat, lon, node.latitude, node.longitude), 1))
          for node in catalogue.region_nodes(region)
          if node.latitude is not None and node.longitude is not None),
         key=lambda m: (m.distance_km, m.node.tni),
     )
-    inside = tuple(m for m in located if m.distance_km <= radius_km)
-    return (inside, False) if inside else (tuple(located[:1]), True)
+    excluded = tuple(m for m in located if m.distance_km <= radius_km and m.node.tni.startswith(outside)) \
+        if outside else ()
+    inside = tuple(m for m in located if m.distance_km <= radius_km and m not in excluded)
+    return (inside, False, excluded) if inside else (tuple(located[:1]), True, excluded)
 
 
 def build_zone(
@@ -240,9 +261,11 @@ def build_zone(
             return None
         _key, name, lat, lon, tnis = found[0]
     points = tuple(p for p in (loads.get(t) for t in tnis) if p is not None and p.region == region) if loads else ()
-    members, nearest_only = _members(catalogue, region, lat, lon, radius_km)
+    outside = OUTSIDE.get(key, ((), ""))[0] if key != ZONE_HOME else ()
+    members, nearest_only, excluded = _members(catalogue, region, lat, lon, radius_km, outside)
     reference = nearest_city(region, lat, lon, loads) if key == ZONE_HOME else None
-    return Zone(key, name, lat, lon, radius_km, members, nearest_only, points, reference)
+    return Zone(key, name, lat, lon, radius_km, members, nearest_only, points,
+                nearest_city=reference, excluded=excluded)
 
 
 def station_key(node: NodeInfo) -> str:
