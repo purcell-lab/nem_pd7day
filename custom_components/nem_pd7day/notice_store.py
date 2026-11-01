@@ -41,7 +41,7 @@ class GridNoticeStore:
     """
 
     def __init__(self, hass: "HomeAssistant") -> None:
-        self._store = Store(hass, NOTICE_STORE_VERSION, NOTICE_STORE_KEY)
+        self._store: Store[dict] = Store(hass, NOTICE_STORE_VERSION, NOTICE_STORE_KEY)
         self._notices: dict[str, list[GridNoticeAnnotation]] = {}
         self._last_seen_notice_id: int = 0
         # When the NEMWEB notice feed was last polled successfully in this

@@ -289,13 +289,13 @@ def fetch_dispatch_prices(
         _LOGGER.debug("ELEC_NEM_SUMMARY failed (%s) — falling back to DispatchIS", exc)
 
     # Fallback: DispatchIS_Reports zip
-    results = _fetch_dispatchis()
-    if results is None:
+    fallback = _fetch_dispatchis()
+    if fallback is None:
         raise ValueError("DispatchIS fallback unavailable (zip not yet published)")
-    sample = next(iter(results.values()), None)
+    sample = next(iter(fallback.values()), None)
     _LOGGER.debug(
         "Dispatch (DispatchIS fallback): %d regions fetched, settlement=%s (NEMtime)",
-        len(results),
+        len(fallback),
         settlement_iso(sample.interval_datetime) if sample else "?",
     )
-    return results
+    return fallback

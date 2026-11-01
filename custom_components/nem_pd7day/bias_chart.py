@@ -128,7 +128,7 @@ def render_chart(
 
     _has_tod = tod_stats is not None and bool(getattr(tod_stats, "slots", None))
 
-    if _has_tod:
+    if _has_tod and tod_stats is not None:
         # Real ToD data — plot actual, raw forecast, calibrated per slot
         slots = sorted(tod_stats.slots, key=lambda s: s.hour + s.minute / 60)
         x_vals = [s.hour + s.minute / 60 for s in slots]
@@ -185,7 +185,7 @@ def render_chart(
 
     n_tod = len(_TODS)
     ax2.imshow(a_mat.T, cmap=cmap, norm=norm, aspect="auto",
-               extent=[-0.5, 3.5, -0.5, n_tod - 0.5])
+               extent=(-0.5, 3.5, -0.5, n_tod - 0.5))
 
     for i, hor in enumerate(_HORIZONS):
         for j, tod in enumerate(_TODS):

@@ -49,7 +49,7 @@ class ScarcityPremiumSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"nem_pd7day_{entry.entry_id}_qld1_scarcity_premium"
         self._attr_device_info = base_sensor._attr_device_info
         self._samples: dict[str, float] = {}
-        self._storage = None
+        self._storage: Store[dict] | None = None
         self._lock = asyncio.Lock()
         self._result = PremiumResult("initialising", [], 0, None, None)
 
