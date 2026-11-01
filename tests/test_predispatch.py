@@ -277,6 +277,35 @@ def _coordinator(snapshot, run_at=None):
     return coord
 
 
+def test_new_runs_only_notify_and_the_sensors_beat_with_dispatch():
+    """#334: the pre-dispatch coordinator no longer wakes its listeners on every dispatch poll that
+    found no new run; its sensors step to the next period on the constraints coordinator instead."""
+    assert _coordinator(_snapshot()).always_update is False
+    removals, writes = [], []
+
+    class _Heartbeat:
+        def async_add_listener(self, callback):
+            self.callback = callback
+            return "unsub"
+
+    heartbeat = _Heartbeat()
+    for sensor in (
+        _sensor.NemPd7dayPredispatchInterconnectorSensor(
+            _coordinator(_snapshot()), SimpleNamespace(entry_id="e1"), "QLD1", "NSW1-QLD1", heartbeat),
+        _sensor.NemPd7dayPredispatchConstraintsSensor(_coordinator(_snapshot()), SimpleNamespace(entry_id="e1"),
+                                                      "QLD1", heartbeat),
+    ):
+        sensor.async_on_remove = removals.append
+        sensor.async_write_ha_state = lambda: writes.append(1)
+        run_async(sensor.async_added_to_hass())
+        heartbeat.callback()
+    assert removals == ["unsub", "unsub"] and writes == [1, 1]
+    lone = _sensor.NemPd7dayPredispatchConstraintsSensor(_coordinator(_snapshot()), SimpleNamespace(entry_id="e1"), "QLD1")
+    lone.async_on_remove = removals.append
+    run_async(lone.async_added_to_hass())
+    assert removals == ["unsub", "unsub"]  # no heartbeat, no listener
+
+
 def test_interconnector_sensor_current_period_and_forecast(monkeypatch):
     monkeypatch.setattr(_sensor, "now_nem", lambda: _at(7))
     sensor = _sensor.NemPd7dayPredispatchInterconnectorSensor(

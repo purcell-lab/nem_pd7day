@@ -298,6 +298,7 @@ AEMO's 30-minute pre-dispatch runs every half hour and covers each trading perio
 
 - **URL**: `https://www.nemweb.com.au/Reports/Current/PredispatchIS_Reports/`
 - **Schedule**: no timer of its own. After each live dispatch poll the shared coordinator checks whether the run it holds is 30 minutes old; only then does it read the listing, so usually one or two listing requests per half hour, and one zip per new run.
+- **Updates**: the P5MIN and pre-dispatch coordinators tell their sensors only of a new run. The DUID, node, zone and pre-dispatch sensors still update after every dispatch poll, through the binding constraints coordinator, so they move to the next interval or period and age out on time. Before v3.40.1 every poll woke each of those sensors up to three times over (#334).
 - **Load**: the zip is about 800 KB (about 38 MB a day), the CSV inside about 8 MB; it is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
 
 ### Sensor state updates (every 30 minutes)

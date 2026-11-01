@@ -278,6 +278,7 @@ def test_the_retired_sensors_are_removed_and_the_kept_one_is_not():
 
 def test_p5min_is_not_fetched_until_a_duid_sensor_listens():
     coord = _coord.P5MinCoordinator(SimpleNamespace(), None, SimpleNamespace())
+    assert coord.always_update is False  # a poll that found no new run wakes no sensor (#334)
     requests = []
     coord._guard = SimpleNamespace(request=lambda: requests.append(1))
     coord._listeners = {}
