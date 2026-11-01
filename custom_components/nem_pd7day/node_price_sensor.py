@@ -58,6 +58,8 @@ from .local_price_sensor import (
     listen_to_forecasts,
 )
 from .nem_time import now_nem
+from .forecast_hub import ForecastHub
+from .predispatch_local_price import MAX_AGE as PD_MAX_AGE
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 
 SUFFIX = "node_price"
@@ -84,9 +86,11 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
 
     def __init__(
         self, constraints: Any, p5min: Any, entry: Any, region: str, tni: str, node: Optional[NodeInfo] = None,
-        predispatch: Any = None,
+        predispatch: Any = None, hub: Any = None,
     ) -> None:
         super().__init__(constraints)
+        # The shared forecast hub (#336); a sensor built alone keeps its own.
+        self._hub = hub if hub is not None else ForecastHub()
         self._p5min = p5min
         self._predispatch = predispatch
         self._region = region
@@ -180,7 +184,9 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
 
     def _forecast_attrs(self, now: datetime) -> dict[str, Any]:
         run = self._p5min.latest if self._p5min is not None else None
-        status, points = node_forecast(run, self._node_region, self._mlf, self._duids, now)
+        args = (self._node_region, self._mlf, self._duids)
+        status, points = self._hub.p5("node", run, args, now, MAX_AGE,
+                                      lambda: node_forecast(run, self._node_region, self._mlf, self._duids, now))
         return {
             "forecast_source": "P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE",
             "forecast_status": status,
@@ -204,7 +210,8 @@ class NemPd7dayNodePriceSensor(CoordinatorEntity, SensorEntity):
             price = rrp.get(end)
             return node_price_mwh(price, adjustment, mlf) / 1000.0 if price is not None else None
 
-        return predispatch_attrs(predispatch_adjustments(snapshot, self._duids, now), snapshot, value)
+        return self._hub.pd("node", snapshot, (self._node_region, mlf, self._duids), now, PD_MAX_AGE, lambda: (
+            predispatch_attrs(predispatch_adjustments(snapshot, self._duids, now), snapshot, value)))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -272,12 +279,12 @@ def node_forecast(
 
 def node_price_entities(
     constraints: Any, p5min: Any, entry: Any, region: str, tnis: list[str], catalogue: Optional[Catalogue] = None,
-    predispatch: Any = None,
+    predispatch: Any = None, hub: Any = None,
 ) -> list[SensorEntity]:
     """The chosen nodes' sensors, enabled; there are no presets."""
     return [
         NemPd7dayNodePriceSensor(
-            constraints, p5min, entry, region, tni, catalogue.node(tni) if catalogue else None, predispatch,
+            constraints, p5min, entry, region, tni, catalogue.node(tni) if catalogue else None, predispatch, hub,
         )
         for tni in tnis
     ]
