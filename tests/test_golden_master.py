@@ -215,6 +215,18 @@ def _binding_constraints(built: harness.Built, snap: dict) -> None:
 
 def _local_prices(built: harness.Built, snap: dict) -> None:
     """Real 13:30 DispatchIS, P5MIN and 13:02 pre-dispatch runs of 31 Oct 2026 (#334)."""
+    # The timeline (#338): P5MIN raw in 5 minutes, then pre-dispatch from where it ends,
+    # its 14:00-14:30 half hour split at 14:25, to the run's last period.
+    timeline = _one(snap, "_price_timeline")["extra_state_attributes"]
+    points = timeline["timeline"]
+    sources = [p["source"] for p in points]
+    assert sources == ["p5min"] * 11 + ["predispatch"] * 76
+    assert points[0]["time"] == "2026-10-31T13:30:00+10:00" and {p["resolution_minutes"] for p in points[:11]} == {5}
+    assert (points[11]["time"], points[11]["resolution_minutes"]) == ("2026-10-31T14:25:00+10:00", 5)
+    assert all(p["calibrated_source"] == "passthrough" for p in points[11:])
+    assert timeline["timeline_sources"]["pd7day"]["status"] == "covered"  # the fixture's PD7DAY is short
+    forecast = _one(snap, "_nsw1_forecast")["extra_state_attributes"]
+    assert forecast["timeline"] == points, "the spot forecast sensor publishes the same timeline"
     uranquinty = _one(snap, "_URANQ14_local_price_adjustment")
     attrs = uranquinty["extra_state_attributes"]
     # The DispatchIS file's own row, not a fallback: the dispatch interval is fresh.
