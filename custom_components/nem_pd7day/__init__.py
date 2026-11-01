@@ -75,6 +75,8 @@ class NemPd7dayEntryData:
     # The tariff the day 2-7 sensors follow and the registry is synced to
     # (#260); resolved once per setup, before the platforms read it.
     active_tariff: Any = None
+    # Pre-dispatch forecasts recorded against TradingIS (#337 stage 3a).
+    pd_record: Any = None
 
 
 # Typed alias for entries belonging to this integration.
@@ -90,6 +92,7 @@ async def _delayed_refresh(coordinator: PD7DayCoordinator, delay_s: float) -> No
 async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> bool:
     """Set up NEM PD7DAY from a config entry."""
     from .actual_price_service import shared_actual_price_service
+    from .predispatch_record import PredispatchRecord
     from .nem_time import fetch_times_as_utc, now_nem
 
     hass.data.setdefault(DOMAIN, {})
@@ -447,7 +450,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     actual_service = shared_actual_price_service(
         hass, async_get_clientsession(hass), hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY),
     )
-    entry.async_on_unload(actual_service.register(entry.entry_id, region, store))
+    entry.runtime_data.pd_record = pd_record = PredispatchRecord(hass, region)
+    await pd_record.async_load()
+    entry.async_on_unload(actual_service.register(entry.entry_id, region, store, pd_record))
 
     # ── Periodic calibration refit (daily) ───────────────────────────────────
     @callback

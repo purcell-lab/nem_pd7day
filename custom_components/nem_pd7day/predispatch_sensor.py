@@ -251,8 +251,11 @@ class NemPd7dayPredispatchConstraintsSensor(_PredispatchSensor):
 
     def __init__(
         self, coordinator: PredispatchCoordinator, entry: Any, region: str, dispatch_constraints: Any = None,
+        record: Any = None,
     ) -> None:
         super().__init__(coordinator, entry, region, dispatch_constraints)
+        # The region's PredispatchRecord, for its diagnostics (#337 stage 3a).
+        self._record = record
         self._attr_unique_id = f"nem_pd7day_{region.lower()}_predispatch_binding_constraints"
         self._attr_name = "Predispatch Binding Constraints"
         # The shared dispatch ConstraintCoordinator, read for rhs_vs_dispatch only.
@@ -307,6 +310,8 @@ class NemPd7dayPredispatchConstraintsSensor(_PredispatchSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         snapshot, end = self._current()
         attrs = self._run_attrs(snapshot)
+        if self._record is not None:
+            attrs.update(self._record.stats())
         if snapshot is None or end is None:
             return attrs
         now = now_nem()

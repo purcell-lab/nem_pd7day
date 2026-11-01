@@ -153,9 +153,9 @@ def _horizon_hours(
     return horizon_h
 
 
-def _prune(accum: dict[tuple[str, str], dict], log: ObservationSink) -> None:
-    """Prune the log to MAX_TOTAL_OBS and retire the dropped pairs."""
-    for dropped in log.prune(MAX_TOTAL_OBS):
+def _prune(accum: dict[tuple[str, str], dict], log: ObservationSink, max_total: int = MAX_TOTAL_OBS) -> None:
+    """Prune the log to ``max_total`` and retire the dropped pairs."""
+    for dropped in log.prune(max_total):
         interval = dropped.get("interval_time")
         run_at = dropped.get("forecast_run_at")
         if isinstance(interval, str) and isinstance(run_at, str):
@@ -171,6 +171,7 @@ def record_actual(
     actual_rrp: float,
     calibration_region: str | None,
     source: str,
+    max_total: int = MAX_TOTAL_OBS,
 ) -> int:
     """
     Match the actual RRP for an interval against all PD7DAY forecasts
@@ -213,6 +214,6 @@ def record_actual(
         new_count += 1
 
     if new_count:
-        _prune(accum, log)
+        _prune(accum, log, max_total)
 
     return new_count

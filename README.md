@@ -304,6 +304,15 @@ AEMO's 30-minute pre-dispatch runs every half hour and covers each trading perio
 - **Updates**: the P5MIN and pre-dispatch coordinators tell their sensors only of a new run. The DUID, node, zone and pre-dispatch sensors still update after every dispatch poll, through the binding constraints coordinator, so they move to the next interval or period and age out on time. Before v3.40.1 every poll woke each of those sensors up to three times over (#334).
 - **Load**: the zip is about 800 KB (about 38 MB a day), the CSV inside about 8 MB; it is unzipped and parsed in the executor, through the shared NEMWEB request gate. A failure here never touches the price path.
 
+### Pre-dispatch forecasts recorded against actuals (stage 3a, #337)
+
+Each new pre-dispatch run's regional price forecast is kept, and each settled half hour's TradingIS price is paired with every kept forecast of it, as PD7DAY's are. This only records: nothing uses these observations until a pre-dispatch calibration is fitted (stage 3b, once there are at least 14 days).
+
+- **Storage**: per region, its own forecast history (`nem_pd7day.<region>.pd_forecast_history`, the next trading day plus a margin, 3 days) and daily observation segments (`…pd_observation_segments`, `…pd_observations.<date>`). The PD7DAY stores are untouched.
+- **Thinning**: pre-dispatch runs 48 times a day, so every run is kept within 6 hours of an interval, every 2nd run from 6 to 12 hours, every 4th from 12 to 24 hours and every 8th beyond: about 25 observations per interval, 1,200 a day. A run's place in the sequence is its run time floored to the half hour, so the same runs are kept everywhere.
+- **Cap**: 100,000 observations per region (`MAX_TOTAL_OBS_PD`), about 83 days, the oldest day dropped first: at the cap about 50 MB per region on disk, as PD7DAY's log.
+- **Diagnostics**: `Predispatch Binding Constraints` shows `pd_observations` and `pd_history_days`.
+
 ### Sensor state updates (every 30 minutes)
 
 Forecast sensor states — price forecast and interconnector flow — advance automatically at each 30-minute interval boundary (:00 and :30 past every hour). The state always reflects the current interval from the most recent fetch, without waiting for the next PD7DAY fetch. This means:
@@ -845,6 +854,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 3.42.0 | Pre-dispatch forecasts are recorded against TradingIS actuals for stage 3b's calibration (#337 stage 3a, PR #352): a per-region history and observation log under `pd_` keys, thinned by horizon to about 25 observations per interval and capped at 100,000 (about 83 days); `Predispatch Binding Constraints` shows `pd_observations` and `pd_history_days`. No published value changes. Suite goes from 2016 to 2038 tests. |
 | 3.41.0 | Stage 1 of the forecast timeline plan (#335), no published value changed: one TradingIS fetch serves every entry, 2 NEMWEB requests a half hour instead of 10 on a five-entry install (PR #350); P5MIN keeps each region's RRP and is fetched for every region after each dispatch poll (PR #349); every price source carries an identity for later stages to cache on, and four more modules join the import layers (PR #351). Suite goes from 1996 to 2016 tests. |
 | 3.40.2 | STPASA is fetched at setup whenever a region has none (a fresh install, or more than 4 hours down), an entry added later is served from the last download, and the STPASA Data sensor shows a fetch as soon as it is saved (#346). The platforms no longer pass `update_before_add`, which refreshed every coordinator inside setup and on a cached restart downloaded PD7DAY there and then (#347). Suite goes from 1984 to 1996 tests. |
 | 3.40.1 | Home has one zone, in the region whose grid serves it; the other entries' Home zone sensors are removed (PR #332). Zones work out their stations once and their pre-dispatch forecast once per run and period (Adelaide: 5.0 to 0.81 ms per update, PR #331). P5MIN and pre-dispatch notify their sensors of a new run only, so a local price sensor writes once per dispatch poll, not up to three times (PR #342). Fixes the tariff sensors' half-hour timer leak (PR #341) and a memberless zone reading `conflicting_rows` (PR #343). Suite goes from 1973 to 1984 tests. |

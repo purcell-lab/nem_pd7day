@@ -330,14 +330,32 @@ def storage_keys(region: str) -> tuple[str, str, str]:
     )
 
 
-def observation_manifest_key(region: str) -> str:
-    """Storage key of the list of daily observation segments for a region."""
-    return f"nem_pd7day.{region.lower()}.observation_segments"
+def observation_manifest_key(region: str, prefix: str = "") -> str:
+    """Storage key of the list of daily observation segments for a region.
+
+    ``prefix`` keeps another source's log apart: ``pd_`` for pre-dispatch (#337).
+    """
+    return f"nem_pd7day.{region.lower()}.{prefix}observation_segments"
 
 
-def observation_segment_key(region: str, date: str) -> str:
+def observation_segment_key(region: str, date: str, prefix: str = "") -> str:
     """Storage key of one day's observations (``date`` is YYYY-MM-DD, NEM)."""
-    return f"nem_pd7day.{region.lower()}.observations.{date}"
+    return f"nem_pd7day.{region.lower()}.{prefix}observations.{date}"
+
+
+# Pre-dispatch forecasts recorded against TradingIS (#337 stage 3a): their own
+# forecast history and observation log, so the PD7DAY stores are untouched.
+PD_KEY_PREFIX = "pd_"
+# Thinned as predispatch_history describes, this holds about 83 days.
+MAX_TOTAL_OBS_PD = 100_000
+# A period is settled within a day of the run that forecast it, so the history
+# needs only the next trading day plus a margin.
+PD_HISTORY_DAYS = 3
+
+
+def pd_forecast_history_key(region: str) -> str:
+    """Storage key of a region's pre-dispatch forecast history."""
+    return f"nem_pd7day.{region.lower()}.{PD_KEY_PREFIX}forecast_history"
 
 
 # Legacy (unscoped) key names — used only for one-time migration

@@ -289,10 +289,13 @@ async def _grid_entities(
     dispatch = entry.runtime_data.dispatch
     constraints = shared_constraints(hass, dispatch)
     predispatch = shared_predispatch(hass, dispatch)
+    record = getattr(entry.runtime_data, "pd_record", None)
+    if record is not None:
+        entry.async_on_unload(record.listen(predispatch))
     return [
         NemPd7dayGridNoticesSensor(coordinator, entry, region, coordinator.notice_store),
         NemPd7dayBindingConstraintsSensor(constraints, entry, region),
-        NemPd7dayPredispatchConstraintsSensor(predispatch, entry, region, constraints),
+        NemPd7dayPredispatchConstraintsSensor(predispatch, entry, region, constraints, record),
         *(
             NemPd7dayPredispatchInterconnectorSensor(predispatch, entry, region, ic_id, constraints)
             for ic_id in sorted(interconnectors_for_regions([region]))

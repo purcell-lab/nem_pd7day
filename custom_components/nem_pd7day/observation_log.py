@@ -79,16 +79,21 @@ def _default_store_factory(hass: Any) -> StoreFactory:
 class ObservationLog:
     """Observations split by day, presented as one flat list."""
 
+    _prefix = ""  # a log built with __new__ is PD7DAY's
+
     def __init__(
         self,
         hass: Any,
         region: str,
         *,
         store_factory: StoreFactory | None = None,
+        key_prefix: str = "",
     ) -> None:
         self._region = region
+        # "" for PD7DAY's log; "pd_" keeps pre-dispatch's apart (#337).
+        self._prefix = key_prefix
         self._factory = store_factory or _default_store_factory(hass)
-        self._manifest = self._factory(observation_manifest_key(region))
+        self._manifest = self._factory(observation_manifest_key(region, key_prefix))
         self._segments: dict[str, list[dict]] = {}
         self._stores: dict[str, Any] = {}
         self._dirty: set[str] = set()
@@ -114,7 +119,7 @@ class ObservationLog:
     def _store_for(self, date: str) -> Any:
         store = self._stores.get(date)
         if store is None:
-            store = self._factory(observation_segment_key(self._region, date))
+            store = self._factory(observation_segment_key(self._region, date, self._prefix))
             self._stores[date] = store
         return store
 
@@ -247,7 +252,7 @@ class ObservationLog:
         removed, self._removed_dates = self._removed_dates, []
         for date in removed:
             store = self._stores.pop(date, None) or self._factory(
-                observation_segment_key(self._region, date)
+                observation_segment_key(self._region, date, self._prefix)
             )
             remove = getattr(type(store), "async_remove", None)
             if remove is not None:
