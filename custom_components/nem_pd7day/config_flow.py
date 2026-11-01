@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import aiohttp
 import voluptuous as vol
@@ -42,7 +42,7 @@ from .duid_catalogue import Catalogue, load_catalogue
 from .local_price import parse_duids, parse_tnis
 from .load_points import EMPTY as LOAD_POINTS_EMPTY
 from .load_points import LoadPoints, load_load_points
-from .zones import DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_RADIUS_KM, parse_zones, zone_choices
+from .zones import DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_RADIUS_KM, nearest_city, parse_zones, zone_choices
 from .pd7day_client import PD7DayClient
 from .tariff_pricing import COMBINED_LOSS_MULTIPLIER, LOSS_FACTOR_MAX, LOSS_FACTOR_MIN
 from .tariff_catalogue import import_tariff_codes, tariff_name as catalogue_tariff_name
@@ -326,14 +326,25 @@ async def _async_catalogue(hass: Any) -> Catalogue:
 
 
 def _duid_choices(catalogue: Catalogue, region: str, current: list[str]) -> list[dict[str, str]]:
-    """The region's DUIDs, most constrained first, and any chosen DUID the catalogue lacks."""
+    """The region's DUIDs, most constrained first, and any chosen DUID not among them.
+
+    Non-physical units (#311) are left out, unless already chosen: those keep
+    their name, marked as such.
+    """
     choices = [{"value": i.duid, "label": i.label} for i in catalogue.region_duids(region)]
     listed = {c["value"] for c in choices}
-    return choices + [{"value": d, "label": d} for d in current if d not in listed]
+    extra = []
+    for duid in current:
+        if duid not in listed:
+            info = catalogue.info(duid)
+            label = f"{info.label} · non-physical" if info is not None and info.non_physical else duid
+            extra.append({"value": duid, "label": label})
+    return choices + extra
 
 
 def _local_price_fields(
     options: dict[str, Any], catalogue: Catalogue, region: str, loads: LoadPoints = LOAD_POINTS_EMPTY,
+    home: Optional[tuple[float, float]] = None,
 ) -> dict[Any, Any]:
     """DUIDs whose local price adjustment is published (#275).
 
@@ -354,17 +365,40 @@ def _local_price_fields(
             }
         }),
         **_node_field(options, catalogue, region),
-        **_zone_fields(options, region, loads),
+        **_zone_fields(options, region, loads, home),
     }
 
 
-def _zone_fields(options: dict[str, Any], region: str, loads: LoadPoints) -> dict[Any, Any]:
+def _home_load_choices(region: str, loads: LoadPoints, home: Optional[tuple[float, float]]) -> list[dict[str, str]]:
+    """The region's load connection points; first, those of the preset city nearest Home (#316).
+
+    AEMO publishes no coordinates for load points, so they cannot be sorted
+    by distance; the nearest city's own bulk supply points are the best lead.
+    """
+    points = loads.region_points(region)
+    city = nearest_city(region, home[0], home[1], loads) if home is not None else None
+    if city is None:
+        return [{"value": p.tni, "label": p.label} for p in points]
+    first = [{"value": p.tni, "label": f"{p.label} · {city.name}, {city.distance_km:.0f} km"}
+             for p in points if p.tni in city.tnis]
+    return first + [{"value": p.tni, "label": p.label} for p in points if p.tni not in city.tnis]
+
+
+def _home_location(hass: Any) -> Optional[tuple[float, float]]:
+    config = getattr(hass, "config", None)
+    lat, lon = getattr(config, "latitude", None), getattr(config, "longitude", None)
+    return (float(lat), float(lon)) if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) else None
+
+
+def _zone_fields(
+    options: dict[str, Any], region: str, loads: LoadPoints, home: Optional[tuple[float, float]] = None,
+) -> dict[Any, Any]:
     """City or zone price proxies (#288): the region's preset cities and Home, the radius,
     and Home's load connection point, whose MLF is the Home zone's."""
     current = parse_zones(options.get(CONF_ZONES, ""), region)
     choices = [{"value": key, "label": name} for key, name in zone_choices(region)]
     home_load = options.get(CONF_HOME_LOAD_POINT) or None
-    points = [{"value": p.tni, "label": p.label} for p in loads.region_points(region)]
+    points = _home_load_choices(region, loads, home)
     return {
         vol.Optional(CONF_ZONES, description={"suggested_value": current or None}): selector.selector({
             "select": {"options": choices, "multiple": True, "mode": "dropdown"}
@@ -384,7 +418,8 @@ def _node_field(options: dict[str, Any], catalogue: Catalogue, region: str) -> d
     current, _invalid = parse_tnis(options.get(CONF_NODES, ""))
     choices = [{"value": n.tni, "label": n.label} for n in catalogue.region_nodes(region)]
     listed = {c["value"] for c in choices}
-    choices += [{"value": t, "label": t} for t in current if t not in listed]
+    known = {n.tni: n.label for n in catalogue.region_nodes(region, include_non_physical=True)}
+    choices += [{"value": t, "label": known.get(t, t)} for t in current if t not in listed]
     return {
         vol.Optional(CONF_NODES, description={"suggested_value": current or None}): selector.selector({
             "select": {"options": choices, "multiple": True, "custom_value": True, "mode": "dropdown"}
@@ -511,6 +546,7 @@ class PD7DayOptionsFlow(config_entries.OptionsFlow):
                 **_local_price_fields(
                     dict(self._entry.options), catalogue, current_region,
                     await _async_load_points(getattr(self, "hass", None)),
+                    _home_location(getattr(self, "hass", None)),
                 ),
                 **_loss_factor_field(self._entry.options.get(CONF_LOSS_FACTOR)),
             }
