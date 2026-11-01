@@ -19,10 +19,19 @@ from __future__ import annotations
 import functools
 import json
 import pathlib
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 PATH = pathlib.Path(__file__).with_name("duid_catalogue.json")
+# Registrations with no plant behind them (#311): each region's dummy
+# generator and reserve trader, VPP and demand response aggregations, and
+# market ancillary service aggregations. None has a location, and none can
+# carry a meaningful local price adjustment.
+_NON_PHYSICAL_DUID = re.compile(r"^(DG_|RT_|AS_)")
+_NON_PHYSICAL_STATION = re.compile(
+    r"dummy|reserve trader|\bvpp\b|aggregat|\bm[as]{2}p\b|^(as|dr) ", re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +46,16 @@ class DuidInfo:
     constrained_intervals: int
     tni: Optional[str] = None      # the connection point (transmission node) the unit is registered at
     mlf: Optional[float] = None    # its marginal loss factor, from the registration in force
+
+    @property
+    def non_physical(self) -> bool:
+        """A registration with no plant behind it: no location, and a dummy, reserve trader or aggregation."""
+        if self.latitude is not None:
+            return False
+        return bool(
+            _NON_PHYSICAL_DUID.match(self.duid) or self.fuel == "aggregator_vpp"
+            or _NON_PHYSICAL_STATION.search(self.station or "")
+        )
 
     @property
     def label(self) -> str:
@@ -79,14 +98,20 @@ class Catalogue:
     def node(self, tni: str) -> Optional[NodeInfo]:
         return self.nodes.get(tni)
 
-    def region_nodes(self, region: str) -> list[NodeInfo]:
-        """The region's connection points, by station and TNI."""
-        found = [n for n in self.nodes.values() if n.region == region]
+    def region_nodes(self, region: str, include_non_physical: bool = False) -> list[NodeInfo]:
+        """The region's connection points, by station and TNI; without those whose units are all non-physical."""
+        found = [n for n in self.nodes.values() if n.region == region
+                 and (include_non_physical or not self._all_non_physical(n))]
         return sorted(found, key=lambda n: ((n.stations[0] if n.stations else n.tni).lower(), n.tni))
 
-    def region_duids(self, region: str) -> list[DuidInfo]:
-        """The region's DUIDs, most often constrained first, then by station and DUID."""
-        found = [i for i in self.duids.values() if i.region == region]
+    def _all_non_physical(self, node: NodeInfo) -> bool:
+        infos = [self.duids.get(d) for d in node.duids]
+        return bool(infos) and all(i is not None and i.non_physical for i in infos)
+
+    def region_duids(self, region: str, include_non_physical: bool = False) -> list[DuidInfo]:
+        """The region's DUIDs, most often constrained first, then by station and DUID; non-physical ones
+        (#311) only when asked."""
+        found = [i for i in self.duids.values() if i.region == region and (include_non_physical or not i.non_physical)]
         return sorted(found, key=lambda i: (-i.constrained_intervals, i.station.lower(), i.duid))
 
     def top_for(self, region: str) -> tuple[str, ...]:

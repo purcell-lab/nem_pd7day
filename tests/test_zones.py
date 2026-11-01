@@ -32,8 +32,9 @@ ENTRY = SimpleNamespace(entry_id="e1")
 NOW = datetime(2026, 10, 30, 21, 26, tzinfo=NEM_TZ)
 
 
-def _node_info(tni, duids, lat, lon, mlf=1.0, region="NSW1", stations=("S",)):
-    return _cat.NodeInfo(tni, region, mlf, tuple(duids), stations, lat, lon)
+def _node_info(tni, duids, lat, lon, mlf=1.0, region="NSW1", stations=None):
+    """A node, its own station unless one is given (each a vote, #314)."""
+    return _cat.NodeInfo(tni, region, mlf, tuple(duids), stations or (f"Station {tni}",), lat, lon)
 
 
 def _catalogue(*nodes):
@@ -97,11 +98,42 @@ def test_zone_mlf_weighs_the_nearer_nodes_more():
     assert 0.95 < zone.mlf < 1.0
 
 
-def test_the_adjustment_is_the_median_of_the_known():
-    assert _zones.zone_adjustment([0.0, 0.0, -385.47]) == 0.0
-    assert _zones.zone_adjustment([88.27, -385.47, 0.0, None]) == 0.0
-    assert _zones.zone_adjustment([88.27, -385.47]) == pytest.approx(-148.6)
-    assert _zones.zone_adjustment([None]) is None and _zones.zone_adjustment([]) is None
+def _zone_of(*stations):
+    """A zone with one member per (station, distance), nearest first."""
+    members = tuple(_zones.Member(_node_info(f"N{i}", [f"D{i}"], -33.9, 151.2, stations=(name,)), km)
+                    for i, (name, km) in enumerate(stations))
+    return _zones.Zone("z", "Z", -33.9, 151.2, 100, members, False)
+
+
+def test_the_adjustment_is_the_median_of_the_stations_known():
+    three = _zone_of(("A", 1), ("B", 2), ("C", 3))
+    assert three.aggregate == "station_median" and three.stations == ("A", "B", "C")
+    assert _zones.zone_adjustment(three, [0.0, 0.0, -385.47]) == 0.0
+    assert _zones.zone_adjustment(three, [88.27, -385.47, None]) == pytest.approx(-148.6)  # two known
+    assert _zones.zone_adjustment(three, [None, None, None]) is None
+    assert _zones.zone_adjustment(_zone_of(), []) is None
+
+
+def test_a_station_with_many_tnis_takes_one_vote():
+    """#314: the Sunshine Coast zone of 31 Oct 2026, Valdora and Woolooga with
+    one TNI each and Wivenhoe with four. Per TNI, Wivenhoe's 4 of 6 votes set
+    the median; per station it is one of three."""
+    zone = _zone_of(("Valdora", 10.7), ("Woolooga", 88.5),
+                    ("Wivenhoe", 91.1), ("Wivenhoe", 91.1), ("Wivenhoe", 91.1), ("Wivenhoe", 91.1))
+    assert zone.stations == ("Valdora", "Woolooga", "Wivenhoe") and zone.aggregate == "station_median"
+    values = [0.0, 5.0, -40.0, -40.0, -40.0, -40.0]
+    assert _zones.zone_adjustment(zone, values) == 0.0  # per TNI it would be -40.0
+    assert _zones.zone_adjustment(zone, [0.0, 5.0, -40.0, -38.0, None, -42.0]) == 0.0  # Wivenhoe's own median, -40
+
+
+def test_below_three_stations_the_nearest_stands_alone():
+    """#315: the Home zone of 31 Oct 2026, Valdora at 16.7 km and Woolooga at
+    73.4 km. A median of two is their mean, half of Woolooga's adjustment."""
+    home = _zone_of(("Valdora", 16.7), ("Woolooga", 73.4))
+    assert home.aggregate == "nearest_station"
+    assert _zones.zone_adjustment(home, [0.0, 7.6]) == 0.0
+    assert _zones.zone_adjustment(home, [None, 7.6]) == 7.6  # the nearest with a known vote
+    assert _zones.zone_adjustment(_zone_of(("A", 1)), [-12.5]) == -12.5
 
 
 def test_the_bundled_catalogue_has_members_near_every_capital():
@@ -235,12 +267,23 @@ def test_one_constrained_member_does_not_move_the_median():
     assert [m["adjustment_mwh"] for m in result.members] == [88.27, 0.0, -385.47]
 
 
-def test_most_members_constrained_moves_it():
-    zone = _zones.build_zone(CAT, "NSW1", "sydney", 50)  # GUTHEGA +88.27, NOROWS1 0
-    two = replace(zone, members=(zone.members[0], _zones.Member(OUT, 60.0)))
-    result = _zs.dispatch_zone(two, "NSW1", _dispatch(), NOW)
-    assert result.adjustment_mwh == pytest.approx((88.27 - 385.47) / 2)
-    assert result.price_mwh == pytest.approx((97.62 + (88.27 - 385.47) / 2) * two.mlf, abs=1e-3)
+def test_most_stations_constrained_moves_it():
+    zone = _zones.build_zone(CAT, "NSW1", "sydney", 100)  # GUTHEGA +88.27, NOROWS1 0, HUMENSW -385.47
+    humensw_too = _node_info("NOUT2", ["HUMENSW"], -34.40, 151.00, mlf=0.95)
+    constrained = replace(zone, members=(zone.members[0], _zones.Member(OUT, 60.0), _zones.Member(humensw_too, 61.0)))
+    result = _zs.dispatch_zone(constrained, "NSW1", _dispatch(), NOW)
+    assert result.adjustment_mwh == -385.47  # two of three stations at -385.47
+    assert result.price_mwh == pytest.approx((97.62 - 385.47) * constrained.mlf, abs=1e-3)
+
+
+def test_a_two_station_zone_takes_the_nearest_and_says_so(monkeypatch):
+    zone = _zones.build_zone(CAT, "NSW1", "sydney", 100)
+    two = replace(zone, members=(zone.members[0], _zones.Member(OUT, 60.0)))  # GUTHEGA +88.27, HUMENSW -385.47
+    assert _zs.dispatch_zone(two, "NSW1", _dispatch(), NOW).adjustment_mwh == 88.27  # not the mean, -148.6
+    monkeypatch.setattr(_zs, "now_nem", lambda: NOW)
+    attrs = _zs.NemPd7dayZonePriceSensor(_constraints(_dispatch()), None, ENTRY, "NSW1", two).extra_state_attributes
+    assert attrs["adjustment_aggregate"] == "nearest_station" and attrs["member_stations"] == ["Station NNEAR1", "Station NOUT1"]
+    assert attrs["aggregation_note"].startswith("2 stations in reach, fewer than 3")
 
 
 def test_stale_no_data_no_rop_and_no_mlf_leave_it_unknown():
@@ -281,16 +324,18 @@ def test_the_p5min_forecast_takes_the_median_per_interval():
     assert status == "published" and points[0]["value"] == round(run.rop["SA1"][first] * zone.mlf / 1000, 6)
 
 
-def test_the_predispatch_forecast_takes_the_median_per_period():
+def test_the_predispatch_forecast_votes_per_station_per_period():
     snapshot = _pdc.parse_predispatch(PD, "pd.zip")
     now = datetime(2026, 10, 31, 13, 10, tzinfo=NEM_TZ)
     uranquinty = _node_info("NURQ4U", ["URANQ14"], -35.2, 147.2)
     quiet = _node_info("NQUIET1", ["NOROWS1"], -35.1, 147.3)
     zone = _zones.Zone("wagga_wagga", "Wagga Wagga", -35.1, 147.36, 100,
-                       (_zones.Member(uranquinty, 10.0), _zones.Member(quiet, 5.0)), False)
+                       (_zones.Member(quiet, 5.0), _zones.Member(uranquinty, 10.0)), False)
     series = _zs.zone_predispatch(zone, snapshot, now)
-    first_end, first_value = series.periods[0]
-    assert first_value == pytest.approx(-1017.04 / 2)  # the median of -1017.04 and 0
+    assert series.periods[0][1] == 0.0  # two stations: the nearest's, not the mean of -1017.04 and 0
+    third = replace(zone, members=(*zone.members, _zones.Member(_node_info("NURQ2", ["URANQ14"], -35.2, 147.2), 12.0)))
+    first_end, first_value = _zs.zone_predispatch(third, snapshot, now).periods[0]
+    assert first_value == -1017.04  # the median of 0, -1017.04 and -1017.04
     assert series.status == "published" and len(series.periods) == 78
     assert series.published == len(snapshot.local_prices["URANQ14"])
     assert _zs.zone_predispatch(zone, None, now).status == "no_data"
@@ -313,7 +358,8 @@ def test_the_sensor_is_a_labelled_proxy(monkeypatch):
     attrs = sensor.extra_state_attributes
     assert attrs["proxy"] is True and attrs["zone_mlf_source"] == "nearby_generation_idw"
     assert attrs["load_points"] == [] and "load_points" in sensor._unrecorded_attributes
-    assert attrs["adjustment_aggregate"] == "median" and attrs["member_count"] == 3
+    assert attrs["adjustment_aggregate"] == "station_median" and attrs["member_count"] == 3
+    assert len(attrs["member_stations"]) == 3 and "aggregation_note" not in attrs
     assert attrs["members_constrained"] == 2
     assert (attrs["adjustment_min_mwh"], attrs["adjustment_max_mwh"]) == (-385.47, 88.27)
     assert [m["tni"] for m in attrs["members"]] == ["NNEAR1", "NCLOSE1", "NOUT1"]

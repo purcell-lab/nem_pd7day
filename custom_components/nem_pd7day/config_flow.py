@@ -326,10 +326,20 @@ async def _async_catalogue(hass: Any) -> Catalogue:
 
 
 def _duid_choices(catalogue: Catalogue, region: str, current: list[str]) -> list[dict[str, str]]:
-    """The region's DUIDs, most constrained first, and any chosen DUID the catalogue lacks."""
+    """The region's DUIDs, most constrained first, and any chosen DUID not among them.
+
+    Non-physical units (#311) are left out, unless already chosen: those keep
+    their name, marked as such.
+    """
     choices = [{"value": i.duid, "label": i.label} for i in catalogue.region_duids(region)]
     listed = {c["value"] for c in choices}
-    return choices + [{"value": d, "label": d} for d in current if d not in listed]
+    extra = []
+    for duid in current:
+        if duid not in listed:
+            info = catalogue.info(duid)
+            label = f"{info.label} · non-physical" if info is not None and info.non_physical else duid
+            extra.append({"value": duid, "label": label})
+    return choices + extra
 
 
 def _local_price_fields(
@@ -408,7 +418,8 @@ def _node_field(options: dict[str, Any], catalogue: Catalogue, region: str) -> d
     current, _invalid = parse_tnis(options.get(CONF_NODES, ""))
     choices = [{"value": n.tni, "label": n.label} for n in catalogue.region_nodes(region)]
     listed = {c["value"] for c in choices}
-    choices += [{"value": t, "label": t} for t in current if t not in listed]
+    known = {n.tni: n.label for n in catalogue.region_nodes(region, include_non_physical=True)}
+    choices += [{"value": t, "label": known.get(t, t)} for t in current if t not in listed]
     return {
         vol.Optional(CONF_NODES, description={"suggested_value": current or None}): selector.selector({
             "select": {"options": choices, "multiple": True, "custom_value": True, "mode": "dropdown"}

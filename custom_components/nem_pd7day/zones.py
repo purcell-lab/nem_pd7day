@@ -9,15 +9,18 @@ own location, and a radius.
   the zone MLF (``zone_mlf_source: load_tni``). Where no load point is known,
   the inverse-distance-weighted mean of the members' MLFs stands in
   (``nearby_generation_idw``).
-- **Adjustment**: the median of the members' local price adjustments. The
-  members are the region's catalogue nodes with coordinates within the
-  radius, nearest first; where none is that close, the single nearest node,
-  flagged ``nearest_only``. They are generation and storage connection
+- **Adjustment**: one vote per station, the median over the stations (#314):
+  a station with several connection points (Wivenhoe's four) takes one
+  vote, its members' median, not one per TNI. Below three stations the
+  median is no better than a mean, so the nearest station's vote stands
+  alone (#315). The members are the region's catalogue nodes with
+  coordinates within the radius, nearest first; where none is that close,
+  the single nearest node, flagged ``nearest_only``. They are generation and storage connection
   points: city load is not a variable in NEMDE's constraint equations, so it
   has no local price adjustment of its own, and nearby units are a geographic
-  proxy, never a validated household node. One constrained unit does not move
-  the median, most of them do; the members carry no capacity, so there is no
-  MW weighting.
+  proxy, never a validated household node. One constrained station does not
+  move the median, most of them do; the members carry no capacity, so there
+  is no MW weighting.
 """
 from __future__ import annotations
 
@@ -38,6 +41,10 @@ MAX_RADIUS_KM = 500
 _MIN_WEIGHT_KM = 5.0
 SOURCE_LOAD = "load_tni"
 SOURCE_GENERATION = "nearby_generation_idw"
+# Fewer stations than this and the median is no better than a mean (#315).
+MIN_MEDIAN_STATIONS = 3
+AGGREGATE_MEDIAN = "station_median"
+AGGREGATE_NEAREST = "nearest_station"
 
 # (key, name, latitude, longitude, load TNIs) per region: the capital and the
 # larger regional centres, each with the bulk supply points that serve it, as
@@ -135,6 +142,16 @@ class Zone:
     nearest_city: Optional[CityReference] = None
 
     @property
+    def stations(self) -> tuple[str, ...]:
+        """The members' stations, nearest first, each once (#314)."""
+        return tuple(dict.fromkeys(station_key(m.node) for m in self.members))
+
+    @property
+    def aggregate(self) -> str:
+        """How the members' adjustments make the zone's: the stations' median, or the nearest station's."""
+        return AGGREGATE_MEDIAN if len(self.stations) >= MIN_MEDIAN_STATIONS else AGGREGATE_NEAREST
+
+    @property
     def mlf_source(self) -> Optional[str]:
         if self.load_points:
             return SOURCE_LOAD
@@ -228,7 +245,26 @@ def build_zone(
     return Zone(key, name, lat, lon, radius_km, members, nearest_only, points, reference)
 
 
-def zone_adjustment(values: Sequence[Optional[float]]) -> Optional[float]:
-    """The median of the members' adjustments that are known; None when none is."""
-    known = [v for v in values if v is not None]
-    return round(median(known), 4) if known else None
+def station_key(node: NodeInfo) -> str:
+    """The station a node votes for: its first station, else its TNI."""
+    return node.stations[0] if node.stations else node.tni
+
+
+def zone_adjustment(zone: Zone, values: Sequence[Optional[float]]) -> Optional[float]:
+    """One vote per station from the members' adjustments, in member order; None when none is known.
+
+    A station's vote is the median of its members' known adjustments. The
+    zone's is the median of the votes, or, below three stations, the
+    nearest station's with a known vote.
+    """
+    votes: dict[str, list[float]] = {}
+    for member, value in zip(zone.members, values):
+        known = votes.setdefault(station_key(member.node), [])
+        if value is not None:
+            known.append(value)
+    station_votes = [median(v) for v in votes.values() if v]
+    if not station_votes:
+        return None
+    if zone.aggregate == AGGREGATE_NEAREST:
+        return round(station_votes[0], 4)
+    return round(median(station_votes), 4)

@@ -17,6 +17,11 @@ from .nem_time import NEM_TZ, now_nem
 MAX_AGE = timedelta(minutes=15)
 # Lists that grow with the market stay out of the recorder; the count is recorded.
 _LISTS = ("constraints", "fcas_constraints", "unassigned_constraints")
+# What the state counts, stated on the sensor (#318).
+FILTER = (
+    "binding network, interconnector and negative residue constraints whose ID names this region; "
+    "FCAS constraints and IDs naming no region are listed, not counted"
+)
 
 
 class NemPd7dayBindingConstraintsSensor(CoordinatorEntity[ConstraintCoordinator], SensorEntity):
@@ -31,7 +36,7 @@ class NemPd7dayBindingConstraintsSensor(CoordinatorEntity[ConstraintCoordinator]
     _attr_icon = "mdi:transmission-tower-off"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "constraints"
-    _unrecorded_attributes = frozenset(_LISTS)
+    _unrecorded_attributes = frozenset((*_LISTS, "binding_nem_network_ids"))
 
     def __init__(self, coordinator: ConstraintCoordinator, entry: Any, region: str) -> None:
         super().__init__(coordinator)
@@ -91,7 +96,24 @@ class NemPd7dayBindingConstraintsSensor(CoordinatorEntity[ConstraintCoordinator]
             "time": (snapshot.interval_end - INTERVAL).astimezone(NEM_TZ).isoformat(),
             "nemtime": snapshot.interval_end.astimezone(NEM_TZ).isoformat(),
             "file": snapshot.source,
+            "filter": FILTER,
             "binding_nem": len(snapshot.constraints),
+            **_nem_network(snapshot),
             "evaluated_nem": snapshot.evaluated,
             **self._split(snapshot),
         }
+
+
+def _nem_network(snapshot: ConstraintSnapshot) -> dict[str, Any]:
+    """The NEM's binding constraints other than FCAS, whatever region their ID names, or none (#318).
+
+    So a constraint the regions do not count still shows: at 18:45 on 31 Oct
+    2026 every region read 0 while L_PEC_X_6C_6G_6H_XST, an interconnector
+    limit naming no region, bound alone, and DispatchIS carried no
+    LOCAL_PRICE table (#309).
+    """
+    ids = sorted(
+        c.constraint_id for c in snapshot.constraints
+        if describe_constraint(c.constraint_id).category not in ("fcas", "data_snapshot")
+    )
+    return {"binding_nem_network": len(ids), "binding_nem_network_ids": ids}
