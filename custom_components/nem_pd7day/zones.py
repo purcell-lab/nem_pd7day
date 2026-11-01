@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import cached_property
 from statistics import median
 from typing import Any, Optional, Sequence
 
@@ -156,12 +157,19 @@ class Zone:
     nearest_city: Optional[CityReference] = None
     excluded: tuple[Member, ...] = ()
 
-    @property
+    # Worked out once per zone, not on every update: a zone is rebuilt only at setup, and the
+    # largest (Adelaide, 46 members) otherwise spent half its update time here.
+    @cached_property
+    def member_keys(self) -> tuple[str, ...]:
+        """Each member's station, in member order."""
+        return tuple(station_key(m.node) for m in self.members)
+
+    @cached_property
     def stations(self) -> tuple[str, ...]:
         """The members' stations, nearest first, each once (#314)."""
-        return tuple(dict.fromkeys(station_key(m.node) for m in self.members))
+        return tuple(dict.fromkeys(self.member_keys))
 
-    @property
+    @cached_property
     def aggregate(self) -> str:
         """How the members' adjustments make the zone's: the stations' median, or the nearest station's."""
         return AGGREGATE_MEDIAN if len(self.stations) >= MIN_MEDIAN_STATIONS else AGGREGATE_NEAREST
@@ -281,8 +289,8 @@ def zone_adjustment(zone: Zone, values: Sequence[Optional[float]]) -> Optional[f
     nearest station's with a known vote.
     """
     votes: dict[str, list[float]] = {}
-    for member, value in zip(zone.members, values):
-        known = votes.setdefault(station_key(member.node), [])
+    for key, value in zip(zone.member_keys, values):
+        known = votes.setdefault(key, [])
         if value is not None:
             known.append(value)
     station_votes = [median(v) for v in votes.values() if v]
