@@ -374,8 +374,29 @@ def test_sensor_splits_region_fcas_and_unassigned(monkeypatch):
     assert [c["constraint_id"] for c in attrs["unassigned_constraints"]] == ["L_PEC_X_6C_6G_6H"]
     assert (attrs["binding_nem"], attrs["evaluated_nem"]) == (25, 1105)
     assert sensor._unrecorded_attributes == frozenset(
-        {"constraints", "fcas_constraints", "unassigned_constraints"}
+        {"constraints", "fcas_constraints", "unassigned_constraints", "binding_nem_network_ids"}
     )
+    assert attrs["filter"].startswith("binding network, interconnector and negative residue constraints")
+    assert "L_PEC_X_6C_6G_6H" in attrs["binding_nem_network_ids"]
+    assert attrs["binding_nem_network"] == len(attrs["binding_nem_network_ids"])
+    assert not any(cid.startswith("F_") for cid in attrs["binding_nem_network_ids"])
+
+
+def test_an_interconnector_limit_naming_no_region_shows_nem_wide(monkeypatch):
+    """#318: 18:45 on 31 Oct 2026, the file of #309 with no LOCAL_PRICE table.
+    Every region counts 0, while L_PEC_X_6C_6G_6H_XST binds alone outside FCAS."""
+    text = (Path(__file__).parent / "fixtures" / "local_price"
+            / "PUBLIC_DISPATCHIS_202610311845_0000000545914233.CSV").read_text()
+    snapshot = _client.parse_constraints(text, "PUBLIC_DISPATCHIS_202610311845_0000000545914233.zip")
+    coord = SimpleNamespace(tracker=SimpleNamespace(latest=snapshot, tracked_since=None, row=lambda c: {
+        "constraint_id": c.constraint_id}))
+    monkeypatch.setattr(_sensor, "now_nem", lambda: datetime(2026, 10, 31, 18, 46, tzinfo=NEM_TZ))
+    for region in ("QLD1", "NSW1", "VIC1", "SA1", "TAS1"):
+        sensor = _sensor.NemPd7dayBindingConstraintsSensor(coord, SimpleNamespace(entry_id="e1"), region)
+        assert sensor.native_value == 0
+    attrs = sensor.extra_state_attributes
+    assert attrs["binding_nem_network_ids"] == ["L_PEC_X_6C_6G_6H_XST"] and attrs["binding_nem_network"] == 1
+    assert attrs["binding_nem"] == 14  # 13 FCAS as well
 
 
 def test_sensor_unavailable_when_stale_or_empty(monkeypatch):

@@ -447,13 +447,17 @@ Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the
 
 AEMO does not publish a region with each constraint, so the region is read from the constraint ID following AEMO's [Constraint Naming Guidelines](https://aemo.com.au/-/media/Files/Electricity/NEM/Security_and_Reliability/Congestion-Information/2016/Constraint-Naming-Guidelines.pdf): `N>NIL_969` is a NSW1 thermal constraint with no outage, `SVML^...` covers Murraylink (VIC1 and SA1), `NRM_VIC1_SA1` is negative residue management between those regions. An ID that follows no documented convention is listed under `unassigned_constraints` in every region rather than guessed.
 
+**What the state counts** (`filter`, #318): binding network, interconnector and negative residue constraints whose ID names this region. FCAS constraints, and IDs that name no region, are listed and not counted. So a region can read 0 while something binds: at 18:45 on 31 Oct 2026 every region read 0 while `L_PEC_X_6C_6G_6H_XST`, an interconnector limit whose ID names no region, bound alone outside FCAS. That is also when DispatchIS carried no LOCAL_PRICE table, because no unit had an adjustment (#309). `binding_nem_network` and its IDs show such a constraint NEM-wide.
+
 | Attribute | Description |
 |---|---|
 | `time`, `nemtime` | Start and end of the dispatch interval, NEM time (+10:00) |
 | `constraints` | The region's binding network, interconnector and negative residue constraints, largest cost first (not saved to the HA recorder) |
 | `fcas_constraints` | Binding FCAS constraints covering the region, not counted in the state (not recorded) |
 | `unassigned_constraints` | Binding constraints whose ID names no region (not recorded) |
-| `binding_nem`, `evaluated_nem` | Binding constraints in the whole NEM, and every equation evaluated for the interval |
+| `filter` | What the state counts, as above |
+| `binding_nem`, `evaluated_nem` | Binding constraints in the whole NEM, FCAS included, and every equation evaluated for the interval |
+| `binding_nem_network`, `binding_nem_network_ids` | Binding constraints in the whole NEM other than FCAS, whatever region their ID names, and their IDs (not recorded) |
 | `file` | The DispatchIS file read |
 | `tracked_since` | Start of the first interval seen since Home Assistant started; `first_bound` and `bound_minutes_today` count from here |
 
