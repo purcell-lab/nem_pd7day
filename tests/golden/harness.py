@@ -82,8 +82,15 @@ _NAMESPACE_PREFIX = "golden::"
 class GoldenCoordinator:
     """DataUpdateCoordinator: refresh, listeners, last_update_success."""
 
-    def __init__(self, hass: Any, logger: Any, name: str | None = None, update_interval: Any = None, **_: Any) -> None:
+    def __init__(
+        self, hass: Any, logger: Any, name: str | None = None, update_interval: Any = None,
+        always_update: bool = True, **_: Any,
+    ) -> None:
         self.hass = hass
+        # Recorded, not applied: the harness notifies on every refresh, so the
+        # snapshots see the same writes either way. scripts/bench_updates.py
+        # applies Home Assistant's rule with it (#334).
+        self.always_update = always_update
         self.logger = logger
         self.name = name
         self.update_interval = update_interval
