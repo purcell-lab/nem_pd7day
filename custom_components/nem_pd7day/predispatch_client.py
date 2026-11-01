@@ -28,12 +28,13 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 from .const import PREDISPATCHIS_BASE_URL
 from .constraint_client import BindingConstraint, ConstraintClient
 from .executor import run_in_executor
 from .nem_time import NEM_TZ
+from .price_sources import KIND_PREDISPATCH, HasIdentity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -100,7 +101,9 @@ class InterconnectorPeriod:
 
 
 @dataclass(frozen=True)
-class PredispatchSnapshot:
+class PredispatchSnapshot(HasIdentity):
+    KIND: ClassVar[str] = KIND_PREDISPATCH
+
     run_at: datetime                                    # when AEMO solved it, NEM time
     source: str                                         # the PredispatchIS file name
     interconnectors: dict[str, tuple[InterconnectorPeriod, ...]]
