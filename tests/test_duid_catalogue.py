@@ -274,28 +274,26 @@ def test_the_retired_sensors_are_removed_and_the_kept_one_is_not():
     assert removed == ["sensor.fc", "sensor.lp"]
 
 
-# ── P5MIN only while a forecast sensor listens ───────────────────────────────
+# ── P5MIN after every dispatch poll, listened to or not (#335) ──────────────
 
-def test_p5min_is_not_fetched_until_a_duid_sensor_listens():
+def test_p5min_is_fetched_after_every_dispatch_poll_without_listeners():
+    """The timeline reads P5MIN for every region, so the old gate (fetch only while
+    a DUID sensor listens) is gone, and so is the sensors' request for a first run."""
     coord = _coord.P5MinCoordinator(SimpleNamespace(), None, SimpleNamespace())
     assert coord.always_update is False  # a poll that found no new run wakes no sensor (#334)
     requests = []
     coord._guard = SimpleNamespace(request=lambda: requests.append(1))
     coord._listeners = {}
     coord._on_dispatch()
-    assert requests == []
     coord._listeners = {object(): None}
     coord._on_dispatch()
-    coord.request_refresh()
     assert requests == [1, 1]
+    assert not hasattr(coord, "request_refresh")
 
 
-def test_an_added_duid_sensor_listens_to_p5min_and_asks_for_the_first_run():
-    asked, listeners = [], []
-    p5 = SimpleNamespace(
-        latest=None, request_refresh=lambda: asked.append(1),
-        async_add_listener=lambda cb: listeners.append(cb) or (lambda: None),
-    )
+def test_an_added_duid_sensor_listens_to_p5min_without_asking_for_a_run():
+    listeners = []
+    p5 = SimpleNamespace(latest=None, async_add_listener=lambda cb: listeners.append(cb) or (lambda: None))
     sensor = _duid("KEPSF1", p5=p5)
     sensor.async_on_remove = lambda unsub: None
 
@@ -304,7 +302,7 @@ def test_an_added_duid_sensor_listens_to_p5min_and_asks_for_the_first_run():
 
     with patch.object(_sensor.CoordinatorEntity, "async_added_to_hass", _noop, create=True):
         run_async(sensor.async_added_to_hass())
-    assert asked == [1] and len(listeners) == 1
+    assert len(listeners) == 1
 
 
 def test_the_json_and_the_builder_agree_on_shape():

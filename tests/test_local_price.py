@@ -143,6 +143,45 @@ def test_p5min_real_run_rows_rops_and_intervals():
     assert run.rop["NSW1"][_at(21, 40)] == pytest.approx(102.87982)
 
 
+def test_p5min_keeps_each_regions_rrp_beside_its_rop():
+    """#335: the timeline publishes P5MIN RRP raw for the next hour, so every region's
+    RRP is kept per interval end, from the pricing run only, read independently here."""
+    import csv
+
+    want: dict = {}
+    header = None
+    for row in csv.reader(P5.splitlines()):
+        if row[:3] == ["I", "P5MIN", "REGIONSOLUTION"]:
+            header = row
+        elif row[:3] == ["D", "P5MIN", "REGIONSOLUTION"]:
+            rec = dict(zip(header, row))
+            if rec["INTERVENTION"] == "0":
+                end = datetime.strptime(rec["INTERVAL_DATETIME"], "%Y/%m/%d %H:%M:%S").replace(tzinfo=NEM_TZ)
+                want.setdefault(rec["REGIONID"], {})[end] = float(rec["RRP"])
+    run = _p5()
+    assert set(run.rrp) == {"NSW1", "QLD1", "SA1", "TAS1", "VIC1"}
+    assert run.rrp == want
+    assert all(len(series) == 12 for series in run.rrp.values())
+
+
+def test_p5min_rrp_and_rop_are_read_from_their_own_columns():
+    """In the fixture RRP equals ROP everywhere, so make one differ, and add an
+    intervention row that must be ignored."""
+    lines = P5.splitlines()
+    i = next(n for n, line in enumerate(lines)
+             if line.startswith("D,P5MIN,REGIONSOLUTION") and ',QLD1,' in line and '"2026/10/30 21:30:00",QLD1' in line)
+    fields = lines[i].split(",")
+    fields[8] = "15000"  # RRP; ROP (field 9) is left as published
+    rop_published = float(fields[9])
+    lines[i] = ",".join(fields)
+    intervention = list(fields)
+    intervention[5], intervention[8], intervention[9] = "1", "-1000", "-1000"
+    lines.append(",".join(intervention))
+    run = _p5("\n".join(lines) + "\n")
+    assert run.rrp["QLD1"][_at(21, 30)] == 15000.0
+    assert run.rop["QLD1"][_at(21, 30)] == rop_published
+
+
 def test_p5min_only_reads_its_own_run_and_pricing_run():
     text = (
         P5
@@ -360,8 +399,8 @@ def test_shared_p5min_created_once_and_cleaned_up():
     hass, dispatch = _Hass(), _Dispatch()
     first = _coord.shared_p5min(hass, dispatch)
     assert _coord.shared_p5min(hass, dispatch) is first
-    # No first fetch on creation: the first enabled forecast sensor asks for it.
-    assert hass.tasks == [] and len(dispatch.listeners) == 1
+    # One first fetch on creation, whether or not a sensor listens (#335).
+    assert hass.tasks == ["nem_pd7day_p5min_first"] and len(dispatch.listeners) == 1
     for cleanup in hass.data[_const.DOMAIN][_const.DISPATCH_UNSUBS_KEY]:
         cleanup()
     assert _const.SHARED_P5MIN_KEY not in hass.data[_const.DOMAIN]
