@@ -198,6 +198,11 @@ def ascending_periods(run_at_dt: datetime, n: int, start=0.05, step=0.001) -> li
     ]
 
 
+def freeze_now(monkeypatch, t: datetime) -> None:
+    """The sensor module's clock at ``t``: ``forecast`` is the timeline from now (#339)."""
+    monkeypatch.setattr(_sensor_mod, "now_nem", lambda: t)
+
+
 def set_current_interval(sensor, value: float):
     """A single period covering the real current NEM time, run an hour earlier."""
     now = datetime.now(NEM_TZ)
@@ -513,6 +518,31 @@ def test_spot_sensor_subscribes_to_dispatch_coordinator():
     dispatch.async_add_listener.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "cls, keys",
+    [
+        pytest.param(PD7DayForecastSensor, {"_shared_p5min", "_shared_predispatch"}, id="spot"),
+        pytest.param(SpotPriceForecastDays27Sensor, {"_shared_predispatch"}, id="days27"),
+    ],
+)
+def test_forecast_sensors_write_on_each_new_run(cls, keys):
+    """#339: ``forecast`` is the timeline, so a new P5MIN or pre-dispatch run is a new forecast."""
+    sensor = make_sensor(store=None, cls=cls)
+    runs = {}
+    for key in (_const_mod.SHARED_P5MIN_KEY, _const_mod.SHARED_PREDISPATCH_KEY):
+        runs[key] = MagicMock()
+        runs[key].async_add_listener = MagicMock(return_value=lambda: None)
+        sensor.hass.data[DOMAIN][key] = runs[key]
+    sensor._entry.runtime_data.dispatch = None
+    sensor.async_on_remove = MagicMock()
+    sensor.async_write_ha_state = MagicMock()
+
+    with patch.object(_sensor_mod, "track_day27_start", return_value=()):
+        run_async(sensor.async_added_to_hass())
+
+    assert {k for k, run in runs.items() if run.async_add_listener.called} == keys
+
+
 def test_tod_sensor_device_info_includes_region():
     sensor = PD7DayTodSensor.__new__(PD7DayTodSensor)
     sensor.coordinator = MagicMock()
@@ -552,10 +582,11 @@ def test_amber_express_cutoff(now, expected):
         pytest.param({CONF_FORECAST_MODE: FORECAST_MODE_DAYS_2_7}, id="days_2_7"),
     ],
 )
-def test_base_sensor_forecast_is_untrimmed_in_every_mode(options):
-    """The day 1-7 sensor publishes every interval; next_value is the first of them."""
+def test_base_sensor_forecast_is_untrimmed_in_every_mode(options, monkeypatch):
+    """The day 1-7 sensor publishes every interval from now; next_value is the first of them."""
     sensor = make_sensor(store=None, options=options)
     run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    freeze_now(monkeypatch, run_at_dt + timedelta(minutes=1))
     periods = ascending_periods(run_at_dt, 200)  # ~100 h, well past any cutoff
     set_price_data(sensor, periods, run_at_dt)
 
@@ -565,10 +596,11 @@ def test_base_sensor_forecast_is_untrimmed_in_every_mode(options):
     assert attrs["next_value"] == attrs["forecast"][0]["value"] == periods[0].value
 
 
-def test_day27_sensor_forecast_only_contains_post_cutoff_intervals():
+def test_day27_sensor_forecast_only_contains_post_cutoff_intervals(monkeypatch):
     """The Day 2-7 sensor drops every interval starting at or before the cutoff."""
     sensor = make_sensor(store=None, cls=SpotPriceForecastDays27Sensor)
     run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    freeze_now(monkeypatch, run_at_dt + timedelta(minutes=1))
     cutoff = run_at_dt + timedelta(hours=12)  # fixed, so the test is deterministic
     periods = ascending_periods(run_at_dt, 200)
     set_price_data(sensor, periods, run_at_dt)
@@ -584,7 +616,7 @@ def test_day27_sensor_forecast_only_contains_post_cutoff_intervals():
     assert attrs["next_value"] == forecast[0]["value"] == periods[25].value
 
 
-def test_min_max_computed_over_first_24h_of_day17_window():
+def test_min_max_computed_over_first_24h_of_day17_window(monkeypatch):
     """min_24h_value / max_24h_value cover the first 24 hours of the run (#148).
 
     The forecast attribute still carries every interval; only the two summary
@@ -592,6 +624,7 @@ def test_min_max_computed_over_first_24h_of_day17_window():
     """
     sensor = make_sensor(store=None)
     run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
+    freeze_now(monkeypatch, run_at_dt + timedelta(minutes=1))
     periods = []
     for i in range(96):
         # Beyond 24 h: deeper and higher than anything in the first 24 h.
@@ -606,7 +639,7 @@ def test_min_max_computed_over_first_24h_of_day17_window():
     assert len(attrs["forecast"]) == 96
 
 
-def test_day27_min_max_cover_first_24h_after_cutoff_not_whole_window():
+def test_day27_min_max_cover_first_24h_after_cutoff_not_whole_window(monkeypatch):
     """Day 2-7: min_24h_value is the first 24 h after the cutoff (#148).
 
     SA1 published min_24h_value -0.864 from a Saturday row four days out. Here
@@ -616,6 +649,7 @@ def test_day27_min_max_cover_first_24h_after_cutoff_not_whole_window():
     """
     sensor = make_sensor(store=None, cls=SpotPriceForecastDays27Sensor, region="SA1")
     run_at_dt = datetime(2026, 9, 8, 7, 30, tzinfo=NEM_TZ)
+    freeze_now(monkeypatch, run_at_dt + timedelta(minutes=1))
     # The trim keeps intervals starting strictly after the cutoff, so a cutoff
     # one minute short of 24 h makes interval 48 the first post-cutoff one.
     cutoff = run_at_dt + timedelta(hours=23, minutes=59)
@@ -642,10 +676,11 @@ def test_day27_min_max_cover_first_24h_after_cutoff_not_whole_window():
     assert len(attrs["forecast"]) == 6 * 48 - 48
 
 
-def test_cheapest_2h_window_computed_over_full_forecast():
+def test_cheapest_2h_window_computed_over_full_forecast(monkeypatch):
     """With ascending values the cheapest 4-interval window is the first one."""
     sensor = make_sensor(store=None)
     run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
+    freeze_now(monkeypatch, run_at_dt + timedelta(minutes=1))
     set_price_data(sensor, ascending_periods(run_at_dt, 96, start=0.10), run_at_dt)
 
     attrs = sensor.extra_state_attributes
@@ -655,6 +690,24 @@ def test_cheapest_2h_window_computed_over_full_forecast():
     assert cheapest["points"] == 4
     assert cheapest["start"] == attrs["forecast"][0]["time"]
     assert cheapest["avg_value"] == round((0.10 + 0.101 + 0.102 + 0.103) / 4, 6)
+
+
+def test_forecast_starts_at_the_current_interval(monkeypatch):
+    """#339: ``forecast`` is the timeline from now; intervals that have ended are gone."""
+    sensor = make_sensor(store=None)
+    run_at_dt = datetime(2026, 5, 19, 14, 0, tzinfo=NEM_TZ)
+    freeze_now(monkeypatch, run_at_dt + timedelta(hours=2, minutes=5))
+    periods = ascending_periods(run_at_dt, 96)
+    set_price_data(sensor, periods, run_at_dt)
+
+    attrs = sensor.extra_state_attributes
+
+    forecast = attrs["forecast"]
+    assert forecast[0]["time"] == nem_iso(run_at_dt + timedelta(hours=2))
+    assert len(forecast) == 92
+    assert attrs["next_value"] == forecast[0]["value"] == periods[4].value
+    assert {p["source"] for p in forecast} == {"pd7day"} and {p["resolution_minutes"] for p in forecast} == {30}
+    assert attrs["timeline"][0]["time"] == forecast[0]["time"]
 
 
 # ── Diagnostic data sensors: PD7DayDataSensor and StpasaDataSensor ───────────

@@ -341,11 +341,11 @@ All sensors are grouped under a single HA device named **NEM PD7DAY {region}** (
 | `last_success_at` | NEM-time ISO-8601 timestamp of the last successful PD7DAY fetch; stays true between state writes, unlike an age |
 | `is_stale` | `true` while the last fetch failed and the previous result is being served, or while a publish slot (07:30, 13:00, 18:00 NEM) is more than 30 minutes past and the run being served is older than it |
 | `stale_reason` | The failure being served through, e.g. `403 Forbidden`, or `missed 07:30 run` when a slot passed without its file; `null` when fresh |
-| `forecast` | List of all forecast periods (see below) |
-| `next_value` | Calibrated price for the next interval |
-| `min_24h_value` | Minimum calibrated price in the first 24 hours of this sensor's window (the 24 hours after the Amber Express cutoff) |
-| `max_24h_value` | Maximum calibrated price in the first 24 hours of this sensor's window |
-| `cheapest_2h_window` | Best contiguous 2-hour window over the whole days 2–7 window, by design |
+| `forecast` | The price timeline from the current interval, from the cutoff on (see below and *`forecast` from the price timeline*) |
+| `next_value` | Price of the first `forecast` entry |
+| `min_24h_value` | Minimum price in the first 24 hours of this sensor's window (the 24 hours after the Amber Express cutoff), by time |
+| `max_24h_value` | Maximum price in the first 24 hours of this sensor's window, by time |
+| `cheapest_2h_window` | Best 2-hour window over the whole days 2–7 window, by design: covered in full, averaged by minutes |
 | `forecast_start` | `time` of the first interval listed: where the days 2–7 window begins |
 | `forecast_start_source` | `amber` when the window starts where the Amber forecast ends, `clock` when it starts by the clock rule (see *Joining the day 2-7 series to an Amber forecast*) |
 | `interpolation_mode` | `previous`: each value holds until the next point. With an `amber` start, the first point's `time` is one second after Amber's end (#270) |
@@ -366,9 +366,21 @@ band_source: stage2_residual           # how p10/p90 were derived: "stage1_quant
 n_obs: 147                             # observations used for this bucket
 horizon_hours: 36.5                    # hours ahead
 value: 0.142                           # alias for calibrated (template compat)
+source: pd7day                         # dispatch | p5min | predispatch | pd7day (v3.45.0)
+resolution_minutes: 30                 # 5, 30, or less where a half hour was split (v3.45.0)
 ```
 
-> **Timestamp convention**: `nemtime` is the interval END timestamp as published by AEMO. `time` is the interval START (`nemtime − 30 minutes`). This matches the AEMO dispatch interval convention.
+> **Timestamp convention**: `nemtime` is the interval END timestamp as published by AEMO. `time` is the interval START: `nemtime − resolution_minutes`. This matches the AEMO dispatch interval convention.
+
+#### `forecast` from the price timeline (v3.45.0, #339)
+
+The spot forecast sensor (`sensor.nem_pd7day_{region}_nem_spot_price_forecast`) and the day 2-7 sensor publish the region's [price timeline](#price-timeline-diagnostic-338) as `forecast`, where they published the PD7DAY run alone before:
+
+- **From now**: `forecast` starts at the interval running now; intervals that have ended are gone. Before, it started at the run's first interval, up to five hours back.
+- **Mixed resolution**: the current 5-minute dispatch interval, P5MIN's 5-minute intervals for the next hour, pre-dispatch's half hours to the end of the next trading day, then PD7DAY's. `interval_minutes` stays `30`, the PD7DAY resolution; each entry's own length is its `resolution_minutes`.
+- **Same keys**: a `pd7day` entry is the calibrated entry as before (its `time` moved where its half hour was split). A `dispatch`, `p5min` or `predispatch` entry has every key too: `raw_value`, `calibrated` and `value` are its price, `calibrated_source` is `actual`, `raw` or `passthrough`, and `p10`, `p50`, `p90`, `ols_mae`, `band_source`, `n_obs`, `horizon_hours` and `spike_credible` are `null` (no band until stage 3b calibrates pre-dispatch). Templates that read `p10`/`p90` should allow for `null`.
+- **By time**: `min_24h_value`/`max_24h_value` cover the 24 hours from the first entry, and `cheapest_2h_window` is the 2 hours with the lowest minute-weighted average, covered in full (a gap in the forecast breaks a window). Its keys are unchanged; `points` counts entries, so a window over P5MIN has more than 4.
+- **Day 2-7**: unchanged in effect: its window starts after the cutoff, a day out, where the timeline is PD7DAY (or the end of pre-dispatch).
 
 ---
 
@@ -641,7 +653,7 @@ One price timeline per region, each source covering what the one before it does 
 - **Splits**: a half hour the source before covers in part is split where that source ends (`resolution_minutes` 5, 10, ...), so no minute is repeated or skipped.
 - **Staleness**: a stale source drops out and the next one fills its span: P5MIN past 15 minutes, pre-dispatch past 75 minutes. `timeline_sources` says, per source, `used`, `stale`, `no_data` or `covered` (fresh, but already covered by the sources before it), with what it covered, its run and its age.
 - **Each point**: `time` (start), `nemtime` (end), `value` ($/kWh), `source`, `calibrated_source`, `p10`, `p50`, `p90`, `resolution_minutes`.
-- **Where**: `sensor.nem_pd7day_{region}_price_timeline` (diagnostic): state, the timeline's value now; attributes `timeline` and `timeline_sources`, not saved to the recorder. The spot forecast sensor carries the same list as `timeline` (not recorded). Its `forecast`, and the tariff and day 2-7 sensors, stay PD7DAY's alone until stage 5 (#339) moves them onto the timeline.
+- **Where**: `sensor.nem_pd7day_{region}_price_timeline` (diagnostic): state, the timeline's value now; attributes `timeline` and `timeline_sources`, not saved to the recorder. The spot forecast sensor carries the same list as `timeline` (not recorded), and since v3.45.0 its `forecast` and the day 2-7 sensor's are the timeline (see *`forecast` from the price timeline*). The tariff sensors stay PD7DAY's until stage 5b (#339).
 - **Cost**: built once per region per source change and 5-minute interval, from the calibrated forecast the spot sensor already holds, in the shared forecast hub.
 
 ---
@@ -872,6 +884,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 3.45.0 | Stage 5a of the forecast timeline plan (#339): the spot forecast and day 2-7 sensors' `forecast` is the price timeline from the current interval, dispatch, P5MIN 5-minute, pre-dispatch then calibrated PD7DAY, every entry with the keys it always had plus `source` and `resolution_minutes`; `min_24h_value`, `max_24h_value` and `cheapest_2h_window` go by time. Both now write on each new P5MIN (spot) and pre-dispatch run. Tariffs are unchanged. Suite goes from 2059 to 2067 tests. |
 | 3.44.0 | Stage 4 of the forecast timeline plan (#338): one price timeline per region, the current dispatch interval, then P5MIN's 5-minute RRP for the next hour, pre-dispatch to the end of the next trading day and calibrated PD7DAY to day 7, each point with its `source`, `calibrated_source`, band and resolution; a stale source falls through to the next. New `Price Timeline` diagnostic sensor per region, and a `timeline` attribute on the spot forecast sensor; no existing attribute changes (PR #355). Suite goes from 2048 to 2059 tests. |
 | 3.43.0 | Stage 2 of the forecast timeline plan (#336), no published value changed: the DUID, node and zone sensors read their P5MIN and pre-dispatch series from one shared forecast hub, worked out once per run and interval for every sensor (zone attributes 0.37 to 0.07 ms per write, DUID 0.30 to 0.03, node 0.35 to 0.04), replacing #331's per-sensor memo (PR #354). Suite goes from 2039 to 2048 tests. |
 | 3.42.1 | Pre-dispatch recording starts: v3.42.0 created the record after the sensor platforms, so no run was ingested and the `pd_` attributes were missing (PR #353). Suite goes from 2038 to 2039 tests. |
