@@ -163,3 +163,16 @@ def test_cheapest_window_weights_points_by_their_minutes():
     first = t.cheapest_window(2.5)
     assert first is None or first["start"] >= "2026-10-30T21:25:00+10:00"
     assert t.cheapest_window(10) is None  # longer than the timeline
+
+
+def test_predispatch_is_served_through_its_calibration(monkeypatch):
+    """Stage 3b changes one function; the timeline's pre-dispatch points follow it (#333 decision 3)."""
+    run = _pd(_at(21, 2), _at(21, 30), periods=3)
+    plain = _tl.build_timeline(_at(21, 27), "NSW1", pd=run)
+    assert {p["calibrated_source"] for p in plain.points} == {"passthrough"}
+    assert [p["value"] for p in plain.points] == [0.1, 0.101, 0.102]
+    monkeypatch.setattr(_tl, "calibrated_rrp_mwh", lambda region, end, rrp: rrp * 0.5)
+    monkeypatch.setattr(_tl, "calibrated_source", lambda region, end: "isotonic")
+    served = _tl.build_timeline(_at(21, 27), "NSW1", pd=run)
+    assert [p["value"] for p in served.points] == [0.05, 0.0505, 0.051]
+    assert {p["calibrated_source"] for p in served.points} == {"isotonic"}

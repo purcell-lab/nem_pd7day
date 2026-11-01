@@ -424,6 +424,9 @@ def test_the_predispatch_forecast_is_worked_out_once_per_run_and_period(monkeypa
     first = pd_attrs(at(13, 5))
     assert pd_attrs(at(13, 25)) == first and len(calls) == 1  # same period
     assert pd_attrs(at(13, 35))["predispatch_forecast"][0]["time"] == "2026-10-31T13:30:00+10:00" and len(calls) == 2
+    # Each entry's price stays on raw RRP; calibrated_rrp_mwh is the timeline's RRP (#333 decision 3).
+    entry = pd_attrs(at(13, 35))["predispatch_forecast"][0]
+    assert entry["calibrated_rrp_mwh"] == snapshot.prices[sensor._region][at(14, 0)]
     source.latest = newer = replace(snapshot, run_at=at(13, 32))
     pd_attrs(at(13, 40))
     assert len(calls) == 3  # a new run

@@ -116,3 +116,24 @@ def cheapest_window(entries: Sequence[dict[str, Any]], hours: float = 2.0) -> Op
                 "avg_value": avg, "points": count,
             }
     return best
+
+
+def half_hour_values(timeline: Any) -> list[dict[str, Any]]:
+    """The timeline as half hours: each half hour's minute-weighted price, keyed by its start (#339).
+
+    For a consumer that prices by half hour (the scarcity premium): the
+    5-minute dispatch and P5MIN points and any split point are folded into the
+    half hour they fall in, weighted by their minutes; a half hour the timeline
+    covers only in part, the one running now, is the price over what it covers.
+    """
+    sums: dict[datetime, list[float]] = {}
+    for point, (start, end) in zip(timeline.points, timeline.spans):
+        if point.get("value") is None:
+            continue
+        slot = start.replace(minute=start.minute - start.minute % 30, second=0, microsecond=0)
+        minutes = (end - start).total_seconds() / 60
+        total = sums.setdefault(slot, [0.0, 0.0])
+        total[0] += point["value"] * minutes
+        total[1] += minutes
+    return [{"time": slot.isoformat(), "value": round(weighted / minutes, 6)}
+            for slot, (weighted, minutes) in sorted(sums.items()) if minutes]

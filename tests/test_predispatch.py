@@ -346,6 +346,9 @@ def test_constraints_sensor_counts_region_and_skips_artefacts(monkeypatch):
     # SN_ZERO's $8.35M penalty is listed, but the largest priced value is N::N_CNCW_2.
     assert attrs["max_marginal_value_mwh"] == pytest.approx(1044.87)
     assert attrs["rrp"] == pytest.approx(1079.32653)
+    # rrp stays raw $/MWh; calibrated_rrp is the timeline's, passthrough until stage 3b (#339).
+    assert attrs["calibrated_rrp"] == attrs["rrp"]
+    assert all(row["calibrated_rrp"] == row["rrp"] for row in attrs["forecast"])
     assert attrs["forecast"][0]["top"][0] == "N::N_CNCW_2"
     assert sensor._unrecorded_attributes == frozenset({"constraints", "unassigned_constraints", "forecast"})
 

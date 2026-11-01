@@ -14,6 +14,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .coordinator import staleness_attributes
 from .dispatch_client import parse_settlement
 from .nem_time import NEM_TZ
+from .region_timeline import region_timeline
+from .timeline_forecast import half_hour_values
 from .scarcity_premium import (
     FLOOR_CAP,
     PREMIUM_CAP,
@@ -142,10 +144,13 @@ class ScarcityPremiumSensor(CoordinatorEntity, SensorEntity):
                 try:
                     await self._base._async_warm_calibrated_forecast()
                     data = self._base._price_data
-                    if data is not None:
-                        base_rows = self._base._cached_calibrated_forecast(
-                            self._base._calibrated_forecast_key(data)
-                        ) or []
+                    calibrated = None if data is None else self._base._cached_calibrated_forecast(
+                        self._base._calibrated_forecast_key(data)
+                    )
+                    if calibrated:
+                        # The region's price timeline by half hour (#339): dispatch, P5MIN and
+                        # pre-dispatch before the calibrated PD7DAY run the base sensor warmed.
+                        base_rows = half_hour_values(region_timeline(self._base, data, calibrated))
                     fresh = (
                         bool(self.coordinator.last_update_success)
                         and not staleness_attributes(self.coordinator).get("is_stale", True)

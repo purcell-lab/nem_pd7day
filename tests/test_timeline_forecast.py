@@ -114,3 +114,19 @@ def test_a_window_needs_full_contiguous_coverage():
     assert best["start"] == entries[2]["time"], "no window spans the missing half hour"
     entries[0]["value"] = None
     assert _tf.cheapest_window(entries, hours=1.0)["start"] == entries[1]["time"]
+
+
+def test_half_hours_fold_five_minute_points_by_their_minutes():
+    """The scarcity premium's base: one price per half hour, from whatever the timeline holds there."""
+    now = _at(21, 27)
+    calibrated = _calibrated(_at(21, 0), 4)
+    timeline = _timeline(now, calibrated, p5=_p5(_at(21, 25), _at(21, 30), 6),
+                         dispatch=_tl.DispatchPoint(_at(21, 30), 0.30))
+    halves = _tf.half_hour_values(timeline)
+    assert [h["time"] for h in halves] == [
+        "2026-10-30T21:00:00+10:00", "2026-10-30T21:30:00+10:00", "2026-10-30T22:00:00+10:00",
+        "2026-10-30T22:30:00+10:00"]
+    assert halves[0]["value"] == 0.30, "21:00 holds only the dispatch interval 21:25-21:30"
+    # 21:30-22:00: P5MIN 21:30-21:55 (0.051 to 0.055) and PD7DAY's last 5 minutes (0.21).
+    assert halves[1]["value"] == round((0.051 + 0.052 + 0.053 + 0.054 + 0.055) * 5 / 30 + 0.21 * 5 / 30, 6)
+    assert halves[2]["value"] == 0.22

@@ -32,6 +32,7 @@ from .const import (
 )
 from .constraint_client import BindingConstraint, describe_constraint
 from .nem_time import NEM_TZ, now_nem
+from .predispatch_calibration import calibrated_rrp_mwh
 from .predispatch_client import PERIOD, InterconnectorPeriod, PredispatchSnapshot
 from .predispatch_coordinator import PredispatchCoordinator
 
@@ -304,6 +305,8 @@ class NemPd7dayPredispatchConstraintsSensor(_PredispatchSensor):
             "max_unassigned_marginal_value_mwh": _max_marginal(unassigned),
             "unassigned": [_unassigned_brief(c, dispatch_rhs) for c in unassigned[:TOP_PER_PERIOD]],
             "rrp": snapshot.prices.get(self._region, {}).get(end),
+            # As the price timeline serves it: passthrough until stage 3b (#333 decision 3, #339).
+            "calibrated_rrp": calibrated_rrp_mwh(self._region, end, snapshot.prices.get(self._region, {}).get(end)),
         }
 
     @property
