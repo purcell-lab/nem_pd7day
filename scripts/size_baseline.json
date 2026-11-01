@@ -11,22 +11,17 @@
     "market_notice_client:MarketNoticeClient": {
       "lines": 255,
       "methods": 6
-    },
-    "tariff_sensor:NemPd7dayTariffSensor": {
-      "lines": 324,
-      "methods": 17
     }
   },
   "functions": {
     "__init__:async_setup_entry": 474,
     "bias_chart:render_chart": 221,
-    "calibration_engine:CalibrationResult.summary": 85,
+    "calibration_engine:CalibrationResult.summary": 67,
     "calibration_engine:_quantile_regression": 86,
     "calibration_inputs:stpasa_features_for_interval": 98,
-    "camera:NemPd7dayForecastChartCamera._build_forecast_data": 110,
     "config_flow:PD7DayConfigFlow.async_step_reconfigure": 74,
-    "config_flow:PD7DayOptionsFlow.async_step_init": 75,
-    "coordinator:DispatchCoordinator._async_update_data": 79,
+    "config_flow:PD7DayOptionsFlow.async_step_init": 71,
+    "coordinator:DispatchCoordinator._async_update_data": 62,
     "coordinator:PD7DayCoordinator._async_update_data": 90,
     "coordinator:PD7DayCoordinator.stpasa_index": 61,
     "dispatch_client:fetch_dispatch_prices": 84,
@@ -37,11 +32,11 @@
     "forecast_chart:render_forecast_chart": 490,
     "iso_chart:render_iso_chart": 66,
     "market_notice_client:MarketNoticeClient.fetch_new_notices": 137,
-    "market_notice_client:_parse_notice_body": 153,
+    "market_notice_client:_parse_notice_body": 142,
     "nemweb_retry:fetch_with_retry": 97,
-    "pd7day_client:PD7DayClient.fetch_all": 77,
+    "pd7day_client:PD7DayClient.fetch_all": 69,
     "pd7day_client:_parse_all_tables": 112,
-    "sensor:async_setup_entry": 110,
+    "sensor:async_setup_entry": 106,
     "stpasa_client:_parse_all_regions": 80,
     "stpasa_client:_parse_regionsolution": 77,
     "tod_stats:compute": 103,

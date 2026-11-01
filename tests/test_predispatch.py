@@ -473,3 +473,26 @@ def test_constraints_sensor_publishes_the_pre_dispatch_record_stats(monkeypatch)
         assert attrs["pd_observations"] == 1234 and attrs["pd_history_days"] == 2.5
     plain = _sensor.NemPd7dayPredispatchConstraintsSensor(_coordinator(_snapshot()), SimpleNamespace(entry_id="e1"), "QLD1")
     assert "pd_observations" not in plain.extra_state_attributes
+
+
+def test_constraints_rows_are_kept_per_run_and_period(monkeypatch):
+    """#336: the rows are built once per run, dispatch interval and period, not every write."""
+    clock = {"now": _at(17, 45)}
+    monkeypatch.setattr(_sensor, "now_nem", lambda: clock["now"])
+    sensor = _sensor.NemPd7dayPredispatchConstraintsSensor(
+        _coordinator(_snapshot(), _at(17, 31)), SimpleNamespace(entry_id="e1"), "NSW1"
+    )
+    sensor.hass = SimpleNamespace(data={_const.DOMAIN: {}})
+    first = sensor.extra_state_attributes["forecast"]
+    clock["now"] = _at(17, 50)
+    assert sensor.extra_state_attributes["forecast"] is first, "same run and period: kept"
+    sensor.coordinator.latest = replace(sensor.coordinator.latest, run_at=_at(17, 46))
+    rebuilt = sensor.extra_state_attributes["forecast"]
+    assert rebuilt is not first and rebuilt == first, "a new run rebuilds, to the same rows here"
+
+
+def test_constraint_descriptions_are_kept_per_id():
+    _cc.describe_constraint.cache_clear()
+    first = _cc.describe_constraint("N::N_CNCW_2")
+    assert _cc.describe_constraint("N::N_CNCW_2") is first
+    assert _cc.describe_constraint.cache_info().hits == 1

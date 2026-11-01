@@ -23,6 +23,7 @@ import io
 import logging
 import re
 import zipfile
+from functools import lru_cache
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
@@ -87,8 +88,14 @@ def _cause(chars: str) -> tuple[Optional[str], bool]:
     return _CAUSES[chars[0]], len(chars) > 1 and chars[1] == chars[0]
 
 
+@lru_cache(maxsize=8192)
 def describe_constraint(constraint_id: str) -> ConstraintInfo:
-    """Region, category and cause read from an AEMO constraint ID."""
+    """Region, category and cause read from an AEMO constraint ID.
+
+    Kept per ID: it depends on the ID alone and returns a frozen value, and
+    the pre-dispatch constraints sensor reads about 2,000 a write, every
+    binding constraint of every period, which was most of its 10 ms (#336).
+    """
     cid = constraint_id.strip()
     nil = "NIL" in re.split(r"[_>:^+\-]", cid)
 
