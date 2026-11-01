@@ -170,6 +170,8 @@ A DUID is a generating or load unit, not your connection point. Its local price 
 
 A catalogued DUID's sensor publishes `station`, `fuel`, `duid_region`, `tni`, `mlf`, `latitude` and `longitude`, so it shows on a map card. The local price uses the ROP of the DUID's own region, and of the entry's region for a DUID the catalogue lacks.
 
+**Non-physical units are not offered** (#311): registrations with no plant behind them, so no location and no meaningful local price adjustment. These are each region's dummy generator (`DG_*`) and reserve trader (`RT_*`), and the VPP, demand response and ancillary service aggregations (`VS*`, `DR*`, `AS*`), 95 in the catalogue. The rule is no coordinates plus a dummy, reserve trader or aggregation marker in the DUID, fuel or station name, so a real plant without coordinates yet (Aldoga Solar Farm) is still offered. A node whose units are all non-physical is not offered either. One already chosen keeps its sensor, is listed in the options marked `non-physical`, publishes `non_physical: true`, and a notice is logged once at setup. It can still be typed.
+
 ### Transmission node prices (optional)
 
 | Field | Default | Description |
@@ -448,13 +450,17 @@ Both are diagnostic sensors (EntityCategory.DIAGNOSTIC) and do not appear on the
 
 AEMO does not publish a region with each constraint, so the region is read from the constraint ID following AEMO's [Constraint Naming Guidelines](https://aemo.com.au/-/media/Files/Electricity/NEM/Security_and_Reliability/Congestion-Information/2016/Constraint-Naming-Guidelines.pdf): `N>NIL_969` is a NSW1 thermal constraint with no outage, `SVML^...` covers Murraylink (VIC1 and SA1), `NRM_VIC1_SA1` is negative residue management between those regions. An ID that follows no documented convention is listed under `unassigned_constraints` in every region rather than guessed.
 
+**What the state counts** (`filter`, #318): binding network, interconnector and negative residue constraints whose ID names this region. FCAS constraints, and IDs that name no region, are listed and not counted. So a region can read 0 while something binds: at 18:45 on 31 Oct 2026 every region read 0 while `L_PEC_X_6C_6G_6H_XST`, an interconnector limit whose ID names no region, bound alone outside FCAS. That is also when DispatchIS carried no LOCAL_PRICE table, because no unit had an adjustment (#309). `binding_nem_network` and its IDs show such a constraint NEM-wide.
+
 | Attribute | Description |
 |---|---|
 | `time`, `nemtime` | Start and end of the dispatch interval, NEM time (+10:00) |
 | `constraints` | The region's binding network, interconnector and negative residue constraints, largest cost first (not saved to the HA recorder) |
 | `fcas_constraints` | Binding FCAS constraints covering the region, not counted in the state (not recorded) |
 | `unassigned_constraints` | Binding constraints whose ID names no region (not recorded) |
-| `binding_nem`, `evaluated_nem` | Binding constraints in the whole NEM, and every equation evaluated for the interval |
+| `filter` | What the state counts, as above |
+| `binding_nem`, `evaluated_nem` | Binding constraints in the whole NEM, FCAS included, and every equation evaluated for the interval |
+| `binding_nem_network`, `binding_nem_network_ids` | Binding constraints in the whole NEM other than FCAS, whatever region their ID names, and their IDs (not recorded) |
 | `file` | The DispatchIS file read |
 | `tracked_since` | Start of the first interval seen since Home Assistant started; `first_bound` and `bound_minutes_today` count from here |
 
@@ -511,6 +517,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `interval_start`, `interval_end` | The dispatch interval, AEST `+10:00`. `interval_end` is AEMO's SETTLEMENTDATE |
 | `source`, `source_file`, `fallback_source_file`, `retrieved_at`, `age_seconds` | `DISPATCH_LOCAL_PRICE` (`P5MIN_LOCAL_PRICE`, `PREDISPATCH_LOCAL_PRICE` or `RRP` under a fallback), the DispatchIS file, the file standing in (`RRP` for none, else null), when it was read, and seconds since the interval started. AEMO publishes the file while its interval runs, so it is about 0 to 300 while current |
 | `region`, `duid`, `station`, `fuel`, `duid_region`, `latitude`, `longitude` | The entry's region and the DUID; the rest from the catalogue, when it lists the DUID |
+| `non_physical` | `true` for a dummy generator, reserve trader or aggregation (#311); absent otherwise |
 
 **A DispatchIS file without its LOCAL_PRICE table** is AEMO's zero: the table is left out when no unit has an adjustment, never written empty. It was missing from 11 of 576 files over 30 and 31 Oct 2026, early evening; on the 31st exactly the intervals where the only network constraints binding were interconnector limits without unit terms (at 18:45, `L_PEC_X_6C_6G_6H_XST`). P5MIN and pre-dispatch leave it out the same way. Such a file reads `dispatch_zero`, 0 for every DUID, and nothing stands in for it.
 
@@ -819,6 +826,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 3.39.0 | Node and zone prices are (ROP + adjustment) × MLF, not ROP × MLF + adjustment (#312): AEMO's adjustment is referred to the regional reference node, like the ROP. Against the bids in force on 31 Oct 2026, 17 of 34 dispatched, locally constrained unit intervals priced to the cent at one of the unit's own offer bands this way, and none the old way. Constrained intervals move by adjustment × (1 − MLF): GSTONE1 at 16:05 on 31 Oct now −967.10 $/MWh, where it read −1044.92. Every price carries a `formula` attribute, the node sensor adds `adjustment_at_node_mwh`, and the DUID sensor adds `node_price` beside AEMO's `local_price` (#313) (PR #322). Suite goes from 1960 to 1961 tests. |
 | 3.38.0 | A DispatchIS file without its LOCAL_PRICE table is AEMO's zero for every unit, not an outage (#309): AEMO leaves the table out when no unit has an adjustment. A fresh file without it reads `row_status: dispatch_zero`, 0 for every DUID, node and zone member, with no fallback; P5MIN and pre-dispatch runs without it are 0 throughout. P5MIN, then pre-dispatch, now stand in only for a missing or stale dispatch file, with their own ROP or RRP. `table_missing` and `rrp_fallback` are removed (PR #320). Suite goes from 1958 to 1960 tests. |
 | 3.37.3 | A P5MIN interval or pre-dispatch period with no LOCAL_PRICE row for any DUID is not a fallback source: the interval goes on to the next one. On 31 Oct 2026 the 20:32 pre-dispatch run had rows only from midnight, and v3.37.2 labelled 21:00 `predispatch_fallback` for data AEMO had not published; it now reads `rrp_fallback`. Values unchanged (PR #307). Suite goes from 1956 to 1958 tests. |
 | 3.37.2 | After P5MIN, pre-dispatch and then the regional price stand in for a DispatchIS file without its LOCAL_PRICE table: the 30-minute pre-dispatch period covering the interval (`predispatch_fallback`), else no adjustment (`rrp_fallback`). On 31 Oct 2026 both DispatchIS and P5MIN lost the table from 19:45 and every local price sensor read unknown; now only a stale file, or none, does (PR #305). Suite goes from 1952 to 1956 tests. |

@@ -339,6 +339,24 @@ def test_options_flow_saves_local_price_duids_upper_cased_and_deduplicated(flow_
     assert omitted["data"][const_mod.CONF_LOCAL_PRICE_DUIDS] == ""
 
 
+def test_the_duid_picker_leaves_out_non_physical_units_unless_chosen(flow_env, monkeypatch):
+    """#311: the bundled catalogue's dummy generator, reserve trader and VPP are
+    not offered; one already chosen stays, named and marked."""
+    config_flow_mod, _const = flow_env
+    catalogue = config_flow_mod.load_catalogue()
+    fresh = {c["value"] for c in config_flow_mod._duid_choices(catalogue, "QLD1", [])}
+    assert "GSTONE1" in fresh and not fresh & {"DG_QLD1", "RT_QLD1", "VSQHT1V1"}
+    kept = config_flow_mod._duid_choices(catalogue, "QLD1", ["DG_QLD1"])
+    assert kept[-1] == {"value": "DG_QLD1", "label": "DG_QLD1 · QLD1 Dummy Generator · non-physical"}
+    configs: list = []
+    monkeypatch.setattr(config_flow_mod.selector, "selector", lambda cfg: configs.append(cfg) or (lambda v: v))
+    config_flow_mod._node_field({_const.CONF_NODES: "QDNSG"}, catalogue, "QLD1")
+    nodes = {c["value"]: c["label"] for c in configs[-1]["select"]["options"]}
+    assert "QGLD1" in nodes and nodes["QDNSG"].startswith("QDNSG · QLD1 Dummy Generator")  # chosen: kept, named
+    config_flow_mod._node_field({}, catalogue, "QLD1")
+    assert "QDNSG" not in {c["value"] for c in configs[-1]["select"]["options"]}
+
+
 def test_options_flow_refuses_a_string_that_cannot_be_a_duid(flow_env):
     config_flow_mod, const_mod = flow_env
     entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1"})
