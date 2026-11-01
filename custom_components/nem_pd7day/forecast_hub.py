@@ -70,6 +70,7 @@ class ForecastHub:
     def __init__(self) -> None:
         self._memo: dict[str, tuple[Hashable, dict[Hashable, Any], Any]] = {}
         self._ends: dict[Hashable, tuple[datetime, ...]] = {}
+        self._kept: dict[str, tuple[Hashable, dict[Hashable, Any], Any]] = {}
         self.stats = HubStats()
 
     def _entries(self, kind: str, run: Any) -> dict[Hashable, Any]:
@@ -127,6 +128,31 @@ class ForecastHub:
             return compute()
         key = (args, self._when(snapshot, lambda: snapshot.period_ends, now, max_age))
         return self._get("pd:" + kind, snapshot, key, compute)
+
+
+    # ── Anything else keyed on its own inputs (the price timeline, #338) ────
+
+    def keep(self, kind: str, identity: Hashable, key: Hashable, compute: Callable[[], T], pin: Any = None) -> T:
+        """``compute()`` kept while ``identity`` is unchanged, per ``key`` (the clock's part).
+
+        ``identity`` must be cheap to compare (ids and times, not the inputs
+        themselves); ``pin`` holds the objects it names by id, so no id is
+        reused while the entry lives. Kept apart from the series memos.
+        """
+        held = self._kept.get(kind)
+        if held is None or held[0] != identity:
+            held = (identity, {}, pin)
+            self._kept[kind] = held
+        entries = held[1]
+        if key in entries:
+            self.stats.reused += 1
+            return entries[key][1]
+        if len(entries) >= MAX_ENTRIES:
+            entries.clear()
+        value = compute()
+        self.stats.computed += 1
+        entries[key] = (key, value)
+        return value
 
 
 def shared_forecast_hub(domain_data: dict) -> ForecastHub:

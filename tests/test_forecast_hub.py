@@ -154,3 +154,17 @@ def test_the_guard_drops_a_kind_that_grows_past_its_limit(monkeypatch):
 def test_one_hub_per_install():
     data: dict = {}
     assert _hub.shared_forecast_hub(data) is _hub.shared_forecast_hub(data)
+
+
+def test_kept_values_live_apart_from_the_series_and_compare_cheaply():
+    """A kept identity names its inputs by id: the series memo's bookkeeping must
+    never hash or deep-compare a run (a frozen dataclass with dict fields)."""
+    run = _p5()
+    hub = _hub.ForecastHub()
+    t = datetime(2026, 10, 30, 21, 26, tzinfo=NEM_TZ)
+    identity = (id(run), run.run_at)
+    assert hub.keep("timeline:NSW1", identity, (t,), lambda: "a", pin=(run,)) == "a"
+    assert hub.keep("timeline:NSW1", identity, (t,), lambda: "b", pin=(run,)) == "a"
+    # The series memo still works beside it, through a new run.
+    assert hub.p5("duid", run, "X", t, P5_MAX, lambda: 1) == 1
+    assert hub.p5("duid", replace(run, source="n.zip"), "X", t, P5_MAX, lambda: 2) == 2

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, TYPE_CHECKING
 
-from .nem_time import now_nem, offset_seam_point, parse_iso, to_nem_iso
+from .nem_time import NEM_TZ, now_nem, offset_seam_point, parse_iso, to_nem_iso
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -168,6 +168,8 @@ async def async_setup_entry(
     # unrecorded attributes (kept out of the HA recorder database).
     entities.append(PD7DayDataSensor(coordinator, store, entry, region))
     entities.append(StpasaDataSensor(coordinator, entry, region))
+    # The price timeline: dispatch, P5MIN, pre-dispatch, PD7DAY (#338).
+    entities.append(PriceTimelineSensor(coordinator, store, entry, region))
 
     # Interconnectors for this region.
     #
@@ -766,7 +768,7 @@ class PD7DayForecastSensor(
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_attribution = ATTR_ATTRIBUTION
-    _unrecorded_attributes = frozenset({"forecast", "forecast_description"})
+    _unrecorded_attributes = frozenset({"forecast", "forecast_description", "timeline"})
 
     def __init__(self, coordinator, store, entry: ConfigEntry, region: str) -> None:
         super().__init__(coordinator)
@@ -906,8 +908,141 @@ class PD7DayForecastSensor(
                 and self._store.calibration is not None
                 and self._store.active_bucket_count > 0
             ),
+            # Dispatch, then P5MIN, pre-dispatch and this forecast, each where the one before ends (#338).
+            # ``forecast`` stays PD7DAY's alone.
+            "timeline": region_timeline(self, d, calibrated_forecast).points,
         }
 
+
+
+def _dispatch_point(entry: ConfigEntry, region: str) -> Any:
+    """The 5-minute dispatch price held for ``region``, as the timeline's first point, or None."""
+    from .dispatch_client import parse_settlement
+    from .price_timeline import DispatchPoint
+
+    runtime_data = getattr(entry, "runtime_data", None)
+    dispatch = getattr(runtime_data, "dispatch", None)
+    price = dispatch.prices.get(region) if dispatch is not None and getattr(dispatch, "prices", None) else None
+    if price is None:
+        return None
+    try:
+        end = parse_settlement(price.interval_datetime).replace(tzinfo=NEM_TZ)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return DispatchPoint(end, price.rrp, getattr(dispatch, "source_file", "") or "")
+
+
+def region_timeline(sensor: Any, d: Any, calibrated: list[dict]) -> Any:
+    """The region's price timeline now, kept in the shared hub until a source or the 5-minute interval moves.
+
+    ``calibrated`` is the region's calibrated PD7DAY forecast, the same list
+    the spot forecast sensor publishes, so the timeline costs no calibration.
+    """
+    from .const import SHARED_P5MIN_KEY, SHARED_PREDISPATCH_KEY
+    from .forecast_hub import shared_forecast_hub
+    from .price_timeline import P5_MAX_AGE, PD_MAX_AGE, build_timeline
+
+    domain_data = sensor.hass.data.setdefault(DOMAIN, {}) if getattr(sensor, "hass", None) else {}
+    p5 = getattr(domain_data.get(SHARED_P5MIN_KEY), "latest", None)
+    pd = getattr(domain_data.get(SHARED_PREDISPATCH_KEY), "latest", None)
+    dispatch = _dispatch_point(sensor._entry, sensor._region)
+    now = now_nem()
+
+    def build() -> Any:
+        return build_timeline(
+            now, sensor._region, dispatch=dispatch, p5=p5, pd=pd, pd7day=calibrated,
+            pd7day_run_at=d.forecast_generated_at, pd7day_source_file=d.source_file,
+        )
+
+    if not domain_data:
+        return build()
+    hub = shared_forecast_hub(domain_data)
+    identity = (dispatch, id(p5), getattr(p5, "run_at", None), id(pd), getattr(pd, "run_at", None), id(calibrated))
+    key = (
+        now.replace(minute=now.minute - now.minute % 5, second=0, microsecond=0),
+        p5 is not None and now - p5.run_at > P5_MAX_AGE,
+        pd is not None and now - pd.run_at > PD_MAX_AGE,
+    )
+    # The memo pins the inputs its identity names by id, so those ids stay unique.
+    return hub.keep("timeline:" + sensor._region, identity, key, build, pin=(p5, pd, calibrated))
+
+
+class PriceTimelineSensor(CalibratedWriteMixin, CoordinatorEntity[PD7DayCoordinator], SensorEntity):
+    """The region's price timeline (#338): dispatch, P5MIN raw, pre-dispatch, PD7DAY calibrated.
+
+    State: the timeline's value now, $/kWh. Attributes: every point, each with
+    its ``source``, ``calibrated_source``, band and resolution, and
+    ``timeline_sources``, what each source covered and how old it was.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_native_unit_of_measurement = "$/kWh"
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_icon = "mdi:chart-timeline-variant"
+    _unrecorded_attributes = frozenset({"timeline", "timeline_sources"})
+
+    def __init__(self, coordinator, store, entry: ConfigEntry, region: str) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._region = region
+        self._store = store
+        self._attr_unique_id = f"nem_pd7day_{region.lower()}_price_timeline"
+        self._attr_name = "Price Timeline"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
+            name=f"NEM PD7DAY {self._region}",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            configuration_url=DEVICE_CONFIGURATION_URL,
+        )
+
+    @property
+    def _price_data(self):
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.prices.get(self._region)
+
+    async def async_added_to_hass(self) -> None:
+        """Write on each dispatch poll, each new P5MIN or pre-dispatch run, and at each half hour."""
+        from .const import SHARED_P5MIN_KEY, SHARED_PREDISPATCH_KEY
+
+        await super().async_added_to_hass()
+
+        async def _handle_tick(_now) -> None:
+            self._schedule_warm_state_write()
+
+        self.async_on_remove(async_track_time_change(self.hass, _handle_tick, minute=[0, 30], second=5))
+        dispatch = getattr(getattr(self._entry, "runtime_data", None), "dispatch", None)
+        domain_data = self.hass.data.get(DOMAIN, {})
+        for source in (dispatch, domain_data.get(SHARED_P5MIN_KEY), domain_data.get(SHARED_PREDISPATCH_KEY)):
+            if source is not None:
+                self.async_on_remove(source.async_add_listener(self._schedule_warm_state_write))
+
+    def _timeline(self) -> Any:
+        d = self._price_data
+        calibrated = self._calibrated_forecast(d) if d is not None else []
+        if d is None:
+            from .price_timeline import build_timeline
+            return build_timeline(now_nem(), self._region)
+        return region_timeline(self, d, calibrated)
+
+    @property
+    def native_value(self) -> float | None:
+        current = self._timeline().current
+        return current["value"] if current is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        timeline = self._timeline()
+        return {
+            ATTR_REGION: self._region,
+            "source": timeline.points[0]["source"] if timeline.points else None,
+            "points": len(timeline.points),
+            "timeline_end": timeline.points[-1]["nemtime"] if timeline.points else None,
+            "timeline_sources": timeline.sources,
+            "timeline": timeline.points,
+        }
 
 
 def _min_max_first_24h(
