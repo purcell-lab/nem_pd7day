@@ -366,6 +366,92 @@ class NemPd7dayIsoChartCamera(
         return self._image_bytes if self._image_bytes else None
 
 
+def _chart_calibration_fields(cal: dict) -> dict:
+    """The chart entry's calibration fields from one ``calibrate_interval`` result."""
+    cal_update = {
+        ATTR_CAL_CALIBRATED: cal["calibrated"],
+        ATTR_CAL_P10: cal["p10"],
+        ATTR_CAL_P50: cal["p50"],
+        ATTR_CAL_P90: cal["p90"],
+        ATTR_CAL_MAE: cal.get("ols_mae"),
+        ATTR_CAL_SOURCE: cal["calibrated_source"],
+        ATTR_CAL_N_OBS: cal["n_obs"],
+    }
+    # spike_credible, issue #84. Until this line the camera never
+    # wrote the key, so the set _save_spike_intervals builds below
+    # was always empty, spike_first_run was therefore always True,
+    # and forecast_chart.py drops any interval whose
+    # spike_credible is not True before it reaches the callout
+    # eligibility check. The chart's spike callouts had never once
+    # been drawn. The sensor has carried the field all along, so
+    # this is the same camera and sensor divergence as #66 and #80.
+    #
+    # The key is copied only when apply_to_price actually set it,
+    # rather than with cal.get(), because the field is a tri-state
+    # and the three states are not the same fact. True means the
+    # gas and QNI covariates both support the spike. None means at
+    # least one of them was missing, so the question was not
+    # answered. Absent means the raw price is below
+    # SPIKE_THRESHOLD, so the question was never asked. Only True
+    # draws a callout, and the other two draw nothing, which is the
+    # conservative direction. What must not happen is a default of
+    # False, which would record an unanswered question as a
+    # confirmed negative.
+    if "spike_credible" in cal:
+        cal_update["spike_credible"] = cal["spike_credible"]
+    return cal_update
+
+
+def _calibrated_chart_entry(store, coordinator, period, run_at, prior_spike_intervals: set[str]) -> dict:
+    """One interval of the chart's own calibration, the fallback without a current memo (#339, #340)."""
+    h = _horizon_hours(run_at, period.time)
+    try:
+        hour = parse_iso(period.time).hour
+    except (ValueError, TypeError):
+        hour = 0
+
+    interval_key = interval_key_for_period(period)
+
+    entry = {
+        "nemtime": to_nem_iso(parse_iso(period.nemtime)),
+        "time": interval_key,
+        "raw_value": period.value,
+        "horizon_hours": round(h, 1),
+        "forecast_run_at": run_at,
+        "spike_first_run": interval_key not in prior_spike_intervals,
+    }
+
+    # Same shared entry point as sensor.py and tariff_sensor.py, so the
+    # line drawn on the chart, the band shaded around it and the source
+    # label are the ones the forecast sensor already published for this
+    # interval. This used to call store.apply_to_price directly with the
+    # gas and QNI covariates only, no stpasa_features and no
+    # run_features, and the stage-2 gate needs both, so the chart could
+    # never render isotonic+stpasa while the sensor routinely did. See
+    # issue #80, and #66 for why there is one assembly and not four.
+    #
+    # WHY this is safe to call from the executor: _render runs this in
+    # a worker thread, but calibrate_interval only reads. It touches no
+    # Home Assistant API and writes no entity state. Its one write is
+    # the STPASA index cache inside coordinator.stpasa_index, which is
+    # already reached from both the loop and the executor by the
+    # sensor's calibration warm and publishes its run key last for that
+    # reason. sensor._calibrated_forecast_values calls this same
+    # function for every interval of the run from
+    # async_add_executor_job today.
+    cal = calibrate_interval(
+        store, coordinator, period.value, interval_key, h, hour,
+        run_at_iso=run_at,
+    )
+    if cal is not None:
+        entry.update(_chart_calibration_fields(cal))
+    else:
+        # No calibration store, or no raw price. Carry the raw value
+        # through rather than inventing a calibrated 0.
+        entry["value"] = period.value
+    return entry
+
+
 class _TimelineChartMixin:
     """The forecast chart's data from the price timeline over the calibrated forecast memo (#339).
 
@@ -531,83 +617,7 @@ class NemPd7dayForecastChartCamera(
         result = []
 
         for period in price_data.forecast:
-            h = _horizon_hours(run_at, period.time)
-            try:
-                hour = parse_iso(period.time).hour
-            except (ValueError, TypeError):
-                hour = 0
-
-            interval_key = interval_key_for_period(period)
-
-            entry = {
-                "nemtime": to_nem_iso(parse_iso(period.nemtime)),
-                "time": interval_key,
-                "raw_value": period.value,
-                "horizon_hours": round(h, 1),
-                "forecast_run_at": run_at,
-                "spike_first_run": interval_key not in prior_spike_intervals,
-            }
-
-            # Same shared entry point as sensor.py and tariff_sensor.py, so the
-            # line drawn on the chart, the band shaded around it and the source
-            # label are the ones the forecast sensor already published for this
-            # interval. This used to call store.apply_to_price directly with the
-            # gas and QNI covariates only, no stpasa_features and no
-            # run_features, and the stage-2 gate needs both, so the chart could
-            # never render isotonic+stpasa while the sensor routinely did. See
-            # issue #80, and #66 for why there is one assembly and not four.
-            #
-            # WHY this is safe to call from the executor: _render runs this in
-            # a worker thread, but calibrate_interval only reads. It touches no
-            # Home Assistant API and writes no entity state. Its one write is
-            # the STPASA index cache inside coordinator.stpasa_index, which is
-            # already reached from both the loop and the executor by the
-            # sensor's calibration warm and publishes its run key last for that
-            # reason. sensor._calibrated_forecast_values calls this same
-            # function for every interval of the run from
-            # async_add_executor_job today.
-            cal = calibrate_interval(
-                store, self.coordinator, period.value, interval_key, h, hour,
-                run_at_iso=run_at,
-            )
-            if cal is not None:
-                cal_update = {
-                    ATTR_CAL_CALIBRATED: cal["calibrated"],
-                    ATTR_CAL_P10: cal["p10"],
-                    ATTR_CAL_P50: cal["p50"],
-                    ATTR_CAL_P90: cal["p90"],
-                    ATTR_CAL_MAE: cal.get("ols_mae"),
-                    ATTR_CAL_SOURCE: cal["calibrated_source"],
-                    ATTR_CAL_N_OBS: cal["n_obs"],
-                }
-                # spike_credible, issue #84. Until this line the camera never
-                # wrote the key, so the set _save_spike_intervals builds below
-                # was always empty, spike_first_run was therefore always True,
-                # and forecast_chart.py drops any interval whose
-                # spike_credible is not True before it reaches the callout
-                # eligibility check. The chart's spike callouts had never once
-                # been drawn. The sensor has carried the field all along, so
-                # this is the same camera and sensor divergence as #66 and #80.
-                #
-                # The key is copied only when apply_to_price actually set it,
-                # rather than with cal.get(), because the field is a tri-state
-                # and the three states are not the same fact. True means the
-                # gas and QNI covariates both support the spike. None means at
-                # least one of them was missing, so the question was not
-                # answered. Absent means the raw price is below
-                # SPIKE_THRESHOLD, so the question was never asked. Only True
-                # draws a callout, and the other two draw nothing, which is the
-                # conservative direction. What must not happen is a default of
-                # False, which would record an unanswered question as a
-                # confirmed negative.
-                if "spike_credible" in cal:
-                    cal_update["spike_credible"] = cal["spike_credible"]
-                entry.update(cal_update)
-            else:
-                # No calibration store, or no raw price. Carry the raw value
-                # through rather than inventing a calibrated 0.
-                entry["value"] = period.value
-
+            entry = _calibrated_chart_entry(store, self.coordinator, period, run_at, prior_spike_intervals)
             result.append(entry)
 
         # Save current spike intervals for next-run persistence check (Rec 4)

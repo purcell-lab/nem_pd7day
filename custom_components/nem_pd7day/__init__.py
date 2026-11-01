@@ -269,7 +269,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # ── Dispatch coordinator (5-minute polling, shared across all entries) ─────
     # The claim has to be lock-guarded because the first refresh awaits. See
     # shared_dispatch.py and issue #34 for what went wrong without the lock.
-    dispatch = await async_shared_dispatch(hass, setup_lock, trace)
+    dispatch = await async_shared_dispatch(hass, setup_lock, trace, DispatchCoordinator)
 
     # Before the platforms: the sensor setup subscribes it to pre-dispatch runs (#337).
     pd_record = PredispatchRecord(hass, region)

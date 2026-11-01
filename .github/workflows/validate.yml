@@ -73,10 +73,11 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: python scripts/check_golden_untouched.py --base "origin/$BASE_REF"
 
-      # Reported, not enforced, until spec 008. The first report is
-      # docs/architecture/import-report-000.txt.
-      - name: Import contracts (report only)
-        continue-on-error: true
+      # Enforced since stage 6 of the forecast timeline plan (#340): adapters
+      # above services above domain, and nothing below the adapters imports
+      # Home Assistant. tests/test_import_layers.py keeps every module in a
+      # layer. The first report was docs/architecture/import-report-000.txt.
+      - name: Import contracts
         run: lint-imports
 
   # Spec 000 part C: no source line the base branch's tests executed may go
@@ -135,8 +136,8 @@ jobs:
       - name: Install type-check dependencies
         run: pip install -r requirements-typecheck.txt
 
-      # Fails when the error count rises above mypy_baseline.txt. Lower the
-      # baseline as errors are fixed; see scripts/mypy_ratchet.py.
+      # Fails on any type error: the baseline is 0 since #340, with numpy and
+      # matplotlib installed so the chart code is checked too (#296).
       - name: Type check (mypy ratchet)
         run: python scripts/mypy_ratchet.py
 
