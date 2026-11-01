@@ -339,6 +339,19 @@ def test_options_flow_saves_local_price_duids_upper_cased_and_deduplicated(flow_
     assert omitted["data"][const_mod.CONF_LOCAL_PRICE_DUIDS] == ""
 
 
+def test_the_home_load_point_list_leads_with_the_nearest_citys(flow_env):
+    """#316: with Home in the Sunshine Coast hinterland, Palmwoods (QPWD), the
+    Sunshine Coast preset's point, comes first, named with the city and distance."""
+    config_flow_mod, _const = flow_env
+    loads = config_flow_mod.load_load_points()
+    choices = config_flow_mod._home_load_choices("QLD1", loads, (-26.42, 153.08))
+    assert choices[0]["value"] == "QPWD" and choices[0]["label"].endswith("· Sunshine Coast, 26 km")
+    assert len(choices) == len(loads.region_points("QLD1")) == len({c["value"] for c in choices})
+    assert config_flow_mod._home_location(types.SimpleNamespace(config=types.SimpleNamespace(latitude=-26.42, longitude=153.08))) \
+        == (-26.42, 153.08)
+    assert config_flow_mod._home_location(None) is None
+
+
 def test_the_duid_picker_leaves_out_non_physical_units_unless_chosen(flow_env, monkeypatch):
     """#311: the bundled catalogue's dummy generator, reserve trader and VPP are
     not offered; one already chosen stays, named and marked."""
@@ -509,6 +522,7 @@ def test_the_zone_fields_list_the_regions_cities_and_home(flow_env, monkeypatch)
     assert home_load["multiple"] is False
     assert {"value": "QBMH", "label": "Belmont 110 kV (QBMH) · MLF 1.0128"} in home_load["options"]
     assert all(o["value"][0] == "Q" for o in home_load["options"])  # QLD1's points only
+    assert not any("km" in o["label"] for o in home_load["options"])  # no Home location: no lead
     (radius,) = [m for m in result["data_schema"].spec if m.key == const_mod.CONF_ZONE_RADIUS]
     assert (radius.default() if callable(radius.default) else radius.default) == 80
 

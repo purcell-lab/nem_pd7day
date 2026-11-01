@@ -198,6 +198,25 @@ def test_home_takes_its_chosen_load_point(loads):
     assert unset.mlf_source == "nearby_generation_idw"
 
 
+def test_home_is_set_against_the_nearest_preset_city(loads):
+    """#316: Home in the Sunshine Coast hinterland on Woolooga (0.978) beside
+    the Sunshine Coast preset, 25.6 km away, on Palmwoods (1.0132)."""
+    catalogue = _cat.load_catalogue()
+    home = _zones.build_zone(catalogue, "QLD1", "home", 100, home=(-26.42, 153.08), loads=loads, home_load="QWLG")
+    city = home.nearest_city
+    assert (city.key, city.distance_km, city.mlf, city.tnis) == ("sunshine_coast", 25.6, 1.0132, ("QPWD",))
+    assert home.mlf == 0.978
+    assert _zones.build_zone(catalogue, "QLD1", "brisbane", 100, loads=loads).nearest_city is None  # Home only
+    assert _zones.nearest_city("XXX1", -26.4, 153.1) is None
+    assert _zones.nearest_city("QLD1", -26.42, 153.08).mlf is None  # no load points to hand
+    attrs = _zs.NemPd7dayZonePriceSensor(
+        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "QLD1", home,
+    ).extra_state_attributes
+    assert (attrs["nearest_city"], attrs["nearest_city_mlf"], attrs["nearest_city_load_points"]) == (
+        "Sunshine Coast", 1.0132, ["QPWD"])
+    assert attrs["zone_mlf_vs_nearest_city"] == round(0.978 / 1.0132 - 1, 4) == -0.0347
+
+
 def test_load_points_parse_tolerantly():
     points = _ldp.parse_load_points({"financial_year": "2026-27", "points": {
         "QOK1": {"region": "QLD1", "name": "Ok", "kv": "33", "mlf": 1.0},
