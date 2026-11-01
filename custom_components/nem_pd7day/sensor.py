@@ -69,7 +69,6 @@ from .const import (
     CONF_NODES,
     CONF_HOME_LOAD_POINT,
     CONF_ZONE_RADIUS,
-    CONF_ZONES,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -320,9 +319,9 @@ async def _local_price_entities(
     from .load_points import load_load_points
 
     loads = await run_in_executor(None, load_load_points)  # a file read, as the catalogue
+    # Every region has preset cities, each a zone sensor enabled by default, so there is always
+    # something to set up.
     zones = _zones(hass, entry, region, catalogue, loads)
-    if not duids and not tnis and not zones and not catalogue.top_for(region):
-        return []
     enable_chosen(hass, entry, region, duids)
     p5min = shared_p5min(hass, entry.runtime_data.dispatch)
     return [
@@ -333,9 +332,10 @@ async def _local_price_entities(
 
 
 def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any, loads: Any = None) -> list:
-    """The chosen city or zone proxies (#288); Home is HA's own location, skipped when unset,
-    with the load connection point chosen for it."""
-    from .zones import DEFAULT_RADIUS_KM, build_zone, parse_zones
+    """Every preset city of the region and Home, each a zone proxy (#288), enabled by default: one
+    not wanted is disabled from its entity page. Home is HA's own location, skipped when unset, with
+    the load connection point chosen for it."""
+    from .zones import DEFAULT_RADIUS_KM, build_zone, zone_choices
 
     try:
         radius = float(entry.options.get(CONF_ZONE_RADIUS) or DEFAULT_RADIUS_KM)
@@ -346,7 +346,7 @@ def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any,
     home = (float(lat), float(lon)) if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) else None
     home_load = str(entry.options.get(CONF_HOME_LOAD_POINT) or "").strip() or None
     built = (build_zone(catalogue, region, key, radius, home, loads, home_load)
-             for key in parse_zones(entry.options.get(CONF_ZONES, ""), region))
+             for key, _name in zone_choices(region))
     return [zone for zone in built if zone is not None]
 
 

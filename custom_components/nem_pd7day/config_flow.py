@@ -24,7 +24,6 @@ from .const import (
     CONF_NODES,
     CONF_HOME_LOAD_POINT,
     CONF_ZONE_RADIUS,
-    CONF_ZONES,
     CONF_ONLY_ACTIVE_TARIFF,
     CONF_REGION,
     CONF_REGIONS,
@@ -42,7 +41,7 @@ from .duid_catalogue import Catalogue, load_catalogue
 from .local_price import parse_duids, parse_tnis
 from .load_points import EMPTY as LOAD_POINTS_EMPTY
 from .load_points import LoadPoints, load_load_points
-from .zones import DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_RADIUS_KM, nearest_city, parse_zones, zone_choices
+from .zones import DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_RADIUS_KM, nearest_city
 from .pd7day_client import PD7DayClient
 from .tariff_pricing import COMBINED_LOSS_MULTIPLIER, LOSS_FACTOR_MAX, LOSS_FACTOR_MIN
 from .tariff_catalogue import import_tariff_codes, tariff_name as catalogue_tariff_name
@@ -393,16 +392,12 @@ def _home_location(hass: Any) -> Optional[tuple[float, float]]:
 def _zone_fields(
     options: dict[str, Any], region: str, loads: LoadPoints, home: Optional[tuple[float, float]] = None,
 ) -> dict[Any, Any]:
-    """City or zone price proxies (#288): the region's preset cities and Home, the radius,
-    and Home's load connection point, whose MLF is the Home zone's."""
-    current = parse_zones(options.get(CONF_ZONES, ""), region)
-    choices = [{"value": key, "label": name} for key, name in zone_choices(region)]
+    """City and zone price proxies (#288): the radius, and Home's load connection point, whose
+    MLF is the Home zone's. Every preset city of the region and Home has a sensor, enabled by
+    default, so there is nothing to choose: one not wanted is disabled from its entity page."""
     home_load = options.get(CONF_HOME_LOAD_POINT) or None
     points = _home_load_choices(region, loads, home)
     return {
-        vol.Optional(CONF_ZONES, description={"suggested_value": current or None}): selector.selector({
-            "select": {"options": choices, "multiple": True, "mode": "dropdown"}
-        }),
         vol.Optional(CONF_ZONE_RADIUS, default=options.get(CONF_ZONE_RADIUS, DEFAULT_RADIUS_KM)): selector.selector({
             "number": {"min": MIN_RADIUS_KM, "max": MAX_RADIUS_KM, "step": 5, "mode": "box",
                        "unit_of_measurement": "km"}
@@ -443,7 +438,6 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
         CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
         CONF_LOCAL_PRICE_DUIDS: ", ".join(duids),
         CONF_NODES: ", ".join(nodes),
-        CONF_ZONES: ", ".join(parse_zones(user_input.get(CONF_ZONES, ""), user_input[CONF_REGION])),
         CONF_ZONE_RADIUS: user_input.get(CONF_ZONE_RADIUS, DEFAULT_RADIUS_KM),
         CONF_HOME_LOAD_POINT: str(user_input.get(CONF_HOME_LOAD_POINT) or "").strip().upper(),
         # Cleared, the library's defaults are used again.

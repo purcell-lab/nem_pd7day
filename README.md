@@ -160,7 +160,7 @@ The options form shows the factor in Amber Express's current settled feed-in int
 
 A DUID is a generating or load unit, not your connection point. Its local price adjustment is a geographic signal of network congestion near that unit, nothing more: it is not added to any existing price, tariff or forecast.
 
-**The region's five most constrained DUIDs are always added, disabled**: enable one from the device page and it starts updating. They are the region's DUIDs with the largest sum of |adjustment| over the catalogue's two-week window. P5MIN is fetched only while at least one DUID sensor is enabled, so the disabled presets cost nothing. Choosing a preset in the options enables the sensor the integration disabled; a sensor you disabled stays disabled.
+**The region's five most constrained DUIDs are always added, disabled**: enable one from the device page and it starts updating. They are the region's DUIDs with the largest sum of |adjustment| over the catalogue's two-week window. P5MIN is fetched only while at least one DUID, node or zone sensor is enabled, so the disabled presets cost nothing by themselves; the zone sensors are enabled by default (below). Choosing a preset in the options enables the sensor the integration disabled; a sensor you disabled stays disabled.
 
 **The DUID catalogue** (`duid_catalogue.json`) is bundled with the integration and rebuilt before each release by `scripts/build_duid_catalogue.py`. Nothing is fetched at run time. Its sources:
 
@@ -190,11 +190,22 @@ A TNI is a transmission connection point. Its **node price** is the region's ori
 The MLF scales the adjustment too: NEMDE refers every offer to the regional reference node by dividing it by the unit's MLF, so AEMO's adjustment is on that basis, as the ROP is. Of 34 dispatched, locally constrained unit intervals on 31 Oct 2026 (to 19:10, against the bids in force), 17 priced to the cent at one of the unit's own offer bands with (ROP + adjustment) × MLF, and none with ROP × MLF + adjustment (METZSF1, MLF 0.8657: its −114.72 band, against −141.4). Until v3.38.0 the node price was ROP × MLF + adjustment.
 
 
-### City and zone price proxies (optional)
+### City and zone price proxies
+
+**Every preset city of the entry's region, and Home, has a sensor, enabled by default**:
+
+- **The cities:**
+  - QLD1: Brisbane, Gold Coast, Sunshine Coast, Toowoomba, Rockhampton, Mackay, Townsville, Cairns.
+  - NSW1: Sydney, Newcastle, Wollongong, Canberra, Wagga Wagga, Tamworth, Orange.
+  - VIC1: Melbourne, Geelong, Ballarat, Bendigo, Latrobe Valley.
+  - SA1: Adelaide, Port Augusta, Mount Gambier.
+  - TAS1: Hobart, Launceston, Burnie.
+- **Home** is Home Assistant's own location. Its sensor is left out while HA has no location set.
+- **There is nothing to choose.** Disable a city you don't want from its entity page, and it stays disabled. Until v3.39.0 the options listed the zones to create.
+- **The data cost:** the zone sensors read P5MIN, so it is fetched every 5 minutes while any of them is enabled. That is one small file, shared by every entry.
 
 | Field | Default | Description |
 |---|---|---|
-| City and zone price proxies | empty | The region's preset cities (QLD1: Brisbane, Gold Coast, Sunshine Coast, Toowoomba, Rockhampton, Mackay, Townsville, Cairns; NSW1: Sydney, Newcastle, Wollongong, Canberra, Wagga Wagga, Tamworth, Orange; VIC1: Melbourne, Geelong, Ballarat, Bendigo, Latrobe Valley; SA1: Adelaide, Port Augusta, Mount Gambier; TAS1: Hobart, Launceston, Burnie) and Home, Home Assistant's own location. Each gets one sensor, enabled |
 | Zone radius | 100 km | How far from the centre a catalogue node counts as nearby |
 | Home load connection point | empty | The bulk supply point serving your area, from a dropdown of the region's load connection points as AEMO's MLF report names them (`Belmont 110 kV (QBMH) · MLF 1.0128`). The points of the preset city nearest Home come first, marked with the city and distance (`Palmwoods 132 kV (QPWD) · MLF 1.0132 · Sunshine Coast, 26 km`). Its MLF is the Home zone's |
 
@@ -576,7 +587,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 ### Zone Price Proxy
 
-`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per chosen zone (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: (ROP + the zone's local price adjustment, one vote per station as above) × zone MLF, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out; a fresh file without the LOCAL_PRICE table is 0 for every member (`dispatch_zero`), and a stale file or none, with nothing to stand in, leaves the state unknown. With a 100 km radius Brisbane has 8 member nodes, Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
+`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per preset city of the region and Home, enabled by default (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: (ROP + the zone's local price adjustment, one vote per station as above) × zone MLF, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out; a fresh file without the LOCAL_PRICE table is 0 for every member (`dispatch_zero`), and a stale file or none, with nothing to stand in, leaves the state unknown. With a 100 km radius Brisbane has 8 member nodes, Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
 
 | Attribute | Description |
 |---|---|
