@@ -814,6 +814,22 @@ def test_apply_tariff_to_spot_cache_hit():
     assert mock_stt.call_count == 1
 
 
+def test_a_library_error_prices_nothing_and_keeps_no_cache():
+    """The library raising gives None on the dispatch path and for the supply charge.
+
+    Neither error caches: the next call asks the library again.
+    """
+    now = datetime(2026, 5, 24, 14, 12, 0, tzinfo=NEM_TZ)
+    sensor = make_tariff_sensor(price_periods=[])
+    sensor._tariff_cache = None
+    with patch.object(_tariff_mod.tariff_pricing, "pricer_for", side_effect=ValueError("bad tariff")) as pricer:
+        assert sensor._apply_tariff_to_spot(0.10, now) is None
+        assert sensor._get_daily_supply_charge() is None
+        assert sensor._apply_tariff_to_spot(0.10, now) is None
+    assert sensor._tariff_cache is None
+    assert pricer.call_count == 3
+
+
 @pytest.mark.parametrize("minute, expected_end", [
     (12, (14, 15)),   # inside the hour: the next 5-minute boundary
     (55, (15, 0)),    # the last 5-minute slot ends on the hour: rolls over
