@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
 import datetime
 
@@ -143,10 +143,15 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         self._distributor = distributor
         self._entry = entry
         self._store = store
+        self._unsub_boundary: Optional[Callable[[], None]] = None
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to PD7Day coordinator, DispatchCoordinator, and NEM boundary refresh."""
         await super().async_added_to_hass()
+        # One removal callback for the whole life of the entity, cancelling whichever
+        # boundary timer is pending then. Registering each timer's own unsubscribe on
+        # every tick grew the removal list by 48 a day (#334).
+        self.async_on_remove(lambda: self._unsub_boundary() if self._unsub_boundary else None)
         self._schedule_next_boundary()
 
         # Subscribe to DispatchCoordinator so state refreshes every 5 minutes
@@ -173,9 +178,9 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], SensorEntity):
         return next_boundary + self._BOUNDARY_DELAY
 
     def _schedule_next_boundary(self) -> None:
-        """Schedule a one-shot callback at the next NEM interval boundary."""
-        self.async_on_remove(
-            async_track_point_in_time(self.hass, self._handle_interval_tick, self._next_nem_boundary())
+        """Schedule a one-shot callback at the next NEM interval boundary, replacing the one held."""
+        self._unsub_boundary = async_track_point_in_time(
+            self.hass, self._handle_interval_tick, self._next_nem_boundary()
         )
 
     async def _handle_interval_tick(self, _now: datetime.datetime) -> None:
