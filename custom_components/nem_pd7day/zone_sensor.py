@@ -43,6 +43,7 @@ from .local_price import (
 from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, dispatch_prices, entity_id_for, listen_to_forecasts
 from .nem_time import now_nem
 from .node_price_sensor import STATUS_NO_ROP, STATUS_UNKNOWN_NODE, node_adjustment, p5_adjustment
+from .predispatch_local_price import MAX_AGE as PD_MAX_AGE
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 from .zones import AGGREGATE_NEAREST, MIN_MEDIAN_STATIONS, OUTSIDE, Zone, station_key, zone_adjustment
 
@@ -182,6 +183,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
         self._predispatch = predispatch
         self._region = region
         self._zone = zone
+        self._pd_memo: tuple[Any, PredispatchAdjustments] = (None, PredispatchAdjustments(STATUS_NO_DATA))
         self._attr_name = f"{zone.name} Zone Price Proxy"
         self._attr_unique_id = f"{entry.entry_id}_{region}_{zone.key}_{SUFFIX}"
         self.entity_id = entity_id_for(region, zone.key, SUFFIX)
@@ -249,8 +251,21 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             "forecast_run_at": _iso(run.run_at) if run else None,
             "forecast": points,
             "forecast_interval_ends": [p["interval_end"] for p in points],
-            **predispatch_attrs(zone_predispatch(self._zone, snapshot, now), snapshot, value),
+            **predispatch_attrs(self._zone_predispatch(snapshot, now), snapshot, value),
         }
+
+    def _zone_predispatch(self, snapshot: Any, now: datetime) -> PredispatchAdjustments:
+        """zone_predispatch, worked out again only for a new run or once a period has ended.
+
+        It is the bulk of an update for a large zone (Adelaide: 46 members by
+        78 periods) and the same for every update within a period.
+        """
+        ahead = next((end for end in snapshot.period_ends if end > now), None) if snapshot is not None else None
+        stale = snapshot is not None and now - snapshot.run_at > PD_MAX_AGE
+        key = (id(snapshot), getattr(snapshot, "run_at", None), ahead, stale)
+        if self._pd_memo[0] != key:
+            self._pd_memo = (key, zone_predispatch(self._zone, snapshot, now))
+        return self._pd_memo[1]
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

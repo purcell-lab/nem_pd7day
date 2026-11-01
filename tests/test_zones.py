@@ -374,6 +374,35 @@ def test_the_predispatch_forecast_votes_per_station_per_period():
     assert _zs.zone_predispatch(zone, None, now).status == "no_data"
 
 
+def test_the_predispatch_forecast_is_worked_out_once_per_run_and_period(monkeypatch):
+    """A large zone rebuilt its pre-dispatch forecast on every update; now only for a new run,
+    once a period has ended, or once the run has gone stale."""
+    snapshot = _pdc.parse_predispatch(PD, "pd.zip")
+    zone = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 100)
+    sensor = _zs.NemPd7dayZonePriceSensor(
+        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1", zone, SimpleNamespace(latest=snapshot),
+    )
+    calls = []
+    real = _zs.zone_predispatch
+    monkeypatch.setattr(_zs, "zone_predispatch", lambda *a: calls.append(a[2]) or real(*a))
+    at = lambda h, m: datetime(2026, 10, 31, h, m, tzinfo=NEM_TZ)  # noqa: E731
+    first = sensor._zone_predispatch(snapshot, at(13, 5))
+    assert sensor._zone_predispatch(snapshot, at(13, 25)) is first and len(calls) == 1  # same period
+    assert sensor._zone_predispatch(snapshot, at(13, 35)).periods[0][0] == at(14, 0) and len(calls) == 2
+    newer = replace(snapshot, run_at=at(13, 32))
+    sensor._zone_predispatch(newer, at(13, 40))
+    assert len(calls) == 3  # a new run
+    assert sensor._zone_predispatch(newer, at(14, 50)).status == "stale" and len(calls) == 4
+    assert sensor._zone_predispatch(None, at(14, 50)).status == "no_data"
+
+
+def test_a_zones_stations_are_worked_out_once():
+    zone = _zones.build_zone(_cat.load_catalogue(), "SA1", "adelaide", 100)
+    assert zone.member_keys is zone.member_keys and zone.stations is zone.stations
+    assert len(zone.member_keys) == len(zone.members) and set(zone.stations) == set(zone.member_keys)
+    assert replace(zone, members=zone.members[:1]).stations == zone.member_keys[:1]  # a new zone, worked out anew
+
+
 # ── Sensor ───────────────────────────────────────────────────────────────────
 
 def _constraints(prices):
