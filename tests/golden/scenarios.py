@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
@@ -149,6 +149,12 @@ class Scenario:
     # Real DispatchIS zips, read in order, one per dispatch interval.
     constraints: Sequence[bytes] = ()
     amber: Mapping[str, Any] | None = None  # attributes served at AMBER_ENTITY (#235)
+    # Real P5MIN and PredispatchIS runs, (file name, CSV text), and a pinned DUID
+    # catalogue: without them the local price and pre-dispatch sensors read
+    # no_data (#334).
+    p5min: tuple[str, str] | None = None
+    predispatch: tuple[str, str] | None = None
+    catalogue: Mapping[str, Any] | None = None
 
 
 # The Amber Electric forecast entity a day 2-7 scenario may serve and register.
@@ -786,6 +792,44 @@ def nsw_binding_constraints(mods: Any) -> Scenario:
     )
 
 
+LOCAL_PRICE_FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "golden_local_price"
+PREDISPATCH_RUN = "PUBLIC_PREDISPATCHIS_202610311330_20261031130240"
+
+
+def nsw_local_prices(mods: Any) -> Scenario:
+    """Real DispatchIS, P5MIN and pre-dispatch runs of 13:30 on 31 Oct 2026, a pinned catalogue.
+
+    The DispatchIS file and P5MIN run are cut to three regions' prices and
+    three DUIDs' rows (URANQ14, HUMENSW, CATHROCK), the pre-dispatch run is
+    the 13:02 one of tests/fixtures/local_price. Two DUIDs and their nodes
+    are chosen; every NSW1 city's zone proxy is built from the catalogue's two
+    NSW1 nodes. Pins the DUID, node, zone and pre-dispatch sensors' values
+    before the forecast hub refactor (#333, #334).
+    """
+    import json
+
+    dispatch_zip = LOCAL_PRICE_FIXTURES / "PUBLIC_DISPATCHIS_202610311330_0000000545870404.zip"
+    p5_name = "PUBLIC_P5MIN_202610311330_20261031132616"
+    pd_path = Path(__file__).resolve().parent.parent / "fixtures" / "local_price" / f"{PREDISPATCH_RUN}.CSV"
+    sc = _common(
+        mods, "nsw_local_prices", SyntheticMarket(seed=61, region="NSW1"),
+        now=nem(2026, 10, 31, 13, 31), run_at=nem(2026, 10, 31, 13, 0), long=False,
+        calibration=EmptySeed(),
+        options={
+            "forecast_mode": "days_1_7",
+            "local_price_duids": "URANQ14, HUMENSW",
+            "transmission_nodes": "NURQ4U, NHUM",
+        },
+        constraints=[dispatch_zip.read_bytes()],
+    )
+    return replace(
+        sc,
+        p5min=(f"{p5_name}.zip", (LOCAL_PRICE_FIXTURES / f"{p5_name}.CSV").read_text()),
+        predispatch=(f"{PREDISPATCH_RUN}.zip", pd_path.read_text()),
+        catalogue=json.loads((LOCAL_PRICE_FIXTURES / "catalogue.json").read_text()),
+    )
+
+
 def sa_stale_coordinator(mods: Any) -> Scenario:
     """Morning run served all day after the evening fetch failed with a 403.
 
@@ -861,4 +905,5 @@ SCENARIOS: dict[str, Callable[[Any], Scenario]] = {
     "sa_stale_coordinator": sa_stale_coordinator,
     "vic_prcer_extension": vic_prcer_extension,
     "qld_lor2_notice": qld_lor2_notice,
+    "nsw_local_prices": nsw_local_prices,
 }

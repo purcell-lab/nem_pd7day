@@ -1,0 +1,95 @@
+{
+ "constrained_window": [
+  "2026-10-16",
+  "2026-10-29"
+ ],
+ "duids": {
+  "CATHROCK": {
+   "adjustment_mwh_sum": 13024,
+   "constrained_intervals": 105,
+   "fuel": "wind",
+   "lat": -34.84874,
+   "lon": 135.59265,
+   "mlf": 0.9417,
+   "region": "SA1",
+   "station": "Cathedral Rocks",
+   "tni": "SCRK",
+   "type": "GENERATOR"
+  },
+  "HUMENSW": {
+   "adjustment_mwh_sum": 1716335,
+   "constrained_intervals": 2150,
+   "fuel": "hydro",
+   "lat": -36.10638,
+   "lon": 147.03226,
+   "mlf": 0.945,
+   "region": "NSW1",
+   "station": "Hume",
+   "tni": "NHUM",
+   "type": "GENERATOR"
+  },
+  "URANQ14": {
+   "adjustment_mwh_sum": 1631612,
+   "constrained_intervals": 2023,
+   "fuel": "gas_ocgt",
+   "lat": -35.18023,
+   "lon": 147.21566,
+   "mlf": 0.9228,
+   "region": "NSW1",
+   "station": "Uranquinty",
+   "tni": "NURQ4U",
+   "type": "GENERATOR"
+  }
+ },
+ "generated": "golden",
+ "nodes": {
+  "NHUM": {
+   "duids": [
+    "HUMENSW"
+   ],
+   "lat": -36.10638,
+   "lon": 147.03226,
+   "mlf": 0.945,
+   "region": "NSW1",
+   "stations": [
+    "Hume"
+   ]
+  },
+  "NURQ4U": {
+   "duids": [
+    "URANQ14"
+   ],
+   "lat": -35.18023,
+   "lon": 147.21566,
+   "mlf": 0.9228,
+   "region": "NSW1",
+   "stations": [
+    "Uranquinty"
+   ]
+  },
+  "SCRK": {
+   "duids": [
+    "CATHROCK"
+   ],
+   "lat": -34.84874,
+   "lon": 135.59265,
+   "mlf": 0.9417,
+   "region": "SA1",
+   "stations": [
+    "Cathedral Rocks"
+   ]
+  }
+ },
+ "registration_month": "2026_09",
+ "sources": [
+  "AEMO MMSDM DUDETAILSUMMARY",
+  "AEMO MMSDM STATION",
+  "Open Electricity facilities",
+  "AEMO DispatchIS LOCAL_PRICE"
+ ],
+ "top": {
+  "NSW1": [
+   "HUMENSW"
+  ]
+ }
+}

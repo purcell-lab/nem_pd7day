@@ -53,6 +53,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import dataclasses
 import json
 import logging
 import os
@@ -60,7 +61,7 @@ import sys
 import types
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Optional
 from unittest.mock import MagicMock
 
 import support
@@ -401,6 +402,17 @@ class _ScenarioNoticeClient:
         return found
 
 
+class _ScenarioRunClient:
+    """P5MinClient or PredispatchClient: the scenario's one run, through the real parser, once."""
+
+    def __init__(self, parse: Callable[[], Any]) -> None:
+        self._parse: Optional[Callable[[], Any]] = parse
+
+    async def fetch_latest(self) -> Any:
+        parse, self._parse = self._parse, None
+        return parse() if parse is not None else None
+
+
 class _ScenarioConstraintClient:
     """ConstraintClient: the scenario's DispatchIS zips through the real parser."""
 
@@ -409,9 +421,15 @@ class _ScenarioConstraintClient:
         self._mod = client_mod
 
     async def fetch_latest(self) -> Any:
+        """As ConstraintClient._parse_off_loop: the constraints, and the same file's local prices."""
         if not self._files:
             return None
-        return self._mod.parse_constraints(self._mod.unzip_csv(self._files.pop(0)), "scenario")
+        content = self._mod.unzip_csv(self._files.pop(0))
+        snapshot = self._mod.parse_constraints(content, "scenario")
+        if snapshot is None:
+            return None
+        local = self._mod.parse_dispatch_local_prices(content, "scenario", self._mod.now_nem())
+        return dataclasses.replace(snapshot, local_prices=local)
 
 
 # ── Module loading ───────────────────────────────────────────────────────────
@@ -683,6 +701,22 @@ async def _setup(built: Built) -> None:
     for _ in sc.constraints:
         await constraints.async_refresh()
 
+    # The shared P5MIN and pre-dispatch coordinators, as the sensor platform
+    # would create them, holding the scenario's runs (#334). Without runs the
+    # platform creates them itself and their first fetch is a closed task.
+    if sc.p5min is not None:
+        name, text = sc.p5min
+        p5min = mods.local_price_coordinator.P5MinCoordinator(hass, dispatch, _ScenarioRunClient(
+            lambda: mods.local_price.parse_p5min_local_prices(text, name, mods.nem_time.now_nem())))
+        hass.data[domain][const.SHARED_P5MIN_KEY] = p5min
+        await p5min.async_refresh()
+    if sc.predispatch is not None:
+        pd_name, pd_text = sc.predispatch
+        predispatch = mods.predispatch_coordinator.PredispatchCoordinator(hass, dispatch, _ScenarioRunClient(
+            lambda: mods.predispatch_client.parse_predispatch(pd_text, pd_name)))
+        hass.data[domain][const.SHARED_PREDISPATCH_KEY] = predispatch
+        await predispatch.async_refresh()
+
     entry.runtime_data = mods.init.NemPd7dayEntryData(
         coordinator=coordinator,
         store=store,
@@ -716,7 +750,9 @@ async def _setup(built: Built) -> None:
     # The bundled DUID catalogue changes with every rebuild, and its disabled
     # presets with it; tests/test_duid_catalogue.py covers them, so the
     # snapshots read an empty catalogue.
-    mods.duid_catalogue.load_catalogue = lambda: mods.duid_catalogue.EMPTY
+    # A scenario may pin its own small catalogue instead (#334).
+    pinned = mods.duid_catalogue.parse_catalogue(sc.catalogue) if sc.catalogue else mods.duid_catalogue.EMPTY
+    mods.duid_catalogue.load_catalogue = lambda: pinned
     added: list[tuple[str, Any]] = []
     for platform in PLATFORM_ORDER:
         batch: list[Any] = []

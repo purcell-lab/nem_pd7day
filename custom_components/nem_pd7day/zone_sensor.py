@@ -71,7 +71,7 @@ class ZoneDispatch:
 def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices], now: datetime) -> ZoneDispatch:
     """The zone's price for the latest dispatch interval, and each member's part in it."""
     mlf = zone.mlf
-    if mlf is None:
+    if mlf is None or not zone.members:  # no member: nothing to vote, not a conflict
         return ZoneDispatch(STATUS_UNKNOWN_NODE)
     if prices is None:
         return ZoneDispatch(STATUS_NO_DATA)
@@ -101,7 +101,7 @@ def dispatch_zone(zone: Zone, region: str, prices: Optional[DispatchLocalPrices]
 def zone_p5_forecast(zone: Zone, region: str, run: Optional[P5LocalPriceRun], now: datetime) -> tuple[str, list]:
     """(status, points): (ROP + the zone's P5MIN adjustment) x zone MLF per interval still to end."""
     mlf = zone.mlf
-    if mlf is None:
+    if mlf is None or not zone.members:
         return STATUS_UNKNOWN_NODE, []
     if run is None:
         return STATUS_NO_DATA, []

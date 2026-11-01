@@ -213,6 +213,24 @@ def _binding_constraints(built: harness.Built, snap: dict) -> None:
     assert {c["category"] for c in attrs["fcas_constraints"]} == {"fcas"}
 
 
+def _local_prices(built: harness.Built, snap: dict) -> None:
+    """Real 13:30 DispatchIS, P5MIN and 13:02 pre-dispatch runs of 31 Oct 2026 (#334)."""
+    uranquinty = _one(snap, "_URANQ14_local_price_adjustment")
+    attrs = uranquinty["extra_state_attributes"]
+    # The DispatchIS file's own row, not a fallback: the dispatch interval is fresh.
+    assert attrs["row_status"] == "published" and attrs["fallback_source_file"] is None
+    assert attrs["forecast_status"] == "published" and len(attrs["forecast"]) == 11
+    assert attrs["predispatch_status"] == "published" and len(attrs["predispatch_forecast"]) == 77
+    node = _one(snap, "_NURQ4U_node_price")["extra_state_attributes"]
+    assert node["formula"] == "(ROP + LOCAL_PRICE_ADJUSTMENT) x MLF" and node["adjustment_status"] == "published"
+    assert node["node_price_mwh"] == pytest.approx((node["rop_mwh"] + node["adjustment_mwh"]) * node["mlf"], abs=1e-3)
+    wagga = _one(snap, "_wagga_wagga_zone_price_proxy")["extra_state_attributes"]
+    assert wagga["row_status"] == "published" and wagga["forecast_status"] == "published"
+    assert wagga["member_stations"] == ["Uranquinty"] and wagga["adjustment_aggregate"] == "nearest_station"
+    constraints = _one(snap, "_nsw1_predispatch_binding_constraints")["extra_state_attributes"]
+    assert constraints["run_at"].startswith("2026-10-31T13:02") and len(constraints["forecast"]) == 77
+
+
 NON_VACUITY: dict[str, Callable[[harness.Built, dict], None]] = {
     "qld_fitted_evening_peak": _fitted_evening_peak,
     "qld_days27_mode": _days27,
@@ -228,6 +246,7 @@ NON_VACUITY: dict[str, Callable[[harness.Built, dict], None]] = {
     "sa_stale_coordinator": _stale,
     "vic_prcer_extension": _prcer,
     "qld_lor2_notice": _lor2,
+    "nsw_local_prices": _local_prices,
 }
 
 
@@ -304,7 +323,7 @@ def test_golden_master(name: str) -> None:
 
 def test_every_scenario_has_a_non_vacuity_check() -> None:
     assert set(NON_VACUITY) == set(SCENARIOS)
-    assert len(SCENARIOS) == 14
+    assert len(SCENARIOS) == 15
 
 
 # ── The frozen clock ─────────────────────────────────────────────────────────
