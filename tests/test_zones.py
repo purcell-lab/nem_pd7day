@@ -374,6 +374,36 @@ def test_the_predispatch_forecast_votes_per_station_per_period():
     assert _zs.zone_predispatch(zone, None, now).status == "no_data"
 
 
+def test_home_belongs_to_the_region_of_its_nearest_node():
+    """One Home zone, in the entry of the region whose grid serves it, not one per entry."""
+    catalogue = _cat.load_catalogue()
+    assert _zones.home_region(catalogue, -26.42, 153.08) == "QLD1"  # the Sunshine Coast hinterland
+    assert _zones.home_region(catalogue, -33.87, 151.21) == "NSW1"
+    assert _zones.home_region(catalogue, -35.28, 149.13) == "NSW1"  # Canberra, in NSW1
+    assert _zones.home_region(catalogue, -42.88, 147.33) == "TAS1"
+    assert _zones.home_region(catalogue, -34.18, 142.16) == "VIC1"  # Mildura, nearer Adelaide's city list
+    assert _zones.home_region(_cat.EMPTY, -34.93, 138.60) == "SA1"  # no nodes: the nearest preset city's
+
+
+def test_a_home_zone_left_in_another_region_is_removed():
+    from unittest.mock import patch
+    rows = {
+        "sensor.nem_pd7day_nsw1_home_zone_price_proxy": SimpleNamespace(
+            entity_id="sensor.nem_pd7day_nsw1_home_zone_price_proxy", unique_id="e1_NSW1_home_zone_price_proxy"),
+        "sensor.nem_pd7day_nsw1_sydney_zone_price_proxy": SimpleNamespace(
+            entity_id="sensor.nem_pd7day_nsw1_sydney_zone_price_proxy", unique_id="e1_NSW1_sydney_zone_price_proxy"),
+    }
+    removed = []
+    registry = SimpleNamespace(
+        async_get_entity_id=lambda domain, platform, uid: next((r.entity_id for r in rows.values() if r.unique_id == uid), None),
+        async_remove=removed.append,
+    )
+    with patch.object(_zs.er, "async_get", return_value=registry):
+        assert _zs.remove_home_zone(None, ENTRY, "NSW1") is True
+        assert _zs.remove_home_zone(None, ENTRY, "VIC1") is False  # none to remove
+    assert removed == ["sensor.nem_pd7day_nsw1_home_zone_price_proxy"]
+
+
 # ── Sensor ───────────────────────────────────────────────────────────────────
 
 def _constraints(prices):
