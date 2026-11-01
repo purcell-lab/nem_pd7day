@@ -493,8 +493,7 @@ def make_pd7day_data(
     """A real ``client_mod.PD7DayData`` (pd7day_client) for ``periods``.
 
     ``run_at`` is a datetime (formatted with nem_iso), an ISO string, or None.
-    The summary values default to what ``periods`` implies; pass any
-    PD7DayData field as a keyword to override it.
+    Pass any PD7DayData field as a keyword to override it.
     """
     if isinstance(run_at, datetime):
         run_at = nem_iso(run_at)
@@ -503,11 +502,6 @@ def make_pd7day_data(
         source_file=source_file,
         forecast_generated_at=run_at,
         interval_minutes=30,
-        current_value=periods[0].value if periods else 0.0,
-        next_value=periods[1].value if len(periods) > 1 else None,
-        min_24h_value=None,
-        max_24h_value=None,
-        cheapest_2h_window=None,
         forecast=periods,
     )
     kwargs.update(fields)

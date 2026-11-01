@@ -294,7 +294,7 @@ def test_reused_parse_is_restamped_so_the_disk_cache_stays_usable():
     assert second.updated_at == nem_time.to_nem_iso(times[1])
     # The forecast content itself is unchanged, only the confirmation time moved.
     assert second.source_file == first.source_file
-    assert second.prices["QLD1"].current_value == first.prices["QLD1"].current_value
+    assert second.prices["QLD1"].forecast[0].value == first.prices["QLD1"].forecast[0].value
 
 
 # ── Failure handling ─────────────────────────────────────────────────────────

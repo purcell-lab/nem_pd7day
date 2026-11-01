@@ -35,7 +35,6 @@ from homeassistant.helpers.storage import Store
 from .const import NEM_TZ
 from .pd7day_client import (
     CaseSolutionData,
-    CheapestWindow,
     GasForecastPeriod,
     InterconnectorData,
     InterconnectorPeriod,
@@ -63,17 +62,14 @@ def _forecast_store_key(region: str) -> str:
 
 
 def _price_data_from_dict(d: dict) -> PD7DayData:
-    cw = d.get("cheapest_2h_window")
+    """A cached run. A cache written before v3.49.0 also carries current_value,
+    next_value, min_24h_value, max_24h_value and cheapest_2h_window, which
+    nothing read (#340); they are ignored."""
     return PD7DayData(
         region=d["region"],
         source_file=d["source_file"],
         forecast_generated_at=d.get("forecast_generated_at"),
         interval_minutes=d["interval_minutes"],
-        current_value=d["current_value"],
-        next_value=d.get("next_value"),
-        min_24h_value=d.get("min_24h_value"),
-        max_24h_value=d.get("max_24h_value"),
-        cheapest_2h_window=CheapestWindow(**cw) if cw else None,
         forecast=[PricePeriod(**p) for p in d.get("forecast", [])],
     )
 

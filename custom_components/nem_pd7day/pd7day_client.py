@@ -28,7 +28,6 @@ import logging
 import zipfile
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Any
 from urllib.parse import urljoin
 
 import aiohttp
@@ -62,56 +61,14 @@ class PricePeriod:
 
 
 @dataclass
-class CheapestWindow:
-    start: str       # ISO-8601 NEM-aware interval-START of first period in window
-    end: str         # ISO-8601 NEM-aware interval-START of last period in window
-    nemtime_start: str  # interval-END of first period
-    nemtime_end: str    # interval-END of last period
-    avg_value: float
-    points: int
-
-
-@dataclass
 class PD7DayData:
     """PRICESOLUTION — regional spot price forecast."""
     region: str
     source_file: str
     forecast_generated_at: str | None   # ISO-8601 NEM-aware
     interval_minutes: int
-    current_value: float
-    next_value: float | None
-    min_24h_value: float | None
-    max_24h_value: float | None
-    cheapest_2h_window: CheapestWindow | None
     forecast: list[PricePeriod] = field(default_factory=list)
 
-    def as_state(self) -> float:
-        return self.current_value
-
-    def as_attributes(self) -> dict[str, Any]:
-        return {
-            "friendly_name": f"{self.region} PD7DAY Forecast",
-            "icon": "mdi:transmission-tower",
-            "unit_of_measurement": "$/kWh",
-            "region": self.region,
-            "forecast_generated_at": self.forecast_generated_at,
-            "interval_minutes": self.interval_minutes,
-            "next_value": self.next_value,
-            "min_24h_value": self.min_24h_value,
-            "max_24h_value": self.max_24h_value,
-            "cheapest_2h_window": (
-                {
-                    "start": self.cheapest_2h_window.start,
-                    "end": self.cheapest_2h_window.end,
-                    "avg_value": self.cheapest_2h_window.avg_value,
-                    "points": self.cheapest_2h_window.points,
-                }
-                if self.cheapest_2h_window
-                else None
-            ),
-            "forecast": [{"time": p.time, "value": p.value} for p in self.forecast],
-            "source_file": self.source_file,
-        }
 
 
 @dataclass
@@ -232,46 +189,6 @@ def _flt(s: str, default: float = 0.0) -> float:
         return float(s)
     except (ValueError, TypeError):
         return default
-
-
-def _avg(prices: list[PricePeriod]) -> float | None:
-    if not prices:
-        return None
-    return round(sum(p.value for p in prices) / len(prices), 6)
-
-
-def _find_cheapest_window(
-    prices: list[PricePeriod], hours: int = 2, interval_minutes: int = 30
-) -> CheapestWindow | None:
-    n = int(hours * 60 / interval_minutes)
-    if len(prices) < n:
-        return None
-    best: CheapestWindow | None = None
-    for i in range(len(prices) - n + 1):
-        window = prices[i : i + n]
-        avg = _avg(window)
-        if avg is None:
-            continue
-        if best is None or avg < best.avg_value:
-            best = CheapestWindow(
-                start=window[0].time,
-                end=window[-1].time,
-                nemtime_start=window[0].nemtime,
-                nemtime_end=window[-1].nemtime,
-                avg_value=avg,
-                points=n,
-            )
-    return best
-
-
-def _min_max_24h(
-    prices: list[PricePeriod], hours: int = 24
-) -> tuple[float | None, float | None]:
-    subset = prices[: hours * 2]
-    if not subset:
-        return None, None
-    vals = [p.value for p in subset]
-    return round(min(vals), 6), round(max(vals), 6)
 
 
 # ---------------------------------------------------------------------------
@@ -585,19 +502,11 @@ class PD7DayClient:
                 )
                 continue
 
-            min_24h, max_24h = _min_max_24h(forecast)
-            cheapest = _find_cheapest_window(forecast)
-
             prices[region] = PD7DayData(
                 region=region,
                 source_file=source_name,
                 forecast_generated_at=run_dt_str,
                 interval_minutes=30,
-                current_value=forecast[0].value,
-                next_value=forecast[1].value if len(forecast) > 1 else None,
-                min_24h_value=min_24h,
-                max_24h_value=max_24h,
-                cheapest_2h_window=cheapest,
                 forecast=forecast,
             )
 

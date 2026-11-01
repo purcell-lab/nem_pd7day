@@ -124,7 +124,7 @@ def test_pricesolution_filters_to_requested_regions():
 def test_pricesolution_sorted_by_nemtime():
     """
     Periods are returned sorted ascending by nemtime, so prices[0] is the
-    earliest interval (current_value) and prices[1] the next (next_value).
+    earliest interval and prices[1] the next.
     AEMO CSV rows are not guaranteed to be in order.
     """
     csv_bytes = _csv(

@@ -520,16 +520,16 @@ def test_spot_map_is_built_once_and_memoised_per_region():
     }
 
 
-def test_spot_map_reads_the_forecast_memo_when_it_is_current():
+def test_spot_map_is_built_once_per_run_for_every_reader():
+    """The spot view is the fallback a tariff takes only when the forecast memo
+    does not hold the run (#339, #340): one build, shared by every tariff."""
     coordinator, store = Coordinator(), Store()
-    cf = CalibratedForecast(coordinator, store, REGION)
     d = price_data()
-    entries = cf.forecast(d, CountingBuild())
-
-    spot_map = cf.spot_map(d)
-
-    assert store.applied == 0, "the spot view calibrated despite a current forecast memo"
-    assert spot_map == {e["time"]: e["value"] for e in entries}
+    first = CalibratedForecast(coordinator, store, REGION).spot_map(d)
+    assert store.applied == len(d.forecast)
+    second = CalibratedForecast(coordinator, store, REGION).spot_map(d)
+    assert second is first and store.applied == len(d.forecast)
+    assert first == {_inputs_mod.interval_key_for_period(p): p.value + 1.0 for p in d.forecast}
 
 
 def test_spot_map_may_raise():
