@@ -9,15 +9,18 @@ own location, and a radius.
   the zone MLF (``zone_mlf_source: load_tni``). Where no load point is known,
   the inverse-distance-weighted mean of the members' MLFs stands in
   (``nearby_generation_idw``).
-- **Adjustment**: the median of the members' local price adjustments. The
-  members are the region's catalogue nodes with coordinates within the
-  radius, nearest first; where none is that close, the single nearest node,
-  flagged ``nearest_only``. They are generation and storage connection
+- **Adjustment**: one vote per station, the median over the stations (#314):
+  a station with several connection points (Wivenhoe's four) takes one
+  vote, its members' median, not one per TNI. Below three stations the
+  median is no better than a mean, so the nearest station's vote stands
+  alone (#315). The members are the region's catalogue nodes with
+  coordinates within the radius, nearest first; where none is that close,
+  the single nearest node, flagged ``nearest_only``. They are generation and storage connection
   points: city load is not a variable in NEMDE's constraint equations, so it
   has no local price adjustment of its own, and nearby units are a geographic
-  proxy, never a validated household node. One constrained unit does not move
-  the median, most of them do; the members carry no capacity, so there is no
-  MW weighting.
+  proxy, never a validated household node. One constrained station does not
+  move the median, most of them do; the members carry no capacity, so there
+  is no MW weighting.
 """
 from __future__ import annotations
 
@@ -38,6 +41,10 @@ MAX_RADIUS_KM = 500
 _MIN_WEIGHT_KM = 5.0
 SOURCE_LOAD = "load_tni"
 SOURCE_GENERATION = "nearby_generation_idw"
+# Fewer stations than this and the median is no better than a mean (#315).
+MIN_MEDIAN_STATIONS = 3
+AGGREGATE_MEDIAN = "station_median"
+AGGREGATE_NEAREST = "nearest_station"
 
 # (key, name, latitude, longitude, load TNIs) per region: the capital and the
 # larger regional centres, each with the bulk supply points that serve it, as
@@ -105,10 +112,35 @@ CITIES: dict[str, tuple[tuple[str, str, float, float, tuple[str, ...]], ...]] = 
 }
 
 
+# Connection points within a preset city's radius but outside its electrical
+# area, behind different constraints from the city's load (#317), by TNI
+# prefix, with why. An interim: grouping members by the constraints they bind
+# together is the real fix.
+OUTSIDE: dict[str, tuple[tuple[str, ...], str]] = {
+    "sydney": (("NEP", "NVPP", "NCLG"),
+               "Central Coast and Lake Macquarie plant (Eraring, Vales Point, Colongra), behind the Central "
+               "Coast's constraints rather than Sydney load's"),
+    "wagga_wagga": (("NBLW", "NTU"), "Tumut hydro (Blowering, Jounama), behind the Snowy constraints"),
+    "sunshine_coast": (("QWIP", "QWIV"), "Wivenhoe, Brisbane valley pumped hydro, behind South East "
+                                         "Queensland's constraints rather than the Sunshine Coast's"),
+}
+
+
 @dataclass(frozen=True)
 class Member:
     node: NodeInfo
     distance_km: float
+
+
+@dataclass(frozen=True)
+class CityReference:
+    """The preset city nearest Home, and its own load points' MLF, to set Home's choice against (#316)."""
+
+    key: str
+    name: str
+    distance_km: float
+    mlf: Optional[float]
+    tnis: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -121,6 +153,18 @@ class Zone:
     members: tuple[Member, ...]
     nearest_only: bool
     load_points: tuple[LoadPoint, ...] = ()
+    nearest_city: Optional[CityReference] = None
+    excluded: tuple[Member, ...] = ()
+
+    @property
+    def stations(self) -> tuple[str, ...]:
+        """The members' stations, nearest first, each once (#314)."""
+        return tuple(dict.fromkeys(station_key(m.node) for m in self.members))
+
+    @property
+    def aggregate(self) -> str:
+        """How the members' adjustments make the zone's: the stations' median, or the nearest station's."""
+        return AGGREGATE_MEDIAN if len(self.stations) >= MIN_MEDIAN_STATIONS else AGGREGATE_NEAREST
 
     @property
     def mlf_source(self) -> Optional[str]:
@@ -165,15 +209,39 @@ def parse_zones(text: Any, region: str) -> list[str]:
     return keys
 
 
-def _members(catalogue: Catalogue, region: str, lat: float, lon: float, radius_km: float) -> tuple[tuple, bool]:
+def nearest_city(
+    region: str, lat: float, lon: float, loads: Optional[LoadPoints] = None,
+) -> Optional[CityReference]:
+    """The region's preset city nearest a point, with the mean MLF of its load points, where known.
+
+    AEMO publishes no coordinates for load connection points, so the Home
+    load point cannot be found by distance; the nearest preset city's own
+    choice is the closest thing to a check on it.
+    """
+    cities = CITIES.get(region, ())
+    if not cities:
+        return None
+    key, name, clat, clon, tnis = min(cities, key=lambda c: distance_km(lat, lon, c[2], c[3]))
+    points = [p for p in (loads.get(t) for t in tnis) if p is not None and p.region == region] if loads else []
+    mlf = round(sum(p.mlf for p in points) / len(points), 4) if points else None
+    return CityReference(key, name, round(distance_km(lat, lon, clat, clon), 1), mlf, tuple(p.tni for p in points))
+
+
+def _members(
+    catalogue: Catalogue, region: str, lat: float, lon: float, radius_km: float, outside: tuple[str, ...] = (),
+) -> tuple[tuple, bool, tuple]:
+    """(members, nearest_only, excluded): the nodes within the radius, nearest first, less those
+    outside the city's electrical area; the nearest node where none is left."""
     located = sorted(
         (Member(node, round(distance_km(lat, lon, node.latitude, node.longitude), 1))
          for node in catalogue.region_nodes(region)
          if node.latitude is not None and node.longitude is not None),
         key=lambda m: (m.distance_km, m.node.tni),
     )
-    inside = tuple(m for m in located if m.distance_km <= radius_km)
-    return (inside, False) if inside else (tuple(located[:1]), True)
+    excluded = tuple(m for m in located if m.distance_km <= radius_km and m.node.tni.startswith(outside)) \
+        if outside else ()
+    inside = tuple(m for m in located if m.distance_km <= radius_km and m not in excluded)
+    return (inside, False, excluded) if inside else (tuple(located[:1]), True, excluded)
 
 
 def build_zone(
@@ -193,11 +261,33 @@ def build_zone(
             return None
         _key, name, lat, lon, tnis = found[0]
     points = tuple(p for p in (loads.get(t) for t in tnis) if p is not None and p.region == region) if loads else ()
-    members, nearest_only = _members(catalogue, region, lat, lon, radius_km)
-    return Zone(key, name, lat, lon, radius_km, members, nearest_only, points)
+    outside = OUTSIDE.get(key, ((), ""))[0] if key != ZONE_HOME else ()
+    members, nearest_only, excluded = _members(catalogue, region, lat, lon, radius_km, outside)
+    reference = nearest_city(region, lat, lon, loads) if key == ZONE_HOME else None
+    return Zone(key, name, lat, lon, radius_km, members, nearest_only, points,
+                nearest_city=reference, excluded=excluded)
 
 
-def zone_adjustment(values: Sequence[Optional[float]]) -> Optional[float]:
-    """The median of the members' adjustments that are known; None when none is."""
-    known = [v for v in values if v is not None]
-    return round(median(known), 4) if known else None
+def station_key(node: NodeInfo) -> str:
+    """The station a node votes for: its first station, else its TNI."""
+    return node.stations[0] if node.stations else node.tni
+
+
+def zone_adjustment(zone: Zone, values: Sequence[Optional[float]]) -> Optional[float]:
+    """One vote per station from the members' adjustments, in member order; None when none is known.
+
+    A station's vote is the median of its members' known adjustments. The
+    zone's is the median of the votes, or, below three stations, the
+    nearest station's with a known vote.
+    """
+    votes: dict[str, list[float]] = {}
+    for member, value in zip(zone.members, values):
+        known = votes.setdefault(station_key(member.node), [])
+        if value is not None:
+            known.append(value)
+    station_votes = [median(v) for v in votes.values() if v]
+    if not station_votes:
+        return None
+    if zone.aggregate == AGGREGATE_NEAREST:
+        return round(station_votes[0], 4)
+    return round(median(station_votes), 4)
