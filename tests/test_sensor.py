@@ -1067,3 +1067,21 @@ def test_every_city_and_home_is_built_with_the_options_radius():
     assert len(_sensor_mod._zones(located, entry, "NSW1", catalogue)) == 7
     entry.options = {"price_zones": "brisbane", "zone_radius_km": "nonsense"}
     assert _sensor_mod._zones(located, entry, "QLD1", catalogue)[0].radius_km == 100.0
+
+
+def test_a_slow_spot_forecast_build_logs_its_steps(caplog, monkeypatch):
+    """#363: the next slow write names the step, or shows the loop was starved."""
+    sensor = make_sensor(store=None)
+    sensor.entity_id = "sensor.nem_pd7day_qld1_nem_spot_price_forecast"
+    run_at_dt = datetime(2026, 5, 19, 6, 0, tzinfo=NEM_TZ)
+    freeze_now(monkeypatch, run_at_dt + timedelta(minutes=1))
+    set_price_data(sensor, ascending_periods(run_at_dt, 48), run_at_dt)
+    monkeypatch.setitem(_sensor_mod.BuildTimer.finish.__globals__, "SLOW_BUILD_SECONDS", 0.0)
+    caplog.set_level("DEBUG", logger=_sensor_mod._LOGGER.name)
+
+    sensor.extra_state_attributes
+
+    (message,) = [r.getMessage() for r in caplog.records if "attribute build took" in r.getMessage()]
+    assert message.startswith("sensor.nem_pd7day_qld1_nem_spot_price_forecast: attribute build took")
+    for step in ("calibrated memo", "region_timeline", "timeline_forecast", "summary"):
+        assert f"{step} 0." in message, step

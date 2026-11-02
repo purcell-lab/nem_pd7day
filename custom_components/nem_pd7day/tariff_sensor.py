@@ -36,6 +36,7 @@ from .const import (
     additional_fee_unique_id,
 )
 from .amber_forecast import day27_start_for, track_day27_start
+from .build_timing import BuildTimer
 from .calibrated_forecast import MEMO_WAIT_SECONDS, CalibratedForecast
 from .coordinator import PD7DayCoordinator, staleness_attributes
 from . import tariff_pricing
@@ -208,10 +209,15 @@ class CalibratedTariffMixin:
         """The tariff ``forecast``: the region's timeline from now, from ``start`` (day 2-7) when given."""
         if self._forecast_deferred:
             return []
+        timer = BuildTimer(getattr(self, "entity_id", None) or f"{self._region} tariff")
         calibrated = self._calibrated_entries(d)
-        entries = timeline_forecast(self, region_timeline(self, d, calibrated), calibrated)
+        timer.step("calibrated memo")
+        timeline = region_timeline(self, d, calibrated)
+        timer.step("region_timeline")
+        entries = timeline_forecast(self, timeline, calibrated)
         if start is not None:
             entries = [e for e in entries if start.includes(parse_iso(e["time"]))]
+        timer.step("timeline_forecast")
         cache = getattr(self, "_tariff_price_cache", None)
         if cache is None:
             cache = self._tariff_price_cache = PriceCache()
@@ -220,7 +226,10 @@ class CalibratedTariffMixin:
         def price(interval: Interval, spot: float) -> float | None:
             return self._price_period(interval, calibrated=spot)
 
-        return tariff_entries(entries, price, self._lookup_period_info, cache)
+        priced = tariff_entries(entries, price, self._lookup_period_info, cache)
+        timer.step("tariff pricing")
+        timer.finish(_LOGGER)
+        return priced
 
     def _calibrated_value_memoised(self, period, spot_map: dict | None) -> float | None:
         """Calibrated spot for a period, from the per run memo when it holds it.
