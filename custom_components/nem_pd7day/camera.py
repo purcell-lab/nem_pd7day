@@ -120,7 +120,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the ToD chart camera and bias chart camera from a config entry."""
+    """Set up the ToD, ISO and forecast chart cameras from a config entry."""
     coordinator: PD7DayCoordinator = entry.runtime_data.coordinator
     region = entry.data.get("region", "QLD1").upper()
     async_add_entities([
@@ -201,86 +201,6 @@ class NemPd7dayTodCamera(
         height: int | None = None,
     ) -> bytes | None:
         """Return the latest rendered PNG."""
-        return self._image_bytes if self._image_bytes else None
-
-
-class NemPd7dayBiasChartCamera(
-    _InitialRenderMixin, CoordinatorEntity[PD7DayCoordinator], Camera
-):
-    """
-    Camera entity that serves the duck-curve forecast bias chart.
-
-    Rendered from live CalibrationResult coefficients after each coordinator
-    refresh.  Shows heatmap of OLS slope a per horizon × ToD bucket, bar chart
-    of top bias patterns, and the stylised duck curve panel.
-    """
-
-    _attr_has_entity_name = True
-    _attr_name = "Bias Chart"
-    _attr_content_type = "image/png"
-    _attr_supported_features = CameraEntityFeature(0)
-    _attr_is_streaming = False
-    _attr_brand = "AEMO NEM"
-    _attr_model = "NEM PD7DAY"
-
-    def __init__(
-        self,
-        coordinator: PD7DayCoordinator,
-        region: str,
-        entry: ConfigEntry,
-    ) -> None:
-        CoordinatorEntity.__init__(self, coordinator)
-        Camera.__init__(self)
-        self._region = region
-        self._entry = entry
-        self._image_bytes: bytes = _PLACEHOLDER
-        self._attr_unique_id = f"nem_pd7day_{region.lower()}_bias_chart"
-
-    @property
-    def device_info(self):
-        from homeassistant.helpers.device_registry import DeviceInfo
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry.entry_id}_{self._region}")},
-            name=f"NEM PD7DAY {self._region}",
-        )
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self._schedule_initial_render()
-
-    def _handle_coordinator_update(self) -> None:
-        self._schedule_update_render()
-        self.async_write_ha_state()
-
-    def _render(self) -> bytes:
-        """Blocking render — called in executor thread."""
-        store = getattr(self.coordinator, "_store", None)
-        if store is None:
-            return self._image_bytes
-        cal = store.calibration
-        if cal is None:
-            return self._image_bytes
-        from . import bias_chart as _bc
-        return _bc.render_chart(
-            cal,
-            obs_count=store.observation_count,
-            region=self._region,
-            tod_stats=self.coordinator.tod_stats,
-        )
-
-    async def _async_refresh_image(self) -> None:
-        try:
-            result = await self.hass.async_add_executor_job(self._render)
-            if result:
-                self._image_bytes = result
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception("Bias chart render failed")
-
-    async def async_camera_image(
-        self,
-        width: int | None = None,
-        height: int | None = None,
-    ) -> bytes | None:
         return self._image_bytes if self._image_bytes else None
 
 

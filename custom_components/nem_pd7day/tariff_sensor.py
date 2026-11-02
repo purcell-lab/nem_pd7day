@@ -126,6 +126,8 @@ class CalibratedTariffMixin:
 
     _awaiting_memo = False
     _memo_task: Any = None
+    # While set, a write publishes no forecast; see _defer_first_forecast (#365).
+    _forecast_deferred = False
 
     if TYPE_CHECKING:
         coordinator: Any
@@ -148,6 +150,7 @@ class CalibratedTariffMixin:
     def _write_when_calibrated(self) -> None:
         """Write now if the memo holds this run, else once a warm publishes it."""
         if self._calibrated_view().is_current(self._price_data):
+            self._forecast_deferred = False
             self.async_write_ha_state()
             return
         if not self._awaiting_memo:
@@ -163,7 +166,31 @@ class CalibratedTariffMixin:
         finally:
             self._awaiting_memo = False
             self._memo_task = None
+        self._forecast_deferred = False
         self.async_write_ha_state()
+
+    def _defer_first_forecast(self) -> None:
+        """Keep the platform's first write off the calibration when the memo is stale (#365).
+
+        Home Assistant writes state straight after ``async_added_to_hass``
+        returns, so that write cannot wait for the memo the way later ones do.
+        The region's forecast sensors are added first and warm the memo before
+        their own first write, but a startup refit or STPASA refetch can move
+        its key before the tariffs are reached. The tariff's first write then
+        calibrated the run and priced every interval on the loop: 0.5 to
+        1.25 s per sensor on HA-OCPP.
+
+        So when the memo was published but is stale, the first write carries
+        the state and every attribute but the forecast, and the full write
+        follows once a warm publishes, as later writes already do. A region
+        whose memo was never published, every forecast sensor disabled,
+        keeps the lazy first write, since no warm is coming.
+        """
+        view = self._calibrated_view()
+        if view.is_current(self._price_data) or not view.published():
+            return
+        self._forecast_deferred = True
+        self._write_when_calibrated()
 
     def _calibrated_entries(self, d: Any) -> list[dict]:
         """The region's calibrated forecast: the memo, else built from the calibrated spot view."""
@@ -180,6 +207,8 @@ class CalibratedTariffMixin:
 
     def _tariff_forecast(self, d: Any, start: Any = None) -> list[dict[str, Any]]:
         """The tariff ``forecast``: the region's timeline from now, from ``start`` (day 2-7) when given."""
+        if self._forecast_deferred:
+            return []
         timer = BuildTimer(getattr(self, "entity_id", None) or f"{self._region} tariff")
         calibrated = self._calibrated_entries(d)
         timer.step("calibrated memo")
@@ -302,6 +331,7 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], CalibratedTariffMix
         dispatch_coordinator = runtime_data.dispatch if runtime_data else None
         if dispatch_coordinator is not None:
             self.async_on_remove(dispatch_coordinator.async_add_listener(self._write_when_calibrated))
+        self._defer_first_forecast()
 
     def _handle_coordinator_update(self) -> None:
         """A new PD7DAY run: write once the region's calibrated forecast holds it (#339)."""

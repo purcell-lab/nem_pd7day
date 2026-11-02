@@ -281,6 +281,11 @@ import time
         (True, 50.0, 100.0, False),     # installed before this start: the module is that copy
         (True, None, 100.0, False),     # no install time: cannot tell, so no claim
         (True, 200.0, None, False),     # no process start (not Linux): no claim
+        # #369: btime is whole seconds, rounded down, so the start can read
+        # up to 1 s early; an install 0.8 s "after" it came before the real start.
+        (True, 100.8, 100.0, False),
+        (True, 101.0, 100.0, False),    # the margin's edge: not after it
+        (True, 101.2, 100.0, True),     # past the margin: installed after the start
     ],
 )
 def test_library_possibly_stale(preloaded, installed_at, started_at, stale):

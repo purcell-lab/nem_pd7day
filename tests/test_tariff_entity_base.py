@@ -371,6 +371,29 @@ def test_ten_ticks_leave_one_removal_callback_that_cancels_the_pending_timer(cls
     assert all(not t.called for t in timers[:10])  # the fired ones are left alone
 
 
+@pytest.mark.parametrize("cls", TARIFF_CLASSES)
+def test_added_to_hass_ends_by_deciding_the_first_writes_forecast(cls):
+    """#365: the last thing before the platform's own write, after every subscription."""
+    events = []
+    dispatch = MagicMock()
+    dispatch.async_add_listener = MagicMock(side_effect=lambda cb: events.append("subscribe") or MagicMock())
+    sensor = make_sensor(cls, dispatch=dispatch)
+    _timer_unsub, track = _lifecycle(sensor, events)
+
+    async def parent_added(self):
+        events.append("super")
+
+    now = datetime(2026, 9, 2, 10, 10, tzinfo=NEM_TZ)
+    with patch.object(_tariff_mod.CoordinatorEntity, "async_added_to_hass", parent_added), \
+            patch.object(_tariff_mod, "async_track_point_in_time", side_effect=track), \
+            patch.object(_tariff_mod, "dt_util", types.SimpleNamespace(now=lambda: now)), \
+            patch.object(cls, "_defer_first_forecast", lambda self: events.append("defer")), \
+            patch.object(_tariff_mod, "track_day27_start", lambda *a: [], create=True):
+        run_async(sensor.async_added_to_hass())
+    assert events[-1] == "defer" and events.count("defer") == 1
+    assert events.index("defer") > events.index("subscribe")
+
+
 @pytest.mark.parametrize(
     "runtime",
     [
