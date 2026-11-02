@@ -747,7 +747,7 @@ Export tariff formula: `result_c_kwh / 100` (no additional usage fee, no GST —
 | SAPN (SA1) | SBELE, B2R | SBELE, B2R | Small Business Electrify; Business Two Rate |
 | Powercor (VIC1) | PRCER | PRCER | Residential CER (opt-in): +7.00 c/kWh 16:00–21:00 Dec–Feb and Jun–Aug, −1.00 c/kWh 11:00–16:00 Sep–May |
 
-Pairings are as read from aemo-to-tariff 0.7.28, the pinned version; a pin bump may add rows without a change here. An export sensor whose credit and charge windows are stated month by month, by the library's table (PRCER) or by an extension (below), also publishes `export_periods`, the windows in force this month.
+Pairings are as read from aemo-to-tariff 0.7.29, the pinned version; a pin bump may add rows without a change here. An export sensor whose credit and charge windows are stated month by month, by the library's table (PRCER) or by an extension (below), also publishes `export_periods`, the windows in force this month.
 
 #### Tariffs the library does not carry yet (extensions)
 
