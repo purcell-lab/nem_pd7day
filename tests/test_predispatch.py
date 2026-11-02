@@ -124,6 +124,86 @@ def test_run_time_from_file_name_without_case_solution():
     assert _client.parse_predispatch(csv, "unnamed") is None
 
 
+# ── The lean parse gives what a dict per row gave (#364) ─────────────────────
+
+def _dict_per_row(content):
+    """The parse as it was before #364: a dict for every row, read through a StringIO."""
+    import csv as _csv
+    import io as _io
+
+    headers, rows = {}, {table: [] for table in _client._TABLES}
+    for parts in _csv.reader(_io.StringIO(content)):
+        if len(parts) < 4 or parts[1] != "PREDISPATCH" or parts[2] not in rows:
+            continue
+        if parts[0] == "I":
+            headers[parts[2]] = parts[4:]
+        elif parts[0] == "D" and parts[2] in headers:
+            row = dict(zip(headers[parts[2]], parts[4:]))
+            if row.get("INTERVENTION", "0").strip() == "0":
+                rows[parts[2]].append(row)
+    return rows, set(headers), len(rows["CONSTRAINT_SOLUTION"])
+
+
+def _reference(monkeypatch, content, name=""):
+    with monkeypatch.context() as m:
+        m.setattr(_client, "_pricing_rows", _dict_per_row)
+        m.setattr(_client, "_nem_datetime", _client._nem_datetime.__wrapped__)
+        return _client.parse_predispatch(content, name)
+
+
+_REAL_FILES = [FIXTURE, *sorted((Path(__file__).parent / "fixtures" / "local_price").glob("PUBLIC_PREDISPATCHIS_*.CSV"))]
+
+
+@pytest.mark.parametrize("path", _REAL_FILES, ids=lambda p: p.name)
+def test_lean_parse_equals_a_dict_per_row_on_real_files(monkeypatch, path):
+    content = _cc.unzip_csv(path.read_bytes()) if path.suffix == ".zip" else path.read_text(encoding="utf-8")
+    lean = _client.parse_predispatch(content, path.name)
+    assert lean == _reference(monkeypatch, content, path.name)
+    if lean.evaluated:  # the local price fixtures are trimmed to other tables
+        assert lean.evaluated > sum(len(c) for c in lean.constraints.values())  # most rows are not binding
+
+
+def test_lean_parse_keeps_what_non_binding_rows_carried(monkeypatch):
+    """A period with nothing binding keeps its key, evaluated counts every pricing-run row,
+    and a short row, an intervention row, a bad timestamp and a quoted line break read as before."""
+    csv = "\r\n".join([
+        "I,PREDISPATCH,CASE_SOLUTION,1,LASTCHANGED",
+        'D,PREDISPATCH,CASE_SOLUTION,1,"2026/10/13 06:01:35"',
+        "I,PREDISPATCH,INTERCONNECTOR_SOLN,3,INTERCONNECTORID,DATETIME,MWFLOW",
+        'D,PREDISPATCH,INTERCONNECTOR_SOLN,3,NSW1-QLD1,"2026/10/13 11:00:00",-10',
+        "I,PREDISPATCH,CONSTRAINT_SOLUTION,5,CONSTRAINTID,DATETIME,MARGINALVALUE,VIOLATIONDEGREE,INTERVENTION",
+        'D,PREDISPATCH,CONSTRAINT_SOLUTION,5,BIND,"2026/10/13 11:00:00",-12.5,0,0',
+        'D,PREDISPATCH,CONSTRAINT_SOLUTION,5,ZERO,"2026/10/13 11:00:00",0,0,0',
+        'D,PREDISPATCH,CONSTRAINT_SOLUTION,5,VIOLATED,"2026/10/13 11:30:00",0,2.5,0',
+        'D,PREDISPATCH,CONSTRAINT_SOLUTION,5,QUIET,"2026/10/13 12:00:00",0.0,0',  # cut short: no INTERVENTION
+        'D,PREDISPATCH,CONSTRAINT_SOLUTION,5,BLANK,"2026/10/13 12:00:00",,,0',
+        'D,PREDISPATCH,CONSTRAINT_SOLUTION,5,RERUN,"2026/10/13 12:30:00",0,0,1',
+        'D,PREDISPATCH,CONSTRAINT_SOLUTION,5,BADTIME,"13/10/2026 13:00",0,0,0',
+        'D,PREDISPATCH,CONSTRAINT_SOLUTION,5,"LINE\nBREAK","2026/10/13 13:30:00",-1,0,0',
+        "",
+    ])
+    lean = _client.parse_predispatch(csv, "x")
+    assert lean == _reference(monkeypatch, csv, "x")
+    assert lean.evaluated == 7
+    assert {end.strftime("%H:%M"): [c.constraint_id for c in rows] for end, rows in lean.constraints.items()} == {
+        "11:00": ["BIND"], "11:30": ["VIOLATED"], "12:00": [], "13:30": ["LINE\nBREAK"],
+    }
+
+
+@pytest.mark.parametrize("text", ["", "a", "a\n", "a\nb", "a\r\nb\r\n", "\n\n", "x\x1cy\nz", 'q"\n"r\n'])
+def test_lines_are_what_a_stringio_gives(text):
+    import io
+    assert list(_client._lines(text)) == list(io.StringIO(text))
+
+
+def test_each_period_timestamp_is_parsed_once():
+    _client._nem_datetime.cache_clear()
+    snap = _snapshot()
+    info = _client._nem_datetime.cache_info()
+    assert info.misses <= len(snap.period_ends) + 2  # the periods, LASTCHANGED and the odd blank
+    assert info.hits > 10 * info.misses
+
+
 def test_latest_file_picks_newest_run():
     older = "PUBLIC_PREDISPATCHIS_202610130600_20261013053142.zip"
     html = f'<a href="/x/{FIXTURE.name}">x</a> <a href="/x/{older}">y</a>'

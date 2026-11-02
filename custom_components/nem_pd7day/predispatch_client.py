@@ -17,18 +17,21 @@ region reaches the next: an interconnector at a limit separates the two prices.
 Directory: https://www.nemweb.com.au/Reports/Current/PredispatchIS_Reports/
 Files:     PUBLIC_PREDISPATCHIS_YYYYMMDDHHMI_YYYYMMDDHHMISS.zip, the run's first
            period END and the time the file was written, both NEM time.
-The zip is about 800 KB and the CSV inside about 8 MB, so it is unzipped and
-parsed in the executor.
+The zip is about 800 KB to 1.3 MB and the CSV inside 8 to 13 MB, so it is
+unzipped and parsed in the executor, and the parse is kept lean (#364): about
+72,000 CONSTRAINT_SOLUTION rows a run, nearly all of them not binding, are
+counted without being read into a dict each, and each period's timestamp is
+parsed once rather than once a row.
 """
 from __future__ import annotations
 
 import csv
-import io
+import functools
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar, Iterator, Optional
 
 from .const import PREDISPATCHIS_BASE_URL
 from .constraint_client import BindingConstraint, ConstraintClient
@@ -40,7 +43,8 @@ _LOGGER = logging.getLogger(__name__)
 
 _FILENAME_RE = re.compile(r"(PUBLIC_PREDISPATCHIS_(\d{12})_(\d{14})\.zip)", re.IGNORECASE)
 PERIOD = timedelta(minutes=30)
-_TABLES = ("INTERCONNECTOR_SOLN", "REGION_PRICES", "CONSTRAINT_SOLUTION", "CASE_SOLUTION", "LOCAL_PRICE")
+_CONSTRAINTS = "CONSTRAINT_SOLUTION"
+_TABLES = ("INTERCONNECTOR_SOLN", "REGION_PRICES", _CONSTRAINTS, "CASE_SOLUTION", "LOCAL_PRICE")
 # A flow within this much of a limit is at the limit: max(1 MW, 0.5 % of it).
 # Pre-dispatch often reports a zero marginal value for an interconnector held
 # at a frequency-control limit, so the flow is compared with the limit instead.
@@ -130,31 +134,107 @@ def _number(value: Any) -> Optional[float]:
         return None
 
 
+@functools.lru_cache(maxsize=512)
 def _nem_datetime(value: Optional[str]) -> Optional[datetime]:
+    """An AEMO ``YYYY/MM/DD HH:MM:SS`` as an aware NEM time, or None.
+
+    Cached: a run has about 72 distinct period timestamps over some 76,000
+    rows, and ``strptime`` was most of the parse (#364). A datetime is
+    immutable, so sharing one is safe.
+    """
     try:
         return datetime.strptime(value or "", "%Y/%m/%d %H:%M:%S").replace(tzinfo=NEM_TZ)
     except ValueError:
         return None
 
 
-def _pricing_rows(content: str) -> tuple[dict[str, list[dict[str, str]]], set[str]]:
+def _pricing_rows(content: str) -> tuple[dict[str, list[dict[str, str]]], set[str], int]:
     """The pricing-run (INTERVENTION 0) rows of each wanted table, by header.
 
     A table without an INTERVENTION column (LOCAL_PRICE) is the pricing run's.
-    The second value is the tables the file has a header for.
+    The second value is the tables the file has a header for, the third how
+    many pricing-run CONSTRAINT_SOLUTION rows there were (``evaluated``).
+
+    A pricing-run CONSTRAINT_SOLUTION row that is not binding, nearly all of
+    some 72,000 a run, is not read into a dict (#364). The first in each period
+    stands for them all as ``{"DATETIME": ...}``, so ``_constraints`` still
+    keys the period, and the rest are only counted. The lines come from
+    ``_lines`` rather than a ``StringIO``, which would hold its own copy of the
+    text.
     """
     headers: dict[str, list[str]] = {}
     rows: dict[str, list[dict[str, str]]] = {table: [] for table in _TABLES}
-    for parts in csv.reader(io.StringIO(content)):
+    columns: Optional[_ConstraintColumns] = None
+    periods: set[Optional[str]] = set()
+    repeats = 0
+    for parts in csv.reader(_lines(content)):
         if len(parts) < 4 or parts[1] != "PREDISPATCH" or parts[2] not in rows:
             continue
+        table = parts[2]
         if parts[0] == "I":
-            headers[parts[2]] = parts[4:]
-        elif parts[0] == "D" and parts[2] in headers:
-            row = dict(zip(headers[parts[2]], parts[4:]))
+            headers[table] = parts[4:]
+            if table == _CONSTRAINTS:
+                columns = _ConstraintColumns.of(parts[4:])
+        elif parts[0] == "D" and table in headers:
+            if table == _CONSTRAINTS and columns is not None and columns.not_binding(parts):
+                when = columns.value(parts, columns.period)
+                if when in periods:
+                    repeats += 1
+                else:
+                    periods.add(when)
+                    rows[table].append({"DATETIME": when} if when is not None else {})
+                continue
+            row = dict(zip(headers[table], parts[4:]))
             if row.get("INTERVENTION", "0").strip() == "0":
-                rows[parts[2]].append(row)
-    return rows, set(headers)
+                rows[table].append(row)
+    return rows, set(headers), len(rows[_CONSTRAINTS]) + repeats
+
+
+def _lines(content: str) -> Iterator[str]:
+    """The lines of ``content`` as iterating ``io.StringIO(content)`` gives them.
+
+    Split on "\n" only, each with its "\n" kept, so the csv module reads a
+    quoted field across lines as before; ``str.splitlines`` would also split
+    on characters such as "\x1c" that StringIO does not.
+    """
+    *lines, last = content.split("\n")
+    for line in lines:
+        yield line + "\n"
+    if last:
+        yield last
+
+
+def _is_zero(text: Optional[str]) -> bool:
+    """``(_number(text) or 0.0) == 0.0``, without a float for the usual "0"."""
+    return text == "0" or (_number(text) or 0.0) == 0.0
+
+
+@dataclass(frozen=True)
+class _ConstraintColumns:
+    """Where CONSTRAINT_SOLUTION's columns are in a D row, from its I header; None when absent."""
+
+    intervention: Optional[int]
+    marginal: Optional[int]
+    violation: Optional[int]
+    period: Optional[int]   # DATETIME, the period end
+
+    @classmethod
+    def of(cls, header: list[str]) -> "_ConstraintColumns":
+        def at(name: str) -> Optional[int]:
+            return header.index(name) + 4 if name in header else None
+        return cls(at("INTERVENTION"), at("MARGINALVALUE"), at("VIOLATIONDEGREE"), at("DATETIME"))
+
+    @staticmethod
+    def value(parts: list[str], index: Optional[int]) -> Optional[str]:
+        """The column as ``dict(zip(header, parts))`` would give it: None when absent or cut short."""
+        return parts[index] if index is not None and index < len(parts) else None
+
+    def not_binding(self, parts: list[str]) -> bool:
+        """A pricing-run row whose marginal value and violation degree are both zero, as ``_constraints`` reads them."""
+        intervention = self.value(parts, self.intervention)
+        if intervention is not None and intervention.strip() != "0":
+            return False
+        return _is_zero(self.value(parts, self.marginal)) and _is_zero(self.value(parts, self.violation))
 
 
 def _interconnectors(rows: list[dict[str, str]]) -> dict[str, tuple[InterconnectorPeriod, ...]]:
@@ -240,7 +320,7 @@ def parse_predispatch(content: str, source: str = "") -> Optional[PredispatchSna
     Columns are read from each table's own I header, and only the pricing run
     (INTERVENTION 0) is kept, as for the dispatch price and constraints.
     """
-    rows, headers = _pricing_rows(content)
+    rows, headers, evaluated = _pricing_rows(content)
     interconnectors = _interconnectors(rows["INTERCONNECTOR_SOLN"])
     run_at = _run_at(rows["CASE_SOLUTION"], source)
     if not interconnectors or run_at is None:
@@ -251,7 +331,7 @@ def parse_predispatch(content: str, source: str = "") -> Optional[PredispatchSna
         interconnectors=interconnectors,
         prices=_prices(rows["REGION_PRICES"]),
         constraints=_constraints(rows["CONSTRAINT_SOLUTION"]),
-        evaluated=len(rows["CONSTRAINT_SOLUTION"]),
+        evaluated=evaluated,
         local_prices=_local_prices(rows["LOCAL_PRICE"]),
         local_price_table="LOCAL_PRICE" in headers,
     )
