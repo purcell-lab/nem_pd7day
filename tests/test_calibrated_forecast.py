@@ -258,6 +258,18 @@ def test_a_non_dict_memo_attribute_is_unusable():
     assert cf.cached(cf.key(price_data())) is None
 
 
+def test_published_says_whether_the_region_was_ever_warmed():
+    """#365: a stale entry is published, an absent one is not."""
+    coordinator = Coordinator()
+    qld = provider(coordinator, region="QLD1")
+    nsw = provider(coordinator, region="NSW1")
+    assert not qld.published()                       # no memo at all
+    qld.forecast(price_data(), CountingBuild())     # the lazy build creates the slot
+    assert qld.published() and not nsw.published()  # per region
+    qld.publish(("an older key",), [])               # stale for the live key
+    assert qld.published() and not qld.is_current(price_data())
+
+
 def test_regions_are_kept_apart():
     coordinator = Coordinator()
     qld = provider(coordinator, region="QLD1")

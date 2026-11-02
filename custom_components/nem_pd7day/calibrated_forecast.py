@@ -133,6 +133,18 @@ class CalibratedForecast:
                 pass
         return True
 
+    def published(self) -> bool:
+        """Whether anything has published to this region's memo, under any key.
+
+        True once a forecast sensor of the region has warmed it. A stale entry
+        then means one will warm again: the coordinator's next update, a refit
+        re-pushing its data among them, reaches it. False when none has, as
+        for a region with every forecast sensor disabled, where only a reader's
+        own lazy path ever fills it.
+        """
+        cache = _memo_dict(self._coordinator, CALIBRATED_FORECAST_MEMO_ATTR)
+        return cache is not None and self._region in cache
+
     def is_current(self, d: Any | None) -> bool:
         """Whether the memo holds the value a write for ``d`` will ask for.
 

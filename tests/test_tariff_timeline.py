@@ -168,12 +168,16 @@ def test_the_day27_tariff_forecast_starts_at_the_cutoff(monkeypatch):
 # ── Writing once the memo is current ─────────────────────────────────────────
 
 class _View:
-    def __init__(self, current):
+    def __init__(self, current, published=True):
         self.current = current
+        self._published = published
         self.waits = 0
 
     def is_current(self, d):
         return self.current
+
+    def published(self):
+        return self._published
 
     async def wait_current(self, price_data_now, timeout):
         self.waits += 1
@@ -182,9 +186,9 @@ class _View:
         return True
 
 
-def _writing_sensor(monkeypatch, current):
-    sensor = _sensor()
-    view = _View(current)
+def _writing_sensor(monkeypatch, current, published=True, cls=None):
+    sensor = _sensor(cls)
+    view = _View(current, published)
     monkeypatch.setattr(type(sensor), "_calibrated_view", lambda self: view)
     sensor.async_write_ha_state = MagicMock()
     tasks = []
@@ -214,6 +218,56 @@ def test_a_stale_memo_waits_for_the_warm_then_writes_once(monkeypatch):
     loop.close()
     sensor.async_write_ha_state.assert_called_once()
     assert view.waits == 1 and sensor._awaiting_memo is False
+
+
+# ── The platform's first write (#365) ────────────────────────────────────────
+# add_to_platform_finish writes straight after async_added_to_hass returns, so
+# that write cannot wait. With the memo published but stale, it carries no
+# forecast, and the full write follows once a warm publishes.
+
+
+@pytest.mark.parametrize("cls", [None, _tariff_mod.NemPd7dayExportTariffSensor], ids=["import", "export"])
+def test_a_stale_memo_defers_the_first_writes_forecast_to_the_warm(monkeypatch, cls):
+    sensor, view, tasks, loop = _writing_sensor(monkeypatch, current=False, cls=cls)
+    if cls is _tariff_mod.NemPd7dayExportTariffSensor:
+        sensor._import_code = sensor._export_code = "8400"
+    sensor._defer_first_forecast()
+    first = sensor.extra_state_attributes      # what the platform's own write publishes
+    assert first["forecast"] == []
+    assert first["tariff_code"] and first["region"] == sensor._region   # the rest is there
+    sensor.async_write_ha_state.assert_not_called()
+    assert len(tasks) == 1
+    loop.run_until_complete(tasks[0])          # the warm publishes
+    loop.close()
+    sensor.async_write_ha_state.assert_called_once()
+    assert sensor._forecast_deferred is False   # that write, and every later one, has the forecast
+
+
+def test_a_current_memo_does_not_defer_the_first_write(monkeypatch):
+    sensor, view, tasks, loop = _writing_sensor(monkeypatch, current=True)
+    sensor._defer_first_forecast()
+    loop.close()
+    assert sensor._forecast_deferred is False and tasks == []
+
+
+def test_a_memo_never_published_keeps_the_lazy_first_write(monkeypatch):
+    """Every forecast sensor of the region disabled: no warm is coming, so do not wait for one."""
+    sensor, view, tasks, loop = _writing_sensor(monkeypatch, current=False, published=False)
+    sensor._defer_first_forecast()
+    loop.close()
+    assert sensor._forecast_deferred is False and tasks == []
+
+
+def test_a_write_once_the_memo_is_current_clears_the_deferral(monkeypatch):
+    sensor, view, tasks, loop = _writing_sensor(monkeypatch, current=False)
+    sensor._defer_first_forecast()
+    view.current = True                        # a dispatch tick after the warm landed
+    sensor._write_when_calibrated()
+    assert sensor._forecast_deferred is False
+    for task in tasks:
+        task.cancel()
+    loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+    loop.close()
 
 
 def test_a_new_run_from_the_coordinator_goes_through_the_wait(monkeypatch):
