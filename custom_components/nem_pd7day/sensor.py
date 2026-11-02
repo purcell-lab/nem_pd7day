@@ -16,6 +16,7 @@ from typing import Any, TYPE_CHECKING, cast
 
 from .nem_time import now_nem, offset_seam_point, parse_iso, to_nem_iso
 from .timeline_forecast import cheapest_window, min_max_24h
+from .build_timing import BuildTimer
 from .region_timeline import _kept, listen_for_runs, region_timeline, timeline_forecast
 
 from homeassistant.components.sensor import (
@@ -871,15 +872,21 @@ class PD7DayForecastSensor(
             return {}
 
         run_at = d.forecast_generated_at
+        timer = BuildTimer(getattr(self, "entity_id", None) or f"{self._region} spot forecast")
         calibrated_forecast = self._calibrated_forecast(d)
+        timer.step("calibrated memo")
         # The price timeline from the current interval: dispatch, P5MIN, pre-dispatch,
         # then this calibrated forecast (#338, #339). Same keys per entry as before.
         timeline = region_timeline(self, d, calibrated_forecast)
+        timer.step("region_timeline")
         forecast = timeline_forecast(self, timeline, calibrated_forecast)
+        timer.step("timeline_forecast")
         (min_value, max_value), cheapest = _kept(
             self, "forecast_summary:" + self._region, id(forecast),
             lambda: (min_max_24h(forecast), cheapest_window(forecast)), pin=forecast,
         )
+        timer.step("summary")
+        timer.finish(_LOGGER)
 
         return {
             ATTR_REGION: d.region,
@@ -967,7 +974,10 @@ class PriceTimelineSensor(CalibratedWriteMixin, CoordinatorEntity[PD7DayCoordina
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        timer = BuildTimer(getattr(self, "entity_id", None) or f"{self._region} price timeline")
         timeline = self._timeline()
+        timer.step("calibrated memo and region_timeline")
+        timer.finish(_LOGGER)
         return {
             ATTR_REGION: self._region,
             "source": timeline.points[0]["source"] if timeline.points else None,

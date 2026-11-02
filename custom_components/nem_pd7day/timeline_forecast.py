@@ -87,8 +87,13 @@ def cheapest_window(entries: Sequence[dict[str, Any]], hours: float = 2.0) -> Op
     ``nemtime_end`` their ends, ``points`` how many entries it spans. A
     window must be covered in full by entries with a value.
     """
-    spans = _spans(entries)
-    length = timedelta(hours=hours)
+    # Epoch seconds rather than datetimes: the inner loop did timedelta
+    # arithmetic per step and was half of the spot forecast's own write cost
+    # (#363). Whole-second timestamps subtract exactly, so every window's
+    # minutes, sum and average are the same floats as before.
+    spans = [(start.timestamp(), end.timestamp(), entry) for start, end, entry in _spans(entries)]
+    length = timedelta(hours=hours).total_seconds()  # rounded as before, to the microsecond
+    full = length / 60
     best: Optional[dict[str, Any]] = None
     for i, (start, _end, first) in enumerate(spans):
         stop = start + length
@@ -96,17 +101,19 @@ def cheapest_window(entries: Sequence[dict[str, Any]], hours: float = 2.0) -> Op
         last = first
         count = 0
         cursor = start
-        for s, e, entry in spans[i:]:
+        for j in range(i, len(spans)):
+            s, e, entry = spans[j]
             if s >= stop:
                 break
-            if s != cursor or entry.get("value") is None:
+            value = entry.get("value")
+            if s != cursor or value is None:
                 covered = -1.0  # a gap or an entry without a value: no window here
                 break
-            minutes = (min(e, stop) - s).total_seconds() / 60
-            weighted += entry["value"] * minutes
+            minutes = ((e if e < stop else stop) - s) / 60
+            weighted += value * minutes
             covered += minutes
             cursor, last, count = e, entry, count + 1
-        if covered != length.total_seconds() / 60:
+        if covered != full:
             continue
         avg = round(weighted / covered, 6)
         if best is None or avg < best["avg_value"]:
