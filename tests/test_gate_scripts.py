@@ -99,6 +99,70 @@ def test_cov_compare_fails_a_line_that_still_exists_but_is_no_longer_executed():
     assert lost == {"m.py": [2]}
 
 
+# #368: the shape of #362. `supply` moves into a mixin above the class; `apply`
+# also ends in `return None`, and the code after both is longer than the code
+# before, so a longest-first diff pairs supply's `return None` (base 13) with
+# apply's (head 15) instead of its own moved copy (head 6).
+_APPLY = ["    def apply(self):", "        try:", "            return 1",
+          "        except Exception:", "            log()", "            return None"]
+_SUPPLY = ["    def supply(self):", "        try:", "            return fee()",
+           "        except Exception:", "            return None"]
+_TAIL = (["    @staticmethod", "    def describe():"]
+         + [f"        line_{k} = {k}" for k in range(8)] + ["        return 'x'"])
+_MOVED_BASE = ["class A:"] + _APPLY + [""] + _SUPPLY + [""] + _TAIL
+_MOVED_HEAD = ["class Mixin:"] + _SUPPLY + ["", "", "class A(Mixin):"] + _APPLY + [""] + _TAIL
+
+
+def test_cov_compare_maps_a_moved_line_to_its_copy_not_an_identical_line_elsewhere():
+    mapping = cov.line_map(_MOVED_BASE, _MOVED_HEAD)
+    assert mapping[13] == 6     # supply's return None, moved into the mixin
+    assert mapping[7] == 15     # apply's return None, which stayed in the class
+    assert all(_MOVED_BASE[i - 1] == _MOVED_HEAD[j - 1] for i, j in mapping.items())
+
+
+def test_cov_compare_passes_a_moved_line_that_is_still_executed():
+    # Base runs supply's except branch (9-13) but not apply's (7); the head
+    # runs the moved copy (2-6), and apply's except branch still not (15).
+    lost, _, _, _ = cov.compare(
+        _report(**{"m.py": [1, 2, 3, 4, 9, 10, 11, 12, 13]}),
+        _report(**{"m.py": [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13]}),
+        lambda p: _MOVED_BASE, lambda p: _MOVED_HEAD,
+    )
+    assert lost == {}
+
+
+def test_cov_compare_fails_a_moved_line_that_is_no_longer_executed():
+    lost, _, _, _ = cov.compare(
+        _report(**{"m.py": [1, 2, 3, 4, 9, 10, 11, 12, 13]}),
+        _report(**{"m.py": [1, 2, 3, 4, 5, 9, 10, 11, 12, 13]}),   # head 6 not run
+        lambda p: _MOVED_BASE, lambda p: _MOVED_HEAD,
+    )
+    assert lost == {"m.py": [13]}
+
+
+def test_cov_compare_trusts_a_short_run_only_in_step_with_a_long_one():
+    # A one-line run at base index 4, landing 3 lines on (offset 3), between
+    # long runs given as (base start, offset).
+    assert cov._in_step(4, 3, [(0, 0), (5, 3)])          # in step with the run after
+    assert cov._in_step(4, 3, [(0, 3), (5, 0)])          # in step with the run before
+    assert not cov._in_step(4, 3, [(0, 0), (5, 0)])      # out of step with both
+    assert not cov._in_step(4, 3, [(0, 0)])              # only a run before, at another offset
+    assert cov._in_step(4, 3, [])                         # no long run: nothing to judge by
+
+
+def test_cov_compare_reports_a_coincidental_short_match_as_edited():
+    # An edit replaces four lines with five. The diff pairs the base's `)`
+    # (line 5) with the head's (line 7), 2 lines on, between long runs at
+    # offsets 0 and 1: a coincidence of a common line, so it is counted as
+    # edited rather than compared.
+    base = ["a1", "a2", "a3", "x(", ")", "y1", "y2", "b1", "b2", "b3"]
+    head = ["a1", "a2", "a3", "p", "q", "r", ")", "s", "b1", "b2", "b3"]
+    assert (4, 5, 6) in cov._unchanged_runs(base, head)   # the diff's own pairing
+    mapping = cov.line_map(base, head)
+    assert 5 not in mapping
+    assert mapping == {1: 1, 2: 2, 3: 3, 8: 9, 9: 10, 10: 11}
+
+
 def test_cov_compare_reports_deleted_code_without_failing():
     lost, edited, _, _ = cov.compare(
         _report(**{"m.py": [1, 2, 3], "gone.py": [1]}), _report(**{"m.py": [1, 2]}),
