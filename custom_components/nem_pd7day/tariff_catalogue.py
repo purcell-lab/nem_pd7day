@@ -125,8 +125,25 @@ def library_possibly_stale(
     The library has no __version__ to compare, so this cannot be certain. The
     one false positive, another integration importing the new copy after the
     install in the same start, costs an unneeded restart.
+
+    ``started_at`` can read up to a second early, since /proc/stat gives the
+    boot time in whole seconds, rounded down. An install within that second
+    before the process started is therefore not counted as after it: a test
+    run started just after ``pip install`` was flagged this way (#369). The
+    case this guards, Home Assistant installing a pin after it started, comes
+    seconds to minutes after the start, not within the same second.
     """
-    return preloaded and installed_at is not None and started_at is not None and installed_at > started_at
+    return (
+        preloaded
+        and installed_at is not None
+        and started_at is not None
+        and installed_at > started_at + _START_TIME_RESOLUTION_S
+    )
+
+
+# /proc/stat's btime is whole seconds, rounded down, so process_started_at()
+# can read up to this much before the real start.
+_START_TIME_RESOLUTION_S = 1.0
 
 
 # Checked once, at import, off the event loop, for the reason given above.
