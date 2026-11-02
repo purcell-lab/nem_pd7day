@@ -1201,7 +1201,7 @@ def _parse_module(module_name: str) -> ast.AST:
 def test_chart_modules_are_discovered():
     """The discovery must actually find the chart modules, or the guards are vacuous."""
     mods = _chart_modules()
-    for expected in ("forecast_chart", "iso_chart", "bias_chart", "tod_stats"):
+    for expected in ("forecast_chart", "iso_chart", "tod_stats"):
         assert expected in mods, f"{expected} not discovered, guard would be vacuous"
 
 
@@ -1353,8 +1353,8 @@ def _capturing_set_text(seen: list[str]):
 
 
 def test_no_dash_in_rendered_chart_text():
-    """Nothing drawn on any of the four charts contains an em dash or en dash."""
-    bias_chart, iso_chart, tod_stats = load("bias_chart"), load("iso_chart"), load("tod_stats")
+    """Nothing drawn on any of the three charts contains an em dash or en dash."""
+    iso_chart, tod_stats = load("iso_chart"), load("tod_stats")
     result = _calibration_result()
     obs = [
         {"interval_time": f"2026-04-{18 + day:02d}T{hour:02d}:{minute:02d}:00+10:00",
@@ -1370,8 +1370,6 @@ def test_no_dash_in_rendered_chart_text():
     try:
         for png in (
             render_forecast_chart(rows, "QLD1", annotations=_notices(run)),
-            bias_chart.render_chart(result, obs_count=500, region="QLD1"),
-            bias_chart.render_chart(result, obs_count=500, region="QLD1", tod_stats=stats),
             iso_chart.render_iso_chart(result, iso_history=[], obs_count=500, region="QLD1"),
             tod_stats.render_chart(stats, region="QLD1"),
         ):

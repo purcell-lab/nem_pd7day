@@ -573,7 +573,6 @@ def test_initial_render_is_cancelled_on_entity_removal():
     "class_name",
     [
         "NemPd7dayTodCamera",
-        "NemPd7dayBiasChartCamera",
         "NemPd7dayIsoChartCamera",
         "NemPd7dayForecastChartCamera",
     ],

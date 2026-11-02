@@ -108,7 +108,7 @@ Before spec 000 Parts B and C, one small housekeeping PR, outside the refactor r
 | 008 | Composition root | `async_setup_entry` into `EntryRuntimeBuilder`, `StpasaFanout`, `RefitScheduler`, service registration; `sensor.async_setup_entry` into per-platform factories | medium: lifecycle and unload (#101, #106, the 2026.9 unload fix) | import-linter moves from report to enforce |
 | 009 | Forecast chart | `render_forecast_chart` into data shaping, axes and zones, and the existing label and callout planners | low business risk, slow tests | the chart sweeps can target units instead of whole renders |
 | 010 | NEMWEB parsers | the nine long client and parser functions into per-table parsers and a single retry policy | low, but outside the golden master, which starts from parsed results | parsers testable against recorded NEMWEB files one table at a time |
-| 011 | Secondary charts and statistics | `bias_chart`, `iso_chart`, `tod_stats` and `camera._build_forecast_data` split into data shaping and rendering | low | the size baseline empties outside the justified list |
+| 011 | Secondary charts and statistics | `iso_chart`, `tod_stats` and `camera._build_forecast_data` split into data shaping and rendering (`bias_chart` was never set up and is removed, #367) | low | the size baseline empties outside the justified list |
 
 Steps 001 and 002 fit in one release; 003 and 004 in the next; 005 and 006 each deserve their own release and a day of recorded replay; 007 to 011 can batch.
 

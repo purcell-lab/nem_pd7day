@@ -14,9 +14,7 @@ import pytest
 
 from support import NEM_TZ, load
 
-_engine_mod = load("calibration_engine")
 _tod_stats = load("tod_stats")
-_bias_chart = load("bias_chart")
 compute, render_chart, TodStats, SlotStats = (
     _tod_stats.compute, _tod_stats.render_chart, _tod_stats.TodStats, _tod_stats.SlotStats,
 )
@@ -40,32 +38,6 @@ def _full_day_stats() -> TodStats:
         _make_obs(f"2026-04-20T{hour:02d}:{minute:02d}:00+10:00", 0.10)
         for hour in range(24) for minute in (0, 30)
     ])
-
-
-def _bucket(key, a, b, n):
-    e = _engine_mod
-    return e.BucketModel(
-        key,
-        e.LinearCoeff(a=a, b=b, n=n, mae=0.01, rmse=0.02),
-        e.QuantileCoeff(0.1, a=a * 0.95, b=b, n=n),
-        e.QuantileCoeff(0.5, a=a, b=b, n=n),
-        e.QuantileCoeff(0.9, a=a * 1.15, b=b, n=n),
-    )
-
-
-def _calibration(keys):
-    """A CalibrationResult with a fitted bucket for each key."""
-    coeffs = {
-        "h00_06__peak": (0.40, 0.060, 50),
-        "h00_06__solar": (0.95, 0.012, 70),
-        "h12_24__shoulder": (1.50, -0.057, 18),
-        "h24_48__peak": (0.05, 0.087, 76),
-    }
-    return _engine_mod.CalibrationResult(
-        fitted_at="2026-04-21T18:00:00+10:00",
-        total_observations=500,
-        models={k: _bucket(k, *coeffs[k]) for k in keys},
-    )
 
 
 # ── compute() ─────────────────────────────────────────────────────────────────
@@ -222,38 +194,3 @@ def test_render_chart_returns_png_bytes(region):
 
 def test_render_chart_empty_returns_empty():
     assert render_chart(TodStats()) == b""
-
-
-# ── bias_chart ────────────────────────────────────────────────────────────────
-
-def test_bias_chart_none_calibration_returns_empty():
-    assert _bias_chart.render_chart(None) == b""
-
-
-def test_bias_chart_renders_png_from_calibration():
-    """A few fitted buckets and no tod_stats (the placeholder panel) render."""
-    cal = _calibration(("h00_06__peak", "h00_06__solar", "h12_24__shoulder", "h24_48__peak"))
-    png = _bias_chart.render_chart(cal, obs_count=500, region="QLD1")
-    assert isinstance(png, bytes)
-    assert len(png) > 5000
-    assert png[:4] == b"\x89PNG"
-
-
-def test_bias_chart_renders_with_tod_stats():
-    """bias_chart.render_chart accepts tod_stats and draws them."""
-    stats = TodStats(
-        slots=[
-            SlotStats(hour=h, minute=m, n=10, mean=0.05 + h * 0.003,
-                      median=0.05, p10=0.03, p25=0.04, p75=0.06, p90=0.07,
-                      mean_raw=0.06 + h * 0.003, mean_calibrated=0.055 + h * 0.003)
-            for h in range(0, 24) for m in (0, 30)
-        ],
-        unique_intervals=48,
-        date_from="18 Apr",
-        date_to="20 Apr 2026",
-    )
-    png = _bias_chart.render_chart(_calibration(("h00_06__peak",)), obs_count=100,
-                                   region="SA1", tod_stats=stats)
-    assert isinstance(png, bytes)
-    assert len(png) > 5000
-    assert png[:4] == b"\x89PNG"
