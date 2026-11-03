@@ -359,9 +359,17 @@ _SETDEFAULT_MODULES = (
 )
 
 
+def _hass_callback(func):
+    """``homeassistant.core.callback`` itself: marks a function to run on the event loop."""
+    setattr(func, "_hass_callback", True)
+    return func
+
+
 def _new_setdefault_module(name: str) -> MagicMock:
     mod = MagicMock()
-    if name == "homeassistant.util":
+    if name == "homeassistant.core":
+        mod.callback = _hass_callback
+    elif name == "homeassistant.util":
         mod.slugify = _slugify
     elif name == "aiohttp":
         mod.ClientError = ClientError

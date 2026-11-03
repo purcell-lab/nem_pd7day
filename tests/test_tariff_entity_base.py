@@ -530,6 +530,18 @@ def test_a_run_that_does_not_come_still_gets_the_write(cls, monkeypatch):
 
 
 @pytest.mark.parametrize("cls", TARIFF_CLASSES)
+def test_the_wait_timer_runs_on_the_event_loop(cls, monkeypatch):
+    """HA-OCPP, 3 November: async_call_later ran the plain expiry function in the
+    executor, and its async_write_ha_state raised from there, once per tariff
+    sensor. HA runs a target on the loop only when it is marked a callback."""
+    sensor, dispatch, _p5, _pd, _events, timers = _subscribed(cls, p5min_due=True)
+    monkeypatch.setattr(_tariff_mod, "async_call_later", lambda h, d, a: timers.append((d, a)) or MagicMock())
+    dispatch.callback()
+    (_delay, action), = timers
+    assert getattr(action, "_hass_callback", False), "the wait's expiry must be an @callback"
+
+
+@pytest.mark.parametrize("cls", TARIFF_CLASSES)
 def test_a_new_predispatch_run_writes(cls):
     sensor, _dispatch, _p5, pd, events, _timers = _subscribed(cls, p5min_due=False)
     (listener,) = pd.listeners
