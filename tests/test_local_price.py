@@ -22,6 +22,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from support import NEM_TZ, install_ha_stubs, load_chain, run_async
@@ -393,6 +395,113 @@ def test_coordinator_fetches_once_the_run_held_reaches_its_first_interval_end(mo
     now["t"] = _at(21, 30, 30)
     assert run_async(coord._async_update_data()).run_at == _at(21, 30)  # an older run never replaces it
     assert coord.client.calls == 2
+
+
+# ── #381: a run listed after the dispatch poll ──────────────────────────────
+# NEMWEB lists a P5MIN run 1 to 2 minutes after the DispatchIS file of the same
+# interval. On HA-OCPP on 3 November the 11:36:15 poll found the 11:35 run
+# still newest; the 11:40 run, listed at 11:37, waited for the 11:41:16 poll.
+
+
+class _ListingClient:
+    """Lists ``runs`` in turn, one per fetch: None while the next run is not listed."""
+
+    def __init__(self, runs):
+        self.runs, self.calls = list(runs), 0
+
+    async def fetch_latest(self):
+        self.calls += 1
+        return self.runs.pop(0) if self.runs else None
+
+
+def _retrying(monkeypatch, runs, now):
+    """A coordinator holding the 11:35 run, its refresh real, its retries recorded, not run."""
+    held = replace(_p5(), run_at=_at(11, 35))
+    coord = _coord.P5MinCoordinator(_Hass(), None, _ListingClient(runs))
+    coord.latest = held
+    timers = []
+
+    def _later(hass, delay, action):
+        unsub = MagicMock(name=f"retry_unsub_{len(timers)}")
+        timers.append((delay, action, unsub))
+        return unsub
+
+    async def _refresh():
+        await coord._async_update_data()
+
+    monkeypatch.setattr(_coord, "async_call_later", _later)
+    monkeypatch.setattr(_coord, "now_nem", lambda: now["t"])
+    monkeypatch.setattr(coord, "async_refresh", _refresh)
+    requests = []
+    monkeypatch.setattr(coord._guard, "request", lambda: requests.append(now["t"]))
+    return coord, timers, requests
+
+
+def test_a_run_listed_after_the_dispatch_poll_lands_on_a_retry(monkeypatch):
+    now = {"t": _at(11, 36, 15)}
+    newer = replace(_p5(), run_at=_at(11, 40))
+    coord, timers, requests = _retrying(monkeypatch, [None, None, newer], now)
+    coord._on_dispatch()
+    assert requests == [_at(11, 36, 15)]
+    run_async(coord._refresh_then_retry())          # the poll's refresh: 11:40 not yet listed
+    assert coord.latest.run_at == _at(11, 35) and len(timers) == 1
+    assert timers[0][0] == _coord.RETRY_SECONDS
+    for at in (_at(11, 36, 45), _at(11, 37, 15)):
+        now["t"] = at
+        timers[-1][1](None)                         # the retry fires: another listing
+        assert requests[-1] == at
+        run_async(coord._refresh_then_retry())
+    assert coord.latest.run_at == _at(11, 40)       # listed at 11:37, held by 11:37:15
+    assert coord.client.calls == 3
+    assert len(timers) == 2                         # no run due: no further retry
+
+
+def test_retries_stop_at_the_limit(monkeypatch):
+    now = {"t": _at(11, 36, 15)}
+    coord, timers, _requests = _retrying(monkeypatch, [], now)
+    coord._on_dispatch()
+    for _ in range(_coord.RETRY_LIMIT + 3):
+        run_async(coord._refresh_then_retry())
+        if timers and coord._unsub_retry is not None:
+            timers[-1][1](None)
+    assert len(timers) == _coord.RETRY_LIMIT        # 3 minutes of retries, then the next poll
+    assert coord.client.calls == _coord.RETRY_LIMIT + 3
+
+
+def test_no_retry_while_the_run_held_is_current(monkeypatch):
+    now = {"t": _at(11, 31)}                        # the 11:35 run is held: nothing due before 11:35
+    coord, timers, _requests = _retrying(monkeypatch, [], now)
+    coord._on_dispatch()
+    run_async(coord._refresh_then_retry())
+    assert timers == [] and coord.client.calls == 0
+
+
+def test_a_dispatch_poll_cancels_a_pending_retry_and_starts_afresh(monkeypatch):
+    now = {"t": _at(11, 36, 15)}
+    coord, timers, _requests = _retrying(monkeypatch, [], now)
+    coord._on_dispatch()
+    run_async(coord._refresh_then_retry())
+    assert coord._retries_left == _coord.RETRY_LIMIT - 1
+    now["t"] = _at(11, 41, 15)
+    coord._on_dispatch()
+    timers[0][2].assert_called_once()               # the 11:36:45 retry is cancelled
+    assert coord._unsub_retry is None and coord._retries_left == _coord.RETRY_LIMIT
+
+
+def test_shutdown_cancels_a_pending_retry(monkeypatch):
+    now = {"t": _at(11, 36, 15)}
+    coord, timers, _requests = _retrying(monkeypatch, [], now)
+    coord._on_dispatch()
+    run_async(coord._refresh_then_retry())
+    coord.async_shutdown_listener()
+    timers[0][2].assert_called_once()
+    run_async(coord._refresh_then_retry())          # a refresh still running when unloaded
+    assert len(timers) == 1
+
+
+def test_the_retry_runs_on_the_event_loop():
+    """A plain function given to async_call_later runs in the executor (#379)."""
+    assert getattr(_coord.P5MinCoordinator._retry, "_hass_callback", False)
 
 
 def test_shared_p5min_created_once_and_cleaned_up():

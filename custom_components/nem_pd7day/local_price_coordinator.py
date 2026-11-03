@@ -8,6 +8,12 @@ the binding constraints it has no timer of its own: it is checked after each
 live dispatch poll, and a failure here never touches the price path. AEMO writes a run every five minutes, so the listing (about 16 KB gzip)
 is read once the run held has reached its first interval's end; the zip
 (about 210 KB) only when a newer run is listed.
+
+NEMWEB lists a P5MIN run 1 to 2 minutes after the DispatchIS file of the same
+interval, and the dispatch poll often comes first. A refresh that leaves a run
+still due reads the listing again every ``RETRY_SECONDS``, up to
+``RETRY_LIMIT`` times, so the run lands within 30 s of being listed rather
+than at the next dispatch poll, 5 minutes later (#381).
 """
 from __future__ import annotations
 
@@ -15,6 +21,8 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Optional
 
+from homeassistant.core import callback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import DISPATCH_UNSUBS_KEY, DOMAIN, NEMWEB_SEMAPHORE_KEY, P5MIN_BASE_URL, SHARED_P5MIN_KEY
@@ -25,6 +33,11 @@ from .nem_time import now_nem
 from .refresh_guard import RefreshGuard
 
 _LOGGER = logging.getLogger(__name__)
+
+# Six retries 30 s apart: 3 minutes after the dispatch poll, past the latest a
+# run has been listed on NEMWEB, and well before the next poll (#381).
+RETRY_SECONDS = 30.0
+RETRY_LIMIT = 6
 
 
 class P5MinClient(ConstraintClient):
@@ -54,7 +67,9 @@ class P5MinCoordinator(DataUpdateCoordinator[Optional[P5MinRun]]):
         super().__init__(hass, _LOGGER, name="NEM P5MIN local prices", update_interval=None, always_update=False)
         self.client = client
         self.latest: Optional[P5MinRun] = None
-        self._guard = RefreshGuard(hass, "nem_pd7day_p5min_refresh", self.async_refresh, _LOGGER)
+        self._guard = RefreshGuard(hass, "nem_pd7day_p5min_refresh", self._refresh_then_retry, _LOGGER)
+        self._retries_left = 0
+        self._unsub_retry: Optional[Callable[[], None]] = None
         self._unsub_dispatch: Optional[Callable[[], None]] = (
             dispatch.async_add_listener(self._on_dispatch) if dispatch is not None else None
         )
@@ -63,9 +78,30 @@ class P5MinCoordinator(DataUpdateCoordinator[Optional[P5MinRun]]):
         """A dispatch poll finished. One refresh at a time, as for constraints.
 
         ``due`` keeps it to the listing once the held run has started, and the
-        zip only when a newer run is listed.
+        zip only when a newer run is listed. Each poll starts a fresh set of
+        retries for a run not yet listed (#381).
         """
+        self._cancel_retry()
+        self._retries_left = RETRY_LIMIT
         self._guard.request()
+
+    async def _refresh_then_retry(self) -> None:
+        """Refresh; when the run is still due, read the listing again in ``RETRY_SECONDS`` (#381)."""
+        await self.async_refresh()
+        if self._retries_left > 0 and self._unsub_retry is None and self.due(now_nem()):
+            self._retries_left -= 1
+            self._unsub_retry = async_call_later(self.hass, RETRY_SECONDS, self._retry)
+
+    @callback
+    def _retry(self, _now: Any = None) -> None:
+        # A callback, so async_call_later runs it on the event loop (#379).
+        self._unsub_retry = None
+        self._guard.request()
+
+    def _cancel_retry(self) -> None:
+        if self._unsub_retry is not None:
+            self._unsub_retry()
+            self._unsub_retry = None
 
     def due(self, now: datetime) -> bool:
         """True once the run held has reached its first interval's end, or there is none."""
@@ -85,6 +121,8 @@ class P5MinCoordinator(DataUpdateCoordinator[Optional[P5MinRun]]):
         return self.latest
 
     def async_shutdown_listener(self) -> None:
+        self._cancel_retry()
+        self._retries_left = 0
         if self._unsub_dispatch is not None:
             self._unsub_dispatch()
             self._unsub_dispatch = None
