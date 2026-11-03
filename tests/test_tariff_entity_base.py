@@ -447,3 +447,111 @@ def test_added_to_hass_calls_super_schedules_and_subscribes(cls, runtime):
     # The first removal callback cancels the pending boundary timer (#334).
     removals[0][0]()
     timer_unsub.assert_called_once()
+
+
+# ── #377: a tariff follows the P5MIN run its dispatch poll starts fetching ───
+
+
+class _P5Min:
+    """The shared P5MIN coordinator as a tariff sees it: ``due`` and a listener."""
+
+    def __init__(self, due):
+        self._due = due
+        self.listeners = []
+
+    def due(self, now):
+        return self._due
+
+    def async_add_listener(self, callback):
+        self.listeners.append(callback)
+        return MagicMock(name="p5min_unsub")
+
+
+def _subscribed(cls, p5min_due, predispatch=True):
+    """A tariff after async_added_to_hass, with dispatch, P5MIN and pre-dispatch coordinators."""
+    events = []
+    dispatch = MagicMock()
+    dispatch.async_add_listener = MagicMock(side_effect=lambda cb: setattr(dispatch, "callback", cb) or MagicMock())
+    sensor = make_sensor(cls, dispatch=dispatch)
+    sensor.async_write_ha_state = MagicMock(side_effect=lambda: events.append("write"))
+    sensor.async_on_remove = MagicMock()
+    p5min = _P5Min(p5min_due)
+    sensor.hass.data[DOMAIN][_const_mod.SHARED_P5MIN_KEY] = p5min
+    pd = _P5Min(False)
+    if predispatch:
+        sensor.hass.data[DOMAIN][_const_mod.SHARED_PREDISPATCH_KEY] = pd
+    timers = []
+
+    async def parent_added(self):
+        return None
+
+    now = datetime(2026, 11, 3, 10, 51, 15, tzinfo=NEM_TZ)
+    with patch.object(_tariff_mod.CoordinatorEntity, "async_added_to_hass", parent_added), \
+            patch.object(_tariff_mod, "async_track_point_in_time", lambda *a: MagicMock()), \
+            patch.object(_tariff_mod, "dt_util", types.SimpleNamespace(now=lambda: now)), \
+            patch.object(_tariff_mod, "track_day27_start", lambda *a: [], create=True), \
+            patch.object(cls, "_defer_first_forecast", lambda self: None):
+        run_async(sensor.async_added_to_hass())
+    # The memo always holds the run here: what is under test is when the write happens.
+    sensor._calibrated_view = lambda: types.SimpleNamespace(is_current=lambda d: True)
+    return sensor, dispatch, p5min, pd, events, timers
+
+
+@pytest.mark.parametrize("cls", TARIFF_CLASSES)
+def test_a_dispatch_update_waits_for_the_p5min_run_it_starts(cls, monkeypatch):
+    """The 3 November case: the write came before the run, so it priced the previous one."""
+    sensor, dispatch, p5min, _pd, events, timers = _subscribed(cls, p5min_due=True)
+    monkeypatch.setattr(_tariff_mod, "async_call_later", lambda h, d, a: timers.append((d, a)) or MagicMock())
+    dispatch.callback()
+    assert events == [] and len(timers) == 1 and timers[0][0] == _tariff_mod.P5MIN_WAIT_SECONDS
+    dispatch.callback()                 # a second poll while waiting does not start another wait
+    assert len(timers) == 1
+    (p5_listener,) = p5min.listeners
+    p5_listener()                       # the new run lands
+    assert events == ["write"]          # one write per tick, with the new run
+    assert sensor._p5min_wait is None
+
+
+@pytest.mark.parametrize("cls", TARIFF_CLASSES)
+def test_with_no_run_due_a_dispatch_update_writes_at_once(cls):
+    sensor, dispatch, _p5, _pd, events, timers = _subscribed(cls, p5min_due=False)
+    dispatch.callback()
+    assert events == ["write"] and timers == []
+
+
+@pytest.mark.parametrize("cls", TARIFF_CLASSES)
+def test_a_run_that_does_not_come_still_gets_the_write(cls, monkeypatch):
+    sensor, dispatch, _p5, _pd, events, timers = _subscribed(cls, p5min_due=True)
+    monkeypatch.setattr(_tariff_mod, "async_call_later", lambda h, d, a: timers.append((d, a)) or MagicMock())
+    dispatch.callback()
+    assert events == []
+    timers[0][1](None)                  # past P5MIN_WAIT_SECONDS: not published yet, or the fetch failed
+    assert events == ["write"] and sensor._p5min_wait is None
+
+
+@pytest.mark.parametrize("cls", TARIFF_CLASSES)
+def test_a_new_predispatch_run_writes(cls):
+    sensor, _dispatch, _p5, pd, events, _timers = _subscribed(cls, p5min_due=False)
+    (listener,) = pd.listeners
+    listener()
+    assert events == ["write"]
+
+
+@pytest.mark.parametrize("cls", TARIFF_CLASSES)
+def test_removal_cancels_a_pending_p5min_wait(cls, monkeypatch):
+    sensor, dispatch, _p5, _pd, events, _timers = _subscribed(cls, p5min_due=True)
+    unsub = MagicMock(name="wait_unsub")
+    monkeypatch.setattr(_tariff_mod, "async_call_later", lambda h, d, a: unsub)
+    dispatch.callback()
+    cancel_pending = sensor.async_on_remove.call_args_list[0].args[0]
+    cancel_pending()
+    unsub.assert_called_once()
+    assert sensor._p5min_wait is None
+
+
+def test_without_a_p5min_coordinator_nothing_changes():
+    """Every existing install path without the shared P5MIN source writes on dispatch as before."""
+    sensor, dispatch, _p5, _pd, events, _timers = _subscribed(NemPd7dayTariffSensor, p5min_due=True)
+    sensor.hass.data[DOMAIN].pop(_const_mod.SHARED_P5MIN_KEY)
+    dispatch.callback()
+    assert events == ["write"]

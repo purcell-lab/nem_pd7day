@@ -37,14 +37,19 @@ def _dispatch_point(entry: ConfigEntry, region: str) -> Any:
     return DispatchPoint(end, price.rrp, "")
 
 
-def listen_for_runs(entity: Any, *keys: str) -> None:
-    """Write ``entity`` when a shared coordinator named by ``keys`` (P5MIN, pre-dispatch) holds a new run."""
+def listen_for_runs(entity: Any, *keys: str, callback: Any = None) -> None:
+    """Write ``entity`` when a shared coordinator named by ``keys`` (P5MIN, pre-dispatch) holds a new run.
+
+    ``callback`` is how the entity writes; the spot sensors' warm write by
+    default. A tariff passes its own, which waits for the calibrated memo (#377).
+    """
     data = getattr(entity.hass, "data", None)
     domain_data = data.get(DOMAIN, {}) if isinstance(data, dict) else {}
+    write = callback if callback is not None else entity._schedule_warm_state_write
     for key in keys:
         source = domain_data.get(key)
         if source is not None:
-            entity.async_on_remove(source.async_add_listener(entity._schedule_warm_state_write))
+            entity.async_on_remove(source.async_add_listener(write))
 
 
 def _domain_data(sensor: Any) -> Optional[dict]:

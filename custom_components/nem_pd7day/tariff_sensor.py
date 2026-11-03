@@ -18,7 +18,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.helpers.event import async_call_later, async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -32,6 +32,8 @@ from .const import (
     DISTRIBUTOR_DISPLAY_NAMES,
     DOMAIN,
     INTERPOLATION_PREVIOUS,
+    SHARED_P5MIN_KEY,
+    SHARED_PREDISPATCH_KEY,
     additional_fee_entity_id,
     additional_fee_unique_id,
 )
@@ -43,7 +45,7 @@ from . import tariff_pricing
 from .tariff_catalogue import library_version, seasonal as seasonal_tariff, tariff_name as catalogue_tariff_name
 from .calibration_inputs import interval_key_for_period
 from .nem_time import now_nem, offset_seam_point, parse_iso, to_nem_iso
-from .region_timeline import region_timeline, timeline_forecast
+from .region_timeline import listen_for_runs, region_timeline, timeline_forecast
 from .tariff_forecast import Interval, PriceCache, tariff_entries
 
 _LOGGER = logging.getLogger(__name__)
@@ -115,6 +117,12 @@ def _losses_of(sensor: Any) -> tariff_pricing.LossFactors:
     return tariff_pricing.losses_for(value)
 
 
+# How long a dispatch write waits for the P5MIN run that poll starts fetching (#377).
+# The fetch is a listing and a small zip, a few seconds; past this the write
+# goes ahead with the run it has.
+P5MIN_WAIT_SECONDS = 30.0
+
+
 class CalibratedTariffMixin:
     """A tariff's ``forecast`` from the price timeline, priced on the region's calibrated forecast memo (#339).
 
@@ -128,6 +136,8 @@ class CalibratedTariffMixin:
     _memo_task: Any = None
     # While set, a write publishes no forecast; see _defer_first_forecast (#365).
     _forecast_deferred = False
+    # Cancels the fallback write while a dispatch write waits for its P5MIN run (#377).
+    _p5min_wait: Any = None
 
     if TYPE_CHECKING:
         coordinator: Any
@@ -168,6 +178,44 @@ class CalibratedTariffMixin:
             self._memo_task = None
         self._forecast_deferred = False
         self.async_write_ha_state()
+
+    def _on_dispatch_update(self) -> None:
+        """A new dispatch price: write once the P5MIN run it starts the fetch for has landed (#377).
+
+        A dispatch poll is what starts the P5MIN fetch, so its listeners always
+        run before the new run is held. Writing then priced the previous run's
+        intervals until the next dispatch tick, 5 minutes later. When a run is
+        due, the write waits for the P5MIN coordinator's notice of it, up to
+        ``P5MIN_WAIT_SECONDS``: past that (the run not yet published, or the
+        fetch failed) it writes with the run it has. With no P5MIN coordinator,
+        or none due, it writes at once, as before.
+        """
+        p5min = self._shared_source(SHARED_P5MIN_KEY)
+        due = getattr(p5min, "due", None)
+        if not callable(due) or not due(now_nem()):
+            self._write_when_calibrated()
+            return
+        if self._p5min_wait is None:
+            self._p5min_wait = async_call_later(self.hass, P5MIN_WAIT_SECONDS, self._p5min_wait_expired)
+
+    def _on_new_run(self) -> None:
+        """A new P5MIN or pre-dispatch run: write now, ending any wait for it (#377)."""
+        self._cancel_p5min_wait()
+        self._write_when_calibrated()
+
+    def _p5min_wait_expired(self, _now: Any = None) -> None:
+        self._p5min_wait = None
+        self._write_when_calibrated()
+
+    def _cancel_p5min_wait(self) -> None:
+        if self._p5min_wait is not None:
+            self._p5min_wait()
+            self._p5min_wait = None
+
+    def _shared_source(self, key: str) -> Any:
+        data = getattr(self.hass, "data", None)
+        domain_data = data.get(DOMAIN, {}) if isinstance(data, dict) else {}
+        return domain_data.get(key)
 
     def _defer_first_forecast(self) -> None:
         """Keep the platform's first write off the calibration when the memo is stale (#365).
@@ -322,6 +370,7 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], CalibratedTariffMix
                 self._unsub_boundary()
             if self._memo_task:
                 self._memo_task.cancel()
+            self._cancel_p5min_wait()
 
         self.async_on_remove(cancel_pending)
         self._schedule_next_boundary()
@@ -330,7 +379,9 @@ class TariffEntityBase(CoordinatorEntity[PD7DayCoordinator], CalibratedTariffMix
         runtime_data = getattr(self._entry, "runtime_data", None)
         dispatch_coordinator = runtime_data.dispatch if runtime_data else None
         if dispatch_coordinator is not None:
-            self.async_on_remove(dispatch_coordinator.async_add_listener(self._write_when_calibrated))
+            self.async_on_remove(dispatch_coordinator.async_add_listener(self._on_dispatch_update))
+        # A new P5MIN or pre-dispatch run reaches the forecast as soon as it lands (#377).
+        listen_for_runs(self, SHARED_P5MIN_KEY, SHARED_PREDISPATCH_KEY, callback=self._on_new_run)
         self._defer_first_forecast()
 
     def _handle_coordinator_update(self) -> None:
