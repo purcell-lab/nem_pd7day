@@ -16,6 +16,7 @@ import datetime
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
+from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_call_later, async_track_point_in_time
@@ -203,7 +204,10 @@ class CalibratedTariffMixin:
         self._cancel_p5min_wait()
         self._write_when_calibrated()
 
+    @callback
     def _p5min_wait_expired(self, _now: Any = None) -> None:
+        # A callback, so async_call_later runs it on the event loop: a plain
+        # function runs in the executor, where async_write_ha_state raises (#379).
         self._p5min_wait = None
         self._write_when_calibrated()
 
