@@ -1424,7 +1424,7 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
             attrs["forecast_history_newest"] = None
             attrs["forecast_history_runs_avg"] = 0
         # Pre-dispatch's own stage 1, beside PD7DAY's (#337 stage 3b); not recorded, as summary.
-        record = getattr(getattr(self._entry, "runtime_data", None), "pd_record", None)
+        record = getattr(getattr(getattr(self, "_entry", None), "runtime_data", None), "pd_record", None)
         if record is not None:
             attrs["pd_calibration"] = record.pd_summary()
         return attrs
