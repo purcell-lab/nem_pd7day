@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .active_tariff import resolve_active_tariff, sync_tariff_entities, watch_amber_site
 from .calibration_store import CalibrationStore
-from .predispatch_calibration import CALIBRATION_STORES_KEY
+from .predispatch_calibration import CALIBRATION_STORES_KEY, PD_RECORDS_KEY
 from .const import (
     CONF_FORECAST_MODE,
     DISPATCH_UNSUBS_KEY,
@@ -286,6 +286,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # Before the platforms: the sensor setup subscribes it to pre-dispatch runs (#337).
     pd_record = PredispatchRecord(hass, region)
     await pd_record.async_load()
+    _register_by_region(hass, entry, PD_RECORDS_KEY, region, pd_record)  # serves its fit (#337 3b)
     entry.runtime_data = NemPd7dayEntryData(
         coordinator=coordinator,
         store=store,
@@ -400,6 +401,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
             "PD7DAY calibration refit complete — %d active buckets",
             store.active_bucket_count,
         )
+        await pd_record.async_refit(store)  # pre-dispatch's own fit, on PD7DAY's cadence (#337 3b)
         # Re-push the data already held rather than calling async_refresh(),
         # which would re-download from NEMWEB. A refit changes how the forecast
         # is calibrated, not the forecast itself, so notifying listeners is
@@ -599,6 +601,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -
             hass.data[DOMAIN].pop("stpasa_client", None)
             hass.data[DOMAIN].pop("stpasa_stores", None)
             hass.data[DOMAIN].pop(CALIBRATION_STORES_KEY, None)
+            hass.data[DOMAIN].pop(PD_RECORDS_KEY, None)
             hass.data[DOMAIN].pop(STPASA_REFRESH_KEY, None)
             hass.data[DOMAIN].pop(SHARED_FETCH_KEY, None)
             hass.data[DOMAIN].pop(SHARED_TRADINGIS_KEY, None)

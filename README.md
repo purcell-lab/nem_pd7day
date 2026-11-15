@@ -378,7 +378,7 @@ The spot forecast sensor (`sensor.nem_pd7day_{region}_nem_spot_price_forecast`) 
 
 - **From now**: `forecast` starts at the interval running now; intervals that have ended are gone. Before, it started at the run's first interval, up to five hours back.
 - **Mixed resolution**: the current 5-minute dispatch interval, P5MIN's 5-minute intervals for the next hour, pre-dispatch's half hours to the end of the next trading day, then PD7DAY's. `interval_minutes` stays `30`, the PD7DAY resolution; each entry's own length is its `resolution_minutes`.
-- **Same keys**: a `pd7day` entry is the calibrated entry as before (its `time` moved where its half hour was split). A `dispatch`, `p5min` or `predispatch` entry has every key too: `raw_value`, `calibrated` and `value` are its price, `calibrated_source` is `actual`, `raw` or `passthrough`, and `p10`, `p50`, `p90`, `ols_mae`, `band_source`, `n_obs`, `horizon_hours` and `spike_credible` are `null`. A `predispatch` entry carries its `horizon_hours` (hours from the run to the period's start), and from 24 h ahead it is served through PD7DAY's `h24_48` model: `calibrated_source: pd7day_iso_h24_48`, with that model's band, `band_source` and `n_obs`, and `raw_value` still the raw RRP (v3.50.4, #337). Templates that read `p10`/`p90` should allow for `null`.
+- **Same keys**: a `pd7day` entry is the calibrated entry as before (its `time` moved where its half hour was split). A `dispatch`, `p5min` or `predispatch` entry has every key too: `raw_value`, `calibrated` and `value` are its price, `calibrated_source` is `actual`, `raw` or `passthrough`, and `p10`, `p50`, `p90`, `ols_mae`, `band_source`, `n_obs`, `horizon_hours` and `spike_credible` are `null`. A `predispatch` entry carries its `horizon_hours` (hours from the run to the period's start) and `raw_value`, the raw RRP. It is served through pre-dispatch's own calibration where its horizon band is admitted (`calibrated_source: pd_isotonic`, v3.51.0), else from 24 h ahead through PD7DAY's `h24_48` model (`pd7day_iso_h24_48`, v3.50.4), else `passthrough`; a served entry has its model's band, `band_source` and `n_obs` (#337). Templates that read `p10`/`p90` should allow for `null`.
 - **By time**: `min_24h_value`/`max_24h_value` cover the 24 hours from the first entry, and `cheapest_2h_window` is the 2 hours with the lowest minute-weighted average, covered in full (a gap in the forecast breaks a window). Its keys are unchanged; `points` counts entries, so a window over P5MIN has more than 4.
 - **Day 2-7**: unchanged in effect: its window starts after the cutoff, a day out, where the timeline is PD7DAY (or the end of pre-dispatch).
 
@@ -429,6 +429,7 @@ Default interconnectors per region:
 | `observation_window_days` | The configured training window, 90 days |
 | `oldest_observation` | Interval time of the oldest observation still in the store |
 | `effective_window_days` | Days from the oldest retained observation to now; shorter than the configured window when the store cap (100,000 observations, about 93 days) binds |
+| `pd_calibration` | Pre-dispatch's own stage 1 (v3.51.0, #337): `status` (`not_fitted` until the record reaches back 14 days, with `pd_observations` and `pd_history_days`, else `fitted`), `fitted_at`, `admitted_bands` (the horizon bands served), `validation` per band on the newest 7 days (`n`, `raw_mae`/`raw_bias`, `pd_mae`/`pd_bias`, `interim_mae`/`interim_bias` from 24 h, `admitted` and `reason`, in $/kWh), and `buckets` per band and time of day in the shape of `summary.buckets` plus `days` and `usable`. Not recorded |
 | `summary` | `buckets`: per-bucket isotonic diagnostics (n, iso_n_steps, compression_ratio, iso_mae, x_min, x_max, q10_a, q90_a, and `iso_top`/`iso_bottom`: each end step's forecast range, median `level`, the value `served` at its top, rows `n`, effective size `n_eff` and distinct `days`). `stage2`: per-bucket stage-2 diagnostics for buckets with a fitted OLS model (n_train, r2, coef with the intercept first then the feature order of feature_min, resid_q10/q50/q90, and feature_min/feature_max keyed by feature name: the training range beyond which the serving gate charges |coef| per unit of excursion against half the residual spread) |
 
 #### Forecast history attributes
@@ -532,7 +533,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 | Attribute | Description |
 |---|---|
 | `time`, `nemtime`, `count`, `rrp` | The current period, its count and the region's pre-dispatch price ($/MWh) |
-| `calibrated_rrp` | The region's pre-dispatch price as the [price timeline](#price-timeline-diagnostic-338) serves it, $/MWh: from 24 h ahead through PD7DAY's `h24_48` model (v3.50.4, #337), below that the RRP itself (passthrough); `rrp` stays raw. Also on each `forecast` row (v3.48.0, #339) |
+| `calibrated_rrp` | The region's pre-dispatch price as the [price timeline](#price-timeline-diagnostic-338) serves it, $/MWh: through pre-dispatch's own calibration where the period's band is admitted (v3.51.0), else from 24 h ahead through PD7DAY's `h24_48` model (v3.50.4), else the RRP itself (#337); `rrp` stays raw. Also on each `forecast` row (v3.48.0, #339) |
 | `max_marginal_value_mwh` | The largest marginal value among the region's binding constraints, as a magnitude. Values of $1,000,000/MWh or more are constraint violation penalties, not prices (`SN_ZERO` and `NS_ZERO` show $8.35M), and are left out here though still listed and counted |
 | `constraints` | The region's binding constraints in the current period, largest cost first, with `constraint_id`, `regions`, `category`, `cause`, `rhs`, `lhs`, `marginal_value_mwh`, `violation_degree` and `rhs_vs_dispatch` (not recorded) |
 | `unassigned_constraints` | Binding constraints in the current period whose ID names no region, with the same fields (not recorded) |
@@ -610,7 +611,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `forecast` | `{time, interval_end, value}` per P5MIN interval still to end: (the run's ROP of the node's region + its DUIDs' P5MIN adjustment, 0 without a row) × MLF, in $/kWh, raw (not recorded). It stops at an interval where the DUIDs conflict |
 | `forecast_status` | `published`, `stale`, `expired`, `conflicting_rows`, `no_rop`, `unknown_node` or `no_data` |
 | `forecast_source`, `forecast_run_at`, `forecast_source_file` | `P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE`, the run and the P5MIN file |
-| `predispatch_forecast` | `{time, value, calibrated_rrp_mwh}` per 30-minute pre-dispatch period still to end, `value` (RRP + the DUIDs' adjustment) × MLF, in $/kWh, to the end of the next trading day (not recorded). `value` stays on raw RRP, because the adjustment comes from the same NEMDE run; `calibrated_rrp_mwh` is the region's RRP as the price timeline serves it: from 24 h ahead through PD7DAY's `h24_48` model (v3.50.4, #337), below that the RRP itself (v3.48.0, #339). The other `predispatch_*` attributes are as for the DUID sensor |
+| `predispatch_forecast` | `{time, value, calibrated_rrp_mwh}` per 30-minute pre-dispatch period still to end, `value` (RRP + the DUIDs' adjustment) × MLF, in $/kWh, to the end of the next trading day (not recorded). `value` stays on raw RRP, because the adjustment comes from the same NEMDE run; `calibrated_rrp_mwh` is the region's RRP as the price timeline serves it: through pre-dispatch's own calibration where the period's band is admitted (v3.51.0), else from 24 h ahead through PD7DAY's `h24_48` model (v3.50.4), else the RRP itself (#337, v3.48.0, #339). The other `predispatch_*` attributes are as for the DUID sensor |
 
 ### Zone Price Proxy
 
@@ -648,7 +649,7 @@ One price timeline per region, each source covering what the one before it does 
 |---|---|---|---|---|
 | The current 5-minute interval | DispatchIS RRP, the price being paid | `dispatch` | `actual` | 5 min |
 | The rest of the next hour | P5MIN RRP, raw, no band | `p5min` | `raw` | 5 min |
-| To the end of the next trading day | Pre-dispatch RRP: below 24 h ahead as published, from 24 h through PD7DAY's `h24_48` stage 1 model, with its band (#337) | `predispatch` | `passthrough`, then `pd7day_iso_h24_48` | 30 min |
+| To the end of the next trading day | Pre-dispatch RRP, calibrated by horizon band where its own fit is admitted, else from 24 h through PD7DAY's `h24_48` stage 1 model, else as published; with the model's band (#337) | `predispatch` | `pd_isotonic`, `pd7day_iso_h24_48` or `passthrough` | 30 min |
 | To day 7 | PD7DAY, calibrated, with its band, as `forecast` | `pd7day` | the calibration's own | 30 min |
 
 - **Splits**: a half hour the source before covers in part is split where that source ends (`resolution_minutes` 5, 10, ...), so no minute is repeated or skipped.

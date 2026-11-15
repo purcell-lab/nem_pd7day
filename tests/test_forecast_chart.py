@@ -1443,3 +1443,9 @@ def test_the_pre_dispatch_line_says_when_it_is_served_calibrated(monkeypatch):
         _make_forecast(8, forecast_run_at=run_at), ["predispatch"] * 4 + ["pd7day"] * 4, served + ["isotonic"] * 4)]
     labels = _legend_labels(timeline, monkeypatch)
     assert "Pre-dispatch (24 h+ calibrated)" in labels and "Pre-dispatch (raw)" not in labels
+
+    # Served through pre-dispatch's own fit (stage 3b), the label says so first.
+    fitted = [dict(e, calibrated_source="pd_isotonic" if e["source"] == "predispatch" and i < 2
+                   else e["calibrated_source"]) for i, e in enumerate(timeline)]
+    labels = _legend_labels(fitted, monkeypatch)
+    assert "Pre-dispatch (calibrated)" in labels and "Pre-dispatch (24 h+ calibrated)" not in labels

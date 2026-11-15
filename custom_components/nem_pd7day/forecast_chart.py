@@ -204,10 +204,13 @@ _NEAR_TERM_SPANS = {
     "p5min": ("#E65100", "P5MIN 5-min (raw)"),
     "predispatch": ("#6A1B9A", "Pre-dispatch (raw)"),
 }
-# Pre-dispatch from 24 h ahead is served through PD7DAY's h24_48 model (#337);
-# the legend says so once any point of the span is.
-_PREDISPATCH_SERVED_LABEL = "Pre-dispatch (24 h+ calibrated)"
-_PREDISPATCH_SERVED_SOURCES = frozenset({"pd7day_iso_h24_48"})
+# Pre-dispatch is served through its own fit (stage 3b) or, from 24 h ahead,
+# PD7DAY's h24_48 model (#337); the legend says which once any point of the
+# span is.
+_PREDISPATCH_SERVED_LABELS = (
+    ("pd_isotonic", "Pre-dispatch (calibrated)"),
+    ("pd7day_iso_h24_48", "Pre-dispatch (24 h+ calibrated)"),
+)
 
 
 def _draw_timeline_spans(
@@ -226,10 +229,9 @@ def _draw_timeline_spans(
         mask = np.array([src == span_source for src in spans])
         if not mask.any():
             continue
-        if span_source == "predispatch" and sources is not None and any(
-            span == "predispatch" and cal in _PREDISPATCH_SERVED_SOURCES for span, cal in zip(spans, sources)
-        ):
-            label = _PREDISPATCH_SERVED_LABEL
+        if span_source == "predispatch" and sources is not None:
+            served = {cal for span, cal in zip(spans, sources) if span == "predispatch"}
+            label = next((text for cal, text in _PREDISPATCH_SERVED_LABELS if cal in served), label)
         first = int(np.argmax(mask))
         if first > 0:
             mask[first - 1] = True
