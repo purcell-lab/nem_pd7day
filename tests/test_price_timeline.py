@@ -171,8 +171,12 @@ def test_predispatch_is_served_through_its_calibration(monkeypatch):
     plain = _tl.build_timeline(_at(21, 27), "NSW1", pd=run)
     assert {p["calibrated_source"] for p in plain.points} == {"passthrough"}
     assert [p["value"] for p in plain.points] == [0.1, 0.101, 0.102]
-    monkeypatch.setattr(_tl, "calibrated_rrp_mwh", lambda region, end, rrp: rrp * 0.5)
-    monkeypatch.setattr(_tl, "calibrated_source", lambda region, end: "isotonic")
+    served_period = _tl.serve_predispatch.__globals__["ServedPeriod"]
+    monkeypatch.setattr(_tl, "serve_predispatch", lambda region, end, rrp, run_at, models: served_period(
+        rrp * 0.5, "isotonic", 1.0, rrp, rrp * 0.4, rrp * 0.5, rrp * 0.6, "stage1_quantile", 250))
     served = _tl.build_timeline(_at(21, 27), "NSW1", pd=run)
     assert [p["value"] for p in served.points] == [0.05, 0.0505, 0.051]
     assert {p["calibrated_source"] for p in served.points} == {"isotonic"}
+    first = served.points[0]
+    assert (first["raw_value"], first["p10"], first["p90"]) == (0.1, 0.04, 0.06)
+    assert (first["horizon_hours"], first["band_source"], first["n_obs"]) == (1.0, "stage1_quantile", 250)

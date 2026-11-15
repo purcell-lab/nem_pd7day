@@ -44,7 +44,7 @@ from .local_price import (
 from .local_price_sensor import MAX_AGE, UNIT, _iso, device_info, dispatch_prices, entity_id_for, listen_to_forecasts
 from .nem_time import now_nem
 from .node_price_sensor import STATUS_NO_ROP, STATUS_UNKNOWN_NODE, node_adjustment, p5_adjustment
-from .predispatch_calibration import calibrated_rrp_mwh
+from .predispatch_calibration import calibrated_rrp_mwh, generation, models_for
 from .predispatch_local_price import MAX_AGE as PD_MAX_AGE
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 from .const import DOMAIN
@@ -254,8 +254,14 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             "forecast_interval_ends": [p["interval_end"] for p in points],
             # The bulk of an update for a large zone (Adelaide: 46 members by 78 periods), now once
             # per run and period for every sensor (#331, #336).
-            **self._hub.pd("zone", snapshot, args, now, PD_MAX_AGE, lambda: self._predispatch_attrs(snapshot, now)),
+            # The served RRP follows the region's PD7DAY fit (#337), so its generation joins the key.
+            **self._hub.pd("zone", snapshot, (*args, generation(self._region, self._models())), now, PD_MAX_AGE,
+                           lambda: self._predispatch_attrs(snapshot, now)),
         }
+
+    def _models(self) -> Any:
+        """The {region: CalibrationStore} pre-dispatch is served through (#337)."""
+        return models_for(self)
 
     def _predispatch_attrs(self, snapshot: Any, now: datetime) -> dict[str, Any]:
         rrp = snapshot.prices.get(self._region, {}) if snapshot is not None else {}
@@ -265,8 +271,11 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
             price = rrp.get(end)
             return node_price_mwh(price, adjustment, mlf) / 1000.0 if price is not None and mlf is not None else None
 
+        models = self._models()
+        run_at = getattr(snapshot, "run_at", None)
+
         def calibrated(end: datetime) -> Optional[float]:
-            return calibrated_rrp_mwh(self._region, end, rrp.get(end))
+            return calibrated_rrp_mwh(self._region, end, rrp.get(end), run_at, models)
 
         return predispatch_attrs(zone_predispatch(self._zone, snapshot, now), snapshot, value, calibrated)
 

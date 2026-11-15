@@ -10,10 +10,14 @@ and automations reading them keep working:
 
 - a **pd7day** entry is the calibrated PD7DAY entry itself; where the timeline
   split its half hour, its ``time`` is moved to where the split begins;
-- a **dispatch**, **p5min** or **predispatch** entry is built with the same
-  keys: ``raw_value``, ``calibrated`` and ``value`` are its price, the band and
-  the calibration's own diagnostics are None, ``calibrated_source`` says
-  ``actual``, ``raw`` or ``passthrough``.
+- a **dispatch** or **p5min** entry is built with the same keys:
+  ``raw_value``, ``calibrated`` and ``value`` are its price, the band and the
+  calibration's own diagnostics are None, ``calibrated_source`` says
+  ``actual`` or ``raw``;
+- a **predispatch** entry likewise, with its own ``raw_value``,
+  ``horizon_hours``, band, ``band_source`` and ``n_obs`` as the timeline
+  served it: ``pd7day_iso_h24_48`` at 24 h and beyond, else ``passthrough``
+  (#337).
 
 Each entry also carries ``source`` and ``resolution_minutes`` (5, 30, or less
 where it was split). Entries are no longer all 30 minutes long, so the 24 hour
@@ -47,10 +51,12 @@ def forecast_entries(timeline: Any, calibrated: Sequence[dict[str, Any]]) -> lis
         else:
             entry = {
                 "nemtime": point["nemtime"], "time": point["time"],
-                "raw_value": point["value"], "horizon_hours": None,
+                # A pre-dispatch point carries its raw price, horizon and band (#337).
+                "raw_value": point.get("raw_value", point["value"]), "horizon_hours": point.get("horizon_hours"),
                 "calibrated": point["value"], "p10": point["p10"], "p50": point["p50"], "p90": point["p90"],
-                "ols_mae": None, "calibrated_source": point["calibrated_source"], "band_source": None,
-                "n_obs": None, "value": point["value"], "spike_credible": None,
+                "ols_mae": None, "calibrated_source": point["calibrated_source"],
+                "band_source": point.get("band_source"),
+                "n_obs": point.get("n_obs"), "value": point["value"], "spike_credible": None,
             }
         entry["source"] = point["source"]
         entry["resolution_minutes"] = point["resolution_minutes"]

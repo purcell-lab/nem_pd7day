@@ -664,6 +664,8 @@ async def _setup(built: Built) -> None:
 
     store = mods.calibration_store.CalibrationStore(hass, region)
     await sc.calibration.load_into(store)
+    # As __init__ registers it: pre-dispatch at 24 h and beyond is served through it (#337).
+    hass.data[domain].setdefault(mods.predispatch_calibration.CALIBRATION_STORES_KEY, {})[region] = store
     forecast_store = mods.forecast_store.ForecastStore(hass, region)
     stpasa_refresh = hass.data[domain].setdefault(
         mods.stpasa_refresh.STPASA_REFRESH_KEY, mods.stpasa_refresh.StpasaRefreshCoordination(),

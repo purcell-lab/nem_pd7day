@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .active_tariff import resolve_active_tariff, sync_tariff_entities, watch_amber_site
 from .calibration_store import CalibrationStore
+from .predispatch_calibration import CALIBRATION_STORES_KEY
 from .const import (
     CONF_FORECAST_MODE,
     DISPATCH_UNSUBS_KEY,
@@ -89,6 +90,29 @@ async def _delayed_refresh(coordinator: PD7DayCoordinator, delay_s: float) -> No
     await coordinator.async_refresh()
 
 
+def _register_by_region(hass: HomeAssistant, entry: ConfigEntry, key: str, region: str, value: Any) -> None:
+    """Hold ``value`` in ``hass.data[DOMAIN][key][region]`` while ``entry`` is loaded.
+
+    De-registered when this entry unloads, not only when the last one does.
+    Otherwise the central STPASA fetch kept writing .storage for a region the
+    user had removed (issue #106). The trigger for that fetch is registered on
+    any loaded region (#37), so popping here does not stop STPASA refreshes for
+    the regions that remain.
+
+    The callback must return None. Home Assistant 2026.9 schedules any value an
+    on-unload callback returns as a task, so a lambda that returned the popped
+    StpasaStore raised "TypeError: a coroutine was expected" on every unload of
+    the entry.
+    """
+    held = hass.data[DOMAIN].setdefault(key, {})
+    held[region] = value
+
+    def _forget() -> None:
+        held.pop(region, None)
+
+    entry.async_on_unload(_forget)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> bool:
     """Set up NEM PD7DAY from a config entry."""
     from .actual_price_service import shared_actual_price_service
@@ -132,6 +156,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     trace.checkpoint(
         "calibration store load", f"{store.observation_count} observations"
     )
+    # Pre-dispatch at 24 h and beyond is served through this region's PD7DAY
+    # model (#337); its consumers find it by region, as the STPASA stores are.
+    _register_by_region(hass, entry, CALIBRATION_STORES_KEY, region, store)
 
     # ── Forecast cache store (per region) ────────────────────────────────────
     forecast_store = ForecastStore(hass, region)
@@ -151,22 +178,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     )
     # Register this region's store for central STPASA distribution. The STPASA
     # ZIP holds every NEM region, so one download (below) populates them all.
-    stpasa_stores = hass.data[DOMAIN].setdefault("stpasa_stores", {})
-    stpasa_stores[region] = stpasa_store
-    # De-register when this entry unloads, not only when the last one does.
-    # Otherwise the central STPASA fetch keeps writing .storage for a region
-    # the user has removed (issue #106). The trigger for that fetch is
-    # registered on any loaded region (#37), so popping here does not stop
-    # STPASA refreshes for the regions that remain.
-    #
-    # The callback must return None. Home Assistant 2026.9 schedules any
-    # value an on-unload callback returns as a task, so a lambda that
-    # returned the popped StpasaStore raised "TypeError: a coroutine was
-    # expected" on every unload of the entry.
-    def _forget_stpasa_store() -> None:
-        stpasa_stores.pop(region, None)
-
-    entry.async_on_unload(_forget_stpasa_store)
+    _register_by_region(hass, entry, "stpasa_stores", region, stpasa_store)
     await stpasa_store.seed_from(stpasa_refresh)
 
     # ── Shared market notice store + client ──────────────────────────────────
@@ -335,7 +347,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # STPASA refreshes for every region, silently (issue #37). Register it on any
     # loaded region instead. The download stays single because
     # _fetch_and_distribute_stpasa claims the cycle before touching NEMWEB.
-    if should_trigger_central_fetch(region, registered_regions=stpasa_stores):
+    if should_trigger_central_fetch(region, registered_regions=hass.data[DOMAIN]["stpasa_stores"]):
         @callback
         def _on_pd7day_update() -> None:
             entry.async_create_background_task(
@@ -586,6 +598,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -
             hass.data[DOMAIN].pop("notice_client", None)
             hass.data[DOMAIN].pop("stpasa_client", None)
             hass.data[DOMAIN].pop("stpasa_stores", None)
+            hass.data[DOMAIN].pop(CALIBRATION_STORES_KEY, None)
             hass.data[DOMAIN].pop(STPASA_REFRESH_KEY, None)
             hass.data[DOMAIN].pop(SHARED_FETCH_KEY, None)
             hass.data[DOMAIN].pop(SHARED_TRADINGIS_KEY, None)

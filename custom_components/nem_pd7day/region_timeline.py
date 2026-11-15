@@ -81,9 +81,12 @@ def region_timeline(sensor: Any, d: Any, calibrated: list[dict]) -> Any:
     the spot forecast sensor publishes, so the timeline costs no calibration.
     """
     from .forecast_hub import shared_forecast_hub
+    from .predispatch_calibration import generation, models_from
     from .price_timeline import P5_MAX_AGE, PD_MAX_AGE, build_timeline
 
     domain_data = _domain_data(sensor)
+    # Pre-dispatch at 24 h and beyond is served through the region's PD7DAY model (#337).
+    models = models_from(domain_data)
 
     def run_of(key: str) -> Any:
         """The shared coordinator's run, if it holds one (a run has a real run time)."""
@@ -98,12 +101,14 @@ def region_timeline(sensor: Any, d: Any, calibrated: list[dict]) -> Any:
         return build_timeline(
             now, sensor._region, dispatch=dispatch, p5=p5, pd=pd, pd7day=calibrated,
             pd7day_run_at=d.forecast_generated_at, pd7day_source_file=getattr(d, "source_file", None),
+            pd_models=models,
         )
 
     if domain_data is None:
         return build()
     hub = shared_forecast_hub(domain_data)
-    identity = (dispatch, id(p5), getattr(p5, "run_at", None), id(pd), getattr(pd, "run_at", None), id(calibrated))
+    identity = (dispatch, id(p5), getattr(p5, "run_at", None), id(pd), getattr(pd, "run_at", None), id(calibrated),
+                generation(sensor._region, models))
     key = (
         now.replace(minute=now.minute - now.minute % 5, second=0, microsecond=0),
         p5 is not None and now - p5.run_at > P5_MAX_AGE,

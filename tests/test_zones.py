@@ -8,7 +8,7 @@ Run with:  python -m pytest tests/test_zones.py -v
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -503,3 +503,44 @@ def test_the_sensor_is_a_labelled_proxy(monkeypatch):
     assert [m["tni"] for m in attrs["members"]] == ["NNEAR1", "NCLOSE1", "NOUT1"]
     assert attrs["forecast_status"] == "no_data" and attrs["predispatch_status"] == "no_data"
     assert "members" in sensor._unrecorded_attributes and "predispatch_forecast" in sensor._unrecorded_attributes
+
+
+class _HalvingModel:
+    """A region's PD7DAY CalibrationStore that halves every price it is asked (#337)."""
+
+    def __init__(self, generation=1):
+        self.fit_generation = generation
+
+    def apply_to_price(self, raw, horizon_hours, hour_of_day, *, interval_dt=None):
+        return {"calibrated": raw * 0.5, "calibrated_source": "isotonic"}
+
+
+def test_calibrated_rrp_follows_the_regions_pd7day_model_from_24_hours(monkeypatch):
+    """Zone entries keep raw RRP as their price; ``calibrated_rrp_mwh`` from 24 h ahead is the
+    timeline's, served through PD7DAY's h24_48 model, and a refit refreshes the hub's memo (#337)."""
+    snapshot = _pdc.parse_predispatch(PD, "pd.zip")
+    zone = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 100)
+    sensor = _zs.NemPd7dayZonePriceSensor(
+        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1", zone,
+        SimpleNamespace(latest=snapshot),
+    )
+    model = _HalvingModel()
+    sensor.hass = SimpleNamespace(data={_const.DOMAIN: {"calibration_stores": {"NSW1": model}}})
+    now = datetime(2026, 10, 31, 13, 35, tzinfo=NEM_TZ)
+    rrp = snapshot.prices["NSW1"]
+
+    def entries():
+        return {e["time"]: e for e in sensor._forecast_attrs(now)["predispatch_forecast"]}
+
+    near, far = "2026-10-31T13:30:00+10:00", "2026-11-01T14:00:00+10:00"  # 0.5 h and 25 h ahead
+    got = entries()
+    end = lambda t: datetime.fromisoformat(t) + timedelta(minutes=30)  # noqa: E731
+    assert got[near]["calibrated_rrp_mwh"] == round(rrp[end(near)], 5)
+    # Served at the store's precision: 6 decimals in $/kWh, 3 in $/MWh.
+    assert got[far]["calibrated_rrp_mwh"] == round(rrp[end(far)] * 0.5, 3)
+    # A refit moves the generation, so the shared memo is not served stale.
+    model.apply_to_price = lambda raw, h, hour, *, interval_dt=None: {"calibrated": raw * 0.25,
+                                                                      "calibrated_source": "isotonic"}
+    assert entries()[far]["calibrated_rrp_mwh"] == round(rrp[end(far)] * 0.5, 3)
+    model.fit_generation = 2
+    assert entries()[far]["calibrated_rrp_mwh"] == round(rrp[end(far)] * 0.25, 3)

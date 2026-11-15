@@ -150,14 +150,34 @@ def test_services_yaml_defines_force_refit():
 
 # ── Unload hygiene (issue #106) ───────────────────────────────────────────────
 
-def test_stpasa_store_is_deregistered_per_entry():
-    """Unloading one region pops its store so the central STPASA fetch stops
-    writing .storage for a region the user removed; the callback must return
-    None (HA 2026.9 schedules any return value as a task)."""
+def _register_by_region():
+    """``__init__._register_by_region``, compiled on its own from the source."""
+    fn = _nested_function(ast.parse(_init_source()), "_register_by_region")
+    module = ast.Module(body=[fn], type_ignores=[])
+    namespace: dict = {"DOMAIN": _const_mod.DOMAIN}
+    exec(compile("from __future__ import annotations\n" + ast.unparse(module), INIT_PATH, "exec"), namespace)
+    return namespace["_register_by_region"]
+
+
+def test_stpasa_and_calibration_stores_are_deregistered_per_entry():
+    """Unloading one region pops its stores so the central STPASA fetch stops
+    writing .storage for a region the user removed (#106), and pre-dispatch is
+    not served through a removed region's model (#337); the callback must
+    return None (HA 2026.9 schedules any return value as a task)."""
     src = _init_source()
-    assert "entry.async_on_unload(_forget_stpasa_store)" in src
+    setup = ast.unparse(_setup_entry_ast())
+    assert "_register_by_region(hass, entry, 'stpasa_stores', region, stpasa_store)" in setup
+    assert "_register_by_region(hass, entry, CALIBRATION_STORES_KEY, region, store)" in setup
     assert "lambda: stpasa_stores.pop" not in src
-    assert "def _forget_stpasa_store() -> None:" in src
+    register = _register_by_region()
+    hass = MagicMock(data={_const_mod.DOMAIN: {}})
+    unloads: list = []
+    entry = MagicMock(async_on_unload=unloads.append)
+    register(hass, entry, "stpasa_stores", "QLD1", "qld")
+    register(hass, entry, "stpasa_stores", "NSW1", "nsw")
+    assert hass.data[_const_mod.DOMAIN]["stpasa_stores"] == {"QLD1": "qld", "NSW1": "nsw"}
+    assert unloads[0]() is None
+    assert hass.data[_const_mod.DOMAIN]["stpasa_stores"] == {"NSW1": "nsw"}
 
 
 def test_no_untracked_tasks_in_init():

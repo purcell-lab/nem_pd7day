@@ -824,6 +824,37 @@ def nsw_local_prices(mods: Any) -> Scenario:
     )
 
 
+def qld_days27_pd_seam(mods: Any) -> Scenario:
+    """The Amber to day 2-7 seam over a real pre-dispatch run, with a fitted PD7DAY store (#337).
+
+    The 13:02 pre-dispatch run of 31 Oct 2026, at 13:31. Amber's last interval
+    ends at 13:00 the next day, so day 2-7 starts on pre-dispatch: the period
+    from 13:00 is 23.96 h ahead and served passthrough, the next, 24.46 h
+    ahead, through PD7DAY's ``h24_48`` stage 1 model, labelled
+    ``pd7day_iso_h24_48``, to the run's last period at 04:00 on 2 Nov; then
+    PD7DAY itself. Pins the interim fix at the seam for the day 2-7, tariff
+    and timeline entities.
+    """
+    amber = {
+        "forecasts": [
+            {"duration": 30, "start_time": "2026-11-01T02:00:01+00:00", "end_time": "2026-11-01T02:30:00+00:00",
+             "per_kwh": 0.0241, "nem_date": "2026-11-01T12:30:00+10:00"},
+            {"duration": 30, "start_time": "2026-11-01T02:30:01+00:00", "end_time": "2026-11-01T03:00:00+00:00",
+             "per_kwh": 0.0263, "nem_date": "2026-11-01T13:00:00+10:00"},
+        ],
+        "channel_type": "general",
+    }
+    pd_path = Path(__file__).resolve().parent.parent / "fixtures" / "local_price" / f"{PREDISPATCH_RUN}.CSV"
+    sc = _common(
+        mods, "qld_days27_pd_seam", SyntheticMarket(seed=71, region="QLD1"),
+        now=nem(2026, 10, 31, 13, 31), run_at=nem(2026, 10, 31, 13, 0), long=True,
+        calibration=ObservationSeed(),
+        options={"forecast_mode": "days_2_7", "active_tariff": "energex/6900"},
+        amber=amber,
+    )
+    return replace(sc, predispatch=(f"{PREDISPATCH_RUN}.zip", pd_path.read_text()))
+
+
 def sa_stale_coordinator(mods: Any) -> Scenario:
     """Morning run served all day after the evening fetch failed with a 403.
 
@@ -900,4 +931,5 @@ SCENARIOS: dict[str, Callable[[Any], Scenario]] = {
     "vic_prcer_extension": vic_prcer_extension,
     "qld_lor2_notice": qld_lor2_notice,
     "nsw_local_prices": nsw_local_prices,
+    "qld_days27_pd_seam": qld_days27_pd_seam,
 }
