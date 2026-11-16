@@ -122,6 +122,23 @@ def test_p24_40_must_also_beat_the_interim():
     assert {"p06_12", "p12_24"} <= fit.admitted and "p24_40" not in fit.admitted
 
 
+def test_a_band_not_admitted_serves_nothing_so_the_interim_serves_it():
+    """16 November, NSW1 and QLD1: p24_40 lost to the interim on the holdout, and the
+    shorter-band chain served p12_24's map at 24 h and beyond instead of the interim."""
+    def perfect(raw, horizon, start):
+        return (raw - 0.05) / 2
+    fit = _fit.fit_pd_calibration(_observations(_rows()), "QLD1", NOW, perfect)
+    start = datetime(2026, 11, 1, 18, 0, tzinfo=NEM_TZ)
+    assert "p24_40" not in fit.admitted and "p12_24" in fit.admitted
+    assert fit.bucket_for(30.0, start) is None and fit.apply(_raw(0.10, 30.0), 30.0, start) is None
+    assert fit.bucket_for(16.0, start)[0].startswith("p12_24__")      # its own band still serves
+    record = SimpleNamespace(calibration=fit, fit_generation=1)
+    models = _cal.ServingModels(pd7day={"QLD1": _Interim()}, pd={"QLD1": record})
+    run_at = start - timedelta(hours=30)
+    served = _cal.serve("QLD1", start + timedelta(minutes=30), 1000 * _raw(0.10, 30.0), run_at, models)
+    assert served.calibrated_source == "pd7day_iso_h24_48"
+
+
 def test_a_band_with_too_few_holdout_rows_is_not_admitted():
     rows = [r for r in _rows() if not (r["horizon_hours"] >= 24 and r["interval_time"] >= "2026-10-25")]
     fit = _fit.fit_pd_calibration(_observations(rows), "QLD1", NOW)
