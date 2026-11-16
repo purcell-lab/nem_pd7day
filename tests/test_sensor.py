@@ -834,8 +834,20 @@ def test_stpasa_data_sensor_without_a_store_adds_no_listener():
 
 
 def test_calibration_summary_is_not_recorded():
-    # Over the recorder's 16 KB limit it would drop every attribute (#248).
-    assert PD7DayCalibrationSensor._unrecorded_attributes == frozenset({"summary"})
+    # Over the recorder's 16 KB limit it would drop every attribute (#248);
+    # pre-dispatch's bucket summary is the same size again (#337 stage 3b).
+    assert PD7DayCalibrationSensor._unrecorded_attributes == frozenset({"summary", "pd_calibration"})
+
+
+def test_calibration_sensor_shows_the_pre_dispatch_fit_when_the_entry_holds_a_record():
+    sensor = PD7DayCalibrationSensor.__new__(PD7DayCalibrationSensor)
+    sensor._region = "QLD1"
+    sensor._store = MagicMock(summary_attributes=lambda: {}, _forecast_history={})
+    record = MagicMock(pd_summary=lambda: {"status": "not_fitted", "pd_history_days": 9.5})
+    sensor._entry = MagicMock(runtime_data=MagicMock(pd_record=record))
+    assert sensor.extra_state_attributes["pd_calibration"] == {"status": "not_fitted", "pd_history_days": 9.5}
+    sensor._entry = MagicMock(runtime_data=MagicMock(pd_record=None))
+    assert "pd_calibration" not in sensor.extra_state_attributes
 
 
 def test_stpasa_data_sensor_unavailable_without_data():

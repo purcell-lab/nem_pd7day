@@ -1,7 +1,9 @@
 """One region's pre-dispatch forecasts and their observations against TradingIS (#337 stage 3a).
 
-It records only: nothing reads these observations until stage 3b fits a
-pre-dispatch calibration. Kept apart from the PD7DAY calibration store, under
+Stage 3b fits pre-dispatch's own stage 1 on these observations
+(``predispatch_fit``), after each PD7DAY refit and once they reach back
+``MIN_HISTORY_DAYS``; ``predispatch_calibration`` serves it. Kept apart from the
+PD7DAY calibration store, under
 its own storage keys (``nem_pd7day.<region>.pd_forecast_history`` and the
 ``pd_`` observation segments), so the PD7DAY data is untouched.
 
@@ -25,7 +27,9 @@ from .const import MAX_TOTAL_OBS_PD, PD_HISTORY_DAYS, PD_KEY_PREFIX, STORAGE_VER
 from .forecast_history import ingest_run, prune_history
 from .nem_time import now_nem, to_nem_iso
 from .observation_log import ObservationLog
+from .predispatch_fit import MIN_HISTORY_DAYS, PdCalibration, fit_pd_calibration
 from .predispatch_history import run_forecast
+from .refit_service import engine_observations
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +45,8 @@ class PredispatchRecord:
         self._history: dict[str, list[dict]] = {}
         self._accum: dict[tuple[str, str], dict] = {}
         self._last_run: Optional[datetime] = None
+        self._calibration: Optional[PdCalibration] = None
+        self._fit_generation = 0
 
     async def async_load(self) -> None:
         data = await self._history_store.async_load()
@@ -91,6 +97,55 @@ class PredispatchRecord:
         if count:
             await self._log.async_save()
         return count
+
+    # ── Stage 3b: fit ───────────────────────────────────────────────────────
+
+    @property
+    def calibration(self) -> Optional[PdCalibration]:
+        """The fit served, None until the first refit with enough history."""
+        return self._calibration
+
+    @property
+    def fit_generation(self) -> int:
+        """Moves on every refit, for the consumers' memo keys."""
+        return self._fit_generation
+
+    async def async_refit(self, pd7day_store: Any = None, now: Optional[datetime] = None) -> Optional[PdCalibration]:
+        """Fit pre-dispatch's stage 1 in the executor, once the record reaches back MIN_HISTORY_DAYS.
+
+        ``pd7day_store``, the region's PD7DAY CalibrationStore, serves the
+        holdout as the interim would, so ``p24_40`` is admitted only where it
+        beats the interim.
+        """
+        from .predispatch_calibration import interim_kwh
+
+        now = now or now_nem()
+        days = self.stats(now)["pd_history_days"]
+        if days is None or days < MIN_HISTORY_DAYS:
+            _LOGGER.debug("%s: pre-dispatch fit waits for %.0f days of observations (%s)",
+                          self._region, MIN_HISTORY_DAYS, days)
+            return None
+        observations = engine_observations(self._log.observations)  # a copy, on the loop
+
+        def interim(raw: float, horizon: float, start: datetime) -> Optional[float]:
+            return interim_kwh(pd7day_store, raw, horizon, start)
+
+        result: PdCalibration = await self._hass.async_add_executor_job(
+            fit_pd_calibration, observations, self._region, now, interim if pd7day_store is not None else None,
+        )
+        self._calibration = result
+        self._fit_generation += 1
+        _LOGGER.info(
+            "%s: pre-dispatch calibration fitted on %d observations; bands served: %s",
+            self._region, result.total_observations, ", ".join(sorted(result.admitted)) or "none",
+        )
+        return result
+
+    def pd_summary(self) -> dict[str, Any]:
+        """The ``pd_calibration`` diagnostic: the fit's summary, or why there is none."""
+        if self._calibration is None:
+            return {"status": "not_fitted", "min_history_days": MIN_HISTORY_DAYS, **self.stats()}
+        return {"status": "fitted", **self._calibration.summary()}
 
     # ── Diagnostics ─────────────────────────────────────────────────────────
 

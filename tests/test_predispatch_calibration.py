@@ -92,14 +92,19 @@ def test_calibrated_rrp_mwh_is_the_served_price():
     assert _cal.calibrated_rrp_mwh("QLD1", _end(25.0), 200.0) == 200.0   # the old call: passthrough
 
 
-def test_the_registry_and_its_generation_are_read_from_hass_data():
-    model = _Model(generation=7)
-    hass = SimpleNamespace(data={_const.DOMAIN: {_cal.CALIBRATION_STORES_KEY: {"QLD1": model}}})
-    assert _cal.models_for(SimpleNamespace(hass=hass)) == {"QLD1": model}
-    assert _cal.models_for(SimpleNamespace(hass=None)) == {}
-    assert _cal.models_for(object()) == {}          # an entity not added yet
-    assert _cal.generation("QLD1", {"QLD1": model}) == 7
-    assert _cal.generation("SA1", {"QLD1": model}) is None
+def test_the_registries_and_their_generations_are_read_from_hass_data():
+    model, record = _Model(generation=7), SimpleNamespace(calibration=None, fit_generation=2)
+    hass = SimpleNamespace(data={_const.DOMAIN: {
+        _cal.CALIBRATION_STORES_KEY: {"QLD1": model}, _cal.PD_RECORDS_KEY: {"QLD1": record},
+    }})
+    held = _cal.models_for(SimpleNamespace(hass=hass))
+    assert (held.pd7day, held.pd) == ({"QLD1": model}, {"QLD1": record})
+    empty = _cal.ServingModels()
+    assert _cal.models_for(SimpleNamespace(hass=None)) == empty
+    assert _cal.models_for(object()) == empty       # an entity not added yet
+    assert _cal.generation("QLD1", held) == (7, 2)
+    assert _cal.generation("QLD1", {"QLD1": model}) == (7, None)   # the PD7DAY stores alone
+    assert _cal.generation("SA1", held) == (None, None)
 
 
 def _pd_run(first_start: datetime, periods: int, base: float = 300.0):

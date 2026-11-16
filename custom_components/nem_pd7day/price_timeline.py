@@ -38,7 +38,7 @@ from __future__ import annotations
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from .nem_time import to_nem_iso
 from .predispatch_calibration import serve as serve_predispatch
@@ -255,12 +255,13 @@ def build_timeline(
     pd7day: Sequence[dict[str, Any]] = (),
     pd7day_run_at: Optional[str] = None,
     pd7day_source_file: Optional[str] = None,
-    pd_models: Optional[Mapping[str, Any]] = None,
+    pd_models: Any = None,
 ) -> PriceTimeline:
     """The region's timeline from ``now``, each source after the one before it.
 
-    ``pd_models`` is the {region: CalibrationStore} pre-dispatch is served
-    through (``predispatch_calibration``); without it pre-dispatch is passthrough.
+    ``pd_models`` is what pre-dispatch is served through, a
+    ``predispatch_calibration.ServingModels`` (or the PD7DAY stores alone);
+    without it pre-dispatch is passthrough.
     """
     b = _Builder(region, now)
     _add_dispatch(b, dispatch)

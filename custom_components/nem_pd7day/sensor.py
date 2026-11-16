@@ -1363,7 +1363,7 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
     # The per-bucket summary runs past the recorder's 16 KB attribute limit
     # (about 20 KB since #248), which drops every attribute from history. It
     # stays on the live state and in the diagnostics download.
-    _unrecorded_attributes = frozenset({"summary"})
+    _unrecorded_attributes = frozenset({"summary", "pd_calibration"})
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_has_entity_name = True
     _attr_should_poll = False
@@ -1423,6 +1423,10 @@ class PD7DayCalibrationSensor(CoordinatorEntity[PD7DayCoordinator], SensorEntity
             attrs["forecast_history_oldest"] = None
             attrs["forecast_history_newest"] = None
             attrs["forecast_history_runs_avg"] = 0
+        # Pre-dispatch's own stage 1, beside PD7DAY's (#337 stage 3b); not recorded, as summary.
+        record = getattr(getattr(getattr(self, "_entry", None), "runtime_data", None), "pd_record", None)
+        if record is not None:
+            attrs["pd_calibration"] = record.pd_summary()
         return attrs
 
 
