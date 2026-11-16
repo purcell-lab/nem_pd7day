@@ -13,9 +13,10 @@ stage 2 (#333 decision 1).
 of day: ``p00_01`` to ``p24_40``, the ``p`` keeping them apart from PD7DAY's
 ``h`` buckets. A horizon of 40 h or more is in ``p24_40``.
 
-**Fallback.** A bucket with fewer than ``MIN_BAND_OBS`` rows, or rows on fewer
-than ``MIN_BAND_DAYS`` days, serves the next shorter band at the same time of
-day. Where no band serves, the caller falls back: PD7DAY's ``h24_48`` model
+**Fallback.** In an admitted band, a bucket with fewer than ``MIN_BAND_OBS``
+rows, or rows on fewer than ``MIN_BAND_DAYS`` days, serves the next shorter
+admitted band at the same time of day. A band not admitted, or with no bucket
+to serve, serves nothing, and the caller falls back: PD7DAY's ``h24_48`` model
 from 24 h (the interim, ``predispatch_calibration``), else passthrough.
 
 **Validation.** Each refit first fits on all but the newest ``HOLDOUT_DAYS``
@@ -97,9 +98,16 @@ class PdCalibration:
     validation: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def bucket_for(self, horizon_hours: float, start: datetime, *, admitted_only: bool = True) -> Optional[tuple[str, _Bucket]]:
-        """The bucket a period is served from: its band's, else the next shorter band's, at its time of day."""
+        """The bucket a period is served from: its band's, else the next shorter band's, at its time of day.
+
+        A shorter band stands in only for a thin bucket of an admitted band. A
+        band the holdout did not admit serves nothing, so its periods take the
+        caller's fallback, the interim from 24 h: on 16 November NSW1 and QLD1's
+        ``p24_40`` lost to the interim, and the chain served ``p12_24``'s map at
+        24 h and beyond instead, a horizon it was never scored at.
+        """
         band = pd_horizon_label(horizon_hours)
-        if band is None:
+        if band is None or (admitted_only and band not in self.admitted):
             return None
         tod = _solar_tod(start, self.region)
         for label in reversed(PD_HORIZON_LABELS[:PD_HORIZON_LABELS.index(band) + 1]):
