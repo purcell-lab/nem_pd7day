@@ -139,6 +139,20 @@ def test_a_band_not_admitted_serves_nothing_so_the_interim_serves_it():
     assert served.calibrated_source == "pd7day_iso_h24_48"
 
 
+def test_a_thin_bucket_with_no_shorter_admitted_band_serves_nothing(fitted):
+    """p06_12 is the shortest admitted band here: a thin p06_12 bucket skips the
+    unadmitted p03_06 to p00_01 and leaves the period to the caller's fallback."""
+    start = datetime(2026, 11, 1, 18, 0, tzinfo=NEM_TZ)
+    key, bucket = fitted.bucket_for(8.0, start)
+    assert key.startswith("p06_12__")
+    try:
+        fitted.buckets[key] = _fit._Bucket(bucket.model, _fit.MIN_BAND_OBS - 1, bucket.days)
+        assert fitted.bucket_for(8.0, start) is None
+        assert fitted.apply(_raw(0.10, 8.0), 8.0, start) is None
+    finally:
+        fitted.buckets[key] = bucket
+
+
 def test_a_band_with_too_few_holdout_rows_is_not_admitted():
     rows = [r for r in _rows() if not (r["horizon_hours"] >= 24 and r["interval_time"] >= "2026-10-25")]
     fit = _fit.fit_pd_calibration(_observations(rows), "QLD1", NOW)
