@@ -1432,3 +1432,14 @@ def test_near_term_spans_get_their_own_lines_only_when_present(monkeypatch):
         _make_forecast(10, forecast_run_at=run_at), ["p5min"] * 3 + ["predispatch"] * 4 + ["pd7day"] * 3)]
     labels = _legend_labels(timeline, monkeypatch)
     assert labels[-2:] == ["P5MIN 5-min (raw)", "Pre-dispatch (raw)"]
+
+
+def test_the_pre_dispatch_line_says_when_it_is_served_calibrated(monkeypatch):
+    """From 24 h pre-dispatch is served through PD7DAY's h24_48 model (#337): no longer raw."""
+    pytest.importorskip("matplotlib")
+    run_at = "2026-05-01T06:00:00+10:00"
+    served = ["passthrough"] * 2 + ["pd7day_iso_h24_48"] * 2
+    timeline = [dict(e, source=src, calibrated_source=cal) for e, src, cal in zip(
+        _make_forecast(8, forecast_run_at=run_at), ["predispatch"] * 4 + ["pd7day"] * 4, served + ["isotonic"] * 4)]
+    labels = _legend_labels(timeline, monkeypatch)
+    assert "Pre-dispatch (24 h+ calibrated)" in labels and "Pre-dispatch (raw)" not in labels

@@ -4,9 +4,11 @@ Each source covers what the one before it does not, in order:
 
 1. **dispatch**: the current 5-minute interval, the RRP being paid (actual).
 2. **p5min**: the rest of the P5MIN run, RRP, 5-minute, raw: no band.
-3. **predispatch**: to the last pre-dispatch period, RRP, 30-minute. Served as
-   ``calibrated_source: passthrough`` until stage 3b fits a pre-dispatch
-   calibration (#337); then calibrated, with its band.
+3. **predispatch**: to the last pre-dispatch period, RRP, 30-minute, served
+   through ``predispatch_calibration``: at 24 h and beyond through PD7DAY's
+   ``h24_48`` stage 1 model, with its band (``pd7day_iso_h24_48``, #337),
+   below that ``passthrough``. Each point also carries ``raw_value`` and
+   ``horizon_hours``.
 4. **pd7day**: beyond that, the calibrated PD7DAY forecast, as the spot forecast
    sensor publishes it, with its band.
 
@@ -26,6 +28,9 @@ All values are $/kWh. Each point is a dict ready to publish:
     p10, p50, p90       the band, None where the source has none
     resolution_minutes  the point's length: 5, 30, or less where it was split
 
+and a pre-dispatch point also ``raw_value`` ($/kWh), ``horizon_hours``,
+``band_source`` and ``n_obs``.
+
 Domain layer: no Home Assistant imports, no clock (``now`` is passed in).
 """
 from __future__ import annotations
@@ -33,10 +38,10 @@ from __future__ import annotations
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from .nem_time import to_nem_iso
-from .predispatch_calibration import calibrated_rrp_mwh, calibrated_source
+from .predispatch_calibration import serve as serve_predispatch
 
 SOURCE_DISPATCH = "dispatch"
 SOURCE_P5MIN = "p5min"
@@ -167,6 +172,10 @@ class _Builder:
         self.source(name, STATUS_USED, start=points[0]["time"], end=points[-1]["nemtime"], points=len(points), **info)
 
 
+def _kwh(mwh: Optional[float]) -> Optional[float]:
+    return round(mwh / 1000.0, 6) if mwh is not None else None
+
+
 def _age(now: datetime, at: Optional[datetime]) -> Optional[int]:
     return round((now - at).total_seconds()) if at is not None else None
 
@@ -196,7 +205,7 @@ def _add_run(b: _Builder, name: str, run: Any, series: dict[datetime, float], le
              max_age: timedelta, serve: Any) -> None:
     """2 and 3. A P5MIN or pre-dispatch run's RRP per interval end, from where the coverage so far ends.
 
-    ``serve(end, rrp_mwh)`` is the ($/MWh, calibrated_source) the point publishes.
+    ``serve(end, rrp_mwh)`` is the ($/MWh, calibrated_source, extra keys) the point publishes.
     """
     if run is None:
         b.source(name, STATUS_NO_DATA)
@@ -209,8 +218,11 @@ def _add_run(b: _Builder, name: str, run: Any, series: dict[datetime, float], le
     for end, rrp in sorted(series.items()):
         start = b.span_start(end - length, end)
         if start is not None:
-            value_mwh, source = serve(end, rrp)
-            b.add(start, end, _point(start, end, value_mwh / 1000.0 if value_mwh is not None else None, name, source))
+            value_mwh, source, extra = serve(end, rrp)
+            point = _point(start, end, value_mwh / 1000.0 if value_mwh is not None else None, name, source)
+            if extra:
+                point.update(extra)
+            b.add(start, end, point)
     b.used(name, first, **info)
 
 
@@ -243,15 +255,29 @@ def build_timeline(
     pd7day: Sequence[dict[str, Any]] = (),
     pd7day_run_at: Optional[str] = None,
     pd7day_source_file: Optional[str] = None,
+    pd_models: Optional[Mapping[str, Any]] = None,
 ) -> PriceTimeline:
-    """The region's timeline from ``now``, each source after the one before it."""
+    """The region's timeline from ``now``, each source after the one before it.
+
+    ``pd_models`` is the {region: CalibrationStore} pre-dispatch is served
+    through (``predispatch_calibration``); without it pre-dispatch is passthrough.
+    """
     b = _Builder(region, now)
     _add_dispatch(b, dispatch)
     p5_series = getattr(p5, "rrp", {}).get(region, {}) if p5 is not None else {}
-    _add_run(b, SOURCE_P5MIN, p5, p5_series, DISPATCH_INTERVAL, P5_MAX_AGE, lambda end, rrp: (rrp, "raw"))
-    # Served through predispatch_calibration: passthrough until stage 3b (#337).
+    _add_run(b, SOURCE_P5MIN, p5, p5_series, DISPATCH_INTERVAL, P5_MAX_AGE, lambda end, rrp: (rrp, "raw", None))
     pd_series = pd.prices.get(region, {}) if pd is not None else {}
-    _add_run(b, SOURCE_PREDISPATCH, pd, pd_series, PD_PERIOD, PD_MAX_AGE,
-             lambda end, rrp: (calibrated_rrp_mwh(region, end, rrp), calibrated_source(region, end)))
+    run_at = getattr(pd, "run_at", None)
+
+    def served(end: datetime, rrp: Optional[float]) -> tuple[Optional[float], str, dict[str, Any]]:
+        # Through predispatch_calibration, as every pre-dispatch consumer (#337).
+        period = serve_predispatch(region, end, rrp, run_at, pd_models)
+        return period.rrp_mwh, period.calibrated_source, {
+            "raw_value": _kwh(period.raw_mwh), "horizon_hours": period.horizon_hours,
+            "p10": _kwh(period.p10_mwh), "p50": _kwh(period.p50_mwh), "p90": _kwh(period.p90_mwh),
+            "band_source": period.band_source, "n_obs": period.n_obs,
+        }
+
+    _add_run(b, SOURCE_PREDISPATCH, pd, pd_series, PD_PERIOD, PD_MAX_AGE, served)
     _add_pd7day(b, pd7day, {"run_at": pd7day_run_at, "source_file": pd7day_source_file})
     return b.timeline

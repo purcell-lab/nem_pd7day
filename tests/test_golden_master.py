@@ -90,6 +90,28 @@ def _days27_amber_joined(built: harness.Built, snap: dict) -> None:
     assert clock_first == "2026-09-17T15:00:00+10:00"
 
 
+def _days27_pd_seam(built: harness.Built, snap: dict) -> None:
+    """Day 2-7 starts at Amber's end on pre-dispatch, served through PD7DAY's h24_48 from 24 h (#337).
+
+    The period from 13:00 is 23.96 h ahead of the 13:02 run and stays raw; the
+    next, 24.46 h ahead, is served through the h24_48 stage 1 model, keeps its
+    raw price and carries its horizon; PD7DAY follows the run's last period."""
+    days27 = list(snapshot.iter_forecast(_one(snap, "_forecast_days27")))
+    pd = [e for e in days27 if e["source"] == "predispatch"]
+    assert days27[0]["source"] == "predispatch"
+    assert pd[0]["calibrated_source"] == "passthrough" and pd[0]["horizon_hours"] == 23.96
+    assert pd[0]["value"] == pd[0]["raw_value"]
+    served = [e for e in pd if e["calibrated_source"] == "pd7day_iso_h24_48"]
+    assert served and served[0] is pd[1] and pd[1]["horizon_hours"] == 24.46
+    assert all(e["horizon_hours"] >= 24 for e in served)
+    assert {e["calibrated_source"] for e in pd[1:]} == {"pd7day_iso_h24_48"}
+    assert any(e["value"] != e["raw_value"] for e in served)
+    assert days27[len(pd)]["source"] == "pd7day"
+    # The tariff's day 2-7 forecast is priced from the same served spot.
+    tariff = list(snapshot.iter_forecast(_one(snap, "_6900_days27")))
+    assert tariff and tariff[0]["time"] == days27[0]["time"]
+
+
 def _empty_store(built: harness.Built, snap: dict) -> None:
     assert {e["calibrated_source"] for e in _forecast(snap)} == {"passthrough"}
     assert _one(snap, "_calibration")["extra_state_attributes"]["status"] == "no_calibration"
@@ -247,6 +269,7 @@ NON_VACUITY: dict[str, Callable[[harness.Built, dict], None]] = {
     "qld_fitted_evening_peak": _fitted_evening_peak,
     "qld_days27_mode": _days27,
     "qld_days27_amber_joined": _days27_amber_joined,
+    "qld_days27_pd_seam": _days27_pd_seam,
     "qld_empty_store": _empty_store,
     "qld_spike_credible": _spike(True, short=False),
     "qld_spike_uncredible": _spike(False, short=False),
@@ -335,7 +358,7 @@ def test_golden_master(name: str) -> None:
 
 def test_every_scenario_has_a_non_vacuity_check() -> None:
     assert set(NON_VACUITY) == set(SCENARIOS)
-    assert len(SCENARIOS) == 15
+    assert len(SCENARIOS) == 16
 
 
 # ── The frozen clock ─────────────────────────────────────────────────────────

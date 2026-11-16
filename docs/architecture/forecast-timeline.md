@@ -22,7 +22,7 @@ Every price a sensor publishes for an interval comes from one place: the region'
                                      ▼                          ▼
                     price_timeline.build_timeline(now, region, dispatch, p5, pd, pd7day)
                       dispatch (actual) → P5MIN (raw, 5 min) → pre-dispatch (served by
-                      predispatch_calibration: passthrough until 3b) → PD7DAY (calibrated)
+                      predispatch_calibration: from 24 h PD7DAY h24_48) → PD7DAY (calibrated)
                       a stale source falls through; a half hour is split where a source ends
                                      │
                     region_timeline.region_timeline(): kept in the hub per source version

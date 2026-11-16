@@ -17,7 +17,7 @@ The chart shows:
 from __future__ import annotations
 
 import io
-from typing import Any, cast
+from typing import Any, Optional, cast
 import logging
 import struct
 import zlib
@@ -204,20 +204,32 @@ _NEAR_TERM_SPANS = {
     "p5min": ("#E65100", "P5MIN 5-min (raw)"),
     "predispatch": ("#6A1B9A", "Pre-dispatch (raw)"),
 }
+# Pre-dispatch from 24 h ahead is served through PD7DAY's h24_48 model (#337);
+# the legend says so once any point of the span is.
+_PREDISPATCH_SERVED_LABEL = "Pre-dispatch (24 h+ calibrated)"
+_PREDISPATCH_SERVED_SOURCES = frozenset({"pd7day_iso_h24_48"})
 
 
-def _draw_timeline_spans(ax: Any, np: Any, plt: Any, times: Any, cals: Any, spans: list, clip_y: float) -> list:
+def _draw_timeline_spans(
+    ax: Any, np: Any, plt: Any, times: Any, cals: Any, spans: list, clip_y: float,
+    sources: Optional[list] = None,
+) -> list:
     """Draw the timeline's near-term spans over the calibrated line; return their legend handles (#339).
 
     ``spans`` is each point's timeline ``source``, None for PD7DAY-only data,
-    which draws nothing here. Each span joins the point before it, as the
-    confidence zones do, so the line does not break at a source boundary.
+    which draws nothing here; ``sources`` its ``calibrated_source``. Each span
+    joins the point before it, as the confidence zones do, so the line does
+    not break at a source boundary.
     """
     handles = []
     for span_source, (color, label) in _NEAR_TERM_SPANS.items():
         mask = np.array([src == span_source for src in spans])
         if not mask.any():
             continue
+        if span_source == "predispatch" and sources is not None and any(
+            span == "predispatch" and cal in _PREDISPATCH_SERVED_SOURCES for span, cal in zip(spans, sources)
+        ):
+            label = _PREDISPATCH_SERVED_LABEL
         first = int(np.argmax(mask))
         if first > 0:
             mask[first - 1] = True
@@ -1488,7 +1500,7 @@ def render_forecast_chart(forecast_data: list, region: str, annotations: list | 
         line_legend.append(plt.Line2D([0], [0], color='#666688', linewidth=0.8,
                                       linestyle='--', alpha=0.3,
                                       label='24h confidence boundary'))
-    line_legend.extend(_draw_timeline_spans(ax, np, plt, times, cals, spans, CLIP_Y))
+    line_legend.extend(_draw_timeline_spans(ax, np, plt, times, cals, spans, CLIP_Y, list(sources)))
     # Add legend entries for any notice types actually present in this chart
     NOTICE_LEGEND = {
         ("LOR", 1): ("#F39C12", "LOR1: Reserve notice"),

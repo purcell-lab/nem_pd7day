@@ -378,7 +378,7 @@ The spot forecast sensor (`sensor.nem_pd7day_{region}_nem_spot_price_forecast`) 
 
 - **From now**: `forecast` starts at the interval running now; intervals that have ended are gone. Before, it started at the run's first interval, up to five hours back.
 - **Mixed resolution**: the current 5-minute dispatch interval, P5MIN's 5-minute intervals for the next hour, pre-dispatch's half hours to the end of the next trading day, then PD7DAY's. `interval_minutes` stays `30`, the PD7DAY resolution; each entry's own length is its `resolution_minutes`.
-- **Same keys**: a `pd7day` entry is the calibrated entry as before (its `time` moved where its half hour was split). A `dispatch`, `p5min` or `predispatch` entry has every key too: `raw_value`, `calibrated` and `value` are its price, `calibrated_source` is `actual`, `raw` or `passthrough`, and `p10`, `p50`, `p90`, `ols_mae`, `band_source`, `n_obs`, `horizon_hours` and `spike_credible` are `null` (no band until stage 3b calibrates pre-dispatch). Templates that read `p10`/`p90` should allow for `null`.
+- **Same keys**: a `pd7day` entry is the calibrated entry as before (its `time` moved where its half hour was split). A `dispatch`, `p5min` or `predispatch` entry has every key too: `raw_value`, `calibrated` and `value` are its price, `calibrated_source` is `actual`, `raw` or `passthrough`, and `p10`, `p50`, `p90`, `ols_mae`, `band_source`, `n_obs`, `horizon_hours` and `spike_credible` are `null`. A `predispatch` entry carries its `horizon_hours` (hours from the run to the period's start), and from 24 h ahead it is served through PD7DAY's `h24_48` model: `calibrated_source: pd7day_iso_h24_48`, with that model's band, `band_source` and `n_obs`, and `raw_value` still the raw RRP (v3.50.4, #337). Templates that read `p10`/`p90` should allow for `null`.
 - **By time**: `min_24h_value`/`max_24h_value` cover the 24 hours from the first entry, and `cheapest_2h_window` is the 2 hours with the lowest minute-weighted average, covered in full (a gap in the forecast breaks a window). Its keys are unchanged; `points` counts entries, so a window over P5MIN has more than 4.
 - **Day 2-7**: unchanged in effect: its window starts after the cutoff, a day out, where the timeline is PD7DAY (or the end of pre-dispatch).
 
@@ -532,7 +532,7 @@ An interconnector held at a limit separates the two regions' prices; one that is
 | Attribute | Description |
 |---|---|
 | `time`, `nemtime`, `count`, `rrp` | The current period, its count and the region's pre-dispatch price ($/MWh) |
-| `calibrated_rrp` | The region's pre-dispatch price as the [price timeline](#price-timeline-diagnostic-338) serves it, $/MWh: the RRP itself (passthrough) until stage 3b fits a pre-dispatch calibration (#337); `rrp` stays raw. Also on each `forecast` row (v3.48.0, #339) |
+| `calibrated_rrp` | The region's pre-dispatch price as the [price timeline](#price-timeline-diagnostic-338) serves it, $/MWh: from 24 h ahead through PD7DAY's `h24_48` model (v3.50.4, #337), below that the RRP itself (passthrough); `rrp` stays raw. Also on each `forecast` row (v3.48.0, #339) |
 | `max_marginal_value_mwh` | The largest marginal value among the region's binding constraints, as a magnitude. Values of $1,000,000/MWh or more are constraint violation penalties, not prices (`SN_ZERO` and `NS_ZERO` show $8.35M), and are left out here though still listed and counted |
 | `constraints` | The region's binding constraints in the current period, largest cost first, with `constraint_id`, `regions`, `category`, `cause`, `rhs`, `lhs`, `marginal_value_mwh`, `violation_degree` and `rhs_vs_dispatch` (not recorded) |
 | `unassigned_constraints` | Binding constraints in the current period whose ID names no region, with the same fields (not recorded) |
@@ -610,7 +610,7 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 | `forecast` | `{time, interval_end, value}` per P5MIN interval still to end: (the run's ROP of the node's region + its DUIDs' P5MIN adjustment, 0 without a row) × MLF, in $/kWh, raw (not recorded). It stops at an interval where the DUIDs conflict |
 | `forecast_status` | `published`, `stale`, `expired`, `conflicting_rows`, `no_rop`, `unknown_node` or `no_data` |
 | `forecast_source`, `forecast_run_at`, `forecast_source_file` | `P5MIN_REGIONSOLUTION_ROP_LOCAL_PRICE`, the run and the P5MIN file |
-| `predispatch_forecast` | `{time, value, calibrated_rrp_mwh}` per 30-minute pre-dispatch period still to end, `value` (RRP + the DUIDs' adjustment) × MLF, in $/kWh, to the end of the next trading day (not recorded). `value` stays on raw RRP, because the adjustment comes from the same NEMDE run; `calibrated_rrp_mwh` is the region's RRP as the price timeline serves it, the RRP itself until stage 3b (v3.48.0, #339). The other `predispatch_*` attributes are as for the DUID sensor |
+| `predispatch_forecast` | `{time, value, calibrated_rrp_mwh}` per 30-minute pre-dispatch period still to end, `value` (RRP + the DUIDs' adjustment) × MLF, in $/kWh, to the end of the next trading day (not recorded). `value` stays on raw RRP, because the adjustment comes from the same NEMDE run; `calibrated_rrp_mwh` is the region's RRP as the price timeline serves it: from 24 h ahead through PD7DAY's `h24_48` model (v3.50.4, #337), below that the RRP itself (v3.48.0, #339). The other `predispatch_*` attributes are as for the DUID sensor |
 
 ### Zone Price Proxy
 
@@ -648,7 +648,7 @@ One price timeline per region, each source covering what the one before it does 
 |---|---|---|---|---|
 | The current 5-minute interval | DispatchIS RRP, the price being paid | `dispatch` | `actual` | 5 min |
 | The rest of the next hour | P5MIN RRP, raw, no band | `p5min` | `raw` | 5 min |
-| To the end of the next trading day | Pre-dispatch RRP | `predispatch` | `passthrough` until stage 3b calibrates it | 30 min |
+| To the end of the next trading day | Pre-dispatch RRP: below 24 h ahead as published, from 24 h through PD7DAY's `h24_48` stage 1 model, with its band (#337) | `predispatch` | `passthrough`, then `pd7day_iso_h24_48` | 30 min |
 | To day 7 | PD7DAY, calibrated, with its band, as `forecast` | `pd7day` | the calibration's own | 30 min |
 
 - **Splits**: a half hour the source before covers in part is split where that source ends (`resolution_minutes` 5, 10, ...), so no minute is repeated or skipped.
@@ -891,6 +891,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 3.50.4 | Pre-dispatch from 24 h ahead is served through the region's PD7DAY `h24_48` stage 1 model (#337, interim until stage 3b). Raw pre-dispatch at that horizon reads far above the actual price: on 15 Nov QLD1's first day 2-7 point, 24.5 h into the run, was 30.2 c where Amber's last was about 13 c, so the import and export tariffs stepped up 20 c at the Amber seam. The timeline, day 2-7, tariff and chart entities and the node, zone and pre-dispatch constraints sensors' `calibrated_rrp` follow, labelled `calibrated_source: pd7day_iso_h24_48`, with the model's band; below 24 h, or without a PD7DAY fit, pre-dispatch stays `passthrough`. Every pre-dispatch point now carries `horizon_hours` and `raw_value`. Suite goes from 2163 to 2181 tests. |
 | 3.50.3 | A P5MIN run listed after the dispatch poll is fetched within 30 s, not at the next poll (#381). NEMWEB lists each P5MIN run 1 to 2 minutes after the DispatchIS file of the same interval, and P5MIN was read only on a dispatch poll, so a run that missed the poll waited 5 minutes and every sensor priced the previous run meanwhile. A refresh that leaves a run due now reads the listing again every 30 s, up to 6 times. Suite goes from 2157 to 2163 tests. |
 | 3.50.2 | The 30 s wait from 3.50.1 wrote tariff state from a worker thread (#379). When the P5MIN run was not published within 30 s, the fallback write ran in the executor, where Home Assistant refuses `async_write_ha_state`: the write was lost and the log showed one RuntimeError per tariff sensor. The timer now runs on the event loop. Suite goes from 2153 to 2157 tests. |
 | 3.50.1 | Tariff forecasts follow each new P5MIN run (#377). A dispatch poll is what starts the P5MIN fetch, so a tariff written on the dispatch update priced the previous run's intervals until the next tick, 5 minutes later; the spot forecast was current. A tariff's dispatch write now waits for the P5MIN run that poll fetches, up to 30 s, and writes once with it; the tariffs also write when a new P5MIN or pre-dispatch run lands. Still one write per tick. Suite goes from 2132 to 2153 tests. |
