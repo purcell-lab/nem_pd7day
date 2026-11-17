@@ -1,9 +1,5 @@
 {
   "classes": {
-    "calibration_store:CalibrationStore": {
-      "lines": 364,
-      "methods": 22
-    },
     "market_notice_client:MarketNoticeClient": {
       "lines": 255,
       "methods": 6
