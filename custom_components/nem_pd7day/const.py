@@ -368,7 +368,7 @@ _LEGACY_FH_KEY = "nem_pd7day.forecast_history"
 # fit, the domain floors and the leverage screen all saw three weeks (issue
 # #127). 100,000 is about 93 days, so the window is the constant again. At
 # roughly 500 bytes per observation the store is about 50 MB per region on
-# disk; see calibration_store._save_observations for how writes are paced.
+# disk; see calibration_observations._save_observations for how writes are paced.
 # Pruning drops whole days (see observation_log.py), so the retained count
 # settles up to a day's worth below the cap rather than exactly at it.
 MAX_TOTAL_OBS = 100_000

@@ -10,10 +10,18 @@ Version:      1
 
 Cache validity
 --------------
-A cached result is considered usable only if its ``updated_at`` timestamp is
-within _CACHE_MAX_AGE_S (35 minutes) of now — i.e. younger than one NEM
-trading interval plus margin. Older caches return None from load(), so the
-caller falls back to a blocking first-refresh (e.g. after a long HA outage).
+A cached result is usable if its ``updated_at`` timestamp is within
+_CACHE_MAX_AGE_S (16 hours) of now. PD7DAY is fetched only when AEMO publishes
+a run, at 07:30, 13:00 and 18:00 NEM time (FETCH_TIMES_NEM), and the cache is
+saved on each fetch, so at a restart it is as old as the time since the last
+publish: up to 13.5 hours overnight, from 18:00 to 07:30. Until v3.51.2 the
+limit was 35 minutes, one trading interval plus margin, which suited a
+coordinator polling every 30 minutes but not this one, so almost every restart
+discarded the cache and blocked setup on a NEMWEB download (#365). The cached
+result is the same run NEMWEB would serve until the next publish, and the
+background refresh that follows a restore replaces it if a newer one is out.
+Older caches return None from load(), so the caller falls back to a blocking
+first refresh (a first install, or an outage longer than the overnight gap).
 
 Serialisation
 -------------
@@ -50,8 +58,10 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 FORECAST_STORE_VERSION = 1
-# Cached forecast is usable only if updated_at is within this many seconds of now.
-_CACHE_MAX_AGE_S = 35 * 60  # 35 minutes
+# Cached forecast is usable only if updated_at is within this many seconds of
+# now: the longest gap between PD7DAY publishes, 13.5 hours from 18:00 to 07:30,
+# plus 2.5 hours for a fetch that retries and a restart around a publish (#365).
+_CACHE_MAX_AGE_S = 16 * 3600  # 16 hours
 
 
 def _forecast_store_key(region: str) -> str:
@@ -115,7 +125,7 @@ class ForecastStore:
         self._store: Store[dict] = Store(hass, FORECAST_STORE_VERSION, _forecast_store_key(region))
 
     async def load(self) -> PD7DayResult | None:
-        """Return the cached PD7DayResult, or None if absent or stale (>35 min)."""
+        """Return the cached PD7DayResult, or None if absent or older than _CACHE_MAX_AGE_S."""
         data = await self._store.async_load()
         if not data:
             return None

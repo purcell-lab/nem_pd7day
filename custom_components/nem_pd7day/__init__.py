@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -33,7 +35,7 @@ from .const import (
     SHARED_FETCH_KEY,
     SHARED_TRADINGIS_KEY,
 )
-from .coordinator import DispatchCoordinator, PD7DayCoordinator
+from .coordinator import DispatchCoordinator, PD7DayCoordinator, restore_cached
 from .fetch_scheduler import DailyFetchScheduler
 from .forecast_store import ForecastStore
 from .market_notice_client import MarketNoticeClient
@@ -114,42 +116,96 @@ def _register_by_region(hass: HomeAssistant, entry: ConfigEntry, key: str, regio
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> bool:
-    """Set up NEM PD7DAY from a config entry."""
-    from .actual_price_service import shared_actual_price_service
-    from .predispatch_record import PredispatchRecord
-    from .nem_time import fetch_times_as_utc, now_nem
+    """Set up NEM PD7DAY from a config entry.
 
+    The composition root. Each phase is a module function below, called in this
+    order; the setup trace's checkpoints mark where the phases end (#366).
+    """
     hass.data.setdefault(DOMAIN, {})
+    _ensure_nemweb_gate(hass)
+    _migrate_forecast_mode(hass, entry)
 
-    # ── Shared NEMWEB request gate ───────────────────────────────────────────
-    # One gate across all region coordinators bounds both simultaneous requests
-    # and request frequency against www.nemweb.com.au, preventing the burst
-    # 403s that HA starting five entries concurrently used to provoke. Created
-    # once in an async context, then reused.
-    #
-    # NemwebGate is a drop-in for the asyncio.Semaphore that used to live under
-    # this key: every NEMWEB client only ever uses it as `async with`, so the
-    # added minimum request gap needed no client change. See nemweb_gate.py and
-    # issue #22.
+    region: str = get_region(entry)
+
+    # Setup is instrumented because startup cost in this integration has twice
+    # been somewhere other than where it appeared to be. See startup_trace.py.
+    trace = StartupTrace(region, _LOGGER)
+
+    store, forecast_store, stpasa_refresh, stpasa_store = await _async_setup_stores(
+        hass, entry, region, trace
+    )
+    setup_lock, notice_store, notice_client = await _async_setup_shared_sources(hass, trace)
+    coordinator, dispatch = await _async_setup_coordinators(
+        hass, entry, region, trace, store, forecast_store, stpasa_store,
+        notice_store, notice_client, setup_lock,
+    )
+
+    # Before the platforms: the sensor setup subscribes it to pre-dispatch runs (#337).
+    pd_record = await _async_load_pd_record(hass, entry, region)
+    entry.runtime_data = NemPd7dayEntryData(
+        coordinator=coordinator,
+        store=store,
+        forecast_store=forecast_store,
+        stpasa_store=stpasa_store,
+        dispatch=dispatch,
+        notice_store=notice_store,
+        region=region,
+        pd_record=pd_record,
+    )
+
+    _wire_central_stpasa_fetch(hass, entry, region, coordinator, stpasa_refresh, stpasa_store)
+    trace.checkpoint("coordinators ready")
+
+    await _forward_platforms(hass, entry, region)
+    trace.checkpoint("platform setup (sensor entities)")
+
+    _schedule_publish_fetches(hass, entry, region, coordinator, store, pd_record)
+    _register_actual_prices(hass, entry, region, store)
+    _schedule_refits(hass, entry, region, store, pd_record, coordinator, stpasa_refresh)
+    _register_services_and_listeners(hass, entry)
+
+    trace.checkpoint("services and listeners")
+    trace.log_summary()
+
+    return True
+
+
+# ── Setup phase: shared NEMWEB request gate and options migration ────────────
+
+def _ensure_nemweb_gate(hass: HomeAssistant) -> None:
+    """Create the one NEMWEB request gate every region's clients share.
+
+    One gate across all region coordinators bounds both simultaneous requests
+    and request frequency against www.nemweb.com.au, preventing the burst
+    403s that HA starting five entries concurrently used to provoke. Created
+    once in an async context, then reused.
+
+    NemwebGate is a drop-in for the asyncio.Semaphore that used to live under
+    this key: every NEMWEB client only ever uses it as `async with`, so the
+    added minimum request gap needed no client change. See nemweb_gate.py and
+    issue #22.
+    """
     if NEMWEB_SEMAPHORE_KEY not in hass.data[DOMAIN]:
         hass.data[DOMAIN][NEMWEB_SEMAPHORE_KEY] = NemwebGate(
             NEMWEB_MAX_CONCURRENT_REQUESTS,
             NEMWEB_MIN_REQUEST_GAP_S,
         )
 
-    # ── Migration: inject default forecast_mode for existing installs ────────
+
+def _migrate_forecast_mode(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> None:
+    """Inject the default forecast_mode for installs that predate it."""
     if CONF_FORECAST_MODE not in entry.options:
         new_options = dict(entry.options)
         new_options[CONF_FORECAST_MODE] = FORECAST_MODE_DAYS_2_7
         hass.config_entries.async_update_entry(entry, options=new_options)
 
-    region: str = get_region(entry)
-    interconnector_ids = interconnectors_for_regions([region])
 
-    # Setup is instrumented because startup cost in this integration has twice
-    # been somewhere other than where it appeared to be. See startup_trace.py.
-    trace = StartupTrace(region, _LOGGER)
+# ── Setup phase: per-region stores ───────────────────────────────────────────
 
+async def _async_setup_stores(
+    hass: HomeAssistant, entry: NemPd7dayConfigEntry, region: str, trace: StartupTrace,
+) -> tuple[CalibrationStore, ForecastStore, StpasaRefreshCoordination, StpasaStore]:
+    """Load the calibration and STPASA stores and register them by region."""
     # ── Calibration store ────────────────────────────────────────────────────
     store = CalibrationStore(hass, region)
     await store.async_load()
@@ -177,10 +233,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         stpasa_store.load_note or "",
     )
     # Register this region's store for central STPASA distribution. The STPASA
-    # ZIP holds every NEM region, so one download (below) populates them all.
+    # ZIP holds every NEM region, so one download populates them all.
     _register_by_region(hass, entry, "stpasa_stores", region, stpasa_store)
     await stpasa_store.seed_from(stpasa_refresh)
+    return store, forecast_store, stpasa_refresh, stpasa_store
 
+
+# ── Setup phase: sources shared by every region ──────────────────────────────
+
+async def _async_setup_shared_sources(
+    hass: HomeAssistant, trace: StartupTrace,
+) -> tuple[asyncio.Lock, GridNoticeStore, MarketNoticeClient]:
+    """Create, once for all entries, the notice store and client and the PD7DAY and STPASA clients."""
     # ── Shared market notice store + client ──────────────────────────────────
     # All five region coordinators share ONE notice store + client so the
     # NEMWEB Market_Notice directory is polled once per cycle, not five times.
@@ -228,20 +292,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
             semaphore=semaphore,
             executor_job=hass.async_add_executor_job,
         )
+    return setup_lock, notice_store, notice_client
 
+
+# ── Setup phase: coordinators ────────────────────────────────────────────────
+
+async def _async_setup_coordinators(
+    hass: HomeAssistant,
+    entry: NemPd7dayConfigEntry,
+    region: str,
+    trace: StartupTrace,
+    store: CalibrationStore,
+    forecast_store: ForecastStore,
+    stpasa_store: StpasaStore,
+    notice_store: GridNoticeStore,
+    notice_client: MarketNoticeClient,
+    setup_lock: asyncio.Lock,
+) -> tuple[PD7DayCoordinator, DispatchCoordinator]:
+    """Build this region's PD7DAY coordinator, start it, and join the shared dispatch one."""
     # ── Coordinator (no automatic polling) ───────────────────────────────────
     coordinator = PD7DayCoordinator(
         hass,
         [region],
         store,
-        interconnector_ids=interconnector_ids,
+        interconnector_ids=interconnectors_for_regions([region]),
         notice_store=notice_store,
         notice_client=notice_client,
         forecast_store=forecast_store,
         stpasa_store=stpasa_store,
     )
+    await _async_start_coordinator(hass, entry, region, trace, coordinator, forecast_store)
 
-    # ── Two-phase startup ─────────────────────────────────────────────────────
+    # ── Dispatch coordinator (5-minute polling, shared across all entries) ─────
+    # The claim has to be lock-guarded because the first refresh awaits. See
+    # shared_dispatch.py and issue #34 for what went wrong without the lock.
+    dispatch = await async_shared_dispatch(hass, setup_lock, trace, DispatchCoordinator)
+    return coordinator, dispatch
+
+
+async def _async_start_coordinator(
+    hass: HomeAssistant,
+    entry: NemPd7dayConfigEntry,
+    region: str,
+    trace: StartupTrace,
+    coordinator: PD7DayCoordinator,
+    forecast_store: ForecastStore,
+) -> None:
+    """Two-phase startup: restore the cached forecast, else block on a download."""
     cached = await forecast_store.load()
     trace.checkpoint(
         "forecast cache load",
@@ -249,7 +346,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     )
     if cached is not None:
         # Phase 1: restore cache instantly — sensors available immediately.
-        coordinator.async_set_updated_data(cached)
+        restore_cached(coordinator, cached)
         # Phase 2: schedule a non-blocking background refresh, staggered per
         # region so the 5 coordinators don't all hit NEMWEB at once.
         region_index = REGION_STARTUP_ORDER.get(region, 0)
@@ -278,71 +375,75 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         with trace.phase("blocking first refresh (NEMWEB download)"):
             await coordinator.async_config_entry_first_refresh()
 
-    # ── Dispatch coordinator (5-minute polling, shared across all entries) ─────
-    # The claim has to be lock-guarded because the first refresh awaits. See
-    # shared_dispatch.py and issue #34 for what went wrong without the lock.
-    dispatch = await async_shared_dispatch(hass, setup_lock, trace, DispatchCoordinator)
 
-    # Before the platforms: the sensor setup subscribes it to pre-dispatch runs (#337).
+async def _async_load_pd_record(hass: HomeAssistant, entry: NemPd7dayConfigEntry, region: str) -> Any:
+    """Load this region's pre-dispatch record and register it by region (#337)."""
+    from .predispatch_record import PredispatchRecord
+
     pd_record = PredispatchRecord(hass, region)
     await pd_record.async_load()
     _register_by_region(hass, entry, PD_RECORDS_KEY, region, pd_record)  # serves its fit (#337 3b)
-    entry.runtime_data = NemPd7dayEntryData(
-        coordinator=coordinator,
-        store=store,
-        forecast_store=forecast_store,
-        stpasa_store=stpasa_store,
-        dispatch=dispatch,
-        notice_store=notice_store,
-        region=region,
-        pd_record=pd_record,
-    )
+    return pd_record
 
-    # ── Central STPASA fetch + distribution ──────────────────────────────────
-    # The STPASA ZIP contains every NEM region. Download it ONCE per PD7DAY
-    # update cycle and populate all registered region stores, instead of each
-    # region coordinator downloading the full file independently.
-    async def _fetch_and_distribute_stpasa(_now=None) -> None:
-        """Download STPASA once and populate all region stores."""
-        client: StpasaClient | None = hass.data[DOMAIN].get("stpasa_client")
-        stores: dict[str, StpasaStore] = hass.data[DOMAIN].get("stpasa_stores", {})
-        if client is None or not stores:
-            return
-        # Every loaded region carries the trigger now, so this can be entered up
-        # to five times per cycle. The claim keeps the download itself single.
-        if not stpasa_refresh.claim_fetch():
+
+# ── Setup phase: central STPASA fetch and distribution ───────────────────────
+# The STPASA ZIP contains every NEM region. Download it ONCE per PD7DAY
+# update cycle and populate all registered region stores, instead of each
+# region coordinator downloading the full file independently.
+
+async def _fetch_and_distribute_stpasa(
+    hass: HomeAssistant, stpasa_refresh: StpasaRefreshCoordination, region: str,
+) -> None:
+    """Download STPASA once and populate all region stores."""
+    client: StpasaClient | None = hass.data[DOMAIN].get("stpasa_client")
+    stores: dict[str, StpasaStore] = hass.data[DOMAIN].get("stpasa_stores", {})
+    if client is None or not stores:
+        return
+    # Every loaded region carries the trigger now, so this can be entered up
+    # to five times per cycle. The claim keeps the download itself single.
+    if not stpasa_refresh.claim_fetch():
+        _LOGGER.debug(
+            "STPASA: another region already holds this cycle's fetch, "
+            "skipping the duplicate download for %s",
+            region,
+        )
+        return
+    try:
+        all_results = await client.fetch_all_regions()
+        await stpasa_refresh.distribute(all_results, stores)
+        if all_results:
+            stpasa_refresh.mark_fresh()
             _LOGGER.debug(
-                "STPASA: another region already holds this cycle's fetch, "
-                "skipping the duplicate download for %s",
-                region,
+                "STPASA: fetched and distributed to %d region stores",
+                len(all_results),
             )
-            return
-        try:
-            all_results = await client.fetch_all_regions()
-            await stpasa_refresh.distribute(all_results, stores)
-            if all_results:
-                stpasa_refresh.mark_fresh()
-                _LOGGER.debug(
-                    "STPASA: fetched and distributed to %d region stores",
-                    len(all_results),
-                )
-            else:
-                # No regions came back, so treat it as a definitive failure for
-                # this cycle: any refit waiting on fresh data must not hang.
-                stpasa_refresh.mark_failed("no regions in STPASA response")
-                # Logged once per cycle here (not per forecast interval in
-                # sensor._stpasa_features_for_interval) to avoid log flooding.
-                # An empty result means this cycle got no fresh STPASA, so OLS
-                # stage-2 falls back to cached/stale STPASA or isotonic-only.
-                _LOGGER.warning(
-                    "STPASA: no fresh data this cycle — OLS calibration will use "
-                    "cached/stale STPASA or fall back to isotonic-only. See earlier "
-                    "STPASA fetch warnings for the cause (e.g. NEMWEB 403)."
-                )
-        except Exception as exc:  # noqa: BLE001
-            stpasa_refresh.mark_failed(str(exc))
-            _LOGGER.warning("STPASA central fetch failed (non-fatal): %s", exc)
+        else:
+            # No regions came back, so treat it as a definitive failure for
+            # this cycle: any refit waiting on fresh data must not hang.
+            stpasa_refresh.mark_failed("no regions in STPASA response")
+            # Logged once per cycle here (not per forecast interval in
+            # sensor._stpasa_features_for_interval) to avoid log flooding.
+            # An empty result means this cycle got no fresh STPASA, so OLS
+            # stage-2 falls back to cached/stale STPASA or isotonic-only.
+            _LOGGER.warning(
+                "STPASA: no fresh data this cycle — OLS calibration will use "
+                "cached/stale STPASA or fall back to isotonic-only. See earlier "
+                "STPASA fetch warnings for the cause (e.g. NEMWEB 403)."
+            )
+    except Exception as exc:  # noqa: BLE001
+        stpasa_refresh.mark_failed(str(exc))
+        _LOGGER.warning("STPASA central fetch failed (non-fatal): %s", exc)
 
+
+def _wire_central_stpasa_fetch(
+    hass: HomeAssistant,
+    entry: NemPd7dayConfigEntry,
+    region: str,
+    coordinator: PD7DayCoordinator,
+    stpasa_refresh: StpasaRefreshCoordination,
+    stpasa_store: StpasaStore,
+) -> None:
+    """Trigger the central STPASA fetch on PD7DAY updates, and now if the cache is stale or empty."""
     # The fetch trigger used to be registered only where region_startup_index
     # was 0, meaning QLD1. Disabling or removing the QLD1 entry therefore stopped
     # STPASA refreshes for every region, silently (issue #37). Register it on any
@@ -353,7 +454,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         def _on_pd7day_update() -> None:
             entry.async_create_background_task(
                 hass,
-                _fetch_and_distribute_stpasa(),
+                _fetch_and_distribute_stpasa(hass, stpasa_refresh, region),
                 name=f"nem_pd7day_stpasa_central_fetch_{region}",
             )
 
@@ -369,7 +470,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
 
         async def _forced_stale_fetch() -> None:
             await asyncio.sleep(STALE_FETCH_DELAY_S)
-            await _fetch_and_distribute_stpasa()
+            await _fetch_and_distribute_stpasa(hass, stpasa_refresh, region)
 
         entry.async_create_background_task(
             hass,
@@ -377,46 +478,52 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
             name=f"nem_pd7day_stpasa_stale_refetch_{region}",
         )
 
-    trace.checkpoint("coordinators ready")
 
-    await _forward_platforms(hass, entry, region)
-    trace.checkpoint("platform setup (sensor entities)")
+# ── Setup phase: timers (calibration refit, scheduled fetches) ───────────────
 
-    # ── Shared calibration refit coroutine ──────────────────────────────────
-
-    async def _do_refit() -> None:
-        """Refit calibration models and refresh sensors."""
-        if store.observation_count < 10:
-            _LOGGER.debug(
-                "Skipping calibration refit — only %d observations (need >= 10)",
-                store.observation_count,
-            )
-            return
-        _LOGGER.info(
-            "PD7DAY calibration refit starting (%d observations)",
+async def _do_refit(store: CalibrationStore, pd_record: Any, coordinator: PD7DayCoordinator) -> None:
+    """Refit calibration models and refresh sensors."""
+    if store.observation_count < 10:
+        _LOGGER.debug(
+            "Skipping calibration refit — only %d observations (need >= 10)",
             store.observation_count,
         )
-        await store.async_refit()
-        _LOGGER.info(
-            "PD7DAY calibration refit complete — %d active buckets",
-            store.active_bucket_count,
-        )
-        await pd_record.async_refit(store)  # pre-dispatch's own fit, on PD7DAY's cadence (#337 3b)
-        # Re-push the data already held rather than calling async_refresh(),
-        # which would re-download from NEMWEB. A refit changes how the forecast
-        # is calibrated, not the forecast itself, so notifying listeners is
-        # enough to get recalibrated values onto the sensors.
-        #
-        # This matters most at startup: the refit below is kicked off as a task
-        # during setup, so a refresh here fires a full NEMWEB fetch per region
-        # within seconds of starting, bypassing the staggered background refresh
-        # that the two-phase cached startup sets up.
-        if coordinator.data is not None:
-            coordinator.async_set_updated_data(coordinator.data)
-        else:
-            await coordinator.async_refresh()
+        return
+    _LOGGER.info(
+        "PD7DAY calibration refit starting (%d observations)",
+        store.observation_count,
+    )
+    await store.async_refit()
+    _LOGGER.info(
+        "PD7DAY calibration refit complete — %d active buckets",
+        store.active_bucket_count,
+    )
+    await pd_record.async_refit(store)  # pre-dispatch's own fit, on PD7DAY's cadence (#337 3b)
+    # Re-push the data already held rather than calling async_refresh(),
+    # which would re-download from NEMWEB. A refit changes how the forecast
+    # is calibrated, not the forecast itself, so notifying listeners is
+    # enough to get recalibrated values onto the sensors.
+    #
+    # This matters most at startup: the startup refit is kicked off as a task
+    # during setup, so a refresh here fires a full NEMWEB fetch per region
+    # within seconds of starting, bypassing the staggered background refresh
+    # that the two-phase cached startup sets up.
+    if coordinator.data is not None:
+        coordinator.async_set_updated_data(coordinator.data)
+    else:
+        await coordinator.async_refresh()
 
-    # ── Scheduled fetches at AEMO publish times ──────────────────────────────
+
+def _schedule_publish_fetches(
+    hass: HomeAssistant,
+    entry: NemPd7dayConfigEntry,
+    region: str,
+    coordinator: PD7DayCoordinator,
+    store: CalibrationStore,
+    pd_record: Any,
+) -> None:
+    """Fetch, then refit, at each AEMO publish time."""
+    from .nem_time import fetch_times_as_utc, now_nem
 
     def _on_publish_time(hour: int, minute: int) -> None:
         _LOGGER.info(
@@ -426,7 +533,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
 
         async def _fetch_then_refit():
             await coordinator.async_refresh()
-            await _do_refit()
+            await _do_refit(store, pd_record, coordinator)
 
         # Tied to the entry so an unload cancels a fetch still in flight rather
         # than letting it write to a torn-down store (issue #106).
@@ -464,18 +571,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         ", ".join(utc_times),
     )
 
-    # ── Actual price service (TradingIS), one fetch for every entry (#335) ──
+
+def _register_actual_prices(
+    hass: HomeAssistant, entry: NemPd7dayConfigEntry, region: str, store: CalibrationStore,
+) -> None:
+    """Record actual prices (TradingIS) against both forecasts, one fetch for every entry (#335)."""
+    from .actual_price_service import shared_actual_price_service
+
     actual_service = shared_actual_price_service(
         hass, async_get_clientsession(hass), hass.data[DOMAIN].get(NEMWEB_SEMAPHORE_KEY),
     )
     entry.async_on_unload(actual_service.register(entry.entry_id, region, store, entry.runtime_data.pd_record))
 
+
+def _schedule_refits(
+    hass: HomeAssistant,
+    entry: NemPd7dayConfigEntry,
+    region: str,
+    store: CalibrationStore,
+    pd_record: Any,
+    coordinator: PD7DayCoordinator,
+    stpasa_refresh: StpasaRefreshCoordination,
+) -> None:
+    """Queue the startup refit and arm the daily one."""
     # ── Periodic calibration refit (daily) ───────────────────────────────────
     @callback
     def _refit(_now=None):
         """Refit calibration models and refresh sensors (24-hour timer)."""
         entry.async_create_background_task(
-            hass, _do_refit(), name=f"nem_pd7day_{region}_daily_refit"
+            hass, _do_refit(store, pd_record, coordinator), name=f"nem_pd7day_{region}_daily_refit"
         )
 
     # Always refit on startup to populate iso_model (not persisted to storage).
@@ -483,57 +607,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
     # Guard: skip if fewer than MIN_OBS observations (nothing to fit).
     if store.observation_count >= 10:
         if stpasa_refresh.fetch_pending:
-            # The refit reads STPASA as an OLS stage-2 feature, and it is the
-            # most expensive calibration work the integration does, so it is the
-            # worst operation to feed a cache that is past the 90 minute fresh
-            # TTL. Hold it until the forced fetch resolves either way.
-            @callback
-            def _log_refit_gate(outcome: str) -> None:
-                if outcome == FETCH_FRESH:
-                    _LOGGER.info(
-                        "[STARTUP] %s: fresh STPASA arrived, running the "
-                        "deferred calibration refit (%d observations)",
-                        region,
-                        store.observation_count,
-                    )
-                elif outcome == FETCH_FAILED:
-                    _LOGGER.warning(
-                        "[STARTUP] %s: forced STPASA refetch failed (%s), "
-                        "running the calibration refit anyway on the stale "
-                        "cache rather than blocking startup",
-                        region,
-                        stpasa_refresh.failure_reason or "no reason reported",
-                    )
-                else:
-                    _LOGGER.warning(
-                        "[STARTUP] %s: no STPASA fetch outcome within %.0f s, "
-                        "running the calibration refit anyway on the stale "
-                        "cache rather than blocking startup",
-                        region,
-                        REFIT_WAIT_TIMEOUT_S,
-                    )
-
-            entry.async_create_background_task(
-                hass,
-                run_refit_when_stpasa_ready(
-                    stpasa_refresh,
-                    _do_refit,
-                    timeout=REFIT_WAIT_TIMEOUT_S,
-                    on_outcome=_log_refit_gate,
-                ),
-                name=f"nem_pd7day_{region}_startup_refit_gated",
-            )
-            _LOGGER.info(
-                "[STARTUP] %s: STPASA cache was stale, so the calibration "
-                "refit is deferred until the forced fetch resolves (up to "
-                "%.0f s, %d observations)",
-                region,
-                REFIT_WAIT_TIMEOUT_S,
-                store.observation_count,
+            _queue_gated_startup_refit(
+                hass, entry, region, store, stpasa_refresh,
+                partial(_do_refit, store, pd_record, coordinator),
             )
         else:
             entry.async_create_background_task(
-                hass, _do_refit(), name=f"nem_pd7day_{region}_startup_refit"
+                hass, _do_refit(store, pd_record, coordinator), name=f"nem_pd7day_{region}_startup_refit"
             )
             _LOGGER.debug(
                 "[STARTUP] %s: calibration refit queued as a background task "
@@ -546,6 +626,71 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         async_track_time_interval(hass, _refit, REFIT_INTERVAL)
     )
 
+
+def _queue_gated_startup_refit(
+    hass: HomeAssistant,
+    entry: NemPd7dayConfigEntry,
+    region: str,
+    store: CalibrationStore,
+    stpasa_refresh: StpasaRefreshCoordination,
+    do_refit: Callable[[], Awaitable[None]],
+) -> None:
+    """Hold the startup refit until the forced STPASA fetch resolves either way.
+
+    The refit reads STPASA as an OLS stage-2 feature, and it is the most
+    expensive calibration work the integration does, so it is the worst
+    operation to feed a cache that is past the 90 minute fresh TTL.
+    """
+    @callback
+    def _log_refit_gate(outcome: str) -> None:
+        if outcome == FETCH_FRESH:
+            _LOGGER.info(
+                "[STARTUP] %s: fresh STPASA arrived, running the "
+                "deferred calibration refit (%d observations)",
+                region,
+                store.observation_count,
+            )
+        elif outcome == FETCH_FAILED:
+            _LOGGER.warning(
+                "[STARTUP] %s: forced STPASA refetch failed (%s), "
+                "running the calibration refit anyway on the stale "
+                "cache rather than blocking startup",
+                region,
+                stpasa_refresh.failure_reason or "no reason reported",
+            )
+        else:
+            _LOGGER.warning(
+                "[STARTUP] %s: no STPASA fetch outcome within %.0f s, "
+                "running the calibration refit anyway on the stale "
+                "cache rather than blocking startup",
+                region,
+                REFIT_WAIT_TIMEOUT_S,
+            )
+
+    entry.async_create_background_task(
+        hass,
+        run_refit_when_stpasa_ready(
+            stpasa_refresh,
+            do_refit,
+            timeout=REFIT_WAIT_TIMEOUT_S,
+            on_outcome=_log_refit_gate,
+        ),
+        name=f"nem_pd7day_{region}_startup_refit_gated",
+    )
+    _LOGGER.info(
+        "[STARTUP] %s: STPASA cache was stale, so the calibration "
+        "refit is deferred until the forced fetch resolves (up to "
+        "%.0f s, %d observations)",
+        region,
+        REFIT_WAIT_TIMEOUT_S,
+        store.observation_count,
+    )
+
+
+# ── Setup phase: services and listeners ──────────────────────────────────────
+
+def _register_services_and_listeners(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> None:
+    """Register the force_refit service once, and this entry's options listener."""
     # ── Manual refit service ───────────────────────────────────────────────
     async def _handle_force_refit(call: ServiceCall) -> None:
         """Handle nem_pd7day.force_refit service call."""
@@ -572,11 +717,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) ->
         hass.services.async_register(DOMAIN, "force_refit", _handle_force_refit)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-
-    trace.checkpoint("services and listeners")
-    trace.log_summary()
-
-    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: NemPd7dayConfigEntry) -> bool:

@@ -1406,16 +1406,16 @@ def real_run_features(coord, periods, region):
         types.SimpleNamespace(nemtime=(run_dt + timedelta(days=d)).isoformat(), value_tj=70.0)
         for d in range(8)
     ])
-    with patch.object(type(coord), "current_run_features", PD7DayCoordinator.current_run_features), \
-         patch.object(type(coord), "_compute_run_features",
-                      staticmethod(PD7DayCoordinator._compute_run_features), create=True):
+    with patch.object(type(coord), "current_run_features", PD7DayCoordinator.current_run_features):
         yield
 
 
 def test_cold_tariff_write_computes_run_features_once():
     periods, _forecast, tariff, _export, coord, _store = build("QLD1")
     calls = []
-    real = PD7DayCoordinator._compute_run_features
+    # The uncached computation behind current_run_features (#366 moved it to
+    # coordinator_jobs), patched where the property's cache calls it.
+    real = _coord_mod._jobs.compute_run_features
 
     def counting(price_data):
         calls.append(1)
@@ -1423,7 +1423,7 @@ def test_cold_tariff_write_computes_run_features_once():
 
     with real_run_features(coord, periods, "QLD1"), \
          patch.object(_tariff_mod.tariff_pricing, "spot_to_tariff", return_value=15.5), \
-         patch.object(type(coord), "_compute_run_features", staticmethod(counting)):
+         patch.object(_coord_mod._jobs, "compute_run_features", counting):
         clear_memos(coord)
         attrs = tariff.extra_state_attributes
         assert attrs["forecast"], "the write must still publish a forecast"
