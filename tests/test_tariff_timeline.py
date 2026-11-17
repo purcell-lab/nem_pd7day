@@ -298,3 +298,103 @@ def test_a_current_memo_means_no_spot_map(monkeypatch):
     view.publish(view.key(sensor._price_data), calibrated)
     monkeypatch.setattr(type(sensor), "_calibrated_spot_map", lambda self, d: pytest.fail("spot map built"))
     assert len(sensor.extra_state_attributes["forecast"]) == 12
+
+
+# ── One price cache per tariff priced, shared across the region (#365) ──────
+
+def test_a_shared_price_cache_is_one_per_key_and_lives_on_the_holder():
+    holder = types.SimpleNamespace()
+    first = _tf_mod.shared_price_cache(holder, ("import", "8400"))
+    assert isinstance(first, _tf_mod.PriceCache)
+    assert _tf_mod.shared_price_cache(holder, ("import", "8400")) is first
+    export = _tf_mod.shared_price_cache(holder, ("export", "8400"))
+    assert export is not first
+    assert getattr(holder, _tf_mod.PRICE_CACHES_ATTR) == {("import", "8400"): first, ("export", "8400"): export}
+    # A mock coordinator invents the attribute; it is replaced by a real dict, not used.
+    mock = MagicMock()
+    assert _tf_mod.shared_price_cache(mock, "k") is _tf_mod.shared_price_cache(mock, "k")
+    # A holder that cannot take the attribute holds none.
+    assert _tf_mod.shared_price_cache(object(), "k") is None
+
+
+def _publish_memo(sensor):
+    """Fill the region's calibrated forecast memo, as its forecast sensors do before the tariffs."""
+    sensor.coordinator._calibrated_forecast_cache = {}
+    view = sensor._calibrated_view()
+    calibrated = [{"time": p.time, "nemtime": p.nemtime, "raw_value": p.value, "value": p.value}
+                  for p in sensor._price_data.forecast]
+    view.publish(view.key(sensor._price_data), calibrated)
+
+
+def _beside(sensor, cls, **attrs):
+    """A second tariff sensor of the same entry and coordinator."""
+    other = _sensor(cls)
+    other.coordinator = sensor.coordinator
+    other._entry = sensor._entry
+    other.hass = sensor.hass
+    for name, value in attrs.items():
+        setattr(other, name, value)
+    return other
+
+
+def _counting(monkeypatch, cls):
+    priced = []
+    real = cls._price_period
+
+    def price_period(self, period, calibrated=None):
+        priced.append((type(self).__name__, period.nemtime))
+        return real(self, period, calibrated=calibrated)
+
+    monkeypatch.setattr(cls, "_price_period", price_period)
+    return priced
+
+
+@pytest.mark.parametrize("full_cls, day27_cls, codes", [
+    (_tariff_mod.NemPd7dayTariffSensor, _tariff_mod.TariffForecastDays27Sensor, {}),
+    (_tariff_mod.NemPd7dayExportTariffSensor, _tariff_mod.ExportTariffForecastDays27Sensor,
+     {"_import_code": "8400", "_export_code": "8400"}),
+], ids=["import", "export"])
+def test_the_day27_sensor_reads_the_prices_its_full_partner_computed(monkeypatch, full_cls, day27_cls, codes):
+    """At startup each tariff sensor priced every interval through aemo_to_tariff from
+    a cold cache; the day 2-7 sensor now prices none its full partner has priced, and
+    publishes the same values."""
+    support.freeze_timeline_clock(monkeypatch, RUN + timedelta(minutes=1))
+    monkeypatch.setattr(_tariff_mod, "day27_start_for",
+                        lambda *a: _nem_time.Day27Start(RUN + timedelta(hours=3), "clock"))
+    full = _sensor(full_cls)
+    for name, value in codes.items():
+        setattr(full, name, value)
+    day27 = _beside(full, day27_cls, **codes)
+    _publish_memo(full)
+    priced = _counting(monkeypatch, full_cls)
+
+    full_forecast = full.extra_state_attributes["forecast"]
+    assert len(priced) == 12
+    assert full._price_cache() is day27._price_cache()
+    day27_forecast = day27.extra_state_attributes["forecast"]
+    assert len(priced) == 12, "the day 2-7 sensor priced intervals its partner had priced"
+    assert len(day27_forecast) == 5  # the half hours from 07:30
+    by_time = {e["time"]: e for e in full_forecast}
+    for entry in day27_forecast:
+        assert entry == by_time[entry["time"]]
+        interval = _tf_mod.Interval(entry["time"], entry["nemtime"], entry["spot_raw"])
+        assert entry["value"] == day27._price_period(interval, calibrated=entry["spot"])
+
+
+def test_import_export_another_code_and_another_loss_factor_do_not_share(monkeypatch):
+    support.freeze_timeline_clock(monkeypatch, RUN + timedelta(minutes=1))
+    imp = _sensor()
+    exp = _beside(imp, _tariff_mod.NemPd7dayExportTariffSensor, _import_code="8400", _export_code="8400")
+    other_code = _beside(imp, _tariff_mod.NemPd7dayTariffSensor, _tariff_code="6900")
+    assert len({id(s._price_cache()) for s in (imp, exp, other_code)}) == 3
+    before = imp._price_cache()
+    imp._entry.options = {_const_mod.CONF_LOSS_FACTOR: 1.05}
+    assert imp._price_cache() is not before
+
+
+def test_a_coordinator_that_holds_no_cache_leaves_the_sensor_its_own(monkeypatch):
+    support.freeze_timeline_clock(monkeypatch, RUN + timedelta(minutes=1))
+    sensor = _sensor()
+    monkeypatch.setattr(_tariff_mod, "shared_price_cache", lambda holder, key: None)
+    cache = sensor._price_cache()
+    assert cache is sensor._price_cache() is sensor._tariff_price_cache

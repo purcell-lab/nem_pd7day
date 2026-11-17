@@ -694,7 +694,7 @@ async def _setup(built: Built) -> None:
     )
     cached = await forecast_store.load()
     if cached is not None:
-        coordinator.async_set_updated_data(cached)
+        mods.coordinator.restore_cached(coordinator, cached)
     else:
         await coordinator.async_config_entry_first_refresh()
 

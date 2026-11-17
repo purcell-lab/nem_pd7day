@@ -35,7 +35,7 @@ from .const import (
     SHARED_FETCH_KEY,
     SHARED_TRADINGIS_KEY,
 )
-from .coordinator import DispatchCoordinator, PD7DayCoordinator
+from .coordinator import DispatchCoordinator, PD7DayCoordinator, restore_cached
 from .fetch_scheduler import DailyFetchScheduler
 from .forecast_store import ForecastStore
 from .market_notice_client import MarketNoticeClient
@@ -346,7 +346,7 @@ async def _async_start_coordinator(
     )
     if cached is not None:
         # Phase 1: restore cache instantly — sensors available immediately.
-        coordinator.async_set_updated_data(cached)
+        restore_cached(coordinator, cached)
         # Phase 2: schedule a non-blocking background refresh, staggered per
         # region so the 5 coordinators don't all hit NEMWEB at once.
         region_index = REGION_STARTUP_ORDER.get(region, 0)

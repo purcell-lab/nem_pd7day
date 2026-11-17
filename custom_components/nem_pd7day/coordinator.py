@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
 import aiohttp
@@ -150,6 +150,29 @@ def _domain_value(hass: Any, key: str) -> Any:
     if isinstance(domain_data, dict):
         return domain_data.get(DOMAIN, {}).get(key)
     return None
+
+
+def restore_cached(coordinator: Any, cached: PD7DayResult) -> None:
+    """Serve a forecast restored from the cache, phase 1 of two-phase startup (#365).
+
+    The cache is saved on each successful fetch, so its ``updated_at`` is when
+    that success was, and it becomes ``last_success_at``. A cache restored
+    across the overnight gap is hours old, and ``data_age_hours`` then says
+    so rather than reading None until the background refresh lands.
+    ``is_stale`` needs nothing more: the missed slot rule reads the run time,
+    so a restored run that a publish has since superseded reads stale until
+    the refresh replaces it. A cache without a readable ``updated_at`` leaves
+    ``last_success_at`` as it was.
+    """
+    try:
+        fetched_at = datetime.fromisoformat(str(cached.updated_at)) if cached.updated_at else None
+    except ValueError:
+        fetched_at = None
+    if fetched_at is not None:
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=NEM_TZ)
+        coordinator.last_success_at = fetched_at.astimezone(timezone.utc)
+    coordinator.async_set_updated_data(cached)
 
 
 class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):

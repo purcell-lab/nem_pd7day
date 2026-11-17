@@ -545,13 +545,77 @@ def test_success_clears_staleness_and_resets_age():
 
 
 def test_staleness_attributes_before_first_success():
-    """Restored-from-cache startup: nothing fetched yet, so no age and not
-    stale rather than a misleading zero."""
+    """Nothing fetched or restored yet: no age and not stale rather than a
+    misleading zero."""
     coord = make_coordinator()
     assert coord.staleness_attributes() == {
         "data_age_hours": None, "last_success_at": None,
         "is_stale": False, "stale_reason": None,
     }
+
+
+# ── A forecast restored from the cache (issue #365) ──────────────────────────
+# The cache is restored across the gap since the last publish, up to 16 hours,
+# so the staleness attributes must say how old the restored run is.
+
+def _restore(coord, generated_at: str, updated_at: str | None) -> MagicMock:
+    price = MagicMock(name="price_data")
+    price.forecast_generated_at = generated_at
+    cached = MagicMock(name="cached_result")
+    cached.prices = {"SA1": price}
+    cached.updated_at = updated_at
+    coord.async_set_updated_data = MagicMock(side_effect=lambda d: setattr(coord, "data", d))
+    _coord_mod.restore_cached(coord, cached)
+    return cached
+
+
+def test_a_restored_cache_reports_its_fetch_as_the_last_success():
+    """The 07:30 run, fetched at 07:31 and restored at 11:01: 3.5 hours old, current, not stale."""
+    coord = make_coordinator()
+    cached = _restore(coord, "2026-09-05T07:30:00+10:00", "2026-09-05T07:31:00+10:00")
+    coord.async_set_updated_data.assert_called_once_with(cached)
+    assert coord.data is cached
+    assert coord.last_success_at == datetime(2026, 9, 4, 21, 31, tzinfo=timezone.utc)
+    attrs = _attrs_at(coord, datetime(2026, 9, 5, 1, 1, tzinfo=timezone.utc))   # 11:01 NEM
+    assert attrs == {
+        "data_age_hours": 3.5,
+        "last_success_at": "2026-09-05T07:31:00+10:00",
+        "is_stale": False,
+        "stale_reason": None,
+    }
+
+
+def test_a_restored_overnight_cache_is_current_until_the_next_publish():
+    """The 18:00 run restored at 06:45 NEM, 12.7 hours old, is still the newest run."""
+    coord = make_coordinator()
+    _restore(coord, "2026-09-04T18:00:00+10:00", "2026-09-04T18:01:00+10:00")
+    attrs = _attrs_at(coord, datetime(2026, 9, 4, 20, 45, tzinfo=timezone.utc))   # 06:45 NEM
+    assert attrs["data_age_hours"] == 12.73
+    assert attrs["is_stale"] is False
+
+
+def test_a_restored_run_a_publish_has_superseded_reads_stale():
+    """Restored at 14:00 NEM, the 07:30 run predates the 13:00 publish: stale until the refresh lands."""
+    coord = make_coordinator()
+    _restore(coord, "2026-09-05T07:30:00+10:00", "2026-09-05T07:31:00+10:00")
+    attrs = _attrs_at(coord, datetime(2026, 9, 5, 4, 0, tzinfo=timezone.utc))   # 14:00 NEM
+    assert attrs["is_stale"] is True
+    assert attrs["stale_reason"] == "missed 13:00 run"
+    assert attrs["data_age_hours"] == 6.48
+
+
+@pytest.mark.parametrize("updated_at", [None, "", "not a time"])
+def test_a_restored_cache_without_a_readable_fetch_time_leaves_no_age(updated_at):
+    coord = make_coordinator()
+    cached = _restore(coord, "2026-09-05T07:30:00+10:00", updated_at)
+    assert coord.data is cached
+    assert coord.last_success_at is None
+
+
+def test_a_naive_fetch_time_is_read_as_nem_time():
+    coord = make_coordinator()
+    _restore(coord, "2026-09-05T07:30:00+10:00", "2026-09-05T07:31:00")
+    assert coord.last_success_at == datetime(2026, 9, 4, 21, 31, tzinfo=timezone.utc)
 
 
 def test_staleness_helper_ignores_coordinators_that_do_not_track_it():

@@ -47,7 +47,7 @@ from .tariff_catalogue import library_version, seasonal as seasonal_tariff, tari
 from .calibration_inputs import interval_key_for_period
 from .nem_time import now_nem, offset_seam_point, parse_iso, to_nem_iso
 from .region_timeline import listen_for_runs, region_timeline, timeline_forecast
-from .tariff_forecast import Interval, PriceCache, tariff_entries
+from .tariff_forecast import Interval, PriceCache, shared_price_cache, tariff_entries
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -145,6 +145,7 @@ class CalibratedTariffMixin:
         hass: Any
         entity_id: str
         _region: str
+        _distributor: str
         _store: Any
 
         @property
@@ -154,6 +155,8 @@ class CalibratedTariffMixin:
         def _get_additional_fee(self) -> float: ...
         def _price_period(self, period: Any, calibrated: float | None = None) -> float | None: ...
         def _lookup_period_info(self, period: Any) -> tuple[str | None, float | None]: ...
+        @property
+        def _priced_code(self) -> str: ...
 
     def _calibrated_view(self) -> CalibratedForecast:
         return CalibratedForecast(self.coordinator, self._store, self._region)
@@ -270,9 +273,7 @@ class CalibratedTariffMixin:
         if start is not None:
             entries = [e for e in entries if start.includes(parse_iso(e["time"]))]
         timer.step("timeline_forecast")
-        cache = getattr(self, "_tariff_price_cache", None)
-        if cache is None:
-            cache = self._tariff_price_cache = PriceCache()
+        cache = self._price_cache()
         cache.renew((id(calibrated), self._get_additional_fee()), pin=calibrated)
 
         def price(interval: Interval, spot: float) -> float | None:
@@ -282,6 +283,31 @@ class CalibratedTariffMixin:
         timer.step("tariff pricing")
         timer.finish(_LOGGER)
         return priced
+
+    def _price_cache(self) -> PriceCache:
+        """The prices and periods this tariff shares with the region's sensors that price it alike (#365).
+
+        Keyed on what a price depends on beyond the interval, spot, calibrated
+        forecast and fee that ``PriceCache`` keys itself: the pricing and period
+        functions the class binds (import or export, and any override), the
+        distributor, the code priced and the loss factors. The day 2-7 sensors
+        then read the prices their full forecast partners computed: at startup
+        each priced every interval through aemo_to_tariff from a cold cache.
+        An export code shared by two import tariffs (Ausgrid EA029) prices
+        identically, so those share too. Falls back to a cache of the entity's
+        own when the coordinator cannot hold one.
+        """
+        key = (
+            type(self)._price_period, type(self)._lookup_period_info,
+            self._region, self._distributor, self._priced_code, _losses_of(self),
+        )
+        shared = shared_price_cache(self.coordinator, key)
+        if shared is not None:
+            return shared
+        cache = getattr(self, "_tariff_price_cache", None)
+        if cache is None:
+            cache = self._tariff_price_cache = PriceCache()
+        return cache
 
     def _calibrated_value_memoised(self, period, spot_map: dict | None) -> float | None:
         """Calibrated spot for a period, from the per run memo when it holds it.
