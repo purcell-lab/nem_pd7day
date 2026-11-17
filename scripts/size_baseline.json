@@ -10,7 +10,6 @@
     }
   },
   "functions": {
-    "__init__:async_setup_entry": 464,
     "calibration_engine:CalibrationResult.summary": 67,
     "calibration_engine:_quantile_regression": 86,
     "calibration_inputs:stpasa_features_for_interval": 98,
