@@ -1,9 +1,5 @@
 {
   "classes": {
-    "calibration_store:CalibrationStore": {
-      "lines": 364,
-      "methods": 22
-    },
     "coordinator:PD7DayCoordinator": {
       "lines": 405,
       "methods": 10
