@@ -55,6 +55,9 @@ UpdateFailed = _coord_mod.UpdateFailed
 NemwebFetchError = _coord_mod.NemwebFetchError
 
 PD7DayCoordinator = _coord_mod.PD7DayCoordinator
+# The one notice poll async_fetch_notices runs, from the module the
+# coordinator delegates its side jobs to (#366).
+fetch_notices_once = _coord_mod._jobs.fetch_notices_once
 DispatchCoordinator = _coord_mod.DispatchCoordinator
 CaseSolutionData = _client_mod.CaseSolutionData
 PD7DayResult = _client_mod.PD7DayResult
@@ -346,7 +349,7 @@ def test_notice_poll_stamps_last_fetched_at_even_when_nothing_relevant_found():
 
     polled = datetime(2026, 9, 6, 13, 0, tzinfo=NEM_TZ)
     with patch.object(_notice_store_mod, "now_nem", return_value=polled):
-        run_async(coord._fetch_notices_once())
+        run_async(fetch_notices_once(notice_client, notice_store, coord._regions))
     assert notice_store.last_fetched_at == polled
     # Nothing relevant and the cursor did not move, so nothing was written.
     notice_store._store.async_save.assert_not_awaited()
@@ -355,7 +358,7 @@ def test_notice_poll_stamps_last_fetched_at_even_when_nothing_relevant_found():
     notice_client.fetch_new_notices = AsyncMock(side_effect=RuntimeError("503"))
     with patch.object(_notice_store_mod, "now_nem", return_value=polled + timedelta(hours=1)):
         with pytest.raises(RuntimeError):
-            run_async(coord._fetch_notices_once())
+            run_async(fetch_notices_once(notice_client, notice_store, coord._regions))
     assert notice_store.last_fetched_at == polled
 
 

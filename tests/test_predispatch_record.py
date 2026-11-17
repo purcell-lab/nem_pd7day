@@ -7,6 +7,7 @@ each settled half hour into it beside the PD7DAY store.
 """
 from __future__ import annotations
 
+import ast
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -225,6 +226,16 @@ def test_setup_builds_the_record_before_the_platforms_subscribe_it():
     """v3.42.0 built it after _forward_platforms, so the sensor setup saw None:
     no run was ingested and the constraints sensor showed no pd_ attributes."""
     src = (Path(__file__).parents[1] / "custom_components" / "nem_pd7day" / "__init__.py").read_text()
-    built = src.index("pd_record = PredispatchRecord(hass, region)")
-    assert built < src.index("entry.runtime_data = NemPd7dayEntryData(") < src.index("await _forward_platforms(hass, entry, region)")
-    assert "pd_record=pd_record," in src
+    functions = {
+        node.name: ast.get_source_segment(src, node)
+        for node in ast.parse(src).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    # Since #366 the record is built in its own setup phase, which
+    # async_setup_entry awaits before it assembles runtime_data and forwards the platforms.
+    loader = functions["_async_load_pd_record"]
+    assert loader.index("pd_record = PredispatchRecord(hass, region)") < loader.index("await pd_record.async_load()")
+    setup = functions["async_setup_entry"]
+    built = setup.index("pd_record = await _async_load_pd_record(hass, entry, region)")
+    assert built < setup.index("entry.runtime_data = NemPd7dayEntryData(") < setup.index("await _forward_platforms(hass, entry, region)")
+    assert "pd_record=pd_record," in setup

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -24,9 +23,6 @@ from .const import (
     NEM_TZ,
     DOMAIN,
     NEMWEB_SEMAPHORE_KEY,
-    NOTICE_FETCH_LOCK_KEY,
-    NOTICE_FETCH_STAMP_KEY,
-    NOTICE_FETCH_WINDOW_S,
     QLD1_INTERCONNECTORS,
     SHARED_FETCH_KEY,
     interconnectors_for_regions,
@@ -39,7 +35,7 @@ from .dispatch_client import (
     parse_settlement,
 )
 from .pd7day_client import PD7DayClient, PD7DayResult
-from . import tod_stats as _tod_stats
+from . import coordinator_jobs as _jobs
 from .tod_stats import TodStats
 from .nemweb_retry import NemwebFetchError, describe_status
 
@@ -147,6 +143,15 @@ def _mark_stale(coordinator: Any, reason: str) -> None:
     coordinator.stale_reason = reason
 
 
+def _domain_value(hass: Any, key: str) -> Any:
+    """``hass.data[DOMAIN][key]``, or None when it is not there or hass carries
+    no data dict (test doubles)."""
+    domain_data = getattr(hass, "data", None)
+    if isinstance(domain_data, dict):
+        return domain_data.get(DOMAIN, {}).get(key)
+    return None
+
+
 def restore_cached(coordinator: Any, cached: PD7DayResult) -> None:
     """Serve a forecast restored from the cache, phase 1 of two-phase startup (#365).
 
@@ -220,12 +225,11 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         self._notice_client: "MarketNoticeClient | None" = notice_client
         self._forecast_store: "ForecastStore | None" = forecast_store
         self._stpasa_store: "StpasaStore | None" = stpasa_store
-        # STPASA interval-start index cache, rebuilt once per STPASA run_datetime.
-        # Maps interval START (ISO-8601 NEM +10:00) -> StpasaInterval, plus a
-        # sorted list of (epoch_seconds, StpasaInterval) for O(log n) nearest
-        # match. Avoids the previous O(intervals x stpasa_intervals) linear scan
-        # that ran once per forecast interval per state write.
+        # STPASA interval index cache and the run key it was built for, rebuilt
+        # once per STPASA run by stpasa_index (coordinator_jobs.build_stpasa_index).
         self._stpasa_index_run: str | None = None
+        self._stpasa_index_map: dict[str, Any] = {}
+        self._stpasa_index_sorted: list[tuple[float, Any]] = []
         # Calibrated forecast memo, keyed by region, owned here rather than by
         # the entities. Three sensors per region ask for the same calibrated
         # forecast and compute it with the same code, so an entity level memo
@@ -237,8 +241,6 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         # its sibling above rather than left to spring into existence via
         # getattr on first use, so the object's state is visible in __init__.
         self._run_features_cache: tuple[tuple[str, int], Any] | None = None
-        self._stpasa_index_map: dict[str, Any] = {}
-        self._stpasa_index_sorted: list[tuple[float, Any]] = []
         self._first_refresh_done = False
         # 0-based position in the fixed region order — retained for callers that
         # still query it; background refreshes are now staggered in __init__.py.
@@ -256,24 +258,18 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         the coordinator still works standalone (unit tests, single-entry setups
         constructed directly).
         """
-        domain_data = getattr(self.hass, "data", None)
-        if isinstance(domain_data, dict):
-            shared = domain_data.get(DOMAIN, {}).get(SHARED_FETCH_KEY)
-            if shared is not None:
-                return shared
+        shared = _domain_value(self.hass, SHARED_FETCH_KEY)
+        if shared is not None:
+            return shared
         return self._build_own_client()
 
     def _build_own_client(self) -> PD7DayClient:
         if self._session is None or self._session.closed:
             self._session = async_get_clientsession(self.hass)
-        semaphore = None
-        domain_data = getattr(self.hass, "data", None)
-        if isinstance(domain_data, dict):
-            semaphore = domain_data.get(DOMAIN, {}).get(NEMWEB_SEMAPHORE_KEY)
         return PD7DayClient(
             self._session,
             interconnector_ids=self._interconnector_ids,
-            semaphore=semaphore,
+            semaphore=_domain_value(self.hass, NEMWEB_SEMAPHORE_KEY),
             # Decompression and CSV parsing run in HA's executor, not on the
             # event loop. async_add_executor_job also tracks the job so HA can
             # await it during shutdown.
@@ -335,27 +331,12 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
             list(result.interconnectors.keys()),
         )
 
-        # STPASA is fetched centrally (once per cycle) in __init__.py and
-        # distributed to every region store; the coordinator only READS its
-        # store here.  latest() returns None when no fresh data is available,
-        # so the calibration path falls through to isotonic-only silently.
-
-        # Feed forecast history into calibration store
+        # Feed forecast history into calibration store, then recompute
+        # tod_stats from the updated observations.
         if self._store is not None:
-            stpasa_latest = (
-                self._stpasa_store.latest() if self._stpasa_store is not None else None
+            self.tod_stats = await _jobs.feed_calibration_store(
+                self._store, self._stpasa_store, result
             )
-            for region, price_data in result.prices.items():
-                await self._store.ingest_forecast(
-                    region=region,
-                    price_data=price_data,
-                    interconnectors=result.interconnectors,
-                    case=result.case,
-                    market_summary=result.market_summary,
-                    stpasa=stpasa_latest,
-                )
-            # Recompute time-of-day statistics from updated observations
-            self.tod_stats = _tod_stats.compute_for_store(self._store)
 
         # Persist the fresh result so the next HA restart can restore sensors
         # instantly (phase 1 of two-phase startup) without a blocking fetch.
@@ -372,88 +353,18 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         return result
 
     async def async_fetch_notices(self) -> None:
-        """Fetch new market notices and persist.
-
-        Market notices are not region-specific: the store and client are shared,
-        and every region coordinator reads the same notices out of the same
-        store. So this runs once per cycle across the whole integration rather
-        than once per region, which previously multiplied the directory poll and
-        every file fetch by five.
-        """
-        if self._notice_client is None or self.notice_store is None:
-            return
-
-        domain_data = self.hass.data.get(DOMAIN) if self.hass is not None else None
-        if not isinstance(domain_data, dict):
-            # No shared domain data to coordinate through, so there is no sibling
-            # coordinator to deduplicate against. Fetch directly.
-            await self._fetch_notices_once()
-            return
-
-        lock: asyncio.Lock = domain_data.setdefault(
-            NOTICE_FETCH_LOCK_KEY, asyncio.Lock()
-        )
-        # Serialised rather than checked-then-fetched, so five coordinators
-        # arriving together queue behind one fetch and then see its timestamp,
-        # instead of all passing a staleness check simultaneously.
-        async with lock:
-            last = domain_data.get(NOTICE_FETCH_STAMP_KEY)
-            now = time.monotonic()
-            if last is not None and (now - last) < NOTICE_FETCH_WINDOW_S:
-                _LOGGER.debug(
-                    "[%s] Market notices fetched %.1f s ago by another region, "
-                    "using shared store",
-                    self._regions[0],
-                    now - last,
-                )
-                return
-            await self._fetch_notices_once()
-            domain_data[NOTICE_FETCH_STAMP_KEY] = time.monotonic()
-
-    async def _fetch_notices_once(self) -> None:
-        """Poll NEMWEB for current notices and persist any change."""
-        assert self._notice_client is not None and self.notice_store is not None
-        started = time.monotonic()
-        self._notice_client.last_seen_notice_id = self.notice_store.last_seen_notice_id
-        new_notices = await self._notice_client.fetch_new_notices()
-        # The poll succeeded: say so whether or not anything relevant came
-        # back, so the sensor's last_fetched reads as "the poll is running"
-        # rather than "a notice was once stored" (issue #139). A failed fetch
-        # raises above this line and leaves the previous stamp in place.
-        self.notice_store.mark_fetched()
-
-        # Persist the cursor even when nothing relevant was found. The client has
-        # examined those files and will not examine them again, so the store has
-        # to record that or the same window is re-read on every cycle.
-        cursor_moved = self.notice_store.advance_cursor(
-            self._notice_client.last_seen_notice_id
-        )
-        if new_notices:
-            self.notice_store.add_notices(new_notices)
-        if new_notices or cursor_moved:
-            await self.notice_store.async_save()
-        if new_notices:
-            _LOGGER.info("Fetched %d new market notices", len(new_notices))
-        _LOGGER.debug(
-            "[%s] Notice fetch took %.0f ms, cursor %d",
-            self._regions[0],
-            (time.monotonic() - started) * 1000,
-            self.notice_store.last_seen_notice_id,
+        """Fetch new market notices and persist, once per cycle across every
+        region coordinator (see coordinator_jobs.fetch_notices)."""
+        await _jobs.fetch_notices(
+            self.hass, self._notice_client, self.notice_store, self._regions
         )
 
     @property
     def current_run_features(self) -> "RunFeatures | None":
         """
         RunFeatures for the latest PD7DAY result in coordinator.data, computed
-        once per run.
-
-        Mirrors calibration_engine._compute_run_features so the values fed to
-        OLS apply() at runtime match those used during fitting:
-          run_max_h6_rrp : max raw forecast for horizon < 6h
-          run_mean_rrp   : mean raw forecast for horizon < 24h
-          run_spread     : p90 − p10 of raw forecast for horizon < 24h
-        Horizon is interval START (period.time) minus the run datetime
-        (forecast_generated_at).  Returns None if no usable data.
+        once per run by coordinator_jobs.cached_run_features (what they are is
+        in compute_run_features there). Returns None if no usable data.
 
         Cached against the run identity (its generated-at stamp and interval
         count). calibrate_interval reads this once per interval, so without
@@ -462,71 +373,20 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         cent of a cold tariff state write and the source of the 0.4 to 0.9 s
         event loop stalls in issue #135.
         """
-        result = self.data
-        if result is None or not result.prices:
-            return None
-        region = self._regions[0]
-        price_data = result.prices.get(region)
-        if price_data is None or not price_data.forecast:
-            return None
-        if not price_data.forecast_generated_at:
-            return None
-        key = (price_data.forecast_generated_at, len(price_data.forecast))
         # getattr, not a direct read: tests reuse this property on stand-in
         # coordinator classes that never run PD7DayCoordinator.__init__, and
         # must still degrade to an uncached first read rather than raising.
-        cached = getattr(self, "_run_features_cache", None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
-        features = self._compute_run_features(price_data)
-        self._run_features_cache = (key, features)
+        features, self._run_features_cache = _jobs.cached_run_features(
+            self.data, self._regions, getattr(self, "_run_features_cache", None)
+        )
         return features
 
-    @staticmethod
-    def _compute_run_features(price_data: Any) -> "RunFeatures | None":
-        """The uncached computation behind ``current_run_features``."""
-        from .calibration_engine import RunFeatures, _p90_minus_p10
-        from .nem_time import parse_iso
-
-        try:
-            run_dt = parse_iso(price_data.forecast_generated_at)
-        except Exception:  # noqa: BLE001
-            return None
-
-        near: list[float] = []
-        day: list[float] = []
-        for period in price_data.forecast:
-            try:
-                start_dt = parse_iso(period.time)
-            except Exception:  # noqa: BLE001
-                continue
-            horizon_hours = (start_dt - run_dt).total_seconds() / 3600.0
-            if horizon_hours < 6:
-                near.append(period.value)
-            if horizon_hours < 24:
-                day.append(period.value)
-
-        if not near and not day:
-            return None
-        return RunFeatures(
-            run_max_h6_rrp=max(near) if near else 0.0,
-            run_mean_rrp=(sum(day) / len(day)) if day else 0.0,
-            run_spread=_p90_minus_p10(day),
-        )
-
     def stpasa_index(self):
-        """
-        Return a cached STPASA lookup index for the latest STPASA result.
+        """``(result, index_map, sorted_intervals)`` for the latest STPASA result.
 
-        Returns a tuple ``(result, index_map, sorted_intervals)`` where:
-          * ``result`` is the ``StpasaResult`` from the store (or ``None``),
-          * ``index_map`` maps interval-START ISO strings to ``StpasaInterval``,
-          * ``sorted_intervals`` is a list of ``(epoch_seconds, StpasaInterval)``
-            sorted by epoch, for O(log n) nearest-match fallback.
-
-        The index is built once per STPASA ``run_datetime`` and reused across
-        every forecast interval and every sensor state write, replacing the old
-        O(forecast_intervals x stpasa_intervals) linear scan.
+        ``result`` is the store's ``StpasaResult`` (or ``None``), and the index
+        is coordinator_jobs.build_stpasa_index's, built once per STPASA run and
+        reused across every forecast interval and every sensor state write.
         """
         store = self._stpasa_store
         if store is None:
@@ -548,19 +408,7 @@ class PD7DayCoordinator(DataUpdateCoordinator[PD7DayResult]):
         # same-run refetch that could, in principle, change interval contents).
         cache_key = f"{result.run_datetime}|{result.fetched_at}"
         if cache_key != self._stpasa_index_run:
-            from .nem_time import interval_start, parse_iso
-
-            index_map: dict[str, Any] = {}
-            sorted_intervals: list[tuple[float, Any]] = []
-            for si in result.intervals:
-                try:
-                    start_iso = interval_start(si.interval_datetime)
-                    epoch = parse_iso(start_iso).timestamp()
-                except (ValueError, TypeError):
-                    continue
-                index_map[start_iso] = si
-                sorted_intervals.append((epoch, si))
-            sorted_intervals.sort(key=lambda t: t[0])
+            index_map, sorted_intervals = _jobs.build_stpasa_index(result)
             # Publish the run key LAST. It is the freshness token the sensor
             # calibrated forecast memo folds into its cache key, and this method
             # is called both from the event loop and from the calibration warm

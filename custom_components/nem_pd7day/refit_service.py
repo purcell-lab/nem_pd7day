@@ -1,12 +1,13 @@
 """
 Refit inputs and records: what the calibration fit is given, and what it leaves.
 
-``CalibrationStore.async_refit`` runs the stage 1 and stage 2 fits in the
-executor and owns the fit generation and the order of every await. This module
-holds the pure parts around those awaits: the conversion of stored observation
-rows into the engine's ``Observation`` tuples, the STPASA feature map the
-stage 2 fit joins on, and the compression-ratio record kept per fit in the
-store's in-memory ``iso_history`` (spec 004).
+``CalibrationFit.async_refit`` (the refit part of ``CalibrationStore``, #366)
+runs the stage 1 and stage 2 fits in the executor and owns the fit generation
+and the order of every await. This module holds the pure parts around those
+awaits: the conversion of stored observation rows into the engine's
+``Observation`` tuples, the STPASA feature map the stage 2 fit joins on, and
+the compression-ratio record kept per fit in the store's in-memory
+``iso_history`` (spec 004).
 """
 from __future__ import annotations
 
