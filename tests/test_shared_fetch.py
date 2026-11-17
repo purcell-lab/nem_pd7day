@@ -331,7 +331,7 @@ def test_new_publication_triggers_a_fresh_download():
 
 
 def test_reused_parse_is_restamped_so_the_disk_cache_stays_usable():
-    """ForecastStore drops a cache older than 35 minutes.
+    """ForecastStore drops a cache older than _CACHE_MAX_AGE_S (16 hours).
 
     updated_at records when the data was last confirmed to be the newest
     published file. Reusing a parse without restamping would make a genuinely

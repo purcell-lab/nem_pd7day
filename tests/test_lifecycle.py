@@ -101,6 +101,28 @@ def test_do_refit_is_defined_at_setup_scope_and_runs_after_the_fetch():
     ]
 
 
+def test_a_restored_cache_is_served_with_its_age_and_still_refreshed():
+    """Issue #365: the cache-hit branch restores through restore_cached and queues the
+    background refresh; only a miss blocks setup on the first refresh.
+
+    The cache is now restored across the gap since the last publish, hours
+    old, so the restore must carry its fetch time into the staleness
+    attributes, and the refresh that replaces it with any newer run must
+    still be queued.
+    """
+    branch = next(
+        node for node in ast.walk(_setup_entry_ast())
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "cached is not None"
+    )
+    hit = "\n".join(ast.unparse(n) for n in branch.body)
+    miss = "\n".join(ast.unparse(n) for n in branch.orelse)
+    assert "restore_cached(coordinator, cached)" in hit
+    assert "_delayed_refresh(coordinator, delay)" in hit
+    assert "async_set_updated_data" not in hit
+    assert "async_config_entry_first_refresh" not in hit
+    assert "await coordinator.async_config_entry_first_refresh()" in miss
+
+
 def test_do_refit_skips_below_ten_observations_then_refits():
     do_refit = _nested_function(_setup_entry_ast(), "_do_refit")
     # The first statement after the docstring is the guard.

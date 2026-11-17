@@ -14,15 +14,22 @@ A price depends only on the interval's end, its spot and the usage fee, so
 unchanged. A new timeline every 5 minutes then prices its near-term entries
 only; the PD7DAY span is priced once per run.
 
+Since v3.51.2 one cache serves every sensor of a region that prices the same
+tariff the same way (``shared_price_cache``): the day 2-7 import and export
+sensors read the prices their full forecast partners computed rather than
+pricing the same intervals again (#365).
+
 Service layer: no Home Assistant imports, no clock.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Hashable, Iterable, Optional
 
 # Room for two runs' worth of intervals; cleared, not evicted, past it.
 MAX_CACHED = 2048
+# The attribute holding a region's shared price caches on its coordinator (#365).
+PRICE_CACHES_ATTR = "_tariff_price_caches"
 
 
 @dataclass(frozen=True)
@@ -64,6 +71,33 @@ class PriceCache:
         if interval.nemtime not in self._periods:
             self._periods[interval.nemtime] = compute(interval)
         return self._periods[interval.nemtime]
+
+
+def shared_price_cache(holder: Any, key: Hashable) -> Optional[PriceCache]:
+    """The ``PriceCache`` kept for ``key`` on ``holder``, made on first use; None if it cannot hold one.
+
+    ``holder`` is the region's coordinator, so the caches live as long as the
+    config entry does and a reload, which an options change triggers, starts
+    them afresh, as the calibrated forecast memo beside them does. ``key``
+    must name everything a cached price or period depends on beyond what
+    ``PriceCache`` keys itself (interval end, spot, and the calibrated forecast
+    and fee through ``renew``): the caller passes the pricing it binds, the
+    code priced and the loss factors (#365).
+
+    The type is checked, not just tested for None, because a MagicMock
+    coordinator invents an attribute rather than raising.
+    """
+    caches = getattr(holder, PRICE_CACHES_ATTR, None)
+    if not isinstance(caches, dict):
+        caches = {}
+        try:
+            setattr(holder, PRICE_CACHES_ATTR, caches)
+        except (AttributeError, TypeError):
+            return None
+    cache = caches.get(key)
+    if cache is None:
+        cache = caches[key] = PriceCache()
+    return cache
 
 
 def _round(value: Any) -> Optional[float]:

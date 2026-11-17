@@ -5,8 +5,8 @@ fetch completes.
 
 Covers the PD7DayResult serialise -> save -> load round trip over every nested
 dataclass, optional None fields, staleness (updated_at older than
-_CACHE_MAX_AGE_S loads as None), the first-install and corrupt-cache paths and
-per region key isolation.
+_CACHE_MAX_AGE_S loads as None, a cache from the last publish loads, #365), the
+first-install and corrupt-cache paths and per region key isolation.
 
 The two-phase startup branch in __init__.async_setup_entry (cache hit ->
 async_set_updated_data plus a staggered background refresh, otherwise
@@ -20,6 +20,8 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
+
+import pytest
 
 from support import (
     NEM_TZ,
@@ -196,10 +198,49 @@ def test_round_trip_handles_optional_none_fields():
 
 
 def test_load_returns_none_when_stale():
-    """updated_at older than _CACHE_MAX_AGE_S (35 minutes) loads as None."""
+    """updated_at older than _CACHE_MAX_AGE_S (16 hours) loads as None."""
     store = _new_store()
     run_async(store.save(_make_result(_stale_iso())))
     assert run_async(store.load()) is None
+
+
+@pytest.mark.parametrize("hours", [0.6, 3.0, 5.5, 13.5, 15.5], ids=lambda h: f"{h}h")
+def test_a_cache_from_the_last_publish_is_restored(hours):
+    """A cache hours old is restored, not dropped (#365).
+
+    PD7DAY is fetched only when a run is published and the cache is saved on
+    each fetch, so a restart finds it as old as the time since the last
+    publish: 5.5 hours between 07:30 and 13:00, 13.5 hours overnight. With
+    the 35 minute limit every one of these blocked setup on a NEMWEB download.
+    """
+    store = _new_store()
+    updated_at = nem_iso(datetime.now(NEM_TZ) - timedelta(hours=hours))
+    run_async(store.save(_make_result(updated_at)))
+    restored = run_async(store.load())
+    assert restored is not None
+    assert restored.updated_at == updated_at
+
+
+@pytest.mark.parametrize("hours", [16.5, 24.0, 72.0], ids=lambda h: f"{h}h")
+def test_a_cache_older_than_the_limit_is_not_restored(hours):
+    """Past 16 hours (an outage longer than the overnight gap) setup still blocks on a fetch."""
+    store = _new_store()
+    run_async(store.save(_make_result(nem_iso(datetime.now(NEM_TZ) - timedelta(hours=hours)))))
+    assert run_async(store.load()) is None
+
+
+def test_the_cache_limit_covers_the_longest_gap_between_publishes():
+    """The limit is read against FETCH_TIMES_NEM, so a moved publish slot fails here (#365).
+
+    The longest gap, wrapping past midnight, plus the grace a late run is
+    allowed, must fit inside the limit; and the limit stays under a day, so
+    a cache a full publish cycle old is not served as a normal restart.
+    """
+    minutes = sorted(h * 60 + m for h, m in _const_mod.FETCH_TIMES_NEM)
+    gaps = [b - a for a, b in zip(minutes, minutes[1:])] + [minutes[0] + 24 * 60 - minutes[-1]]
+    longest_s = max(gaps) * 60
+    assert longest_s == 13.5 * 3600
+    assert longest_s + _const_mod.STALE_RUN_GRACE_MIN * 60 < _CACHE_MAX_AGE_S < 24 * 3600
 
 
 def test_load_returns_none_when_no_cache():
