@@ -1036,9 +1036,9 @@ def test_local_price_entities_chosen_enabled_and_presets_disabled(monkeypatch):
     everything = run_async(_sensor_mod._local_price_entities(hass, entry, "QLD1", MagicMock()))
     presets_only = duid_sensors(everything)
     assert len(presets_only) == 3 and not any(e._attr_entity_registry_enabled_default for e in presets_only)
-    # Every QLD1 city's zone proxy, enabled (Home needs a location the mock lacks).
+    # Every QLD1 congestion zone's proxy, enabled (Home needs a location the mock lacks).
     zones = [e for e in everything if isinstance(e, zs.NemPd7dayZonePriceSensor)]
-    assert len(zones) == 8 and all(getattr(e, "_attr_entity_registry_enabled_default", True) for e in zones)
+    assert len(zones) == 5 and all(getattr(e, "_attr_entity_registry_enabled_default", True) for e in zones)
 
     entry.options = {"local_price_duids": "GSTONE1"}
     entities = duid_sensors(run_async(_sensor_mod._local_price_entities(hass, entry, "QLD1", MagicMock())))
@@ -1047,24 +1047,25 @@ def test_local_price_entities_chosen_enabled_and_presets_disabled(monkeypatch):
     assert len(entities) == 1 + 2  # GSTONE1 is chosen, so not also a preset
 
 
-def test_every_city_and_home_is_built_with_the_options_radius():
-    """#288: every preset city of the entry's region and Home, whatever an older entry chose;
-    Home needs HA's location."""
+def test_every_congestion_zone_and_home_is_built():
+    """#288, #387: every congestion zone of the entry's region and Home, whatever an older entry chose
+    (a stored radius is ignored); Home needs HA's location."""
     import custom_components.nem_pd7day.duid_catalogue as cat
     from dataclasses import replace as _replace
 
-    node = cat.NodeInfo("QNEAR1", "QLD1", 1.0, ("NEAR1",), ("Near",), -27.5, 153.0)
-    catalogue = _replace(cat.EMPTY, nodes={"QNEAR1": node})
+    node = cat.NodeInfo("QWIV1", "QLD1", 1.0, ("WIVENHOE",), ("Wivenhoe",), -27.5, 153.0)  # in Q_SOUTHEAST
+    catalogue = _replace(cat.EMPTY, nodes={"QWIV1": node})
     entry = MagicMock()
-    entry.options = {"price_zones": "brisbane, home, sydney", "zone_radius_km": 50}
+    entry.options = {"price_zones": "brisbane, home, sydney", "zone_radius_km": 50}  # retired options
     located = MagicMock()
     located.config.latitude, located.config.longitude = -27.4, 153.0
     unset = MagicMock()
     unset.config.latitude, unset.config.longitude = None, None
 
     zones = _sensor_mod._zones(located, entry, "QLD1", catalogue)
-    cities = ["brisbane", "gold_coast", "sunshine_coast", "toowoomba", "rockhampton", "mackay", "townsville", "cairns"]
-    assert [z.key for z in zones] == [*cities, "home"] and zones[0].radius_km == 50.0
+    codes = ["q_central", "q_farnorth", "q_nth", "q_southeast", "q_southwest"]
+    assert [z.key for z in zones] == [*codes, "home"]
+    assert zones[-1].congestion_zone == "Q_SOUTHEAST" and zones[-1].members[0].node.tni == "QWIV1"
     import custom_components.nem_pd7day.load_points as ldp
 
     loads = ldp.parse_load_points({"points": {"QBMH": {"region": "QLD1", "name": "Belmont", "kv": "110", "mlf": 1.0128}}})
@@ -1072,13 +1073,11 @@ def test_every_city_and_home_is_built_with_the_options_radius():
     home = _sensor_mod._zones(located, entry, "QLD1", catalogue, loads)[-1]
     assert home.key == "home" and home.mlf == 1.0128 and home.mlf_source == "load_tni"
     entry.options = {"price_zones": "brisbane, home, sydney", "zone_radius_km": 50}
-    assert [z.key for z in _sensor_mod._zones(unset, entry, "QLD1", catalogue)] == cities
+    assert [z.key for z in _sensor_mod._zones(unset, entry, "QLD1", catalogue)] == codes
     entry.options = {}
-    # Home is in QLD1's grid (its nearest node is QLD1's), so NSW1's entry has its seven cities only.
-    assert [z.key for z in _sensor_mod._zones(located, entry, "NSW1", catalogue)][-1] == "orange"
-    assert len(_sensor_mod._zones(located, entry, "NSW1", catalogue)) == 7
-    entry.options = {"price_zones": "brisbane", "zone_radius_km": "nonsense"}
-    assert _sensor_mod._zones(located, entry, "QLD1", catalogue)[0].radius_km == 100.0
+    # Home is in QLD1's grid (its nearest node is QLD1's), so NSW1's entry has its five zones only.
+    assert [z.key for z in _sensor_mod._zones(located, entry, "NSW1", catalogue)] == [
+        "n_canberra", "n_cenwest", "n_north", "n_swnsw", "n_sydney"]
 
 
 def test_a_slow_spot_forecast_build_logs_its_steps(caplog, monkeypatch):

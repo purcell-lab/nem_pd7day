@@ -1,6 +1,8 @@
-"""One city or zone price proxy sensor per chosen zone (#288).
+"""One zone price proxy sensor per AEMO congestion zone of the region, and Home (#288, #387).
 
-``<City> Zone Price Proxy``, for each zone chosen in the options (zones.py):
+``<City> Zone Price Proxy``, for each congestion zone of the entry's region
+(zones.py), named for the zone's city, its entity and unique IDs carrying the
+zone's code (``sensor.nem_pd7day_nsw1_n_sydney_zone_price_proxy``):
 
 - **State**: (ROP + the zone's local price adjustment) x zone MLF, in
   $/kWh, for the latest dispatch interval, raw (local_price.node_price_mwh,
@@ -11,11 +13,15 @@
   pre-dispatch period to the end of the next trading day (RRP there, as
   pre-dispatch publishes no ROP).
 
-The zone MLF is the place's own load connection points' where they are known
+The zone MLF is the zone's own load connection points' where they are known
 (zones.py). Always a proxy: the adjustment comes from generation and storage
-connection points near the place, not its load, and no zone price is a
+connection points in the zone, not its load, and no zone price is a
 settlement or retail price. ``proxy: true`` and the members, with their distances and
 adjustments, say so on every sensor.
+
+Up to v3.51 a zone was a preset city and a radius. ``migrate_city_zones``
+moves each zone's named city sensor to the zone's unique ID, keeping its
+history, and retires the cities that now share a zone, with a repair notice.
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ from typing import Any, Optional
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .local_price import (
@@ -49,7 +56,7 @@ from .predispatch_local_price import MAX_AGE as PD_MAX_AGE
 from .predispatch_local_price import PredispatchAdjustments, predispatch_adjustments, predispatch_attrs
 from .const import DOMAIN
 from .forecast_hub import ForecastHub
-from .zones import AGGREGATE_NEAREST, MIN_MEDIAN_STATIONS, OUTSIDE, ZONE_HOME, Zone, station_key, zone_adjustment
+from .zones import AGGREGATE_NEAREST, MIN_MEDIAN_STATIONS, ZONE_HOME, Zone, station_key, zone_adjustment
 
 SUFFIX = "zone_price_proxy"
 
@@ -176,7 +183,7 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
     _attr_suggested_display_precision = 4
     _attr_state_class = SensorStateClass.MEASUREMENT
     _unrecorded_attributes = frozenset(
-        {"members", "excluded_members", "load_points", "forecast", "forecast_interval_ends", "predispatch_forecast"}
+        {"members", "unmapped_nodes", "load_points", "forecast", "forecast_interval_ends", "predispatch_forecast"}
     )
 
     def __init__(
@@ -213,12 +220,12 @@ class NemPd7dayZonePriceSensor(CoordinatorEntity, SensorEntity):
         return {
             "proxy": True,
             "zone": zone.key, "region": self._region,
-            "latitude": zone.latitude, "longitude": zone.longitude, "radius_km": zone.radius_km,
+            "congestion_zone": zone.congestion_zone, "congestion_zone_source": zone.source or None,
+            "cities": list(zone.cities),
+            "latitude": zone.latitude, "longitude": zone.longitude,
             "nearest_only": zone.nearest_only, "member_count": len(zone.members),
             "member_stations": list(zone.stations),
-            "excluded_members": [{"tni": m.node.tni, "stations": list(m.node.stations), "distance_km": m.distance_km}
-                                 for m in zone.excluded],
-            "exclusion_reason": OUTSIDE[zone.key][1] if zone.excluded else None,
+            "unmapped_node_count": len(zone.unmapped), "unmapped_nodes": list(zone.unmapped),
             "zone_mlf": zone.mlf, "zone_mlf_source": zone.mlf_source,
             "load_points": [{"tni": p.tni, "name": p.name, "kv": p.kv, "mlf": p.mlf} for p in zone.load_points],
             **_nearest_city_attrs(zone),
@@ -297,9 +304,52 @@ def remove_home_zone(hass: Any, entry: Any, region: str) -> bool:
     return True
 
 
+RETIRED_ISSUE = "congestion_zones_retired"
+
+
+def migrate_city_zones(hass: Any, entry: Any, region: str, zones: list[Zone]) -> list[str]:
+    """Move each zone's named city sensor to the zone's unique ID; retire the cities sharing a zone (#387).
+
+    The named city's registry entry (else the first of the zone's cities with
+    one) takes the zone's unique ID, and its entity
+    ID too while it is still the default one, so it keeps its history (Home
+    Assistant moves the recorded history with an entity ID it renames). The
+    other cities of the zone (Newcastle and Wollongong in N_SYDNEY) are
+    removed, and a repair notice names them. Returns the names retired.
+    """
+    registry = er.async_get(hass)
+    retired: list[str] = []
+    for zone in zones:
+        if zone.key == ZONE_HOME or not zone.city_keys:
+            continue
+        new_uid = f"{entry.entry_id}_{region}_{zone.key}_{SUFFIX}"
+        has_new = registry.async_get_entity_id("sensor", DOMAIN, new_uid) is not None
+        for city_key, city_name in zip(zone.city_keys, zone.cities):
+            old = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{region}_{city_key}_{SUFFIX}")
+            if old is None:
+                continue
+            if not has_new:  # the first city sensor found, the named city's where it has one, carries on
+                changes: dict[str, Any] = {"new_unique_id": new_uid}
+                new_entity_id = entity_id_for(region, zone.key, SUFFIX)
+                if old == entity_id_for(region, city_key, SUFFIX) and registry.async_get(new_entity_id) is None:
+                    changes["new_entity_id"] = new_entity_id
+                registry.async_update_entity(old, **changes)
+                has_new = True
+            else:
+                registry.async_remove(old)
+                retired.append(f"{city_name} ({old})")
+    if retired:
+        ir.async_create_issue(
+            hass, DOMAIN, f"{RETIRED_ISSUE}_{entry.entry_id}_{region}", is_fixable=False,
+            severity=ir.IssueSeverity.WARNING, translation_key=RETIRED_ISSUE,
+            translation_placeholders={"region": region, "retired": ", ".join(retired)},
+        )
+    return retired
+
+
 def zone_price_entities(
     constraints: Any, p5min: Any, entry: Any, region: str, zones: list[Zone], predispatch: Any = None,
     hub: Any = None,
 ) -> list[SensorEntity]:
-    """Every zone's sensor, enabled by default: the region's preset cities and Home."""
+    """Every zone's sensor, enabled by default: the region's congestion zones and Home."""
     return [NemPd7dayZonePriceSensor(constraints, p5min, entry, region, zone, predispatch, hub) for zone in zones]

@@ -501,14 +501,14 @@ def test_nodes_are_saved_comma_separated_and_a_bad_one_is_refused(flow_env):
     assert omitted["data"][const_mod.CONF_NODES] == ""
 
 
-def test_the_zone_fields_are_the_radius_and_homes_load_point(flow_env, monkeypatch):
-    """City and zone price proxies (#288): every preset city and Home has a sensor, so there is no
-    choice of zones, only the radius and Home's load point."""
+def test_the_zone_field_is_homes_load_point(flow_env, monkeypatch):
+    """Zone price proxies (#288): every congestion zone and Home has a sensor, so there is no
+    choice of zones, and AEMO's zones left no radius (#387): only Home's load point."""
     config_flow_mod, const_mod = flow_env
     configs: list = []
     monkeypatch.setattr(config_flow_mod.selector, "selector", lambda cfg: configs.append(cfg) or (lambda v: v))
     entry = make_entry(const_mod, "QLD1", options={
-        const_mod.CONF_REGION: "QLD1", const_mod.CONF_ZONES: "brisbane, sydney", const_mod.CONF_ZONE_RADIUS: 80,
+        const_mod.CONF_REGION: "QLD1", const_mod.CONF_ZONES: "brisbane, sydney", "zone_radius_km": 80,
     })
 
     result = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init())
@@ -522,25 +522,23 @@ def test_the_zone_fields_are_the_radius_and_homes_load_point(flow_env, monkeypat
     assert {"value": "QBMH", "label": "Belmont 110 kV (QBMH) · MLF 1.0128"} in home_load["options"]
     assert all(o["value"][0] == "Q" for o in home_load["options"])  # QLD1's points only
     assert not any("km" in o["label"] for o in home_load["options"])  # no Home location: no lead
-    (radius,) = [m for m in result["data_schema"].spec if m.key == const_mod.CONF_ZONE_RADIUS]
-    assert (radius.default() if callable(radius.default) else radius.default) == 80
+    assert not [m for m in result["data_schema"].spec if m.key == "zone_radius_km"]
 
 
-def test_the_radius_and_home_load_point_are_saved_and_zones_no_longer(flow_env):
+def test_the_home_load_point_is_saved_and_zones_and_the_radius_no_longer(flow_env):
     config_flow_mod, const_mod = flow_env
     entry = make_entry(const_mod, "QLD1", options={const_mod.CONF_REGION: "QLD1"})
     base = {const_mod.CONF_REGION: "QLD1", const_mod.CONF_FORECAST_MODE: const_mod.FORECAST_MODE_DAYS_2_7}
 
     saved = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(
-        {**base, const_mod.CONF_ZONES: ["home", "Brisbane", "sydney"], const_mod.CONF_ZONE_RADIUS: 150,
+        {**base, const_mod.CONF_ZONES: ["home", "Brisbane", "sydney"], "zone_radius_km": 150,
          const_mod.CONF_HOME_LOAD_POINT: "qbmh"}))
     omitted = run_async(config_flow_mod.PD7DayOptionsFlow(entry).async_step_init(dict(base)))
 
     assert const_mod.CONF_ZONES not in saved["data"]  # every zone has its sensor
     assert saved["data"][const_mod.CONF_HOME_LOAD_POINT] == "QBMH"
-    assert saved["data"][const_mod.CONF_ZONE_RADIUS] == 150
+    assert "zone_radius_km" not in saved["data"] and "zone_radius_km" not in omitted["data"]
     assert omitted["data"][const_mod.CONF_HOME_LOAD_POINT] == ""
-    assert omitted["data"][const_mod.CONF_ZONE_RADIUS] == 100
 
 
 def test_a_dropdown_choice_is_saved_as_the_comma_separated_string(flow_env):

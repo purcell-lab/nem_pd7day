@@ -192,10 +192,9 @@ CONF_LOCAL_PRICE_DUIDS = "local_price_duids"
 # Transmission nodes (TNIs) whose static node price, ROP x MLF, is published
 # (#286), a comma separated string.
 CONF_NODES = "transmission_nodes"
-# City or zone price proxies (#288): zone keys (zones.py), a comma separated
-# string, and the radius their member nodes are taken from.
+# City or zone price proxies (#288): retired; every congestion zone has its
+# sensor (#387). A stored value, and a stored zone_radius_km, is ignored.
 CONF_ZONES = "price_zones"
-CONF_ZONE_RADIUS = "zone_radius_km"
 # Home's load connection point (TNI), from the bundled MLF report tables: its
 # MLF is the Home zone's.
 CONF_HOME_LOAD_POINT = "home_load_point"

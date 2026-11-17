@@ -258,9 +258,9 @@ def _local_prices(built: harness.Built, snap: dict) -> None:
     node = _one(snap, "_NURQ4U_node_price")["extra_state_attributes"]
     assert node["formula"] == "(ROP + LOCAL_PRICE_ADJUSTMENT) x MLF" and node["adjustment_status"] == "published"
     assert node["node_price_mwh"] == pytest.approx((node["rop_mwh"] + node["adjustment_mwh"]) * node["mlf"], abs=1e-3)
-    wagga = _one(snap, "_wagga_wagga_zone_price_proxy")["extra_state_attributes"]
+    wagga = _one(snap, "_n_swnsw_zone_price_proxy")["extra_state_attributes"]  # Wagga Wagga, N_SWNSW (#387)
     assert wagga["row_status"] == "published" and wagga["forecast_status"] == "published"
-    assert wagga["member_stations"] == ["Uranquinty"] and wagga["adjustment_aggregate"] == "nearest_station"
+    assert wagga["member_stations"] == ["Uranquinty", "Hume"] and wagga["adjustment_aggregate"] == "nearest_station"
     constraints = _one(snap, "_nsw1_predispatch_binding_constraints")["extra_state_attributes"]
     assert constraints["run_at"].startswith("2026-10-31T13:02") and len(constraints["forecast"]) == 77
 

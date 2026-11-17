@@ -16,10 +16,10 @@ from support import NEM_TZ, install_ha_stubs, load_chain
 
 install_ha_stubs()
 
-_const, _cat, _lp, _cc, _pdc, _pdl, _hub, _lps, _node, _ldp, _zones, _zs = load_chain(
+_const, _cat, _lp, _cc, _pdc, _pdl, _hub, _lps, _node, _ldp, _cz, _zones, _zs = load_chain(
     "const", "duid_catalogue", "local_price", "constraint_client", "predispatch_client",
     "predispatch_local_price", "forecast_hub", "local_price_sensor", "node_price_sensor",
-    "load_points", "zones", "zone_sensor",
+    "load_points", "congestion_zones", "zones", "zone_sensor",
 )
 
 _DIR = Path(__file__).parent / "fixtures" / "local_price"
@@ -38,6 +38,10 @@ def _pd():
     return _pdc.parse_predispatch(PD, "PUBLIC_PREDISPATCHIS_202610311330_20261031130240.zip")
 
 
+def _bundled_zone(catalogue, region, code):
+    return next(z for z in _zones.build_zones(catalogue, region, _cz.load_congestion_zones()) if z.congestion_zone == code)
+
+
 def _minutes(start, count):
     return [start + timedelta(minutes=m, seconds=17) for m in range(count)]
 
@@ -48,7 +52,7 @@ def test_p5min_series_from_the_hub_equal_the_direct_call_at_every_minute():
     run = _p5()
     hub = _hub.ForecastHub()
     catalogue = _cat.load_catalogue()
-    zone = _zones.build_zone(catalogue, "NSW1", "canberra", 100)
+    zone = _bundled_zone(catalogue, "NSW1", "N_CANBERRA")
     node_duids = tuple(sorted(run.rows))[:2]
     for now in _minutes(datetime(2026, 10, 30, 21, 15, tzinfo=NEM_TZ), 50):  # through to stale
         for duid in run.rows:
@@ -65,7 +69,7 @@ def test_p5min_series_from_the_hub_equal_the_direct_call_at_every_minute():
 def test_predispatch_series_from_the_hub_equal_the_direct_call_at_every_minute():
     snapshot = _pd()
     hub = _hub.ForecastHub()
-    zone = _zones.build_zone(_cat.load_catalogue(), "QLD1", "rockhampton", 100)
+    zone = _bundled_zone(_cat.load_catalogue(), "QLD1", "Q_CENTRAL")
     duids = sorted(snapshot.local_prices)[:5]
     for now in _minutes(datetime(2026, 10, 31, 13, 0, tzinfo=NEM_TZ), 150):  # 13:00 to 15:30: stale from 14:18
         for duid in duids:

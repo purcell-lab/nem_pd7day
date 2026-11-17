@@ -71,7 +71,6 @@ from .const import (
     CONF_LOCAL_PRICE_DUIDS,
     CONF_NODES,
     CONF_HOME_LOAD_POINT,
-    CONF_ZONE_RADIUS,
     DEVICE_CONFIGURATION_URL,
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
@@ -325,7 +324,8 @@ async def _local_price_entities(
     from .local_price_coordinator import shared_p5min
     from .local_price_sensor import enable_chosen, local_price_entities, remove_retired
     from .node_price_sensor import node_price_entities
-    from .zone_sensor import remove_home_zone, zone_price_entities
+    from .congestion_zones import load_congestion_zones
+    from .zone_sensor import migrate_city_zones, remove_home_zone, zone_price_entities
     from .zones import ZONE_HOME
 
     duids, _invalid = parse_duids(entry.options.get(CONF_LOCAL_PRICE_DUIDS, ""))
@@ -335,11 +335,13 @@ async def _local_price_entities(
     from .load_points import load_load_points
 
     loads = await run_in_executor(None, load_load_points)  # a file read, as the catalogue
-    # Every region has preset cities, each a zone sensor enabled by default, so there is always
+    congestion = await run_in_executor(None, load_congestion_zones)  # AEMO's IPRR zones (#387)
+    # Every region has congestion zones, each a zone sensor enabled by default, so there is always
     # something to set up.
-    zones = _zones(hass, entry, region, catalogue, loads)
+    zones = _zones(hass, entry, region, catalogue, loads, congestion)
     if not any(zone.key == ZONE_HOME for zone in zones):
         remove_home_zone(hass, entry, region)
+    migrate_city_zones(hass, entry, region, zones)  # the city sensors of v3.51 and before (#387)
     enable_chosen(hass, entry, region, duids)
     p5min = shared_p5min(hass, entry.runtime_data.dispatch)
     hub = shared_forecast_hub(hass.data[DOMAIN])  # one series per run for every sensor (#336)
@@ -350,25 +352,26 @@ async def _local_price_entities(
     ]
 
 
-def _zones(hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any, loads: Any = None) -> list:
-    """Every preset city of the region and Home, each a zone proxy (#288), enabled by default: one
-    not wanted is disabled from its entity page. Home is HA's own location, skipped when unset, with
-    the load connection point chosen for it, and only in the entry of the region whose grid serves it."""
-    from .zones import DEFAULT_RADIUS_KM, build_zone, home_region, zone_choices
+def _zones(
+    hass: HomeAssistant, entry: ConfigEntry, region: str, catalogue: Any, loads: Any = None, congestion: Any = None,
+) -> list:
+    """Every AEMO congestion zone of the region and Home, each a zone proxy (#288, #387), enabled by
+    default: one not wanted is disabled from its entity page. Home is HA's own location, skipped when
+    unset, in the zone of the load connection point chosen for it, and only in the entry of the region
+    whose grid serves it."""
+    from .congestion_zones import load_congestion_zones
+    from .zones import build_zones, home_region, home_zone
 
-    try:
-        radius = float(entry.options.get(CONF_ZONE_RADIUS) or DEFAULT_RADIUS_KM)
-    except (TypeError, ValueError):
-        radius = DEFAULT_RADIUS_KM
+    zones_map = congestion if congestion is not None else load_congestion_zones()
     config = getattr(hass, "config", None)
     lat, lon = getattr(config, "latitude", None), getattr(config, "longitude", None)
     home = (float(lat), float(lon)) if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) else None
     if home is not None and home_region(catalogue, *home) != region:
         home = None  # Home's zone belongs to another region's entry
     home_load = str(entry.options.get(CONF_HOME_LOAD_POINT) or "").strip() or None
-    built = (build_zone(catalogue, region, key, radius, home, loads, home_load)
-             for key, _name in zone_choices(region))
-    return [zone for zone in built if zone is not None]
+    built = build_zones(catalogue, region, zones_map, loads)
+    home_built = home_zone(catalogue, region, zones_map, home, loads, home_load)
+    return built + ([home_built] if home_built is not None else [])
 
 
 def _published_spike_credible(cal: dict, horizon_h: float | None) -> bool | None:
