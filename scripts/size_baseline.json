@@ -1,24 +1,18 @@
 {
   "classes": {
-    "coordinator:PD7DayCoordinator": {
-      "lines": 405,
-      "methods": 10
-    },
     "market_notice_client:MarketNoticeClient": {
       "lines": 255,
       "methods": 6
     }
   },
   "functions": {
-    "__init__:async_setup_entry": 474,
     "calibration_engine:CalibrationResult.summary": 67,
     "calibration_engine:_quantile_regression": 86,
     "calibration_inputs:stpasa_features_for_interval": 98,
     "config_flow:PD7DayConfigFlow.async_step_reconfigure": 74,
     "config_flow:PD7DayOptionsFlow.async_step_init": 71,
     "coordinator:DispatchCoordinator._async_update_data": 62,
-    "coordinator:PD7DayCoordinator._async_update_data": 90,
-    "coordinator:PD7DayCoordinator.stpasa_index": 61,
+    "coordinator:PD7DayCoordinator._async_update_data": 75,
     "dispatch_client:fetch_dispatch_prices": 84,
     "forecast_chart:_place_spike_callouts": 80,
     "forecast_chart:_plan_callout_placements": 96,
