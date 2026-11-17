@@ -27,7 +27,6 @@ from .const import (
     CONF_LOSS_FACTOR,
     CONF_NODES,
     CONF_HOME_LOAD_POINT,
-    CONF_ZONE_RADIUS,
     CONF_ONLY_ACTIVE_TARIFF,
     CONF_REGION,
     CONF_REGIONS,
@@ -45,7 +44,7 @@ from .duid_catalogue import Catalogue, load_catalogue
 from .local_price import parse_duids, parse_tnis
 from .load_points import EMPTY as LOAD_POINTS_EMPTY
 from .load_points import LoadPoints, load_load_points
-from .zones import DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_RADIUS_KM, nearest_city
+from .zones import nearest_city
 from .pd7day_client import PD7DayClient
 from .tariff_pricing import COMBINED_LOSS_MULTIPLIER, LOSS_FACTOR_MAX, LOSS_FACTOR_MIN
 from .tariff_catalogue import import_tariff_codes, tariff_name as catalogue_tariff_name
@@ -396,16 +395,13 @@ def _home_location(hass: Any) -> Optional[tuple[float, float]]:
 def _zone_fields(
     options: dict[str, Any], region: str, loads: LoadPoints, home: Optional[tuple[float, float]] = None,
 ) -> dict[Any, Any]:
-    """City and zone price proxies (#288): the radius, and Home's load connection point, whose
-    MLF is the Home zone's. Every preset city of the region and Home has a sensor, enabled by
-    default, so there is nothing to choose: one not wanted is disabled from its entity page."""
+    """Zone price proxies (#288, #387): Home's load connection point, which places Home in its
+    congestion zone and whose MLF is the Home zone's. Every congestion zone of the region and Home
+    has a sensor, enabled by default, so there is nothing to choose: one not wanted is disabled
+    from its entity page. The zone radius went with the move to congestion zones."""
     home_load = options.get(CONF_HOME_LOAD_POINT) or None
     points = _home_load_choices(region, loads, home)
     return {
-        vol.Optional(CONF_ZONE_RADIUS, default=options.get(CONF_ZONE_RADIUS, DEFAULT_RADIUS_KM)): selector.selector({
-            "number": {"min": MIN_RADIUS_KM, "max": MAX_RADIUS_KM, "step": 5, "mode": "box",
-                       "unit_of_measurement": "km"}
-        }),
         vol.Optional(CONF_HOME_LOAD_POINT, description={"suggested_value": home_load}): selector.selector({
             "select": {"options": points, "multiple": False, "mode": "dropdown"}
         }),
@@ -442,7 +438,6 @@ def _options_data(user_input: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
         CONF_AMBER_FORECAST_ENTITY: user_input.get(CONF_AMBER_FORECAST_ENTITY, ""),
         CONF_LOCAL_PRICE_DUIDS: ", ".join(duids),
         CONF_NODES: ", ".join(nodes),
-        CONF_ZONE_RADIUS: user_input.get(CONF_ZONE_RADIUS, DEFAULT_RADIUS_KM),
         CONF_HOME_LOAD_POINT: str(user_input.get(CONF_HOME_LOAD_POINT) or "").strip().upper(),
         # Cleared, the library's defaults are used again.
         CONF_LOSS_FACTOR: user_input.get(CONF_LOSS_FACTOR),

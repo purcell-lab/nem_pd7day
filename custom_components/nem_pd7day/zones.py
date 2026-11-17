@@ -1,26 +1,35 @@
-"""City and zone price proxies: what stands for a place (#288).
+"""Zone price proxies by AEMO congestion zone: what stands for a place (#288, #387).
 
-A zone is a centre, a preset city of the entry's region or Home Assistant's
-own location, and a radius.
+Each zone is one of AEMO's IPRR congestion zones in the entry's region, the
+19 zones NEMDE's constraint equations and AEMO's congestion management are
+written against (congestion_zones.py). Until v3.52.0 a zone was a preset city
+and a radius, which crossed electrical areas (#317).
 
-- **Zone MLF**: the place's own load connection points, from AEMO's annual
-  MLF report (load_points.py). A preset city lists its metropolitan bulk
-  supply points; Home takes the one chosen in the options. Their mean MLF is
-  the zone MLF (``zone_mlf_source: load_tni``). Where no load point is known,
-  the inverse-distance-weighted mean of the members' MLFs stands in
+- **Members**: the region's catalogue nodes whose TNI the tool maps to the
+  zone, nearest the zone's city first. They are generation and storage
+  connection points: city load is not a variable in NEMDE's constraint
+  equations, so it has no local price adjustment of its own, and a zone's
+  units are a network proxy, never a validated household node. A node the
+  tool does not map, or maps to another region's zone, is listed as unmapped,
+  not guessed. A zone with no located member takes the region's nearest node,
+  flagged ``nearest_only``.
+- **Name**: the preset city of the region with the most load points in the
+  zone (``Sydney`` for N_SYDNEY, which also holds Newcastle and Wollongong);
+  ``cities`` lists every preset city whose load points are in it. Entity and
+  unique IDs carry the zone code.
+- **Zone MLF**: the mean MLF of the region's load connection points the tool
+  maps to the zone (load_points.py, ``zone_mlf_source: load_tni``); without
+  one, the inverse-distance-weighted mean of the members' MLFs
   (``nearby_generation_idw``).
 - **Adjustment**: one vote per station, the median over the stations (#314):
-  a station with several connection points (Wivenhoe's four) takes one
-  vote, its members' median, not one per TNI. Below three stations the
-  median is no better than a mean, so the nearest station's vote stands
-  alone (#315). The members are the region's catalogue nodes with
-  coordinates within the radius, nearest first; where none is that close,
-  the single nearest node, flagged ``nearest_only``. They are generation and storage connection
-  points: city load is not a variable in NEMDE's constraint equations, so it
-  has no local price adjustment of its own, and nearby units are a geographic
-  proxy, never a validated household node. One constrained station does not
-  move the median, most of them do; the members carry no capacity, so there
-  is no MW weighting.
+  a station with several connection points (Wivenhoe's four) takes one vote,
+  its members' median, not one per TNI. Below three stations the median is no
+  better than a mean, so the nearest station's vote stands alone (#315). One
+  constrained station does not move the median, most of them do; the members
+  carry no capacity, so there is no MW weighting.
+- **Home** is Home Assistant's own location, in the zone of the load
+  connection point chosen for it (#316) through the tool, else the zone of its
+  nearest mapped node. Its MLF is the chosen load point's, else the zone's.
 """
 from __future__ import annotations
 
@@ -28,15 +37,13 @@ import math
 from dataclasses import dataclass
 from functools import cached_property
 from statistics import median
-from typing import Any, Optional, Sequence
+from typing import Optional, Sequence
 
+from .congestion_zones import CongestionZones
 from .duid_catalogue import Catalogue, NodeInfo
 from .load_points import LoadPoint, LoadPoints
 
 ZONE_HOME = "home"
-DEFAULT_RADIUS_KM = 100
-MIN_RADIUS_KM = 10
-MAX_RADIUS_KM = 500
 # A member closer than this weighs as if it were this far, so one node at the
 # centre does not take the whole MLF.
 _MIN_WEIGHT_KM = 5.0
@@ -102,6 +109,8 @@ CITIES: dict[str, tuple[tuple[str, str, float, float, tuple[str, ...]], ...]] = 
         )),
         ("port_augusta", "Port Augusta", -32.4911, 137.7653, ("SDAV", "SDAW")),
         ("mount_gambier", "Mount Gambier", -37.8284, 140.7804, ("SBL1", "SBLA", "SMGA")),
+        # The Riverland's own congestion zone has no other city (#387).
+        ("renmark", "Renmark", -34.1748, 140.7468, ("SBER", "SBE1", "SNWB")),
     ),
     "TAS1": (
         ("hobart", "Hobart", -42.8821, 147.3272, (
@@ -110,20 +119,6 @@ CITIES: dict[str, tuple[tuple[str, str, float, float, tuple[str, ...]], ...]] = 
         ("launceston", "Launceston", -41.4332, 147.1441, ("THA3", "TMY2", "TNW2", "TSL2", "TTR2")),
         ("burnie", "Burnie", -41.0526, 145.9061, ("TBU3", "TEB2", "TEB3")),
     ),
-}
-
-
-# Connection points within a preset city's radius but outside its electrical
-# area, behind different constraints from the city's load (#317), by TNI
-# prefix, with why. An interim: grouping members by the constraints they bind
-# together is the real fix.
-OUTSIDE: dict[str, tuple[tuple[str, ...], str]] = {
-    "sydney": (("NEP", "NVPP", "NCLG"),
-               "Central Coast and Lake Macquarie plant (Eraring, Vales Point, Colongra), behind the Central "
-               "Coast's constraints rather than Sydney load's"),
-    "wagga_wagga": (("NBLW", "NTU"), "Tumut hydro (Blowering, Jounama), behind the Snowy constraints"),
-    "sunshine_coast": (("QWIP", "QWIV"), "Wivenhoe, Brisbane valley pumped hydro, behind South East "
-                                         "Queensland's constraints rather than the Sunshine Coast's"),
 }
 
 
@@ -146,16 +141,21 @@ class CityReference:
 
 @dataclass(frozen=True)
 class Zone:
-    key: str
-    name: str
+    """One zone price proxy: a congestion zone of the region, or Home."""
+
+    key: str                                  # the congestion zone's code, lower case, or "home"
+    name: str                                 # the zone's city, or "Home"
     latitude: float
     longitude: float
-    radius_km: float
+    congestion_zone: Optional[str]            # AEMO's code, e.g. N_SYDNEY
     members: tuple[Member, ...]
     nearest_only: bool
     load_points: tuple[LoadPoint, ...] = ()
     nearest_city: Optional[CityReference] = None
-    excluded: tuple[Member, ...] = ()
+    cities: tuple[str, ...] = ()              # every preset city whose load points are in the zone
+    city_keys: tuple[str, ...] = ()           # their keys, the named city first (the registry migration)
+    unmapped: tuple[str, ...] = ()            # the region's nodes the tool does not map
+    source: str = ""                          # the mapping's citation
 
     # Worked out once per zone, not on every update: a zone is rebuilt only at setup, and the
     # largest (Adelaide, 46 members) otherwise spent half its update time here.
@@ -215,23 +215,6 @@ def home_region(catalogue: Catalogue, lat: float, lon: float) -> Optional[str]:
     return min(cities, key=lambda rc: distance_km(lat, lon, rc[1][2], rc[1][3]))[0]
 
 
-def zone_choices(region: str) -> list[tuple[str, str]]:
-    """(key, name) of the region's preset cities, then Home."""
-    return [(city[0], city[1]) for city in CITIES.get(region, ())] + [(ZONE_HOME, "Home")]
-
-
-def parse_zones(text: Any, region: str) -> list[str]:
-    """The zone keys of the region in a comma separated string or a list; others are dropped."""
-    known = {key for key, _name in zone_choices(region)}
-    items = text if isinstance(text, (list, tuple)) else str(text or "").split(",")
-    keys: list[str] = []
-    for item in items:
-        key = str(item).strip().lower()
-        if key in known and key not in keys:
-            keys.append(key)
-    return keys
-
-
 def nearest_city(
     region: str, lat: float, lon: float, loads: Optional[LoadPoints] = None,
 ) -> Optional[CityReference]:
@@ -250,45 +233,111 @@ def nearest_city(
     return CityReference(key, name, round(distance_km(lat, lon, clat, clon), 1), mlf, tuple(p.tni for p in points))
 
 
-def _members(
-    catalogue: Catalogue, region: str, lat: float, lon: float, radius_km: float, outside: tuple[str, ...] = (),
-) -> tuple[tuple, bool, tuple]:
-    """(members, nearest_only, excluded): the nodes within the radius, nearest first, less those
-    outside the city's electrical area; the nearest node where none is left."""
-    located = sorted(
-        (Member(node, round(distance_km(lat, lon, node.latitude, node.longitude), 1))
-         for node in catalogue.region_nodes(region)
-         if node.latitude is not None and node.longitude is not None),
+def _located(catalogue: Catalogue, region: str) -> list[NodeInfo]:
+    return [n for n in catalogue.region_nodes(region) if n.latitude is not None and n.longitude is not None]
+
+
+def _by_distance(nodes: Sequence[NodeInfo], lat: float, lon: float) -> tuple[Member, ...]:
+    """The nodes as members, nearest first."""
+    return tuple(sorted(
+        (Member(n, round(distance_km(lat, lon, n.latitude, n.longitude), 1)) for n in nodes),  # type: ignore[arg-type]
         key=lambda m: (m.distance_km, m.node.tni),
-    )
-    excluded = tuple(m for m in located if m.distance_km <= radius_km and m.node.tni.startswith(outside)) \
-        if outside else ()
-    inside = tuple(m for m in located if m.distance_km <= radius_km and m not in excluded)
-    return (inside, False, excluded) if inside else (tuple(located[:1]), True, excluded)
+    ))
 
 
-def build_zone(
-    catalogue: Catalogue, region: str, key: str, radius_km: float,
-    home: Optional[tuple[float, float]] = None, loads: Optional[LoadPoints] = None,
-    home_load: Optional[str] = None,
+def _members(
+    catalogue: Catalogue, region: str, zones: CongestionZones, zone: Optional[str], lat: float, lon: float,
+) -> tuple[tuple[Member, ...], bool]:
+    """(members, nearest_only): the zone's located nodes nearest first; the region's nearest where it has none."""
+    located = _located(catalogue, region)
+    inside = _by_distance([n for n in located if zone and zones.node_zone(n.tni, region) == zone], lat, lon)
+    if inside:
+        return inside, False
+    return _by_distance(located, lat, lon)[:1], True
+
+
+def _zone_loads(region: str, zones: CongestionZones, zone: Optional[str],
+                loads: Optional[LoadPoints]) -> tuple[LoadPoint, ...]:
+    """The region's load connection points the tool maps to the zone."""
+    if loads is None or zone is None:
+        return ()
+    return tuple(p for p in loads.region_points(region) if zones.zone_for(p.tni) == zone)
+
+
+def zone_cities(region: str, zones: CongestionZones) -> dict[str, list[tuple[str, str, float, float, tuple[str, ...]]]]:
+    """Each zone's preset cities, the one with the most load points in the zone first.
+
+    A city is in the zone most of its load points map to; a tie goes to the
+    order of CITIES. A city none of whose load points the tool maps is in no zone.
+    """
+    found: dict[str, list[tuple[int, int, tuple[str, str, float, float, tuple[str, ...]]]]] = {}
+    for order, city in enumerate(CITIES.get(region, ())):
+        counts: dict[str, int] = {}
+        for tni in city[4]:
+            zone = zones.zone_for(tni)
+            if zone is not None and zones.region_of(zone) == region:
+                counts[zone] = counts.get(zone, 0) + 1
+        if counts:
+            zone = max(counts, key=lambda z: counts[z])
+            found.setdefault(zone, []).append((-counts[zone], order, city))
+    return {zone: [city for *_rank, city in sorted(rows)] for zone, rows in found.items()}
+
+
+def unmapped_nodes(catalogue: Catalogue, region: str, zones: CongestionZones) -> tuple[str, ...]:
+    """The region's catalogue nodes the tool maps to no zone of the region, by connection point."""
+    return tuple(sorted(n.tni for n in catalogue.region_nodes(region) if zones.node_zone(n.tni, region) is None))
+
+
+def build_zones(
+    catalogue: Catalogue, region: str, zones: CongestionZones, loads: Optional[LoadPoints] = None,
+) -> list[Zone]:
+    """One zone per congestion zone of the region, by code, named for its city (#387)."""
+    by_zone = zone_cities(region, zones)
+    unmapped = unmapped_nodes(catalogue, region, zones)
+    built: list[Zone] = []
+    for code in zones.region_zones(region):
+        cities = by_zone.get(code, [])
+        located = [n for n in _located(catalogue, region) if zones.node_zone(n.tni, region) == code]
+        if cities:
+            _key, name, lat, lon, _tnis = cities[0]
+        elif located:  # no preset city: the members' centre, named by the zone's code
+            name = code
+            lat = sum(n.latitude for n in located) / len(located)  # type: ignore[misc]
+            lon = sum(n.longitude for n in located) / len(located)  # type: ignore[misc]
+        else:
+            continue
+        members, nearest_only = _members(catalogue, region, zones, code, lat, lon)
+        built.append(Zone(
+            code.lower(), name, lat, lon, code, members, nearest_only, _zone_loads(region, zones, code, loads),
+            cities=tuple(c[1] for c in cities), city_keys=tuple(c[0] for c in cities),
+            unmapped=unmapped, source=zones.source,
+        ))
+    return built
+
+
+def home_zone(
+    catalogue: Catalogue, region: str, zones: CongestionZones, home: Optional[tuple[float, float]],
+    loads: Optional[LoadPoints] = None, home_load: Optional[str] = None,
 ) -> Optional[Zone]:
-    """The zone for a key, or None when the key is unknown or Home has no location."""
-    tnis: tuple[str, ...]
-    if key == ZONE_HOME:
-        if home is None:
-            return None
-        name, (lat, lon), tnis = "Home", home, ((home_load,) if home_load else ())
-    else:
-        found = [c for c in CITIES.get(region, ()) if c[0] == key]
-        if not found:
-            return None
-        _key, name, lat, lon, tnis = found[0]
-    points = tuple(p for p in (loads.get(t) for t in tnis) if p is not None and p.region == region) if loads else ()
-    outside = OUTSIDE.get(key, ((), ""))[0] if key != ZONE_HOME else ()
-    members, nearest_only, excluded = _members(catalogue, region, lat, lon, radius_km, outside)
-    reference = nearest_city(region, lat, lon, loads) if key == ZONE_HOME else None
-    return Zone(key, name, lat, lon, radius_km, members, nearest_only, points,
-                nearest_city=reference, excluded=excluded)
+    """Home's zone: that of its chosen load point through the tool, else of its nearest mapped node; None
+    without a location."""
+    if home is None:
+        return None
+    lat, lon = home
+    code = zones.node_zone(home_load, region) if home_load else None
+    if code is None:
+        mapped = [n for n in _located(catalogue, region) if zones.node_zone(n.tni, region) is not None]
+        nearest = _by_distance(mapped, lat, lon)[:1]
+        code = zones.node_zone(nearest[0].node.tni, region) if nearest else None
+    members, nearest_only = _members(catalogue, region, zones, code, lat, lon)
+    chosen = loads.get(home_load) if loads is not None and home_load else None
+    points = (chosen,) if chosen is not None and chosen.region == region else _zone_loads(region, zones, code, loads)
+    cities = zone_cities(region, zones).get(code, []) if code else []
+    return Zone(
+        ZONE_HOME, "Home", lat, lon, code, members, nearest_only, points,
+        nearest_city=nearest_city(region, lat, lon, loads), cities=tuple(c[1] for c in cities),
+        unmapped=unmapped_nodes(catalogue, region, zones), source=zones.source,
+    )
 
 
 def station_key(node: NodeInfo) -> str:

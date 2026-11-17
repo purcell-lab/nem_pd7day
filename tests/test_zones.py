@@ -18,10 +18,10 @@ from support import NEM_TZ, install_ha_stubs, load_chain
 
 install_ha_stubs()
 
-_const, _cat, _lp, _cc, _pdc, _pdl, _coord, _hub, _lps, _node, _ldp, _zones, _zs = load_chain(
+_const, _cat, _lp, _cc, _pdc, _pdl, _coord, _hub, _lps, _node, _ldp, _cz, _zones, _zs = load_chain(
     "const", "duid_catalogue", "local_price", "constraint_client", "predispatch_client",
     "predispatch_local_price", "local_price_coordinator", "forecast_hub", "local_price_sensor", "node_price_sensor",
-    "load_points", "zones", "zone_sensor",
+    "load_points", "congestion_zones", "zones", "zone_sensor",
 )
 
 _DIR = Path(__file__).parent / "fixtures" / "local_price"
@@ -47,6 +47,32 @@ CLOSE = _node_info("NCLOSE1", ["NOROWS1"], -33.80, 151.10, mlf=0.98)
 OUT = _node_info("NOUT1", ["HUMENSW"], -34.40, 151.00, mlf=0.95)
 FAR = _node_info("NFAR1", ["FARAWAY1"], -30.00, 150.00, mlf=0.90)
 CAT = _catalogue(NEAR, CLOSE, OUT, FAR)
+# Their congestion zones: the three around Sydney in N_SYDNEY, the far one in N_NORTH.
+CZ = _cz.CongestionZones(
+    zones={"N_SYDNEY": "NSW1", "N_NORTH": "NSW1", "N_CENWEST": "NSW1", "Q_SOUTHEAST": "QLD1"},
+    tnis={"NNEA": "N_SYDNEY", "NCLO": "N_SYDNEY", "NOUT": "N_SYDNEY", "NFAR": "N_NORTH",
+          "NSYS": "N_SYDNEY", "NALX": "N_SYDNEY", "NTA2": "N_NORTH", "NONO": "N_CENWEST"},
+    source_date="2026-07-31", status="DRAFT FOR INDUSTRY FEEDBACK",
+)
+
+
+def _zone(code, catalogue=CAT, zones=CZ, region="NSW1", loads=None):
+    """The region's zone of that congestion zone code."""
+    return next(z for z in _zones.build_zones(catalogue, region, zones, loads) if z.congestion_zone == code)
+
+
+def _bundled(region, code, loads=None):
+    """The bundled catalogue's zone of that congestion zone code."""
+    _cat.load_catalogue.cache_clear()
+    return _zone(code, _cat.load_catalogue(), _cz.load_congestion_zones(), region, loads)
+
+
+@pytest.fixture(scope="module")
+def bundled():
+    """The bundled catalogue and congestion zones."""
+    _cat.load_catalogue.cache_clear()
+    _cz.load_congestion_zones.cache_clear()
+    return _cat.load_catalogue(), _cz.load_congestion_zones()
 
 
 def _dispatch():
@@ -60,40 +86,53 @@ def test_distance_is_great_circle():
     assert _zones.distance_km(-33.0, 151.0, -33.0, 151.0) == 0.0
 
 
-def test_each_region_has_its_cities_and_home():
-    for region in ("QLD1", "NSW1", "VIC1", "SA1", "TAS1"):
-        choices = _zones.zone_choices(region)
-        assert choices[-1] == ("home", "Home") and len(choices) >= 4
-    assert ("canberra", "Canberra") in _zones.zone_choices("NSW1") and ("orange", "Orange") in _zones.zone_choices("NSW1")
-    assert _zones.parse_zones("brisbane, Townsville, sydney, brisbane, home", "QLD1") == ["brisbane", "townsville", "home"]
-    assert _zones.parse_zones(["cairns"], "QLD1") == ["cairns"] and _zones.parse_zones("", "QLD1") == []
+def test_every_congestion_zone_of_the_region_is_a_zone_named_for_its_city():
+    zones = _zones.build_zones(CAT, "NSW1", CZ)
+    assert [(z.key, z.congestion_zone, z.name) for z in zones] == [
+        ("n_cenwest", "N_CENWEST", "Orange"), ("n_north", "N_NORTH", "Tamworth"), ("n_sydney", "N_SYDNEY", "Sydney"),
+    ]
+    sydney = zones[2]
+    assert (sydney.latitude, sydney.longitude) == (-33.8688, 151.2093)
+    assert sydney.source == "AEMO IPRR Congestion Zone Mapping Tool, 2026-07-31 (draft)"
 
 
-def test_members_are_the_nodes_within_the_radius_nearest_first():
-    zone = _zones.build_zone(CAT, "NSW1", "sydney", 50)
-    assert [m.node.tni for m in zone.members] == ["NNEAR1", "NCLOSE1"] and not zone.nearest_only
-    assert zone.members[0].distance_km < zone.members[1].distance_km < 50
-    wide = _zones.build_zone(CAT, "NSW1", "sydney", 100)
-    assert [m.node.tni for m in wide.members] == ["NNEAR1", "NCLOSE1", "NOUT1"]
+def test_members_are_the_zones_nodes_nearest_its_city_first():
+    zone = _zone("N_SYDNEY")
+    assert [m.node.tni for m in zone.members] == ["NNEAR1", "NCLOSE1", "NOUT1"] and not zone.nearest_only
+    assert zone.members[0].distance_km < zone.members[1].distance_km < zone.members[2].distance_km
+    assert [m.node.tni for m in _zone("N_NORTH").members] == ["NFAR1"]  # 430 km from Sydney, in its own zone
 
 
-def test_with_no_node_in_reach_the_nearest_stands_in():
-    zone = _zones.build_zone(CAT, "NSW1", "orange", 10)
-    assert zone.nearest_only and len(zone.members) == 1
+def test_a_zone_without_a_located_node_takes_the_regions_nearest():
+    zone = _zone("N_CENWEST")  # Orange: no node of the fixture is in N_CENWEST
+    assert zone.nearest_only and [m.node.tni for m in zone.members] == ["NCLOSE1"]
 
 
-def test_home_needs_a_location_and_unknown_keys_are_none():
-    assert _zones.build_zone(CAT, "NSW1", "home", 100) is None
-    home = _zones.build_zone(CAT, "NSW1", "home", 100, home=(-33.90, 151.20))
-    assert home.name == "Home" and home.members[0].node.tni == "NNEAR1"
-    assert _zones.build_zone(CAT, "NSW1", "brisbane", 100) is None  # another region's city
-    assert _zones.build_zone(CAT, "NSW1", "atlantis", 100) is None
+def test_nodes_the_tool_does_not_map_are_listed_not_guessed():
+    odd = _node_info("XAGG01", ["AGG01"], -33.88, 151.21)          # an aggregation, no TNI the tool knows
+    elsewhere = _node_info("QMIS1", ["MIS01"], -33.86, 151.22)       # mapped to another region's zone
+    zones = replace(CZ, tnis={**CZ.tnis, "QMIS": "Q_SOUTHEAST"})
+    zone = _zone("N_SYDNEY", _catalogue(NEAR, CLOSE, OUT, FAR, odd, elsewhere), zones)
+    assert "XAGG01" not in {m.node.tni for m in zone.members} and "QMIS1" not in {m.node.tni for m in zone.members}
+    assert zone.unmapped == ("QMIS1", "XAGG01")
 
 
-def test_zone_mlf_weighs_the_nearer_nodes_more():
-    zone = _zones.build_zone(CAT, "NSW1", "sydney", 100)
+def test_home_needs_a_location_and_takes_its_load_points_zone():
+    assert _zones.home_zone(CAT, "NSW1", CZ, None) is None
+    home = _zones.home_zone(CAT, "NSW1", CZ, (-33.90, 151.20), home_load="NSYS")
+    assert (home.key, home.name, home.congestion_zone) == ("home", "Home", "N_SYDNEY")
+    assert [m.node.tni for m in home.members] == ["NNEAR1", "NCLOSE1", "NOUT1"]   # nearest Home first
+    north = _zones.home_zone(CAT, "NSW1", CZ, (-33.90, 151.20), home_load="NTA2")
+    assert north.congestion_zone == "N_NORTH" and [m.node.tni for m in north.members] == ["NFAR1"]
+    unset = _zones.home_zone(CAT, "NSW1", CZ, (-30.1, 150.1))
+    assert unset.congestion_zone == "N_NORTH"   # no load point: the zone of the nearest mapped node
+
+
+def test_zone_mlf_weighs_the_nearer_nodes_more_without_load_points():
+    zone = _zone("N_SYDNEY")
     weights = [1 / max(m.distance_km, 5.0) for m in zone.members]
     mlfs = [m.node.mlf for m in zone.members]
+    assert zone.mlf_source == "nearby_generation_idw"
     assert zone.mlf == round(sum(w * m for w, m in zip(weights, mlfs)) / sum(weights), 4)
     assert 0.95 < zone.mlf < 1.0
 
@@ -102,7 +141,7 @@ def _zone_of(*stations):
     """A zone with one member per (station, distance), nearest first."""
     members = tuple(_zones.Member(_node_info(f"N{i}", [f"D{i}"], -33.9, 151.2, stations=(name,)), km)
                     for i, (name, km) in enumerate(stations))
-    return _zones.Zone("z", "Z", -33.9, 151.2, 100, members, False)
+    return _zones.Zone("z", "Z", -33.9, 151.2, "Z_TEST", members, False)
 
 
 def test_the_adjustment_is_the_median_of_the_stations_known():
@@ -136,48 +175,93 @@ def test_below_three_stations_the_nearest_stands_alone():
     assert _zones.zone_adjustment(_zone_of(("A", 1)), [-12.5]) == -12.5
 
 
-def test_the_bundled_catalogue_has_members_near_every_capital():
-    _cat.load_catalogue.cache_clear()
-    catalogue = _cat.load_catalogue()
-    for region, city in (("QLD1", "brisbane"), ("NSW1", "sydney"), ("VIC1", "melbourne"),
-                         ("SA1", "adelaide"), ("TAS1", "hobart")):
-        zone = _zones.build_zone(catalogue, region, city, 100)
-        assert zone.members and not zone.nearest_only, city
-        assert 0.85 < zone.mlf < 1.1, (city, zone.mlf)
-        assert all(m.node.region == region for m in zone.members)
+def test_the_bundled_mapping_is_aemos_draft_tool_of_31_july_2026(bundled):
+    _catalogue_, zones = bundled
+    assert (zones.source_date, len(zones.zones), len(zones.tnis)) == ("2026-07-31", 19, 815)
+    assert "DRAFT" in zones.status and zones.source.endswith("(draft)")
+    assert {r: len(zones.region_zones(r)) for r in ("QLD1", "NSW1", "VIC1", "SA1", "TAS1")} == {
+        "QLD1": 5, "NSW1": 5, "VIC1": 2, "SA1": 4, "TAS1": 3}
+    assert zones.zone_for("NBER") == "N_CENWEST"            # the tool's own example A
+    assert zones.zone_for("NEPS1") == "N_SYDNEY"            # a connection point ID is cut to its TNI
 
 
-def test_a_preset_leaves_out_plant_outside_its_electrical_area():
-    """#317, interim: Sydney without the Central Coast's Eraring, Vales Point and
-    Colongra; Wagga Wagga without Tumut; the Sunshine Coast without Wivenhoe."""
-    catalogue = _cat.load_catalogue()
-    sydney = _zones.build_zone(catalogue, "NSW1", "sydney", 100)
-    assert {m.node.tni[:3] for m in sydney.excluded} == {"NCL", "NVP", "NEP"}
-    assert not any(m.node.tni.startswith(("NEP", "NVPP", "NCLG")) for m in sydney.members)
-    assert "Tallawarra" in {s for m in sydney.members for s in m.node.stations}  # Illawarra stays
-    wagga = _zones.build_zone(catalogue, "NSW1", "wagga_wagga", 100)
-    assert [m.node.tni for m in wagga.excluded] == ["NBLW8", "NTU21J"]
-    coast = _zones.build_zone(catalogue, "QLD1", "sunshine_coast", 100)
-    assert [m.node.tni for m in coast.members] == ["QPWD1S", "QWLS1W"] and len(coast.excluded) == 4
-    narrow = _zones.build_zone(catalogue, "NSW1", "sydney", 50)
-    assert narrow.excluded == ()  # nothing to leave out within 50 km
-    home = _zones.build_zone(catalogue, "QLD1", "home", 100, home=(coast.latitude, coast.longitude))
-    assert home.excluded == () and any(m.node.tni.startswith("QWIV") for m in home.members)  # presets only
+def test_sjp1_maps_by_postcode_else_to_its_default(bundled):
+    """The tool's examples B1 and B2: the virtual TNI SJP1 is placed by the NMI's postcode."""
+    _catalogue_, zones = bundled
+    assert zones.zone_for("SJP1", 5262) == "S_SOUTHEAST"
+    assert zones.zone_for("SJP1", "5000") == "S_ADELAIDE"   # not listed: SJP1's default
+    assert zones.zone_for("SJP1") == "S_ADELAIDE" and zones.zone_for("SJP1", "nonsense") == "S_ADELAIDE"
+    assert len(zones.postcodes["SJP1"]) == 149
+    assert {zones.zones[z] for z in zones.postcodes["SJP1"].values()} == {"SA1"}
+    assert zones.zone_for("NBER", 5262) == "N_CENWEST"      # a postcode matters for SJP1 only
 
 
-def test_the_sensor_lists_who_was_left_out_and_why(monkeypatch):
+def test_the_mapping_parses_tolerantly():
+    parsed = _cz.parse_congestion_zones({"zones": {"N_SYDNEY": "NSW1"}, "tnis": {"nsys": "n_sydney", "NBAD": "Z_NONE"},
+                                         "postcodes": {"SJP1": "row"}, "source_date": "2026-07-31"})
+    assert parsed.tnis == {"NSYS": "N_SYDNEY"} and parsed.postcodes == {}
+    assert _cz.parse_congestion_zones("nonsense") == _cz.EMPTY
+    assert _cz.EMPTY.zone_for("NSYS") is None and _cz.EMPTY.zone_for(None) is None
+
+
+def test_every_preset_city_falls_in_the_zone_of_the_issues_table(bundled):
+    """#387's table: each congestion zone, its cities and its name, from the cities' load points."""
+    catalogue, zones = bundled
+    expected = {
+        "QLD1": {"Q_SOUTHEAST": ["Brisbane", "Gold Coast", "Sunshine Coast"], "Q_SOUTHWEST": ["Toowoomba"],
+                 "Q_CENTRAL": ["Rockhampton"], "Q_NTH": ["Townsville", "Mackay"], "Q_FARNORTH": ["Cairns"]},
+        "NSW1": {"N_SYDNEY": ["Sydney", "Newcastle", "Wollongong"], "N_CANBERRA": ["Canberra"],
+                 "N_SWNSW": ["Wagga Wagga"], "N_NORTH": ["Tamworth"], "N_CENWEST": ["Orange"]},
+        "VIC1": {"V_MELBOURNE": ["Melbourne", "Latrobe Valley", "Geelong"], "V_STATEGRID": ["Bendigo", "Ballarat"]},
+        "SA1": {"S_ADELAIDE": ["Adelaide"], "S_NORTH": ["Port Augusta"], "S_SOUTHEAST": ["Mount Gambier"],
+                "S_RIVERLAND": ["Renmark"]},
+        "TAS1": {"T_SOUTH": ["Hobart"], "T_NORTH": ["Launceston"], "T_WEST": ["Burnie"]},
+    }
+    for region, by_zone in expected.items():
+        built = {z.congestion_zone: z for z in _zones.build_zones(catalogue, region, zones)}
+        assert set(built) == set(by_zone), region
+        for code, cities in by_zone.items():
+            assert list(built[code].cities) == cities, code
+            assert built[code].name == cities[0] and built[code].key == code.lower()
+
+
+def test_the_bundled_catalogue_has_members_in_every_zone(bundled):
+    catalogue, zones = bundled
+    for region in ("QLD1", "NSW1", "VIC1", "SA1", "TAS1"):
+        for zone in _zones.build_zones(catalogue, region, zones):
+            assert zone.members and not zone.nearest_only, zone.congestion_zone
+            assert all(m.node.region == region for m in zone.members)
+            assert all(zones.node_zone(m.node.tni, region) == zone.congestion_zone for m in zone.members)
+            assert all(zones.node_zone(t, region) is None for t in zone.unmapped)
+
+
+def test_plant_the_radius_left_out_is_in_its_congestion_zone(bundled):
+    """#317's exclusions were an interim; the tool puts Eraring, Vales Point and Colongra in
+    N_SYDNEY and Wivenhoe in Q_SOUTHEAST, so they are members there (#387)."""
+    catalogue, zones = bundled
+    sydney = _zone("N_SYDNEY", catalogue, zones)
+    assert {m.node.tni[:3] for m in sydney.members} >= {"NEP", "NVP", "NCL"}
+    southeast = _zone("Q_SOUTHEAST", catalogue, zones, region="QLD1")
+    assert any(m.node.tni.startswith(("QWIV", "QWIP")) for m in southeast.members)
+    assert southeast.name == "Brisbane"
+
+
+def test_the_sensor_cites_the_zone_and_lists_the_unmapped(monkeypatch, bundled):
     monkeypatch.setattr(_zs, "now_nem", lambda: NOW)
-    coast = _zones.build_zone(_cat.load_catalogue(), "QLD1", "sunshine_coast", 100)
-    attrs = _zs.NemPd7dayZonePriceSensor(
-        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "QLD1", coast,
-    ).extra_state_attributes
-    assert [m["tni"] for m in attrs["excluded_members"]] == ["QWIP1", "QWIP2", "QWIV1", "QWIV2"]
-    assert attrs["exclusion_reason"].startswith("Wivenhoe") and attrs["member_count"] == 2
-    brisbane = _zones.build_zone(_cat.load_catalogue(), "QLD1", "brisbane", 100)
-    plain = _zs.NemPd7dayZonePriceSensor(
-        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "QLD1", brisbane,
-    ).extra_state_attributes
-    assert plain["excluded_members"] == [] and plain["exclusion_reason"] is None
+    catalogue, zones = bundled
+    sydney = _zone("N_SYDNEY", catalogue, zones)
+    sensor = _zs.NemPd7dayZonePriceSensor(
+        SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1", sydney,
+    )
+    attrs = sensor.extra_state_attributes
+    assert (attrs["zone"], attrs["congestion_zone"], attrs["cities"]) == (
+        "n_sydney", "N_SYDNEY", ["Sydney", "Newcastle", "Wollongong"])
+    assert attrs["congestion_zone_source"] == "AEMO IPRR Congestion Zone Mapping Tool, 2026-07-31 (draft)"
+    assert attrs["unmapped_node_count"] == len(attrs["unmapped_nodes"]) > 0
+    assert "radius_km" not in attrs and "excluded_members" not in attrs
+    assert sensor._attr_name == "Sydney Zone Price Proxy"
+    assert sensor._attr_unique_id == "e1_NSW1_n_sydney_zone_price_proxy"
+    assert sensor.entity_id == "sensor.nem_pd7day_nsw1_n_sydney_zone_price_proxy"
 
 
 # ── Load connection points ───────────────────────────────────────────────────
@@ -209,37 +293,38 @@ def test_every_preset_citys_load_points_are_bundled_in_its_region(loads):
                 assert loads.get(tni) is not None and loads.get(tni).region == region, (key, tni)
 
 
-def test_a_city_takes_its_load_points_mlf(loads):
-    _cat.load_catalogue.cache_clear()
-    catalogue = _cat.load_catalogue()
-    brisbane = _zones.build_zone(catalogue, "QLD1", "brisbane", 100, loads=loads)
-    expected = [loads.get(t).mlf for t in _zones.CITIES["QLD1"][0][4]]
-    assert brisbane.mlf == round(sum(expected) / len(expected), 4) == 1.012
-    assert brisbane.mlf_source == "load_tni" and len(brisbane.load_points) == 15
-    townsville = _zones.build_zone(catalogue, "QLD1", "townsville", 100, loads=loads)
-    assert townsville.mlf == 0.9998  # nearby generation alone said 0.951
-    without = _zones.build_zone(catalogue, "QLD1", "townsville", 100)
-    assert without.mlf_source == "nearby_generation_idw" and without.mlf != townsville.mlf
+def test_a_zone_takes_its_load_points_mlf(loads):
+    """The MLF of every load point the tool maps to the zone, not only the named city's (#387)."""
+    southeast = _bundled("QLD1", "Q_SOUTHEAST", loads)
+    expected = [p.mlf for p in southeast.load_points]
+    assert southeast.mlf == round(sum(expected) / len(expected), 4) == 1.0051
+    assert southeast.mlf_source == "load_tni" and len(southeast.load_points) == 31
+    assert {p.tni for p in southeast.load_points} >= set(_zones.CITIES["QLD1"][0][4])  # Brisbane's among them
+    north = _bundled("QLD1", "Q_NTH", loads)
+    assert north.mlf == 0.9794  # nearby generation alone said 0.9468
+    without = _bundled("QLD1", "Q_NTH")
+    assert without.mlf_source == "nearby_generation_idw" and without.mlf != north.mlf
 
 
 def test_home_takes_its_chosen_load_point(loads):
-    home = _zones.build_zone(CAT, "NSW1", "home", 100, home=(-33.9, 151.2), loads=loads, home_load="NSYS")
+    home = _zones.home_zone(CAT, "NSW1", CZ, (-33.9, 151.2), loads, "NSYS")
     assert home.mlf == loads.get("NSYS").mlf and home.mlf_source == "load_tni"
-    other = _zones.build_zone(CAT, "NSW1", "home", 100, home=(-33.9, 151.2), loads=loads, home_load="QBMH")
-    assert other.load_points == () and other.mlf_source == "nearby_generation_idw"  # another region's point
-    unset = _zones.build_zone(CAT, "NSW1", "home", 100, home=(-33.9, 151.2), loads=loads)
+    other = _zones.home_zone(CAT, "NSW1", CZ, (-33.9, 151.2), loads, "QBMH")   # another region's point
+    assert other.congestion_zone == "N_SYDNEY" and {p.tni for p in other.load_points} == {"NSYS", "NALX"}  # the zone's
+    unset = _zones.home_zone(CAT, "NSW1", CZ, (-33.9, 151.2))
     assert unset.mlf_source == "nearby_generation_idw"
 
 
 def test_home_is_set_against_the_nearest_preset_city(loads):
     """#316: Home in the Sunshine Coast hinterland on Woolooga (0.978) beside
-    the Sunshine Coast preset, 25.6 km away, on Palmwoods (1.0132)."""
+    the Sunshine Coast preset, 25.6 km away, on Palmwoods (1.0132); both in Q_SOUTHEAST."""
     catalogue = _cat.load_catalogue()
-    home = _zones.build_zone(catalogue, "QLD1", "home", 100, home=(-26.42, 153.08), loads=loads, home_load="QWLG")
+    home = _zones.home_zone(catalogue, "QLD1", _cz.load_congestion_zones(), (-26.42, 153.08), loads, "QWLG")
     city = home.nearest_city
     assert (city.key, city.distance_km, city.mlf, city.tnis) == ("sunshine_coast", 25.6, 1.0132, ("QPWD",))
-    assert home.mlf == 0.978
-    assert _zones.build_zone(catalogue, "QLD1", "brisbane", 100, loads=loads).nearest_city is None  # Home only
+    assert home.mlf == 0.978 and home.congestion_zone == "Q_SOUTHEAST"
+    assert home.cities == ("Brisbane", "Gold Coast", "Sunshine Coast")
+    assert _bundled("QLD1", "Q_SOUTHEAST", loads).nearest_city is None  # Home only
     assert _zones.nearest_city("XXX1", -26.4, 153.1) is None
     assert _zones.nearest_city("QLD1", -26.42, 153.08).mlf is None  # no load points to hand
     attrs = _zs.NemPd7dayZonePriceSensor(
@@ -248,6 +333,7 @@ def test_home_is_set_against_the_nearest_preset_city(loads):
     assert (attrs["nearest_city"], attrs["nearest_city_mlf"], attrs["nearest_city_load_points"]) == (
         "Sunshine Coast", 1.0132, ["QPWD"])
     assert attrs["zone_mlf_vs_nearest_city"] == round(0.978 / 1.0132 - 1, 4) == -0.0347
+    assert attrs["zone"] == "home" and attrs["congestion_zone"] == "Q_SOUTHEAST"
 
 
 def test_load_points_parse_tolerantly():
@@ -292,7 +378,7 @@ def test_the_builder_keeps_load_rows_and_the_rows_from_1_july():
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
 def test_one_constrained_member_does_not_move_the_median():
-    zone = _zones.build_zone(CAT, "NSW1", "sydney", 100)  # GUTHEGA +88.27, none, HUMENSW -385.47
+    zone = _zone("N_SYDNEY")  # GUTHEGA +88.27, none, HUMENSW -385.47
     result = _zs.dispatch_zone(zone, "NSW1", _dispatch(), NOW)
     assert result.status == "published" and result.adjustment_mwh == 0.0
     assert result.rop_mwh == 97.62 and result.static_mwh == round(97.62 * zone.mlf, 4)
@@ -301,7 +387,7 @@ def test_one_constrained_member_does_not_move_the_median():
 
 
 def test_most_stations_constrained_moves_it():
-    zone = _zones.build_zone(CAT, "NSW1", "sydney", 100)  # GUTHEGA +88.27, NOROWS1 0, HUMENSW -385.47
+    zone = _zone("N_SYDNEY")  # GUTHEGA +88.27, NOROWS1 0, HUMENSW -385.47
     humensw_too = _node_info("NOUT2", ["HUMENSW"], -34.40, 151.00, mlf=0.95)
     constrained = replace(zone, members=(zone.members[0], _zones.Member(OUT, 60.0), _zones.Member(humensw_too, 61.0)))
     result = _zs.dispatch_zone(constrained, "NSW1", _dispatch(), NOW)
@@ -310,7 +396,7 @@ def test_most_stations_constrained_moves_it():
 
 
 def test_a_two_station_zone_takes_the_nearest_and_says_so(monkeypatch):
-    zone = _zones.build_zone(CAT, "NSW1", "sydney", 100)
+    zone = _zone("N_SYDNEY")
     two = replace(zone, members=(zone.members[0], _zones.Member(OUT, 60.0)))  # GUTHEGA +88.27, HUMENSW -385.47
     assert _zs.dispatch_zone(two, "NSW1", _dispatch(), NOW).adjustment_mwh == 88.27  # not the mean, -148.6
     monkeypatch.setattr(_zs, "now_nem", lambda: NOW)
@@ -320,7 +406,7 @@ def test_a_two_station_zone_takes_the_nearest_and_says_so(monkeypatch):
 
 
 def test_stale_no_data_no_rop_and_no_mlf_leave_it_unknown():
-    zone = _zones.build_zone(CAT, "NSW1", "sydney", 100)
+    zone = _zone("N_SYDNEY")
     assert _zs.dispatch_zone(zone, "NSW1", None, NOW).status == "no_data"
     late = datetime(2026, 10, 30, 21, 50, tzinfo=NEM_TZ)
     assert _zs.dispatch_zone(zone, "NSW1", _dispatch(), late).price_mwh is None
@@ -334,7 +420,7 @@ def test_stale_no_data_no_rop_and_no_mlf_leave_it_unknown():
 
 def test_a_member_whose_duids_disagree_is_left_out():
     split = _node_info("NSPLIT1", ["GUTHEGA", "HUMENSW"], -33.85, 151.2)
-    zone = replace(_zones.build_zone(CAT, "NSW1", "sydney", 50), members=(
+    zone = replace(_zone("N_SYDNEY"), members=(
         _zones.Member(split, 2.0), _zones.Member(CLOSE, 14.0),
     ))
     result = _zs.dispatch_zone(zone, "NSW1", _dispatch(), NOW)
@@ -404,11 +490,71 @@ def test_a_home_zone_left_in_another_region_is_removed():
     assert removed == ["sensor.nem_pd7day_nsw1_home_zone_price_proxy"]
 
 
+class _Registry:
+    """An entity registry of rows ``entity_id -> unique_id``, recording updates and removals."""
+
+    def __init__(self, rows):
+        self.rows, self.updated, self.removed = dict(rows), [], []
+
+    def async_get_entity_id(self, domain, platform, uid):
+        return next((e for e, u in self.rows.items() if u == uid), None)
+
+    def async_get(self, entity_id):
+        return entity_id if entity_id in self.rows else None
+
+    def async_update_entity(self, entity_id, new_unique_id=None, new_entity_id=None):
+        self.updated.append((entity_id, new_unique_id, new_entity_id))
+        uid = self.rows.pop(entity_id)
+        self.rows[new_entity_id or entity_id] = new_unique_id or uid
+
+    def async_remove(self, entity_id):
+        self.removed.append(entity_id)
+        del self.rows[entity_id]
+
+
+def test_each_zone_keeps_its_named_citys_sensor_and_retires_the_others(bundled):
+    """#387: the named city's sensor takes the zone's unique and entity ID, keeping its history;
+    the zone's other cities are removed and a repair notice names them, once."""
+    from unittest.mock import patch
+    catalogue, zones = bundled
+    built = _zones.build_zones(catalogue, "NSW1", zones)
+    old = lambda key: (f"sensor.nem_pd7day_nsw1_{key}_zone_price_proxy", f"e1_NSW1_{key}_zone_price_proxy")  # noqa: E731
+    registry = _Registry(dict([
+        old("sydney"), old("newcastle"), ("sensor.my_wollongong", "e1_NSW1_wollongong_zone_price_proxy"),
+        old("canberra"), ("sensor.wagga_price", "e1_NSW1_wagga_wagga_zone_price_proxy"), old("home"),
+    ]))
+    issues = []
+    with patch.object(_zs.er, "async_get", return_value=registry), \
+            patch.object(_zs.ir, "async_create_issue", lambda *a, **k: issues.append((a, k))):
+        retired = _zs.migrate_city_zones(None, ENTRY, "NSW1", built)
+        assert _zs.migrate_city_zones(None, ENTRY, "NSW1", built) == []  # the second setup has nothing to do
+    assert retired == ["Newcastle (sensor.nem_pd7day_nsw1_newcastle_zone_price_proxy)",
+                       "Wollongong (sensor.my_wollongong)"]
+    assert registry.rows == {
+        "sensor.nem_pd7day_nsw1_n_sydney_zone_price_proxy": "e1_NSW1_n_sydney_zone_price_proxy",
+        "sensor.nem_pd7day_nsw1_n_canberra_zone_price_proxy": "e1_NSW1_n_canberra_zone_price_proxy",
+        "sensor.wagga_price": "e1_NSW1_n_swnsw_zone_price_proxy",   # a renamed entity ID is kept
+        "sensor.nem_pd7day_nsw1_home_zone_price_proxy": "e1_NSW1_home_zone_price_proxy",  # Home untouched
+    }
+    ((args, kwargs),) = issues
+    assert args[2] == "congestion_zones_retired_e1_NSW1" and kwargs["translation_key"] == "congestion_zones_retired"
+    assert kwargs["translation_placeholders"] == {"region": "NSW1", "retired": ", ".join(retired)}
+
+
+def test_a_zone_whose_named_city_had_no_sensor_takes_the_next_citys():
+    from unittest.mock import patch
+    zone = replace(_zone("N_SYDNEY"), cities=("Sydney", "Newcastle"), city_keys=("sydney", "newcastle"))
+    registry = _Registry({"sensor.nem_pd7day_nsw1_newcastle_zone_price_proxy": "e1_NSW1_newcastle_zone_price_proxy"})
+    with patch.object(_zs.er, "async_get", return_value=registry):
+        assert _zs.migrate_city_zones(None, ENTRY, "NSW1", [zone]) == []
+    assert registry.rows == {"sensor.nem_pd7day_nsw1_n_sydney_zone_price_proxy": "e1_NSW1_n_sydney_zone_price_proxy"}
+
+
 def test_the_predispatch_forecast_is_worked_out_once_per_run_and_period(monkeypatch):
     """A large zone rebuilt its pre-dispatch forecast on every update; now only for a new run,
     once a period has ended, or once the run has gone stale (#331), through the hub (#336)."""
     snapshot = _pdc.parse_predispatch(PD, "pd.zip")
-    zone = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 100)
+    zone = _bundled("NSW1", "N_SWNSW")
     source = SimpleNamespace(latest=snapshot)
     sensor = _zs.NemPd7dayZonePriceSensor(
         SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1", zone, source,
@@ -439,7 +585,7 @@ def test_the_predispatch_forecast_is_worked_out_once_per_run_and_period(monkeypa
 def test_sensors_sharing_the_hub_work_a_zone_out_once(monkeypatch):
     """#336: the same zone and run are worked out once for every sensor and write."""
     snapshot = _pdc.parse_predispatch(PD, "pd.zip")
-    zone = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 100)
+    zone = _bundled("NSW1", "N_SWNSW")
     hub = _hub.ForecastHub()
     sensors = [
         _zs.NemPd7dayZonePriceSensor(SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1",
@@ -453,7 +599,7 @@ def test_sensors_sharing_the_hub_work_a_zone_out_once(monkeypatch):
     results = [s._forecast_attrs(now)["predispatch_forecast"] for s in sensors]
     assert len(calls) == 1 and all(r is results[0] for r in results)
     # A zone rebuilt (an options reload) is a different key, not the old zone's result.
-    rebuilt = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 60)
+    rebuilt = replace(zone, members=zone.members[:10])
     other = _zs.NemPd7dayZonePriceSensor(SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1",
                                          rebuilt, SimpleNamespace(latest=snapshot), hub)
     other._forecast_attrs(now)
@@ -461,7 +607,7 @@ def test_sensors_sharing_the_hub_work_a_zone_out_once(monkeypatch):
 
 
 def test_a_zones_stations_are_worked_out_once():
-    zone = _zones.build_zone(_cat.load_catalogue(), "SA1", "adelaide", 100)
+    zone = _bundled("SA1", "S_ADELAIDE")
     assert zone.member_keys is zone.member_keys and zone.stations is zone.stations
     assert len(zone.member_keys) == len(zone.members) and set(zone.stations) == set(zone.member_keys)
     assert replace(zone, members=zone.members[:1]).stations == zone.member_keys[:1]  # a new zone, worked out anew
@@ -472,7 +618,7 @@ def test_a_zone_without_members_is_an_unknown_node_not_a_conflict():
     unknown_node, not conflicting_rows (seen once the golden harness read the dispatch file's local
     prices, #334)."""
     loads = _ldp.load_load_points()
-    empty = _zones.build_zone(_cat.EMPTY, "NSW1", "sydney", 100, loads=loads)
+    empty = _zone("N_SYDNEY", _cat.EMPTY, CZ, "NSW1", loads)
     assert empty.members == () and empty.mlf is not None
     assert _zs.dispatch_zone(empty, "NSW1", _dispatch(), NOW).status == "unknown_node"
     run = _lp.parse_p5min_local_prices(P5, "p.zip", datetime(2026, 10, 30, 21, 25, 45, tzinfo=NEM_TZ))
@@ -487,11 +633,11 @@ def _constraints(prices):
 
 def test_the_sensor_is_a_labelled_proxy(monkeypatch):
     monkeypatch.setattr(_zs, "now_nem", lambda: NOW)
-    zone = _zones.build_zone(CAT, "NSW1", "sydney", 100)
+    zone = _zone("N_SYDNEY")
     sensor = _zs.NemPd7dayZonePriceSensor(_constraints(_dispatch()), None, ENTRY, "NSW1", zone)
     assert sensor._attr_name == "Sydney Zone Price Proxy"
-    assert sensor.entity_id == "sensor.nem_pd7day_nsw1_sydney_zone_price_proxy"
-    assert sensor._attr_unique_id == "e1_NSW1_sydney_zone_price_proxy"
+    assert sensor.entity_id == "sensor.nem_pd7day_nsw1_n_sydney_zone_price_proxy"
+    assert sensor._attr_unique_id == "e1_NSW1_n_sydney_zone_price_proxy"
     assert sensor.native_value == pytest.approx(97.62 * zone.mlf / 1000, abs=1e-6)
     attrs = sensor.extra_state_attributes
     assert attrs["proxy"] is True and attrs["zone_mlf_source"] == "nearby_generation_idw"
@@ -519,7 +665,7 @@ def test_calibrated_rrp_follows_the_regions_pd7day_model_from_24_hours(monkeypat
     """Zone entries keep raw RRP as their price; ``calibrated_rrp_mwh`` from 24 h ahead is the
     timeline's, served through PD7DAY's h24_48 model, and a refit refreshes the hub's memo (#337)."""
     snapshot = _pdc.parse_predispatch(PD, "pd.zip")
-    zone = _zones.build_zone(_cat.load_catalogue(), "NSW1", "wagga_wagga", 100)
+    zone = _bundled("NSW1", "N_SWNSW")
     sensor = _zs.NemPd7dayZonePriceSensor(
         SimpleNamespace(tracker=SimpleNamespace(latest=None)), None, ENTRY, "NSW1", zone,
         SimpleNamespace(latest=snapshot),

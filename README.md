@@ -190,34 +190,53 @@ A TNI is a transmission connection point. Its **node price** is the region's ori
 The MLF scales the adjustment too: NEMDE refers every offer to the regional reference node by dividing it by the unit's MLF, so AEMO's adjustment is on that basis, as the ROP is. Of 34 dispatched, locally constrained unit intervals on 31 Oct 2026 (to 19:10, against the bids in force), 17 priced to the cent at one of the unit's own offer bands with (ROP + adjustment) × MLF, and none with ROP × MLF + adjustment (METZSF1, MLF 0.8657: its −114.72 band, against −141.4). Until v3.38.0 the node price was ROP × MLF + adjustment.
 
 
-### City and zone price proxies
+### Congestion zone price proxies
 
-**Every preset city of the entry's region, and Home, has a sensor, enabled by default**:
+**Every AEMO congestion zone of the entry's region, and Home, has a sensor, enabled by default** (#387). The zones are those of AEMO's Integrating Price-Responsive Resources (IPRR) rule: 19 across the NEM, each the area AEMO manages transmission congestion by. Each sensor is named for the largest preset city in it, by load points, and lists the others in `cities`:
 
-- **The cities:**
-  - QLD1: Brisbane, Gold Coast, Sunshine Coast, Toowoomba, Rockhampton, Mackay, Townsville, Cairns.
-  - NSW1: Sydney, Newcastle, Wollongong, Canberra, Wagga Wagga, Tamworth, Orange.
-  - VIC1: Melbourne, Geelong, Ballarat, Bendigo, Latrobe Valley.
-  - SA1: Adelaide, Port Augusta, Mount Gambier.
-  - TAS1: Hobart, Launceston, Burnie.
-- **Home** is Home Assistant's own location. It has one sensor, in the entry of the region whose grid serves it (the region of the nearest catalogue node: a Sunshine Coast home is QLD1's, Canberra NSW1's, Mildura VIC1's), and none while HA has no location set. Until v3.40.0 every entry had its own; those in the other regions' entries are removed at setup.
-- **There is nothing to choose.** Disable a city you don't want from its entity page, and it stays disabled. Until v3.39.0 the options listed the zones to create.
+| Region | Congestion zone (sensor) | Cities | Member nodes | Load points | Zone MLF |
+|---|---|---|---|---|---|
+| QLD1 | `Q_SOUTHEAST` (Brisbane) | Brisbane, Gold Coast, Sunshine Coast | 13 | 31 | 1.0051 |
+| QLD1 | `Q_SOUTHWEST` (Toowoomba) | Toowoomba | 37 | 14 | 0.9858 |
+| QLD1 | `Q_CENTRAL` (Rockhampton) | Rockhampton | 22 | 27 | 0.9420 |
+| QLD1 | `Q_NTH` (Townsville) | Townsville, Mackay | 34 | 40 | 0.9794 |
+| QLD1 | `Q_FARNORTH` (Cairns) | Cairns | 6 | 8 | 0.9964 |
+| NSW1 | `N_SYDNEY` (Sydney) | Sydney, Newcastle, Wollongong | 40 | 79 | 1.0000 |
+| NSW1 | `N_CANBERRA` (Canberra) | Canberra | 7 | 24 | 0.9918 |
+| NSW1 | `N_SWNSW` (Wagga Wagga) | Wagga Wagga | 40 | 31 | 0.9700 |
+| NSW1 | `N_NORTH` (Tamworth) | Tamworth | 24 | 25 | 0.9354 |
+| NSW1 | `N_CENWEST` (Orange) | Orange | 18 | 18 | 0.9923 |
+| VIC1 | `V_MELBOURNE` (Melbourne) | Melbourne, Latrobe Valley, Geelong | 47 | 50 | 0.9989 |
+| VIC1 | `V_STATEGRID` (Bendigo) | Bendigo, Ballarat | 58 | 20 | 0.9855 |
+| SA1 | `S_ADELAIDE` (Adelaide) | Adelaide | 36 | 29 | 1.0052 |
+| SA1 | `S_NORTH` (Port Augusta) | Port Augusta | 27 | 29 | 0.9843 |
+| SA1 | `S_SOUTHEAST` (Mount Gambier) | Mount Gambier | 13 | 9 | 0.9976 |
+| SA1 | `S_RIVERLAND` (Renmark) | Renmark | 1 | 6 | 0.9377 |
+| TAS1 | `T_SOUTH` (Hobart) | Hobart | 14 | 27 | 1.0285 |
+| TAS1 | `T_NORTH` (Launceston) | Launceston | 10 | 16 | 1.0044 |
+| TAS1 | `T_WEST` (Burnie) | Burnie | 15 | 20 | 0.9934 |
+
+Catalogue of 31 Oct 2026 and the FY2026-27 MLF report's load points.
+
+- **The mapping** is AEMO's draft *Congestion Zone Mapping Tool* of 31 July 2026, published for industry feedback with the IPRR trial participation guidelines consultation. It maps each of 815 TNIs to one zone; the virtual TNI SJP1 (South Australia) is placed by the NMI's postcode, else in `S_ADELAIDE`. It is bundled as `congestion_zones.json`, built by `scripts/build_congestion_zones.py` from the workbook, with its date and draft status, which every sensor cites in `congestion_zone_source`. Nothing is fetched at run time; the file will be refreshed when AEMO finalises the tool.
+- **Members** are the region's catalogue nodes whose TNI (the first four characters of the connection point ID) the tool maps to the zone, nearest the named city first. A node the tool does not map, or maps to another region's zone (Murray, `NMUR`, in VIC1, is in `S_ADELAIDE` in the tool; Meadowbank, `TMB1`, in TAS1, in `N_SYDNEY`), is no member anywhere: it is counted in `unmapped_node_count` and listed in `unmapped_nodes`. A zone with no mapped node takes the region's nearest one (`nearest_only`).
+- **Home** is Home Assistant's own location. It has one sensor, in the entry of the region whose grid serves it (the region of the nearest catalogue node: a Sunshine Coast home is QLD1's, Canberra NSW1's, Mildura VIC1's), and none while HA has no location set. Its zone is that of the load connection point chosen for it below, through the tool, else that of the nearest mapped node; its members are that zone's, nearest Home first.
+- **There is nothing to choose.** Disable a zone you don't want from its entity page, and it stays disabled. Until v3.39.0 the options listed the zones to create.
 - **The data cost:** the zone sensors read P5MIN, so it is fetched every 5 minutes while any of them is enabled. That is one small file, shared by every entry.
 
 | Field | Default | Description |
 |---|---|---|
-| Zone radius | 100 km | How far from the centre a catalogue node counts as nearby |
-| Home load connection point | empty | The bulk supply point serving your area, from a dropdown of the region's load connection points as AEMO's MLF report names them (`Belmont 110 kV (QBMH) · MLF 1.0128`). The points of the preset city nearest Home come first, marked with the city and distance (`Palmwoods 132 kV (QPWD) · MLF 1.0132 · Sunshine Coast, 26 km`). Its MLF is the Home zone's |
+| Home load connection point | empty | The bulk supply point serving your area, from a dropdown of the region's load connection points as AEMO's MLF report names them (`Belmont 110 kV (QBMH) · MLF 1.0128`). The points of the preset city nearest Home come first, marked with the city and distance (`Palmwoods 132 kV (QPWD) · MLF 1.0132 · Sunshine Coast, 26 km`). It places Home in its congestion zone, and its MLF is the Home zone's |
 
-A zone's price is a **proxy**: (ROP + the zone's local price adjustment) × zone MLF. The adjustment comes from the region's catalogue nodes within the radius, with the nearest node alone standing in where none is that close.
+A zone's price is a **proxy**: (ROP + the zone's local price adjustment) × zone MLF, the adjustment from the zone's member nodes.
 
-- **Zone MLF**: the mean MLF of the place's own load connection points. Each preset city lists the bulk supply points that serve it (Brisbane 15, from Algester to Tennyson: 1.0120; Sydney 48: 1.0035; Melbourne 43: 1.0004; Adelaide 13: 1.0012; Hobart 11: 1.0373; Townsville 5: 0.9998), and Home the one chosen above. They come from `load_points.json`, the load tables of AEMO's *Marginal Loss Factors: Financial Year 2026-27* report (513 load points), built by `scripts/build_load_points.py` from the report's PDF, which aemo.com.au does not serve to scripts; every MLF matches MMSDM's TRANSMISSIONLOSSFACTOR. Where no load point is known, the inverse-distance-weighted mean of the nearby nodes' MLFs stands in (`zone_mlf_source: nearby_generation_idw`).
-- **Outside a city's electrical area** (#317): a radius crosses network boundaries, so three presets leave out plant within reach that sits behind other constraints than the city's load. Sydney leaves out the Central Coast and Lake Macquarie plant (Eraring, Vales Point, Colongra), Wagga Wagga leaves out Tumut hydro (Blowering, Jounama), and the Sunshine Coast leaves out Wivenhoe. They are matched by TNI and listed in `excluded_members`, with `exclusion_reason`. Home and the other presets take everything in reach. This is an interim fix: grouping members by the constraints they bind together would follow the network itself.
+- **Zone MLF**: the mean MLF of the load connection points the tool maps to the zone (`zone_mlf_source: load_tni`), and for Home the one chosen above. They come from `load_points.json`, the load tables of AEMO's *Marginal Loss Factors: Financial Year 2026-27* report (513 load points), built by `scripts/build_load_points.py` from the report's PDF, which aemo.com.au does not serve to scripts; every MLF matches MMSDM's TRANSMISSIONLOSSFACTOR. Where no load point is known, the inverse-distance-weighted mean of the members' MLFs stands in (`zone_mlf_source: nearby_generation_idw`).
+- **From a city and a radius to congestion zones** (#387, v3.52.0): until v3.51 a zone was a preset city and every node within 100 km, a radius that crossed electrical areas; v3.40.0 left out by hand the plant of three presets that sat behind other constraints (#317). The tool settles both: Eraring, Vales Point and Colongra are in `N_SYDNEY` with Sydney, Wivenhoe in `Q_SOUTHEAST` with the Sunshine Coast, and Jounama in `N_SWNSW` with Wagga Wagga (Blowering and Tumut 3 are in `N_NORTH`, Tumut 1 and 2 in `N_CANBERRA`). Each zone keeps the sensor, and the history, of the city it is named for, under the zone's entity ID (`sensor.nem_pd7day_qld1_q_southeast_zone_price_proxy`, until v3.51 `..._brisbane_zone_price_proxy`). The other cities' sensors share a zone with it and are removed at setup, with a repair notice naming them: Gold Coast, Sunshine Coast, Mackay, Newcastle, Wollongong, Latrobe Valley, Geelong and Ballarat. An entity ID you renamed is kept.
 - **Choosing Home's load point** (#316): AEMO publishes no coordinates for load connection points, so the list cannot be sorted by distance, and the nearest point is not always the one that supplies you. Your meter's standing data, or your distributor, says which bulk supply point serves you. For a check, the Home zone sensor shows the preset city nearest Home, its load points and their MLF (`nearest_city`, `nearest_city_load_points`, `nearest_city_mlf`), and how far Home's MLF differs (`zone_mlf_vs_nearest_city`). Woolooga (0.978) against the Sunshine Coast preset's Palmwoods (1.0132) is −3.5%, about 3.3 $/MWh at a 95 $/MWh ROP.
-- **Adjustment**: city load is not a variable in NEMDE's constraint equations, so it has no local price adjustment of its own; the nearby generation and storage nodes' adjustments stand in.
-  - **One vote per station** (#314): a station with several connection points takes one vote, its members' median. Wivenhoe's four TNIs once took 4 of the Sunshine Coast zone's 6 votes from 91 km away; now it is one of three stations.
+- **Adjustment**: city load is not a variable in NEMDE's constraint equations, so it has no local price adjustment of its own; the member generation and storage nodes' adjustments stand in.
+  - **One vote per station** (#314): a station with several connection points takes one vote, its members' median. Wivenhoe's four TNIs once took 4 of the Sunshine Coast zone's 6 votes from 91 km away.
   - **The median of the stations**: one constrained station does not move the zone, while most of them do.
-  - **Below three stations, the nearest station alone** (#315): a median of two is their mean, so one unit would move the zone by half its adjustment. The Home zone of Valdora and Woolooga takes Valdora's, with an `aggregation_note` saying so.
+  - **Below three stations, the nearest station alone** (#315): a median of two is their mean, so one unit would move the zone by half its adjustment. `S_RIVERLAND`, with one member, takes that one, with an `aggregation_note` saying so.
 
 Not a settlement or retail price, and not the price at your meter.
 
@@ -617,13 +636,14 @@ Until 3.33 each DUID had three sensors; the `..._local_price_adjustment_forecast
 
 ### Zone Price Proxy
 
-`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per preset city of the region and Home, enabled by default (`Brisbane Zone Price Proxy`, `Home Zone Price Proxy`), in the device's Diagnostic section: (ROP + the zone's local price adjustment, one vote per station as above) × zone MLF, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out; a fresh file without the LOCAL_PRICE table is 0 for every member (`dispatch_zero`), and a stale file or none, with nothing to stand in, leaves the state unknown. With a 100 km radius Brisbane has 8 member nodes, Sydney 28, Melbourne 16, Adelaide 46 and Hobart 12 (catalogue of 31 Oct 2026).
+`sensor.nem_pd7day_{region}_{zone}_zone_price_proxy`, one per congestion zone of the region and Home, enabled by default (`sensor.nem_pd7day_qld1_q_southeast_zone_price_proxy`, named `Brisbane Zone Price Proxy`; `Home Zone Price Proxy`), in the device's Diagnostic section: (ROP + the zone's local price adjustment, one vote per station as above) × zone MLF, in $/kWh, for the latest dispatch interval, raw. A member whose DUIDs disagree is left out; a fresh file without the LOCAL_PRICE table is 0 for every member (`dispatch_zero`), and a stale file or none, with nothing to stand in, leaves the state unknown. The zones' members are in the table above.
 
 | Attribute | Description |
 |---|---|
 | `proxy` | Always `true` |
-| `zone`, `latitude`, `longitude`, `radius_km`, `nearest_only`, `member_count`, `member_stations` | The centre and radius, whether the nearest node stood in for none in reach, and the members' TNIs and stations (each station once, nearest first) |
-| `excluded_members`, `exclusion_reason` | Nodes in reach left out as outside the city's electrical area, with their `tni`, `stations` and `distance_km` (not recorded), and why; empty and `null` elsewhere |
+| `zone`, `congestion_zone`, `congestion_zone_source`, `cities` | The zone's key (`q_southeast`, or `home`), its AEMO congestion zone, the mapping it comes from (`AEMO IPRR Congestion Zone Mapping Tool, 2026-07-31 (draft)`), and the preset cities in it |
+| `latitude`, `longitude`, `nearest_only`, `member_count`, `member_stations` | The named city (or Home), whether the region's nearest node stood in for a zone with no mapped node, and the members' TNIs and stations (each station once, nearest first) |
+| `unmapped_node_count`, `unmapped_nodes` | The region's catalogue nodes the tool maps to no zone of the region, member of none (the list is not recorded) |
 | `zone_mlf`, `zone_mlf_source`, `load_points` | The zone MLF; `load_tni` (the mean of `load_points`, each with `tni`, `name`, `kv` and `mlf`, not recorded) or `nearby_generation_idw` |
 | `nearest_city`, `nearest_city_distance_km`, `nearest_city_load_points`, `nearest_city_mlf`, `zone_mlf_vs_nearest_city` | Home only: the preset city nearest Home, its load points and their mean MLF, and Home's MLF against it (−0.0347 is 3.47% lower) |
 | `price_mwh`, `static_price_mwh`, `rop_mwh`, `adjustment_mwh`, `formula` | The state in $/MWh, ROP × zone MLF, the ROP, the zone's adjustment, and `(ROP + zone LOCAL_PRICE_ADJUSTMENT) x zone MLF` |
@@ -894,6 +914,7 @@ This occurs when HA's entity registry has a stale `entity_id` from a previous ve
 
 | Version | Changes |
 |---|---|
+| 3.52.0 | Zone price proxies follow AEMO's IPRR congestion zones (#387): one sensor per zone of the region, 19 across the NEM, named for its largest preset city, with the zone's member nodes and load points from AEMO's draft Congestion Zone Mapping Tool of 31 July 2026, bundled as `congestion_zones.json`. The 100 km radius and its option go, and so do #317's hand-made exclusions: Eraring, Vales Point and Colongra are members of `N_SYDNEY`, Wivenhoe of `Q_SOUTHEAST`. Home takes the zone of its chosen load point. Each zone keeps its named city's sensor and history under the zone's entity ID (`..._q_southeast_zone_price_proxy`); the other cities' sensors are removed with a repair notice. Renmark joins SA1's cities for `S_RIVERLAND`. Suite goes from 2232 to 2239 tests. |
 | 3.51.2 | A restart restores the saved PD7DAY run instead of downloading one during setup (#365). The saved run was used only within 35 minutes of its fetch, but PD7DAY is fetched only at its three publishes a day, so almost every restart blocked setup on NEMWEB: 9.5 s per entry on HA-OCPP, and twice past Home Assistant's 60 s setup warning. A run fetched within 16 hours (the 13.5 h overnight gap plus margin) is now restored, with its fetch time and age in `last_success_at` and `data_age_hours`, and the background fetch still follows; an older one still blocks. The day 2-7 import and export tariffs share their full partners' price cache, so their first write prices nothing again (the active tariff's four first writes 23.9 ms to 13.3 ms CPU on a full run here); no published value changes. Suite goes from 2210 to 2232 tests. |
 | 3.51.1 | A pre-dispatch horizon band its holdout did not admit no longer borrows a shorter band's map (#337 stage 3b). On 16 Nov NSW1 and QLD1's `p24_40` lost to the interim, and v3.51.0 served those periods, the day 2-7 start among them, by `p12_24`'s map instead of the interim; now a band not admitted takes the fallback, the interim from 24 h, else passthrough, and a shorter band stands in only for a thin bucket of an admitted band. Suite goes from 2207 to 2209 tests. |
 | 3.51.0 | Stage 3b of the forecast timeline plan (#337): pre-dispatch is calibrated by its own stage 1 fit on the 3a record against TradingIS, by horizon band (`p00_01` to `p24_40`) and solar time of day, with PD7DAY's fitting code. Each band is admitted only where it beats raw pre-dispatch on the newest 7 days, and at 24 h and beyond the v3.50.4 interim too; then it is served as `calibrated_source: pd_isotonic`, else the interim from 24 h, else passthrough. Refitted after each PD7DAY refit once the record reaches back 14 days; the Calibration sensor shows `pd_calibration`. A 14-day backtest over NEMWEB's archives (`scripts/pd_backtest.py`) beats raw in every band of every region and the interim at 24 to 40 h (QLD1: 3.58 c raw, 1.91 c interim, 1.71 c). Suite goes from 2181 to 2206 tests. |
